@@ -714,44 +714,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return;
         };
 
-        // Extract type parameters from AST and create TypeParam TypeIds
-        let factory = self.ctx.types.factory();
-        let mut params = Vec::new();
-        let mut bindings = Vec::new();
-
-        if let Some(ref type_param_list) = type_alias.type_parameters {
-            for &param_idx in &type_param_list.nodes {
-                let Some(param_node) = decl_arena.get(param_idx) else {
-                    continue;
-                };
-                let Some(param_data) = decl_arena.get_type_parameter(param_node) else {
-                    continue;
-                };
-
-                let name = decl_arena
-                    .get(param_data.name)
-                    .and_then(|n| decl_arena.get_identifier(n))
-                    .map_or_else(|| "T".to_string(), |id| id.escaped_text.clone());
-
-                let atom = self.ctx.types.intern_string(&name);
-                let info = tsz_solver::TypeParamInfo {
-                    name: atom,
-                    constraint: None,
-                    default: None,
-                    is_const: false,
-                };
-                let type_id = factory.type_param(info);
-                bindings.push((atom, type_id));
-                params.push(info);
-            }
-        }
-
-        if !params.is_empty() {
-            self.ctx.insert_def_type_params(def_id, params.clone());
-        }
-
         // Lower the type alias body with the type params in scope
         if type_alias.type_node != NodeIndex::NONE {
+            let factory = self.ctx.types.factory();
             let namespace_prefix = self.declaration_namespace_prefix(decl_arena, decl_idx);
             let decl_binder = self
                 .ctx
@@ -855,17 +820,92 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     .copied()
                     .filter(|&t| t != TypeId::ERROR)
             };
-            let lowering = tsz_lowering::TypeLowering::with_hybrid_resolver(
-                decl_arena,
-                self.ctx.types,
-                &type_resolver,
-                &def_id_resolver,
-                &value_resolver,
-            )
-            .with_type_param_bindings(bindings)
-            .with_computed_name_resolver(&computed_name_resolver)
-            .with_name_def_id_resolver(&name_resolver)
-            .with_type_query_override(&type_query_override);
+
+            let make_lowering = |bindings| {
+                tsz_lowering::TypeLowering::with_hybrid_resolver(
+                    decl_arena,
+                    self.ctx.types,
+                    &type_resolver,
+                    &def_id_resolver,
+                    &value_resolver,
+                )
+                .with_type_param_bindings(bindings)
+                .with_computed_name_resolver(&computed_name_resolver)
+                .with_name_def_id_resolver(&name_resolver)
+                .with_type_query_override(&type_query_override)
+            };
+
+            // Seed placeholder type parameters first so later constraints/defaults can
+            // refer to earlier parameters and self-recursive alias constraints.
+            let mut params = Vec::new();
+            let mut bindings = Vec::new();
+            if let Some(ref type_param_list) = type_alias.type_parameters {
+                for &param_idx in &type_param_list.nodes {
+                    let Some(param_node) = decl_arena.get(param_idx) else {
+                        continue;
+                    };
+                    let Some(param_data) = decl_arena.get_type_parameter(param_node) else {
+                        continue;
+                    };
+
+                    let name = decl_arena
+                        .get(param_data.name)
+                        .and_then(|n| decl_arena.get_identifier(n))
+                        .map_or_else(|| "T".to_string(), |id| id.escaped_text.clone());
+
+                    let atom = self.ctx.types.intern_string(&name);
+                    let placeholder = tsz_solver::TypeParamInfo {
+                        name: atom,
+                        constraint: None,
+                        default: None,
+                        is_const: false,
+                    };
+                    bindings.push((atom, factory.type_param(placeholder)));
+                }
+
+                // Refine placeholder params with their real constraints/defaults and keep
+                // the updated bindings in scope for later type parameters.
+                for (binding_idx, &param_idx) in type_param_list.nodes.iter().enumerate() {
+                    let Some(param_node) = decl_arena.get(param_idx) else {
+                        continue;
+                    };
+                    let Some(param_data) = decl_arena.get_type_parameter(param_node) else {
+                        continue;
+                    };
+
+                    let name = decl_arena
+                        .get(param_data.name)
+                        .and_then(|n| decl_arena.get_identifier(n))
+                        .map_or_else(|| "T".to_string(), |id| id.escaped_text.clone());
+                    let atom = self.ctx.types.intern_string(&name);
+
+                    let lowering = make_lowering(bindings.clone());
+                    let constraint = (param_data.constraint != NodeIndex::NONE)
+                        .then(|| lowering.lower_type(param_data.constraint));
+                    let default = if param_data.default != NodeIndex::NONE {
+                        let default_type = lowering.lower_type(param_data.default);
+                        (default_type != TypeId::ERROR).then_some(default_type)
+                    } else {
+                        None
+                    };
+                    let is_const = decl_arena
+                        .has_modifier(&param_data.modifiers, tsz_scanner::SyntaxKind::ConstKeyword);
+                    let info = tsz_solver::TypeParamInfo {
+                        name: atom,
+                        constraint,
+                        default,
+                        is_const,
+                    };
+                    bindings[binding_idx] = (atom, factory.type_param(info));
+                    params.push(info);
+                }
+            }
+
+            if !params.is_empty() {
+                self.ctx.insert_def_type_params(def_id, params.clone());
+            }
+
+            let lowering = make_lowering(bindings);
 
             let body = lowering.lower_type(type_alias.type_node);
 

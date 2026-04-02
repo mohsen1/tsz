@@ -882,16 +882,22 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // Skip multi-overload class components — they should go through JSX
-        // overload resolution (TS2769) instead of picking a single signature.
-        // This matches tsc's behavior for classes like React.Component which
-        // have 2 construct overloads.
-        if sigs.len() >= 2 {
-            return None;
-        }
+        // Prefer the single constructor signature that carries props for JSX checks.
+        // React-like class surfaces may expose a synthetic no-arg constructor
+        // alongside a real props-taking constructor; we still want the latter
+        // so `<MyComp a="x" />` produces type errors instead of falling into
+        // overload mismatch fallback.
+        let first_sig = if sigs.len() == 1 {
+            sigs.first()?
+        } else {
+            let with_props: Vec<_> = sigs.iter().filter(|sig| !sig.params.is_empty()).collect();
+            match with_props.len() {
+                1 => with_props[0],
+                _ => return None,
+            }
+        };
 
-        let first_sig = sigs.first()?;
-        let inferred_sig = Some(first_sig).and_then(|sig| {
+        let inferred_sig = Some(first_sig.clone()).and_then(|sig| {
             if sig.type_params.is_empty() {
                 None
             } else {

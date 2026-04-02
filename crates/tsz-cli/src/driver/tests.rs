@@ -346,6 +346,73 @@ fn test_compile_project_keeps_unimported_external_module_type_alias_unresolved()
 }
 
 #[test]
+fn test_compile_project_mixin_constructor_object_does_not_emit_ts2510() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2015",
+    "declaration": true
+  },
+  "files": ["wrapClass.ts", "index.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("wrapClass.ts"),
+        r#"export function wrapClass(param: any) {
+    return class Wrapped {
+        foo() {
+            return param;
+        }
+    }
+}
+
+export type Constructor<T = {}> = new (...args: any[]) => T;
+
+export function Timestamped<TBase extends Constructor>(Base: TBase) {
+    return class extends Base {
+        timestamp = Date.now();
+    };
+}
+"#,
+    )
+    .expect("write wrapClass.ts");
+    fs::write(
+        dir.path().join("index.ts"),
+        r#"import { wrapClass, Timestamped } from "./wrapClass";
+
+export default wrapClass(0);
+
+export class User {
+    name = "";
+}
+
+export class TimestampedUser extends Timestamped(User) {
+    constructor() {
+        super();
+    }
+}
+"#,
+    )
+    .expect("write index.ts");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
+        .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    assert!(
+        !result.diagnostics.iter().any(|diag| diag.code
+            == diagnostic_codes::BASE_CONSTRUCTORS_MUST_ALL_HAVE_THE_SAME_RETURN_TYPE),
+        "Expected no TS2510 for mixin constructor object base, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn test_compile_emits_ts18003_in_batch_style_project_mode() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(
@@ -377,6 +444,136 @@ fn test_compile_emits_ts18003_in_batch_style_project_mode() {
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
     assert!(codes.contains(&5110), "expected TS5110, got: {codes:?}");
     assert!(codes.contains(&18003), "expected TS18003, got: {codes:?}");
+}
+
+#[test]
+fn test_batch_style_project_mode_keeps_ts7005_for_imported_dts_export() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+      "compilerOptions": {
+        "jsx": "react",
+        "module": "commonjs",
+        "target": "es2015"
+      },
+      "include": ["*.ts", "*.tsx", "*.d.ts"]
+    }"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("file.tsx"),
+        r#"declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        [s: string]: any;
+    }
+}"#,
+    )
+    .expect("write jsx declarations");
+    fs::write(dir.path().join("test.d.ts"), "export var React;\n").expect("write dts");
+    fs::write(
+        dir.path().join("react-consumer.tsx"),
+        r#"import { React } from "./test";
+var foo: any;
+var spread1 = <div x='' {...foo} y='' />;"#,
+    )
+    .expect("write consumer");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--project",
+        project.as_str(),
+        "--noEmit",
+        "--pretty",
+        "false",
+    ])
+    .expect("batch-style args");
+    let result =
+        compile(&args, Path::new(env!("CARGO_MANIFEST_DIR"))).expect("batch compile succeeds");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(codes.contains(&7005), "expected TS7005, got: {codes:?}");
+}
+
+#[test]
+fn test_compile_project_reports_template_literal_generic_constraint_ts2322() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "strict": true,
+    "target": "esnext",
+    "noEmit": true
+  },
+  "include": ["*.ts", "**/*.ts"],
+  "exclude": ["node_modules"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("test.ts"),
+        r#"interface NMap {
+  1: 'A'
+  2: 'B'
+  3: 'C'
+  4: 'D'
+}
+
+declare const g: <T extends 1 | 2 | 3>(x: `${T}`) => NMap[T]
+
+type G1 = <T extends 1 | 2 | 3>(x: `${T}`) => NMap[T]
+const g1: G1 = g
+
+type G2 = <T extends 1 | 2 | 3 | 4>(x: `${T}`) => NMap[T]
+const g2: G2 = g
+
+type G3 = <T extends 1 | 2>(x: `${T}`) => NMap[T]
+const g3: G3 = g
+"#,
+    )
+    .expect("write test");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
+        .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+    let direct_args = CliArgs::try_parse_from([
+        "tsz",
+        dir.path().join("test.ts").to_string_lossy().as_ref(),
+        "--strict",
+        "--target",
+        "esnext",
+        "--noEmit",
+        "--pretty",
+        "false",
+    ])
+    .expect("direct args");
+    let direct_result = compile(&direct_args, dir.path()).expect("direct compile succeeds");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| {
+            diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && diag.file.ends_with("test.ts")
+                && diag.message_text.contains(
+                    "Type '<T extends 1 | 2 | 3>(x: `${T}`) => NMap[T]' is not assignable to type 'G2'",
+                )
+        }),
+        "Expected project-mode compile to preserve template-literal generic constraint TS2322, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        direct_result.diagnostics.iter().any(|diag| {
+            diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && diag.file.ends_with("test.ts")
+                && diag.message_text.contains(
+                    "Type '<T extends 1 | 2 | 3>(x: `${T}`) => NMap[T]' is not assignable to type 'G2'",
+                )
+        }),
+        "Expected direct compile to preserve template-literal generic constraint TS2322, got: {:?}",
+        direct_result.diagnostics
+    );
 }
 
 #[test]

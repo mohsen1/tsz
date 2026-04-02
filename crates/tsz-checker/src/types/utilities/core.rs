@@ -2,7 +2,7 @@
 //! for `CheckerState`.
 
 use crate::query_boundaries::type_checking_utilities as query;
-use crate::state::CheckerState;
+use crate::state::{CheckerState, EnumKind};
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, node::PropertyDeclData};
@@ -1864,9 +1864,21 @@ impl<'a> CheckerState<'a> {
         let mut types = Vec::with_capacity(keys.len());
         for &value in keys {
             if let Some(index) = self.get_numeric_index_from_number(value) {
-                types.push(self.get_element_access_type(object_type, TypeId::NUMBER, Some(index)));
+                let ty = self.get_element_access_type(object_type, TypeId::NUMBER, Some(index));
+                if (ty == TypeId::ERROR || ty == TypeId::UNDEFINED)
+                    && !self.is_array_like_type(object_type)
+                {
+                    return None;
+                }
+                types.push(ty);
             } else {
-                return Some(self.get_element_access_type(object_type, TypeId::NUMBER, None));
+                let ty = self.get_element_access_type(object_type, TypeId::NUMBER, None);
+                if (ty == TypeId::ERROR || ty == TypeId::UNDEFINED)
+                    && !self.is_array_like_type(object_type)
+                {
+                    return None;
+                }
+                return Some(ty);
             }
         }
 
@@ -2151,6 +2163,13 @@ impl<'a> CheckerState<'a> {
     /// type E = "a" | 1;      // (true, true) - mixed literals
     /// ```
     pub(crate) fn get_index_key_kind(&self, index_type: TypeId) -> Option<(bool, bool)> {
+        if self
+            .enum_symbol_from_type(index_type)
+            .is_some_and(|sym_id| self.enum_kind(sym_id) == Some(EnumKind::Numeric))
+        {
+            return Some((false, true));
+        }
+
         match query::classify_index_key(self.ctx.types, index_type) {
             query::IndexKeyKind::String
             | query::IndexKeyKind::StringLiteral

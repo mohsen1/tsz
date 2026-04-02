@@ -83,6 +83,63 @@ impl<'a> CheckerState<'a> {
         shared_anchor
     }
 
+    pub(super) fn shared_overload_argument_anchor(
+        &mut self,
+        idx: NodeIndex,
+        failures: &[&tsz_solver::PendingDiagnostic],
+    ) -> Option<NodeIndex> {
+        use crate::diagnostics::diagnostic_codes;
+
+        let node = self.ctx.arena.get(idx)?;
+        let call = self.ctx.arena.get_call_expr(node)?;
+        let args = call.arguments.as_ref()?;
+
+        let mut shared = None;
+        for failure in failures {
+            if failure.code
+                != diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+            {
+                return None;
+            }
+
+            let (actual_type, expected_type) = match failure.args.as_slice() {
+                [
+                    tsz_solver::DiagnosticArg::Type(actual_type),
+                    tsz_solver::DiagnosticArg::Type(expected_type),
+                ] => (*actual_type, *expected_type),
+                _ => return None,
+            };
+
+            let mut matching_args = Vec::new();
+            for &arg_idx in &args.nodes {
+                let arg_type = self.get_type_of_node(arg_idx);
+                let matches_actual = arg_type == actual_type
+                    || self.resolve_lazy_type(arg_type) == actual_type
+                    || self.resolve_lazy_type(actual_type) == arg_type;
+                let mismatches_expected = expected_type != TypeId::ERROR
+                    && expected_type != TypeId::UNKNOWN
+                    && !self.is_assignable_to(arg_type, expected_type);
+
+                if matches_actual || mismatches_expected {
+                    matching_args.push(arg_idx);
+                }
+            }
+
+            let [anchor_idx] = matching_args.as_slice() else {
+                return None;
+            };
+            if let Some(existing) = shared {
+                if existing != *anchor_idx {
+                    return None;
+                }
+            } else {
+                shared = Some(*anchor_idx);
+            }
+        }
+
+        shared
+    }
+
     pub(super) fn literal_argument_mismatch_anchor(
         &mut self,
         source_idx: NodeIndex,

@@ -1340,6 +1340,15 @@ impl<'a> CheckerState<'a> {
             & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE))
             != 0
         {
+            if let Some(enum_type) = symbol
+                .declarations
+                .iter()
+                .copied()
+                .filter(|decl| decl.is_some())
+                .find_map(|decl| self.jsdoc_enum_annotation_type_for_symbol_decl(sym_id, decl))
+            {
+                return enum_type;
+            }
             if symbol.value_declaration.is_some()
                 && let Some(instance_type) = self.resolve_jsdoc_commonjs_binding_element_type(
                     symbol.value_declaration,
@@ -1368,43 +1377,67 @@ impl<'a> CheckerState<'a> {
         TypeId::ERROR
     }
 
-    fn resolve_jsdoc_generic_symbol_body_and_params(
+    fn jsdoc_enum_annotation_type_for_symbol_decl(
         &mut self,
         sym_id: tsz_binder::SymbolId,
-    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
-        let symbol = self
-            .get_cross_file_symbol(sym_id)
-            .or_else(|| self.ctx.binder.get_symbol(sym_id))
-            .cloned()?;
+        decl: NodeIndex,
+    ) -> Option<TypeId> {
+        let file_idx = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .unwrap_or(self.ctx.current_file_idx);
 
-        if (symbol.flags & symbol_flags::ALIAS) != 0 {
-            let mut visited_aliases = Vec::new();
-            if let Some(target) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
-                return self.resolve_jsdoc_generic_symbol_body_and_params(target);
-            }
+        if file_idx == self.ctx.current_file_idx && self.ctx.arena.get(decl).is_some() {
+            return self.jsdoc_enum_annotation_type_for_current_checker(decl);
         }
 
-        if (symbol.flags
-            & (symbol_flags::TYPE_ALIAS
-                | symbol_flags::CLASS
-                | symbol_flags::INTERFACE
-                | symbol_flags::ENUM))
-            != 0
-        {
-            let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
-            return (body_type != TypeId::ERROR && body_type != TypeId::UNKNOWN)
-                .then_some((body_type, type_params));
+        let all_arenas = self.ctx.all_arenas.clone()?;
+        let all_binders = self.ctx.all_binders.clone()?;
+        let arena = all_arenas.get(file_idx)?;
+        let binder = all_binders.get(file_idx)?;
+        let source_file = arena.source_files.first()?;
+
+        let mut checker = Box::new(CheckerState::with_parent_cache(
+            arena.as_ref(),
+            binder.as_ref(),
+            self.ctx.types,
+            source_file.file_name.clone(),
+            self.ctx.compiler_options.clone(),
+            self,
+        ));
+        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+        checker.ctx.copy_cross_file_state_from(&self.ctx);
+        checker.ctx.current_file_idx = file_idx;
+        self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+
+        let result = checker.jsdoc_enum_annotation_type_for_current_checker(decl);
+        self.ctx.merge_symbol_file_targets_from(&checker.ctx);
+        result
+    }
+
+    fn jsdoc_enum_annotation_type_for_current_checker(
+        &mut self,
+        decl: NodeIndex,
+    ) -> Option<TypeId> {
+        let sf = self.source_file_data_for_node(decl)?;
+        if sf.comments.is_empty() || !sf.comments.iter().any(|c| c.is_multi_line) {
+            return None;
         }
 
-        let value_decl = symbol.value_declaration;
-        let constructor_type = self.get_type_of_symbol(sym_id);
-        let shape = tsz_solver::type_queries::get_function_shape(self.ctx.types, constructor_type)?;
-        let raw_instance = self.synthesize_js_constructor_instance_type(
-            value_decl,
-            constructor_type,
-            &[],
-        )?;
-        Some((raw_instance, shape.type_params.clone()))
+        let source_text = sf.text.to_string();
+        let comments = sf.comments.clone();
+        let node = self.ctx.arena.get(decl)?;
+        let jsdoc = self.try_jsdoc_with_ancestor_walk(decl, &comments, &source_text)?;
+        if !jsdoc.contains("@enum") {
+            return None;
+        }
+
+        let type_expr = Self::extract_jsdoc_enum_type_expression(&jsdoc)?.trim();
+        let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
+        self.ctx.jsdoc_typedef_anchor_pos.set(node.pos);
+        let result = self.resolve_jsdoc_reference(type_expr);
+        self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
+        result.filter(|ty| *ty != TypeId::ERROR && *ty != TypeId::UNKNOWN)
     }
 
     fn jsdoc_declared_value_symbol_prefers_value_type(
@@ -1635,8 +1668,14 @@ impl<'a> CheckerState<'a> {
                 Self::parse_jsdoc_import_type(base_name)
             {
                 let sym_id = self.resolve_jsdoc_import_member(&module_specifier, &member_name)?;
-                let (body_type, type_params) =
-                    self.resolve_jsdoc_generic_symbol_body_and_params(sym_id)?;
+                let resolved = self.resolve_jsdoc_symbol_type(sym_id);
+                if resolved == TypeId::ERROR || resolved == TypeId::UNKNOWN {
+                    return None;
+                }
+                let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
+                if body_type == TypeId::ERROR {
+                    return None;
+                }
                 if type_params.is_empty() || type_args.is_empty() {
                     return Some(body_type);
                 }
@@ -1655,10 +1694,7 @@ impl<'a> CheckerState<'a> {
                 & (symbol_flags::TYPE_ALIAS
                     | symbol_flags::CLASS
                     | symbol_flags::INTERFACE
-                    | symbol_flags::ENUM
-                    | symbol_flags::FUNCTION
-                    | symbol_flags::FUNCTION_SCOPED_VARIABLE
-                    | symbol_flags::BLOCK_SCOPED_VARIABLE))
+                    | symbol_flags::ENUM))
                 == 0
             {
                 return None;
@@ -1676,15 +1712,15 @@ impl<'a> CheckerState<'a> {
                             & (symbol_flags::TYPE_ALIAS
                                 | symbol_flags::CLASS
                                 | symbol_flags::INTERFACE
-                                | symbol_flags::ENUM
-                                | symbol_flags::FUNCTION
-                                | symbol_flags::FUNCTION_SCOPED_VARIABLE
-                                | symbol_flags::BLOCK_SCOPED_VARIABLE))
+                                | symbol_flags::ENUM))
                             != 0
                     })
                 })?
         };
-        let (body_type, type_params) = self.resolve_jsdoc_generic_symbol_body_and_params(sym_id)?;
+        let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
+        if body_type == TypeId::ERROR {
+            return None;
+        }
         if type_params.is_empty() || type_args.is_empty() {
             return Some(body_type);
         }

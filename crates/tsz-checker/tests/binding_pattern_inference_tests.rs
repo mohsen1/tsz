@@ -156,3 +156,35 @@ trans(({a, b = 10}) => a);
         ts2345_count
     );
 }
+
+#[test]
+fn test_destructuring_assignment_defaults_skip_ts2493_for_empty_array_literal_rhs() {
+    let source = r#"
+class A {
+    #field = 1;
+    otherObject = new A();
+    constructor() {
+        [this.#field = 2] = [];
+        [this.otherObject.#field = 2] = [];
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2493_errors: Vec<&(u32, String)> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2493)
+        .collect();
+
+    assert!(
+        ts2493_errors.is_empty(),
+        "Defaulted destructuring assignment elements should not produce TS2493. \
+         Got diagnostics: {diagnostics:#?}"
+    );
+}

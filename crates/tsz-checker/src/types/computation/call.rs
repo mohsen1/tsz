@@ -1383,8 +1383,12 @@ impl<'a> CheckerState<'a> {
 
                     if let Some(snap) = &round1_diag_snap {
                         let round1_end = self.ctx.snapshot_diagnostics();
-                        let preserved_round1_arg_diags =
-                            self.collect_non_callback_diagnostics_between(args, snap, &round1_end);
+                        let preserved_round1_arg_diags = self
+                            .collect_non_callback_and_body_assignability_diagnostics_between(
+                                args,
+                                snap,
+                                &round1_end,
+                            );
                         self.ctx.rollback_diagnostics_filtered(snap, |diag| {
                             Self::should_preserve_speculative_call_diagnostic(diag)
                         });
@@ -1834,7 +1838,7 @@ impl<'a> CheckerState<'a> {
                             if let Some(snap) = &initial_arg_snap {
                                 let initial_arg_end = self.ctx.snapshot_diagnostics();
                                 let preserved_initial_arg_diags = self
-                                    .collect_non_callback_diagnostics_between(
+                                    .collect_non_callback_and_body_assignability_diagnostics_between(
                                         args,
                                         snap,
                                         &initial_arg_end,
@@ -1989,7 +1993,7 @@ impl<'a> CheckerState<'a> {
                             if let Some(snap) = &initial_arg_snap {
                                 let initial_arg_end = self.ctx.snapshot_diagnostics();
                                 let preserved_initial_arg_diags = self
-                                    .collect_non_callback_diagnostics_between(
+                                    .collect_non_callback_and_body_assignability_diagnostics_between(
                                         args,
                                         snap,
                                         &initial_arg_end,
