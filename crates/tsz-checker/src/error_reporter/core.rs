@@ -1364,6 +1364,105 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|prop| prop.initializer == current)
     }
 
+    pub(crate) fn object_literal_initializer_anchor_for_type(
+        &mut self,
+        object_idx: NodeIndex,
+        source_type: TypeId,
+    ) -> Option<(u32, u32)> {
+        let mut current = self.ctx.arena.skip_parenthesized_and_assertions(object_idx);
+        let mut guard = 0;
+
+        loop {
+            guard += 1;
+            if guard > 32 {
+                return None;
+            }
+
+            let node = self.ctx.arena.get(current)?;
+
+            let direct_initializer = if let Some(prop) = self.ctx.arena.get_property_assignment(node)
+            {
+                Some(prop.initializer)
+            } else if let Some(prop) = self.ctx.arena.get_shorthand_property(node) {
+                Some(prop.name)
+            } else {
+                None
+            };
+
+            if let Some(initializer_idx) = direct_initializer {
+                if let Some(anchor) = self.resolve_diagnostic_anchor(
+                    initializer_idx,
+                    crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind::Exact,
+                ) {
+                    return Some((anchor.start, anchor.length));
+                }
+
+                let (pos, end) = self.get_node_span(initializer_idx)?;
+                return Some(self.normalized_anchor_span(
+                    initializer_idx,
+                    pos,
+                    end.saturating_sub(pos),
+                ));
+            }
+
+            if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                let literal = self.ctx.arena.get_literal_expr(node)?;
+                let source_display = self
+                    .format_type_for_assignability_message(self.widen_type_for_display(source_type));
+
+                for child_idx in literal.elements.nodes.iter().copied() {
+                    let Some(child) = self.ctx.arena.get(child_idx) else {
+                        continue;
+                    };
+
+                    let candidate_idx =
+                        if let Some(prop) = self.ctx.arena.get_property_assignment(child) {
+                            prop.initializer
+                        } else if let Some(prop) = self.ctx.arena.get_shorthand_property(child) {
+                            prop.name
+                        } else {
+                            continue;
+                        };
+
+                    let candidate_type = self.get_type_of_node(candidate_idx);
+                    if matches!(candidate_type, TypeId::ERROR | TypeId::UNKNOWN) {
+                        continue;
+                    }
+
+                    let candidate_display = self
+                        .format_type_for_assignability_message(
+                            self.widen_type_for_display(candidate_type),
+                        );
+                    if candidate_type != source_type && candidate_display != source_display {
+                        continue;
+                    }
+
+                    if let Some(anchor) = self.resolve_diagnostic_anchor(
+                        candidate_idx,
+                        crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind::Exact,
+                    ) {
+                        return Some((anchor.start, anchor.length));
+                    }
+
+                    let (pos, end) = self.get_node_span(candidate_idx)?;
+                    return Some(self.normalized_anchor_span(
+                        candidate_idx,
+                        pos,
+                        end.saturating_sub(pos),
+                    ));
+                }
+
+                return None;
+            }
+
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            current = self.ctx.arena.skip_parenthesized_and_assertions(ext.parent);
+        }
+    }
+
     fn direct_diagnostic_source_expression(&self, anchor_idx: NodeIndex) -> Option<NodeIndex> {
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
@@ -1476,6 +1575,16 @@ impl<'a> CheckerState<'a> {
         expr_idx: NodeIndex,
         allow_object_shapes: bool,
     ) -> Option<String> {
+        let node_text_in_arena = |arena: &tsz_parser::NodeArena, node_idx: NodeIndex| {
+            let node = arena.get(node_idx)?;
+            let source = arena.source_files.first()?.text.as_ref();
+            let start = node.pos as usize;
+            let end = node.end as usize;
+            if start >= end || end > source.len() {
+                return None;
+            }
+            Some(source[start..end].to_string())
+        };
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
         let node = self.ctx.arena.get(expr_idx)?;
         if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
@@ -1483,28 +1592,82 @@ impl<'a> CheckerState<'a> {
         }
 
         let sym_id = self.resolve_identifier_symbol(expr_idx)?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        let mut declarations = Vec::new();
-        if let Some(decl) = self.ctx.arena.get(symbol.value_declaration) {
-            declarations.push(decl);
-        }
-        for decl_idx in &symbol.declarations {
-            if let Some(decl) = self.ctx.arena.get(*decl_idx)
-                && !declarations
-                    .iter()
-                    .any(|existing| existing.pos == decl.pos && existing.end == decl.end)
-            {
-                declarations.push(decl);
+        let symbol = self.get_cross_file_symbol(sym_id)?;
+        let owner_binder = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .symbol_arenas
+                    .get(&sym_id)
+                    .and_then(|arena| self.ctx.get_binder_for_arena(arena))
+            })
+            .unwrap_or(self.ctx.binder);
+        let fallback_arena = if symbol.decl_file_idx != u32::MAX {
+            self.ctx.get_arena_for_file(symbol.decl_file_idx)
+        } else {
+            owner_binder
+                .symbol_arenas
+                .get(&sym_id)
+                .map(std::convert::AsRef::as_ref)
+                .unwrap_or(self.ctx.arena)
+        };
+
+        let mut declarations: Vec<(NodeIndex, &tsz_parser::NodeArena)> = Vec::new();
+        let mut push_declaration = |decl_idx: NodeIndex| {
+            if decl_idx.is_none() {
+                return;
             }
+
+            let mut pushed = false;
+            if let Some(arenas) = owner_binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                for arena in arenas {
+                    let arena = arena.as_ref();
+                    if arena.get(decl_idx).is_none() {
+                        continue;
+                    }
+                    let key = (decl_idx, arena as *const tsz_parser::NodeArena);
+                    if declarations
+                        .iter()
+                        .all(|(existing_idx, existing_arena)| {
+                            (*existing_idx, *existing_arena as *const tsz_parser::NodeArena) != key
+                        })
+                    {
+                        declarations.push((decl_idx, arena));
+                    }
+                    pushed = true;
+                }
+            }
+
+            if !pushed && fallback_arena.get(decl_idx).is_some() {
+                let key = (decl_idx, fallback_arena as *const tsz_parser::NodeArena);
+                if declarations
+                    .iter()
+                    .all(|(existing_idx, existing_arena)| {
+                        (*existing_idx, *existing_arena as *const tsz_parser::NodeArena) != key
+                    })
+                {
+                    declarations.push((decl_idx, fallback_arena));
+                }
+            }
+        };
+
+        push_declaration(symbol.value_declaration);
+        for &decl_idx in &symbol.declarations {
+            push_declaration(decl_idx);
         }
 
-        for decl in declarations {
-            if let Some(param) = self.ctx.arena.get_parameter(decl)
+        for (decl_idx, decl_arena) in declarations {
+            let decl = decl_arena.get(decl_idx)?;
+            if let Some(param) = decl_arena.get_parameter(decl)
                 && param.type_annotation.is_some()
             {
-                let mut text = self.node_text(param.type_annotation).and_then(|text| {
-                    self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
-                })?;
+                let mut text =
+                    node_text_in_arena(decl_arena, param.type_annotation).and_then(|text| {
+                        self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
+                    })?;
                 if param.question_token
                     && self.ctx.strict_null_checks()
                     && !text.contains("undefined")
@@ -1518,10 +1681,10 @@ impl<'a> CheckerState<'a> {
                 return Some(text);
             }
 
-            if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl)
+            if let Some(var_decl) = decl_arena.get_variable_declaration(decl)
                 && var_decl.type_annotation.is_some()
             {
-                return self.node_text(var_decl.type_annotation).and_then(|text| {
+                return node_text_in_arena(decl_arena, var_decl.type_annotation).and_then(|text| {
                     self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
                 });
             }
@@ -1657,6 +1820,64 @@ impl<'a> CheckerState<'a> {
             return self.format_type_diagnostic_structural(ty);
         }
         assignability_display
+    }
+
+    pub(crate) fn named_type_display_name(&self, type_id: TypeId) -> Option<String> {
+        if self.ctx.types.get_display_alias(type_id).is_some() {
+            return None;
+        }
+
+        if let Some(def_id) = tsz_solver::lazy_def_id(self.ctx.types, type_id)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(type_id))
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+        {
+            let name = self.ctx.types.resolve_atom(def.name);
+            if !name.is_empty() {
+                return Some(name.to_string());
+            }
+        }
+
+        if let Some(shape_id) = tsz_solver::type_queries::get_object_shape_id(self.ctx.types, type_id)
+        {
+            let shape = self.ctx.types.object_shape(shape_id);
+            if let Some(sym_id) = shape.symbol
+                && let Some(symbol) = self.get_cross_file_symbol(sym_id)
+                && !symbol.escaped_name.is_empty()
+            {
+                return Some(symbol.escaped_name.clone());
+            }
+        }
+
+        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
+            && let Some(symbol) = self.get_cross_file_symbol(sym_id)
+            && !symbol.escaped_name.is_empty()
+        {
+            return Some(symbol.escaped_name.clone());
+        }
+
+        None
+    }
+
+    pub(crate) fn preferred_constructor_display_name(&mut self, type_id: TypeId) -> Option<String> {
+        let base_name = self.named_type_display_name(type_id)?;
+        let is_callable_or_constructible =
+            tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id).is_some()
+                || tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id).is_some();
+        if !is_callable_or_constructible {
+            return None;
+        }
+
+        let constructor_name = format!("{base_name}Constructor");
+        let constructor_type = self.resolve_lib_type_by_name(&constructor_name)?;
+        if matches!(constructor_type, TypeId::UNKNOWN | TypeId::ERROR) {
+            return None;
+        }
+
+        let source_display =
+            self.format_type_for_assignability_message(self.widen_type_for_display(type_id));
+        let constructor_display =
+            self.format_type_for_assignability_message(self.widen_type_for_display(constructor_type));
+        (source_display == constructor_display).then_some(constructor_name)
     }
 
     fn jsdoc_annotated_expression_display(
