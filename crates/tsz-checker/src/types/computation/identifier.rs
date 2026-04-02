@@ -349,6 +349,15 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
 
+            // Import aliases inside global/module augmentations are forbidden as
+            // runtime values. Suppress their value lookup so we don't emit
+            // downstream false errors (e.g., TS2322).
+            if !self.is_identifier_in_type_position(idx)
+                && self.symbol_is_import_alias_in_forbidden_augmentation(sym_id)
+            {
+                return TypeId::ERROR;
+            }
+
             if self.alias_resolves_to_type_only(sym_id) {
                 // Duplicate import-equals aliases may merge type-only and value targets
                 // under one symbol. If a value import binding with the same local name
@@ -2204,8 +2213,7 @@ impl<'a> CheckerState<'a> {
             if clause.named_bindings.is_some()
                 && let Some(named_bindings_node) = self.ctx.arena.get(clause.named_bindings)
                 && (named_bindings_node.kind == tsz_parser::parser::syntax_kind_ext::NAMED_IMPORTS
-                    || named_bindings_node.kind
-                        == tsz_parser::parser::syntax_kind_ext::NAMESPACE_IMPORT)
+                    || named_bindings_node.kind == tsz_parser::parser::syntax_kind_ext::NAMESPACE_IMPORT)
                 && let Some(named_imports) = self.ctx.arena.get_named_imports(named_bindings_node)
             {
                 if named_bindings_node.kind == tsz_parser::parser::syntax_kind_ext::NAMESPACE_IMPORT
@@ -2261,10 +2269,9 @@ impl<'a> CheckerState<'a> {
                                 } else {
                                     name
                                 };
-                                if self.is_export_type_only_across_binders(
-                                    &module_specifier,
-                                    export_name,
-                                ) {
+                                if self
+                                    .is_export_type_only_across_binders(&module_specifier, export_name)
+                                {
                                     continue; // type-only through export chain — skip
                                 }
                             }

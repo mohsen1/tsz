@@ -69,17 +69,10 @@ impl BinderState {
                     if bindings_node.kind == SyntaxKind::Identifier as u16 {
                         if let Some(name) = Self::get_identifier_name(arena, clause.named_bindings)
                         {
-                            let namespace_alias_flags = if clause_type_only {
-                                symbol_flags::ALIAS
-                            } else {
-                                symbol_flags::ALIAS
-                                    | symbol_flags::VALUE_MODULE
-                                    | symbol_flags::NAMESPACE_MODULE
-                            };
                             let sym_id = self.declare_symbol(
                                 arena,
                                 name,
-                                namespace_alias_flags,
+                                symbol_flags::ALIAS,
                                 clause.named_bindings,
                                 false,
                             );
@@ -98,17 +91,10 @@ impl BinderState {
                             && let Some(name) = Self::get_identifier_name(arena, named.name)
                         {
                             // Use named_bindings (NamespaceImport) as the declaration node
-                            let namespace_alias_flags = if clause_type_only {
-                                symbol_flags::ALIAS
-                            } else {
-                                symbol_flags::ALIAS
-                                    | symbol_flags::VALUE_MODULE
-                                    | symbol_flags::NAMESPACE_MODULE
-                            };
                             let sym_id = self.declare_symbol(
                                 arena,
                                 name,
-                                namespace_alias_flags,
+                                symbol_flags::ALIAS,
                                 clause.named_bindings,
                                 false,
                             );
@@ -593,13 +579,12 @@ impl BinderState {
                             // Create symbols for re-export specifiers so they can be tracked
                             // in the compilation cache for incremental invalidation
                             for (exported, original, spec_idx) in &export_mappings {
-                                // Use declare_symbol to add to file_locals
                                 let sym_id = self.declare_symbol(
                                     arena,
                                     exported,
                                     symbol_flags::ALIAS | symbol_flags::EXPORT_VALUE,
                                     *spec_idx,
-                                    true, // re-exports are always "exported"
+                                    true,
                                 );
                                 if let Some(sym) = self.symbols.get_mut(sym_id) {
                                     sym.is_exported = true;
