@@ -588,7 +588,7 @@ impl<'a> CheckerState<'a> {
         if (symbol.flags & symbol_flags::VALUE) != 0 {
             return false;
         }
-        if symbol.is_type_only {
+        if symbol.is_type_only && symbol.import_module.is_none() {
             return true;
         }
         if let Some(module_specifier) = symbol.import_module.as_deref() {
@@ -654,7 +654,9 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let has_value = (target_symbol.flags & symbol_flags::VALUE) != 0;
+        let has_value = (target_symbol.flags
+            & (symbol_flags::VALUE | symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE))
+            != 0;
         let has_type = (target_symbol.flags & symbol_flags::TYPE) != 0;
         has_type && !has_value
     }
@@ -897,11 +899,11 @@ impl<'a> CheckerState<'a> {
         let ident = self.ctx.arena.get_identifier(node)?;
         let name = &ident.escaped_text;
 
-        let sym_id = self
-            .ctx
-            .binder
-            .resolve_identifier(self.ctx.arena, expr_idx)?;
+        let sym_id = self.resolve_identifier_symbol(expr_idx)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if (symbol.flags & symbol_flags::ALIAS) != 0 && symbol.import_module.is_some() {
+            return None;
+        }
 
         let is_namespace = (symbol.flags & symbol_flags::NAMESPACE_MODULE) != 0;
         let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
