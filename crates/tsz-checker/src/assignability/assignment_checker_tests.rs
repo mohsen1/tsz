@@ -1,7 +1,7 @@
 use crate::context::CheckerOptions;
 use crate::query_boundaries::common::function_shape_for_type;
-use crate::test_utils::{check_js_source_diagnostics, check_source};
 use crate::state::CheckerState;
+use crate::test_utils::{check_js_source_diagnostics, check_source};
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::{TypeData, TypeInterner};
@@ -895,8 +895,16 @@ fn constrained_generic_signature_preserves_type_param_constraint_metadata() {
     let f_shape = shapes[0].as_ref().expect("expected function shape for f");
     let g_shape = shapes[1].as_ref().expect("expected function shape for g");
 
-    assert_eq!(f_shape.type_params.len(), 2, "f shape lost generic params: {f_shape:?}");
-    assert_eq!(g_shape.type_params.len(), 2, "g shape lost generic params: {g_shape:?}");
+    assert_eq!(
+        f_shape.type_params.len(),
+        2,
+        "f shape lost generic params: {f_shape:?}"
+    );
+    assert_eq!(
+        g_shape.type_params.len(),
+        2,
+        "g shape lost generic params: {g_shape:?}"
+    );
     assert!(
         f_shape.type_params[1].constraint.is_some(),
         "expected constrained source type param metadata to be preserved: {f_shape:?}"
@@ -950,8 +958,14 @@ fn assignability_normalization_keeps_generic_functions_callable_not_plain_object
     "#;
 
     let kinds = normalized_type_kinds_for_named_bindings(source, &["f", "g"]);
-    assert_eq!(kinds[0], "Function", "expected normalized source to stay a function, got {kinds:?}");
-    assert_eq!(kinds[1], "Function", "expected normalized target to stay a function, got {kinds:?}");
+    assert_eq!(
+        kinds[0], "Function",
+        "expected normalized source to stay a function, got {kinds:?}"
+    );
+    assert_eq!(
+        kinds[1], "Function",
+        "expected normalized target to stay a function, got {kinds:?}"
+    );
 }
 
 #[test]
