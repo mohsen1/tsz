@@ -4646,6 +4646,10 @@ Workspace.Project.prototype = {
         !has_error(&diagnostics, 2339),
         "Did not expect TS2339 once the JSDoc merged class type resolves. Actual diagnostics: {diagnostics:#?}"
     );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Did not expect TS2322 while reusing prototype evidence for a JSDoc-typed merged class. Actual diagnostics: {diagnostics:#?}"
+    );
 }
 
 #[test]

@@ -1476,7 +1476,11 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|sf| sf.file_name.ends_with(".d.ts"))
     }
 
-    pub(crate) fn resolve_jsdoc_assigned_value_type(&mut self, name: &str) -> Option<TypeId> {
+    fn resolve_jsdoc_assigned_value_type_inner(
+        &mut self,
+        name: &str,
+        allow_prototype_only_fallback: bool,
+    ) -> Option<TypeId> {
         let prototype_type = self.resolve_jsdoc_prototype_assignment_type(name);
 
         for raw_idx in 0..self.ctx.arena.len() {
@@ -1525,7 +1529,19 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        allow_prototype_only_fallback.then_some(())?;
         prototype_type
+    }
+
+    pub(crate) fn resolve_jsdoc_assigned_value_type(&mut self, name: &str) -> Option<TypeId> {
+        self.resolve_jsdoc_assigned_value_type_inner(name, true)
+    }
+
+    pub(crate) fn resolve_jsdoc_assigned_value_type_for_write(
+        &mut self,
+        name: &str,
+    ) -> Option<TypeId> {
+        self.resolve_jsdoc_assigned_value_type_inner(name, false)
     }
 
     fn resolve_jsdoc_prototype_assignment_type(&mut self, name: &str) -> Option<TypeId> {
