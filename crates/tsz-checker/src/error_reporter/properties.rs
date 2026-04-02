@@ -373,14 +373,39 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Suppress TS2339 when the property access is on an expression rooted in an
+        // unresolved import (TS2307 was already emitted for the missing module).
+        // This prevents cascading errors when a namespace import fails to resolve.
+        if let Some(parent) = self.ctx.arena.get_extended(idx)
+            && let Some(parent_node) = self.ctx.arena.get(parent.parent)
+            && parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        {
+            // Get the access expression and check if the base is an unresolved import
+            if let Some(access) = self.ctx.arena.get_access_expr(parent_node) {
+                // Check if the base expression is an unresolved import
+                if self.is_unresolved_import_symbol(access.expression) {
+                    return;
+                }
+                // Check if the base expression type is ERROR (indicating a failed resolution)
+                let base_type = self.get_type_of_node(access.expression);
+                if base_type == TypeId::ERROR {
+                    return;
+                }
+                // Also check the full chain for unresolved imports
+                if self.is_property_access_on_unresolved_import(parent.parent) {
+                    return;
+                }
+            }
+        }
+
         // Suppress cascaded TS2339 from failed generic inference when the receiver
         // remains a union that still contains unresolved type parameters.
         // This keeps follow-on property errors from obscuring the primary root cause
         // (typically assignability/inference diagnostics).
         //
-        // Only suppress when a DIRECT union member is a type parameter (e.g., T | Foo).
+        // Only suppress when a DIRECT union member is a type parameter (e.g. T | Foo).
         // Do NOT suppress when type parameters are deeply nested inside object types
-        // (e.g., string | MyInterface where MyInterface has generic base types).
+        // (e.g. string | MyInterface where MyInterface has generic base types).
         // The deep nesting case occurs with concrete unions like `string | MyArr`
         // where MyArr extends Array<string> -- the resolved object shape may contain
         // type parameters from the generic base, but the union itself is concrete.
@@ -570,6 +595,22 @@ impl<'a> CheckerState<'a> {
         type_display: &str,
         idx: NodeIndex,
     ) {
+        // Suppress TS2339 when the property access is on an expression rooted in an
+        // unresolved import (TS2307 was already emitted for the missing module).
+        if let Some(parent) = self.ctx.arena.get_extended(idx)
+            && let Some(parent_node) = self.ctx.arena.get(parent.parent)
+            && parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        {
+            if let Some(access) = self.ctx.arena.get_access_expr(parent_node) {
+                if self.is_unresolved_import_symbol(access.expression) {
+                    return;
+                }
+                if self.is_property_access_on_unresolved_import(parent.parent) {
+                    return;
+                }
+            }
+        }
+
         let message = format!("Property '{prop_name}' does not exist on type '{type_display}'.");
         self.error_at_anchor(
             idx,
