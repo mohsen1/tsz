@@ -69,7 +69,7 @@ impl BinderState {
                     if bindings_node.kind == SyntaxKind::Identifier as u16 {
                         if let Some(name) = Self::get_identifier_name(arena, clause.named_bindings)
                         {
-                            let sym_flags = if clause_type_only {
+                            let namespace_alias_flags = if clause_type_only {
                                 symbol_flags::ALIAS
                             } else {
                                 symbol_flags::ALIAS
@@ -79,7 +79,7 @@ impl BinderState {
                             let sym_id = self.declare_symbol(
                                 arena,
                                 name,
-                                sym_flags,
+                                namespace_alias_flags,
                                 clause.named_bindings,
                                 false,
                             );
@@ -98,7 +98,7 @@ impl BinderState {
                             && let Some(name) = Self::get_identifier_name(arena, named.name)
                         {
                             // Use named_bindings (NamespaceImport) as the declaration node
-                            let sym_flags = if clause_type_only {
+                            let namespace_alias_flags = if clause_type_only {
                                 symbol_flags::ALIAS
                             } else {
                                 symbol_flags::ALIAS
@@ -108,7 +108,7 @@ impl BinderState {
                             let sym_id = self.declare_symbol(
                                 arena,
                                 name,
-                                sym_flags,
+                                namespace_alias_flags,
                                 clause.named_bindings,
                                 false,
                             );

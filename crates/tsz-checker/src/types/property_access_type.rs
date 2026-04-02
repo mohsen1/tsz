@@ -594,6 +594,10 @@ impl<'a> CheckerState<'a> {
             && self.alias_resolves_to_type_only(local_sym_id)
             && let Some(base_node) = self.ctx.arena.get(access.expression)
             && let Some(base_ident) = self.ctx.arena.get_identifier(base_node)
+            && !self.source_file_has_value_import_binding_named(
+                access.expression,
+                &base_ident.escaped_text,
+            )
         {
             self.report_wrong_meaning_diagnostic(
                 &base_ident.escaped_text,
@@ -642,16 +646,18 @@ impl<'a> CheckerState<'a> {
                 // Applies to both enum and namespace member access.
                 if let Some(local_sym_id) = self.resolve_identifier_symbol(access.expression)
                     && self.alias_resolves_to_type_only(local_sym_id)
+                    && let Some(base_node) = self.ctx.arena.get(access.expression)
+                    && let Some(base_ident) = self.ctx.arena.get_identifier(base_node)
+                    && !self.source_file_has_value_import_binding_named(
+                        access.expression,
+                        &base_ident.escaped_text,
+                    )
                 {
-                    if let Some(base_node) = self.ctx.arena.get(access.expression)
-                        && let Some(base_ident) = self.ctx.arena.get_identifier(base_node)
-                    {
-                        self.report_wrong_meaning_diagnostic(
-                            &base_ident.escaped_text,
-                            access.expression,
-                            crate::query_boundaries::name_resolution::NameLookupKind::Type,
-                        );
-                    }
+                    self.report_wrong_meaning_diagnostic(
+                        &base_ident.escaped_text,
+                        access.expression,
+                        crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                    );
                     return TypeId::ERROR;
                 }
 

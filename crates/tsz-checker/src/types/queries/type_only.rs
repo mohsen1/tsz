@@ -588,7 +588,7 @@ impl<'a> CheckerState<'a> {
         if (symbol.flags & symbol_flags::VALUE) != 0 {
             return false;
         }
-        if symbol.is_type_only && symbol.import_module.is_none() {
+        if symbol.is_type_only {
             return true;
         }
         if let Some(module_specifier) = symbol.import_module.as_deref() {
@@ -654,9 +654,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let has_value = (target_symbol.flags
-            & (symbol_flags::VALUE | symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE))
-            != 0;
+        let has_value = (target_symbol.flags & symbol_flags::VALUE) != 0;
         let has_type = (target_symbol.flags & symbol_flags::TYPE) != 0;
         has_type && !has_value
     }

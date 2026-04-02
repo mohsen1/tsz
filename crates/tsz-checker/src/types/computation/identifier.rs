@@ -2203,49 +2203,74 @@ impl<'a> CheckerState<'a> {
             // Named imports: `import { Foo } from ...`
             if clause.named_bindings.is_some()
                 && let Some(named_bindings_node) = self.ctx.arena.get(clause.named_bindings)
-                && named_bindings_node.kind == tsz_parser::parser::syntax_kind_ext::NAMED_IMPORTS
+                && (named_bindings_node.kind == tsz_parser::parser::syntax_kind_ext::NAMED_IMPORTS
+                    || named_bindings_node.kind
+                        == tsz_parser::parser::syntax_kind_ext::NAMESPACE_IMPORT)
                 && let Some(named_imports) = self.ctx.arena.get_named_imports(named_bindings_node)
             {
-                for &specifier_idx in &named_imports.elements.nodes {
-                    let Some(specifier_node) = self.ctx.arena.get(specifier_idx) else {
-                        continue;
-                    };
-                    let Some(specifier) = self.ctx.arena.get_specifier(specifier_node) else {
-                        continue;
-                    };
-                    // Skip individual type-only specifiers (`import { type Foo, Bar }`)
-                    if specifier.is_type_only {
-                        continue;
-                    }
-                    let local_name = specifier.name;
-                    if local_name.is_none() {
-                        continue;
-                    }
-                    if self.ctx.arena.get_identifier_text(local_name) == Some(name) {
-                        // Also check whether this import's target is type-only through
-                        // the export chain (e.g., `import { A } from './b'` where b.ts
-                        // has `export type * from './a'`). If the target export is
-                        // type-only, this import doesn't provide a runtime value binding.
-                        if let Some(module_specifier) =
-                            self.get_import_module_specifier(import_decl)
-                        {
-                            // Get the original export name (before any rename).
-                            // For `import { Foo as Bar }`, the export name is "Foo".
-                            let export_name = if specifier.property_name.is_some() {
-                                self.ctx
-                                    .arena
-                                    .get_identifier_text(specifier.property_name)
-                                    .unwrap_or(name)
-                            } else {
-                                name
-                            };
-                            if self
-                                .is_export_type_only_across_binders(&module_specifier, export_name)
+                if named_bindings_node.kind == tsz_parser::parser::syntax_kind_ext::NAMESPACE_IMPORT {
+                    if named_imports.name.is_some()
+                        && self
+                            .ctx
+                            .arena
+                            .get_identifier_text(named_imports.name)
+                            == Some(name)
+                    {
+                        if let Some(module_specifier) = self.get_import_module_specifier(import_decl) {
+                            if self.is_export_type_only_across_binders(&module_specifier, "*")
+                                || self.is_module_export_equals_type_only(&module_specifier)
                             {
-                                continue; // type-only through export chain — skip
+                                // type-only through export chain or export= chain — skip
+                            } else {
+                                return true;
                             }
+                        } else {
+                            return true;
                         }
-                        return true;
+                    }
+                } else {
+                    for &specifier_idx in &named_imports.elements.nodes {
+                        let Some(specifier_node) = self.ctx.arena.get(specifier_idx) else {
+                            continue;
+                        };
+                        let Some(specifier) = self.ctx.arena.get_specifier(specifier_node) else {
+                            continue;
+                        };
+                        // Skip individual type-only specifiers (`import { type Foo, Bar }`)
+                        if specifier.is_type_only {
+                            continue;
+                        }
+                        let local_name = specifier.name;
+                        if local_name.is_none() {
+                            continue;
+                        }
+                        if self.ctx.arena.get_identifier_text(local_name) == Some(name) {
+                            // Also check whether this import's target is type-only through
+                            // the export chain (e.g., `import { A } from './b'` where b.ts
+                            // has `export type * from './a'`). If the target export is
+                            // type-only, this import doesn't provide a runtime value binding.
+                            if let Some(module_specifier) =
+                                self.get_import_module_specifier(import_decl)
+                            {
+                                // Get the original export name (before any rename).
+                                // For `import { Foo as Bar }`, the export name is "Foo".
+                                let export_name = if specifier.property_name.is_some() {
+                                    self.ctx
+                                        .arena
+                                        .get_identifier_text(specifier.property_name)
+                                        .unwrap_or(name)
+                                } else {
+                                    name
+                                };
+                                if self.is_export_type_only_across_binders(
+                                    &module_specifier,
+                                    export_name,
+                                ) {
+                                    continue; // type-only through export chain — skip
+                                }
+                            }
+                            return true;
+                        }
                     }
                 }
             }
