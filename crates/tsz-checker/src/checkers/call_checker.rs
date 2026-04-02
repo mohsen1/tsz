@@ -1560,10 +1560,36 @@ impl<'a> CheckerState<'a> {
             union_contextual,
             self.ctx.compiler_options.no_implicit_any,
         );
+        // Include parenthesized expressions in contextual refresh args
+        // so that `(callback)` gets the correct contextual type per-overload.
         let contextual_refresh_args: Vec<_> = args
             .iter()
             .copied()
-            .filter(|&arg_idx| self.argument_needs_contextual_type(arg_idx))
+            .filter(|&arg_idx| {
+                if self.argument_needs_contextual_type(arg_idx) {
+                    return true;
+                }
+                // Also include parenthesized expressions that might contain callbacks
+                let mut current = arg_idx;
+                for _ in 0..10 {
+                    let Some(node) = self.ctx.arena.get(current) else {
+                        return false;
+                    };
+                    if node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                    {
+                        return true;
+                    }
+                    if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                        if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                            current = paren.expression;
+                            continue;
+                        }
+                    }
+                    return false;
+                }
+                false
+            })
             .collect();
         let refresh_all_args = |this: &mut Self| {
             for &arg_idx in args {

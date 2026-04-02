@@ -172,6 +172,21 @@ impl<'a> CheckerState<'a> {
             || is_conditional_type(self.ctx.types, type_id)
             || type_application(self.ctx.types, type_id).is_some();
 
+        // Handle parenthesized expressions: the contextual type should flow through
+        // parentheses to the inner expression. This ensures that callbacks wrapped in
+        // parens (e.g., `fun((x) => x)`) still get the correct contextual typing.
+        if arg_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            if let Some(paren) = self.ctx.arena.get_parenthesized(arg_node) {
+                return self.contextual_type_option_for_call_argument_at(
+                    Some(type_id),
+                    paren.expression,
+                    arg_index,
+                    arg_count,
+                    callable_ctx,
+                );
+            }
+        }
+
         if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             && arg_index.is_some()
             && arg_count.is_some()
