@@ -11507,6 +11507,21 @@ impl<'a> DeclarationEmitter<'a> {
 
         while i < bytes.len() {
             let ch = bytes[i] as char;
+            if ch == '"' || ch == '\'' {
+                i += 1;
+                while i < bytes.len() {
+                    let current = bytes[i] as char;
+                    if current == '\\' {
+                        i = (i + 2).min(bytes.len());
+                        continue;
+                    }
+                    i += 1;
+                    if current == ch {
+                        break;
+                    }
+                }
+                continue;
+            }
             if !Self::is_type_text_identifier_start(ch) {
                 i += 1;
                 continue;
@@ -11523,7 +11538,10 @@ impl<'a> DeclarationEmitter<'a> {
                 .chars()
                 .rev()
                 .find(|c| !c.is_ascii_whitespace());
-            if prev_non_ws == Some('.') || Self::is_non_type_text_identifier_candidate(ident) {
+            if prev_non_ws == Some('.')
+                || Self::is_non_type_text_identifier_candidate(ident)
+                || Self::type_text_identifier_is_member_name(type_text, i)
+            {
                 continue;
             }
 
@@ -11533,6 +11551,29 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         false
+    }
+
+    fn type_text_identifier_is_member_name(type_text: &str, end: usize) -> bool {
+        let mut iter = type_text[end..]
+            .char_indices()
+            .skip_while(|(_, ch)| ch.is_ascii_whitespace());
+        let Some((offset, ch)) = iter.next() else {
+            return false;
+        };
+
+        if ch == ':' {
+            return true;
+        }
+
+        if ch != '?' {
+            return false;
+        }
+
+        type_text[end + offset + ch.len_utf8()..]
+            .chars()
+            .skip_while(|next| next.is_ascii_whitespace())
+            .next()
+            == Some(':')
     }
 
     fn local_identifier_requires_serialization_guard(

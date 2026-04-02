@@ -620,6 +620,57 @@ export const f = fn;
 }
 
 #[test]
+fn declaration_emit_reusable_local_property_names_avoid_ts7056() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("decl.ts"),
+        r#"const u = "X";
+type A = { a: { b : "value of b", notNecessary: typeof u }}
+const a = { a: "value of a", notNecessary: u } as const
+
+export const o1 = (o: A['a']['b']) => {}
+export const o2 = (o: (typeof a)['a']) => {}
+export const o3 = (o: typeof a['a']) => {}
+export const o4 = (o: keyof (A['a'])) => {}
+"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        r#"import * as d from "./decl";
+
+export const f = { ...d };
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "esnext",
+    "declaration": true,
+    "module": "commonjs"
+  },
+  "files": ["decl.ts", "main.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.iter().all(|d| d.code != 7056),
+        "expected no TS7056 for reusable local property-name serialization, got: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        base.join("decl.d.ts").exists(),
+        "expected declaration emit to keep decl.d.ts when no TS7056 is needed"
+    );
+}
+
+#[test]
 fn declaration_emit_reports_ts2883_for_transitive_react_styled_form() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
