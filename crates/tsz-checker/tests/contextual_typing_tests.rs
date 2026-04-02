@@ -1588,3 +1588,103 @@ function test(): Promise<DooDad> {
         "Multi-return callback should not produce TS2322 when all returns are subtypes of DooDad, got: {ts2322:?}"
     );
 }
+
+#[test]
+fn test_cross_wrapper_return_context_infers_assign_callback_actor_literal() {
+    let source = r#"
+type Values<T> = T[keyof T];
+
+type EventObject = {
+  type: string;
+};
+
+interface ActorLogic<TEvent extends EventObject> {
+  transition: (ev: TEvent) => unknown;
+}
+
+type UnknownActorLogic = ActorLogic<never>;
+
+interface ProvidedActor {
+  src: string;
+  logic: UnknownActorLogic;
+}
+
+interface ActionFunction<TActor extends ProvidedActor> {
+  (): void;
+  _out_TActor?: TActor;
+}
+
+interface AssignAction<TActor extends ProvidedActor> {
+  (): void;
+  _out_TActor?: TActor;
+}
+
+interface MachineConfig<TActor extends ProvidedActor> {
+  entry?: ActionFunction<TActor>;
+}
+
+declare function assign<TActor extends ProvidedActor>(
+  _: (spawn: (actor: TActor["src"]) => void) => {},
+): AssignAction<TActor>;
+
+type ToProvidedActor<TActors extends Record<string, UnknownActorLogic>> =
+  Values<{
+    [K in keyof TActors & string]: {
+      src: K;
+      logic: TActors[K];
+    };
+  }>;
+
+declare function setup<
+  TActors extends Record<string, UnknownActorLogic> = {},
+>(implementations?: {
+  actors?: { [K in keyof TActors]: TActors[K] };
+}): {
+  createMachine: <
+    const TConfig extends MachineConfig<ToProvidedActor<TActors>>,
+  >(
+    config: TConfig,
+  ) => void;
+};
+
+declare const counterLogic: ActorLogic<{ type: "INCREMENT" }>;
+
+setup({
+  actors: { counter: counterLogic },
+}).createMachine({
+  entry: assign((spawn) => {
+    spawn("counter");
+    spawn("alarm");
+    return {};
+  }),
+});
+"#;
+
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            exact_optional_property_types: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Cross-wrapper return-context inference should not emit a top-level TS2322, got diagnostics={diagnostics:?}"
+    );
+
+    let ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "Expected exactly one TS2345 for spawn(\"alarm\"), got diagnostics={diagnostics:?}"
+    );
+    assert!(
+        ts2345[0].message_text.contains(r#""alarm""#)
+            && ts2345[0].message_text.contains(r#""counter""#),
+        "Expected the TS2345 message to mention the literal actor mismatch, got {:?}",
+        ts2345[0]
+    );
+}
