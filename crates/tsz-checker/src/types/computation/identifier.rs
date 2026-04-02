@@ -563,6 +563,18 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 if !is_instantiated {
+                    // For import aliases like `import * as A from "./a"`, the namespace
+                    // object is always usable as a value (even if the module has no exports).
+                    // Suppress TS2708 for these cases.
+                    let has_alias = (flags & tsz_binder::symbol_flags::ALIAS) != 0;
+                    if has_alias {
+                        let lib_binders = self.get_lib_binders();
+                        if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                            && symbol.import_module.is_some()
+                        {
+                            return self.get_type_of_symbol(sym_id);
+                        }
+                    }
                     if let Some(value_type) = self.cross_file_global_value_type_by_name(name, true)
                     {
                         return value_type;
