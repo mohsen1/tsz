@@ -56,6 +56,11 @@ pub const MODULE_WAS_RESOLVED_TO_BUT_JSX_NOT_SET: u32 = 6142;
 /// and `noImplicitAny` is enabled.
 pub const COULD_NOT_FIND_DECLARATION_FILE: u32 = 7016;
 
+/// TS2209: The project root is ambiguous, but is required to resolve export map entry.
+/// Emitted when a package imports itself (self-reference) with exports field in package.json
+/// but rootDir is not set.
+pub const AMBIGUOUS_PROJECT_ROOT_FOR_EXPORT_MAP: u32 = 2209;
+
 /// Reason why module resolution failed
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolutionFailure {
@@ -151,6 +156,19 @@ pub enum ResolutionFailure {
     JsonModuleWithoutResolveJsonModule {
         /// Module specifier ending in .json
         specifier: String,
+        /// File containing the import
+        containing_file: String,
+        /// Span of the module specifier in source
+        span: Span,
+    },
+    /// TS2209: The project root is ambiguous, but is required to resolve export map entry.
+    /// Emitted when a package imports itself (self-reference) with exports field in package.json
+    /// but rootDir is not set in Node16/NodeNext/Bundler module resolution.
+    AmbiguousProjectRoot {
+        /// Export map entry that could not be resolved (e.g., "./cjs")
+        export_map_entry: String,
+        /// Package.json file path
+        package_json_path: String,
         /// File containing the import
         containing_file: String,
         /// Span of the module specifier in source
@@ -280,6 +298,19 @@ impl ResolutionFailure {
                 ),
                 JSON_MODULE_WITHOUT_RESOLVE_JSON_MODULE,
             ),
+            Self::AmbiguousProjectRoot {
+                export_map_entry,
+                package_json_path,
+                containing_file,
+                span,
+            } => Diagnostic::error(
+                containing_file,
+                *span,
+                format!(
+                    "The project root is ambiguous, but is required to resolve export map entry '{export_map_entry}' in file '{package_json_path}'. Supply the `rootDir` compiler option to disambiguate.",
+                ),
+                AMBIGUOUS_PROJECT_ROOT_FOR_EXPORT_MAP,
+            ),
         }
     }
 
@@ -315,6 +346,9 @@ impl ResolutionFailure {
             }
             | Self::JsonModuleWithoutResolveJsonModule {
                 containing_file, ..
+            }
+            | Self::AmbiguousProjectRoot {
+                containing_file, ..
             } => containing_file,
         }
     }
@@ -331,7 +365,8 @@ impl ResolutionFailure {
             | Self::ImportingTsExtensionNotAllowed { span, .. }
             | Self::JsxNotEnabled { span, .. }
             | Self::ModuleResolutionModeMismatch { span, .. }
-            | Self::JsonModuleWithoutResolveJsonModule { span, .. } => *span,
+            | Self::JsonModuleWithoutResolveJsonModule { span, .. }
+            | Self::AmbiguousProjectRoot { span, .. } => *span,
         }
     }
 
