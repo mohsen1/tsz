@@ -703,6 +703,22 @@ impl<'a> CheckerState<'a> {
                 return member_type;
             }
 
+            // If the symbol is an enum member, it cannot have exports.
+            // Emit TS2749 (value used as type) instead of TS2694.
+            if symbol.flags & symbol_flags::ENUM_MEMBER != 0 {
+                let full_name = self
+                    .entity_name_text(idx)
+                    .unwrap_or_else(|| right_name.clone());
+                self.report_wrong_meaning(
+                    &full_name,
+                    idx,
+                    fallback_sym,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                );
+                return TypeId::ERROR;
+            }
+
             // Not found - report TS2694 or TS2724 (with spelling suggestion)
             let export_names: Vec<String> = symbol
                 .exports
