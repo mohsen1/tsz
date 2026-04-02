@@ -410,6 +410,8 @@ impl<'a> CheckerState<'a> {
             self.resolve_effective_module_exports_with_mode(module_name, resolution_mode);
         // TSC includes source-level quotes in module diagnostic messages
         let quoted_module = format!("\"{module_name}\"");
+        let has_json_default_export =
+            self.module_has_json_default_export(module_name, Some(self.ctx.current_file_idx));
 
         let Some(module_exports) = module_exports else {
             return; // Module exports not found - TS2307 already emitted
@@ -456,10 +458,16 @@ impl<'a> CheckerState<'a> {
             {
                 continue;
             }
+            if export_name == "default" && has_json_default_export {
+                continue;
+            }
 
             // Check if this name is exported from the source module
             if export_name != "*" && !module_exports.has(&export_name) {
-                if module_exports.has("default") || module_exports.has("export=") {
+                if has_json_default_export
+                    || module_exports.has("default")
+                    || module_exports.has("export=")
+                {
                     // TS2614: Symbol doesn't exist but a default export does
                     let message = format_message(
                         diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,

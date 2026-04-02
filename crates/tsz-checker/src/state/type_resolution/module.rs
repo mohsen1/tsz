@@ -1360,7 +1360,13 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let has_json_default_export =
+            self.module_has_json_default_export(module_specifier, Some(self.ctx.current_file_idx));
+
         if let Some(specifier_node) = named_default_specifier_node {
+            if has_json_default_export {
+                return;
+            }
             self.emit_no_exported_member_error(module_specifier, "default", specifier_node);
             return;
         }
@@ -1371,7 +1377,7 @@ impl<'a> CheckerState<'a> {
         //   (the parsed JSON content), so TS1192 must be suppressed.
         // IMPORTANT: This check must come BEFORE report_unresolved_imports guard
         // because TS2732 should be emitted even in single-file mode.
-        if module_specifier.ends_with(".json") && self.ctx.compiler_options.resolve_json_module {
+        if has_json_default_export {
             return;
         }
         if module_specifier.ends_with(".json") && !self.ctx.compiler_options.resolve_json_module {
@@ -1505,6 +1511,15 @@ impl<'a> CheckerState<'a> {
             message,
             diagnostic_codes::MODULE_HAS_NO_DEFAULT_EXPORT,
         );
+    }
+
+    pub(crate) fn module_has_json_default_export(
+        &mut self,
+        module_specifier: &str,
+        source_file_idx: Option<usize>,
+    ) -> bool {
+        self.json_module_type_for_module(module_specifier, source_file_idx)
+            .is_some()
     }
 
     pub(crate) fn module_can_use_synthetic_default_import(
