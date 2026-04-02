@@ -346,6 +346,75 @@ fn test_compile_project_keeps_unimported_external_module_type_alias_unresolved()
 }
 
 #[test]
+fn test_compile_project_mixin_constructor_object_does_not_emit_ts2510() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2015",
+    "declaration": true
+  },
+  "files": ["wrapClass.ts", "index.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("wrapClass.ts"),
+        r#"export function wrapClass(param: any) {
+    return class Wrapped {
+        foo() {
+            return param;
+        }
+    }
+}
+
+export type Constructor<T = {}> = new (...args: any[]) => T;
+
+export function Timestamped<TBase extends Constructor>(Base: TBase) {
+    return class extends Base {
+        timestamp = Date.now();
+    };
+}
+"#,
+    )
+    .expect("write wrapClass.ts");
+    fs::write(
+        dir.path().join("index.ts"),
+        r#"import { wrapClass, Timestamped } from "./wrapClass";
+
+export default wrapClass(0);
+
+export class User {
+    name = "";
+}
+
+export class TimestampedUser extends Timestamped(User) {
+    constructor() {
+        super();
+    }
+}
+"#,
+    )
+    .expect("write index.ts");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
+        .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::BASE_CONSTRUCTORS_MUST_ALL_HAVE_THE_SAME_RETURN_TYPE),
+        "Expected no TS2510 for mixin constructor object base, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn test_compile_emits_ts18003_in_batch_style_project_mode() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(
