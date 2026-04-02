@@ -109,6 +109,50 @@ fn test_literal_subtyping() {
 }
 
 #[test]
+fn test_synthetic_promise_base_is_covariant_in_inner_type() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let one_name = interner.intern_string("one");
+    let two_name = interner.intern_string("two");
+
+    let source_tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: interner.literal_number(1.0),
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: interner.literal_string("two"),
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let target_tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: Some(one_name),
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: Some(two_name),
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let source_promise = interner.application(TypeId::PROMISE_BASE, vec![source_tuple]);
+    let target_promise = interner.application(TypeId::PROMISE_BASE, vec![target_tuple]);
+
+    assert!(checker.is_subtype_of(source_promise, target_promise));
+    assert!(!checker.is_subtype_of(target_promise, source_promise));
+}
+
+#[test]
 fn test_template_literal_subtyping_to_string() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);

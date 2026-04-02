@@ -498,6 +498,57 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn return_context_application_bases_match(&self, left: TypeId, right: TypeId) -> bool {
+        use tsz_binder::SymbolId;
+
+        if left == right {
+            return true;
+        }
+
+        let symbol_for_base = |base: TypeId| {
+            common::lazy_def_id(self.ctx.types, base)
+                .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
+                .or_else(|| {
+                    tsz_solver::visitor::type_query_symbol(self.ctx.types, base)
+                        .map(|symbol_ref| SymbolId(symbol_ref.0))
+                })
+        };
+
+        let left_symbol = symbol_for_base(left);
+        let right_symbol = symbol_for_base(right);
+        if left_symbol.is_some() && left_symbol == right_symbol {
+            return true;
+        }
+
+        let base_name = |symbol_id: Option<SymbolId>| {
+            symbol_id
+                .and_then(|symbol_id| self.ctx.binder.get_symbol(symbol_id))
+                .map(|symbol| symbol.escaped_name.as_str())
+        };
+
+        matches!(
+            (base_name(left_symbol), base_name(right_symbol)),
+            (Some(left_name), Some(right_name)) if left_name == right_name
+        )
+    }
+
+    fn return_context_type_head(&self, type_id: TypeId) -> Option<String> {
+        let display = self.format_type(type_id);
+        let trimmed = display.trim();
+        if !trimmed.contains('<') {
+            return None;
+        }
+
+        Some(
+            trimmed
+                .split('<')
+                .next()
+                .unwrap_or(trimmed)
+                .trim()
+                .to_string(),
+        )
+    }
+
     pub(crate) fn collect_return_context_substitution(
         &mut self,
         source: TypeId,
@@ -612,23 +663,35 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let source_application = common::application_info(self.ctx.types, source).or_else(|| {
+            let evaluated = self.evaluate_type_with_env(source);
+            (evaluated != source).then(|| common::application_info(self.ctx.types, evaluated))?
+        });
+        let target_application = common::application_info(self.ctx.types, target).or_else(|| {
+            let evaluated = self.evaluate_type_with_env(target);
+            (evaluated != target).then(|| common::application_info(self.ctx.types, evaluated))?
+        });
+
         // Handle Application types like Readonly<T>, Promise<T>, etc.
         // When source is Application(Base, [args...]) and target is NOT
         // a matching Application, decompose the source Application's type
         // arguments and recursively match each against the target. This
         // handles cases like Readonly<T> where T needs to be inferred from
         // the contextual type (e.g., readonly [string, number][]).
-        if let Some((source_base, source_args)) = common::application_info(self.ctx.types, source) {
-            let target_app = common::application_info(self.ctx.types, target);
+        if let Some((source_base, source_args)) = source_application.as_ref() {
             // Only try if target is not already matched as Application(same_base)
             // (that case is handled later at the Application-Application matching).
-            let target_same_base = target_app
-                .as_ref()
-                .is_some_and(|(tb, ta)| *tb == source_base && ta.len() == source_args.len());
-            let target_same_arity_application = target_app
-                .as_ref()
-                .is_some_and(|(_, ta)| ta.len() == source_args.len());
-            if !target_same_base && !target_same_arity_application {
+            let target_same_base =
+                target_application
+                    .as_ref()
+                    .is_some_and(|(target_base, target_args)| {
+                        self.return_context_application_bases_match(*source_base, *target_base)
+                            && target_args.len() == source_args.len()
+                    })
+                    || (target_application.is_none()
+                        && self.return_context_type_head(source)
+                            == self.return_context_type_head(target));
+            if !target_same_base {
                 // When the source Application evaluates to a callable type
                 // (e.g., Mapper<T, U> = (x: T) => U) and the target is also
                 // a callable type (e.g., (x: string) => number), skip the
@@ -673,7 +736,7 @@ impl<'a> CheckerState<'a> {
                             self.ctx.types,
                             elem,
                         );
-                        for &source_arg in &source_args {
+                        for &source_arg in source_args {
                             self.collect_return_context_substitution(
                                 source_arg,
                                 widened_elem,
@@ -686,7 +749,7 @@ impl<'a> CheckerState<'a> {
                             return;
                         }
                     } else {
-                        for &source_arg in &source_args {
+                        for &source_arg in source_args {
                             self.collect_return_context_substitution(
                                 source_arg,
                                 target,
@@ -841,48 +904,21 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let (Some((source_base, source_args)), Some((target_base, target_args))) = (
-            common::application_info(self.ctx.types, source),
-            common::application_info(self.ctx.types, target),
-        ) && source_args.len() == target_args.len()
+        if let (Some((source_base, source_args)), Some((target_base, target_args))) =
+            (source_application.as_ref(), target_application.as_ref())
+            && self.return_context_application_bases_match(*source_base, *target_base)
+            && source_args.len() == target_args.len()
         {
-            if source_base == target_base {
-                for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
-                    self.collect_return_context_substitution(
-                        *source_arg,
-                        *target_arg,
-                        tracked_type_params,
-                        substitution,
-                        visited,
-                    );
-                }
-                return;
+            for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
+                self.collect_return_context_substitution(
+                    *source_arg,
+                    *target_arg,
+                    tracked_type_params,
+                    substitution,
+                    visited,
+                );
             }
-
-            // Mirror the solver's cross-wrapper return-context inference: when
-            // different generic interfaces carry the tracked type parameter in
-            // the same positional slot (for example `AssignAction<T>` vs
-            // `ActionFunction<U>` with `_out_TActor?: T`), map the type
-            // arguments positionally so round-2 contextual typing can recover
-            // the concrete callback parameter types.
-            let has_tracked_source_arg = source_args.iter().any(|&arg| {
-                common::type_param_info(self.ctx.types, arg)
-                    .is_some_and(|tp| tracked_type_params.contains(&tp.name))
-            });
-            if has_tracked_source_arg {
-                for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
-                    self.collect_return_context_substitution(
-                        *source_arg,
-                        *target_arg,
-                        tracked_type_params,
-                        substitution,
-                        visited,
-                    );
-                }
-                if !substitution.is_empty() {
-                    return;
-                }
-            }
+            return;
         }
 
         // Structural Object matching: when source is an Application (e.g., GenericClass<T>)
@@ -1500,6 +1536,16 @@ impl<'a> CheckerState<'a> {
         let apply_contextual = syntax_needs_contextual || needs_contextual_signature_instantiation;
         let expected_context_type =
             self.contextual_type_option_for_call_argument(expected_type, arg_idx, callable_ctx);
+        let suppress_unresolved_object_literal_context = self
+            .ctx
+            .arena
+            .get(arg_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+            && expected_context_type.is_some_and(|ty| {
+                common::contains_type_parameters(self.ctx.types, ty)
+                    || common::contains_infer_types(self.ctx.types, ty)
+                    || should_preserve_contextual_application_shape(self.ctx.types, ty)
+            });
         let concrete_callback_context = expected_context_type.is_some_and(|ty| {
             ty != TypeId::ANY
                 && ty != TypeId::UNKNOWN
@@ -1594,9 +1640,13 @@ impl<'a> CheckerState<'a> {
             false
         };
         let request = if apply_contextual {
-            match expected_context_type {
-                Some(ty) => TypingRequest::with_contextual_type(ty),
-                None => TypingRequest::NONE,
+            if suppress_unresolved_object_literal_context {
+                TypingRequest::NONE
+            } else {
+                match expected_context_type {
+                    Some(ty) => TypingRequest::with_contextual_type(ty),
+                    None => TypingRequest::NONE,
+                }
             }
         } else if skip_flow {
             TypingRequest::for_write_context()

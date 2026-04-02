@@ -135,7 +135,7 @@ impl<'a> CheckerState<'a> {
 
         // Unwrap parenthesized expressions to find the actual callee.
         // Handles both `function*(){}()` and `(function*(){})()`.
-        let is_function_expr = {
+        let function_expr_info = {
             let mut expr_idx = callee_expression;
             loop {
                 match self.ctx.arena.get(expr_idx) {
@@ -143,28 +143,38 @@ impl<'a> CheckerState<'a> {
                         if n.kind == syntax_kind_ext::FUNCTION_EXPRESSION
                             || n.kind == syntax_kind_ext::ARROW_FUNCTION =>
                     {
-                        break true;
+                        let is_async = self
+                            .ctx
+                            .arena
+                            .get_function(n)
+                            .is_some_and(|function| function.is_async);
+                        break Some((expr_idx, is_async));
                     }
                     Some(n) if n.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                         if let Some(paren) = self.ctx.arena.get_parenthesized(n) {
                             expr_idx = paren.expression;
                         } else {
-                            break false;
+                            break None;
                         }
                     }
-                    _ => break false,
+                    _ => break None,
                 }
             }
         };
 
-        if is_function_expr {
+        if let Some((_function_idx, is_async)) = function_expr_info {
+            let body_context_type = if is_async {
+                self.unwrap_async_return_type_for_body(ctx_type)
+            } else {
+                ctx_type
+            };
             // Wrap contextual type as `() => ctx_type` so the function expression
             // resolver can use get_return_type() to extract the expected return type.
             let wrapper_fn = self
                 .ctx
                 .types
                 .factory()
-                .function(FunctionShape::new(vec![], ctx_type));
+                .function(FunctionShape::new(vec![], body_context_type));
             Some((wrapper_fn, ctx_type))
         } else {
             None

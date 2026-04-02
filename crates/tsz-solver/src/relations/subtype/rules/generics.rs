@@ -334,6 +334,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let s_app = self.interner.type_application(s_app_id);
         let t_app = self.interner.type_application(t_app_id);
 
+        // Synthetic Promise fallback: when lib resolution cannot find the real Promise
+        // symbol, checker-side async lowering uses PROMISE_BASE as the application base.
+        // That base has no DefId, variance metadata, or structural body to expand, so the
+        // generic slow path would otherwise reject even trivially compatible cases like
+        // Promise<[1, "two"]> <: Promise<[number, string]>. Treat the synthetic wrapper
+        // as a covariant single-parameter container.
+        if s_app.base == TypeId::PROMISE_BASE
+            && t_app.base == TypeId::PROMISE_BASE
+            && s_app.args.len() == 1
+            && t_app.args.len() == 1
+        {
+            return self.check_subtype(s_app.args[0], t_app.args[0]);
+        }
+
         // ===================================================================
         // ARITY NORMALIZATION: Fill in type parameter defaults when same base
         // ===================================================================
