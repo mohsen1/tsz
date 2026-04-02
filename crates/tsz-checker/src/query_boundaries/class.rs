@@ -54,6 +54,96 @@ fn has_polymorphic_this_return_mismatch(
     target_has_polymorphic_this && !source_has_polymorphic_this
 }
 
+fn has_own_signature_type_params(checker: &CheckerState<'_>, type_id: TypeId) -> bool {
+    if let Some(shape) = tsz_solver::type_queries::get_callable_shape(checker.ctx.types, type_id) {
+        return shape
+            .call_signatures
+            .iter()
+            .chain(shape.construct_signatures.iter())
+            .any(|sig| !sig.type_params.is_empty());
+    }
+    if let Some(shape) = tsz_solver::type_queries::get_function_shape(checker.ctx.types, type_id) {
+        return !shape.type_params.is_empty();
+    }
+    false
+}
+
+fn callable_mentions_nonlocal_type_params(checker: &CheckerState<'_>, type_id: TypeId) -> bool {
+    let signature_mentions_nonlocal = |type_params: &[tsz_solver::types::TypeParamInfo],
+                                       params: &[tsz_solver::types::ParamInfo],
+                                       this_type: Option<TypeId>,
+                                       return_type: TypeId| {
+        let local_tp_ids: Vec<TypeId> = type_params
+            .iter()
+            .map(|tp| checker.ctx.types.type_param(*tp))
+            .collect();
+        let mentions_nonlocal = |referenced: TypeId| {
+            tsz_solver::visitor::collect_all_types(checker.ctx.types, referenced)
+                .into_iter()
+                .any(|ty| {
+                    tsz_solver::type_param_info(checker.ctx.types, ty).is_some()
+                        && !local_tp_ids.contains(&ty)
+                })
+        };
+
+        params.iter().any(|param| mentions_nonlocal(param.type_id))
+            || this_type.is_some_and(mentions_nonlocal)
+            || mentions_nonlocal(return_type)
+    };
+
+    if let Some(shape) = tsz_solver::type_queries::get_callable_shape(checker.ctx.types, type_id) {
+        return shape
+            .call_signatures
+            .iter()
+            .chain(shape.construct_signatures.iter())
+            .any(|sig| {
+                signature_mentions_nonlocal(
+                    &sig.type_params,
+                    &sig.params,
+                    sig.this_type,
+                    sig.return_type,
+                )
+            });
+    }
+    if let Some(shape) = tsz_solver::type_queries::get_function_shape(checker.ctx.types, type_id) {
+        return signature_mentions_nonlocal(
+            &shape.type_params,
+            &shape.params,
+            shape.this_type,
+            shape.return_type,
+        );
+    }
+    false
+}
+
+fn unwrap_single_property_value_type(checker: &CheckerState<'_>, type_id: TypeId) -> TypeId {
+    if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(checker.ctx.types, type_id)
+        && shape.properties.len() == 1
+        && !shape.properties[0].is_method
+    {
+        return shape.properties[0].type_id;
+    }
+    type_id
+}
+
+fn needs_strict_generic_target_callable_recheck(
+    checker: &CheckerState<'_>,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    let source = unwrap_single_property_value_type(checker, source);
+    let target = unwrap_single_property_value_type(checker, target);
+    let is_callable_like = |type_id: TypeId| {
+        tsz_solver::type_queries::get_callable_shape(checker.ctx.types, type_id).is_some()
+            || tsz_solver::type_queries::get_function_shape(checker.ctx.types, type_id).is_some()
+    };
+
+    is_callable_like(source)
+        && is_callable_like(target)
+        && callable_mentions_nonlocal_type_params(checker, source)
+        && has_own_signature_type_params(checker, target)
+}
+
 // =============================================================================
 // Relation boundary helpers (thin wrappers over assignability)
 // =============================================================================
@@ -239,7 +329,11 @@ pub(crate) fn should_report_property_type_mismatch(
     node_idx: NodeIndex,
 ) -> bool {
     let narrowed_source = checker.narrow_this_from_enclosing_typeof_guard(node_idx, source);
-    if checker.should_suppress_assignability_diagnostic(narrowed_source, target) {
+    // TS2430 property compatibility is still a member-compatibility check, even
+    // though it uses regular assignability instead of no-erase-generics. Using
+    // the broader TS2322 suppression here hides real interface-extends failures
+    // when the derived property mentions outer type parameters.
+    if checker.should_suppress_member_assignability(narrowed_source, target) {
         return false;
     }
     if checker.should_suppress_assignability_for_parse_recovery(node_idx, node_idx) {
@@ -258,6 +352,11 @@ pub(crate) fn should_report_property_type_mismatch(
     let outcome = checker.execute_relation_request(&request);
 
     if outcome.related {
+        if needs_strict_generic_target_callable_recheck(checker, narrowed_source, target) {
+            let strict_source = unwrap_single_property_value_type(checker, narrowed_source);
+            let strict_target = unwrap_single_property_value_type(checker, target);
+            return !checker.is_assignable_to_no_erase_generics(strict_source, strict_target);
+        }
         return false;
     }
     if outcome.weak_union_violation

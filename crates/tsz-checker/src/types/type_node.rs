@@ -586,6 +586,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return TypeId::ERROR;
         };
 
+        let (_type_params, type_param_updates) =
+            self.push_type_parameters_for_type_literal_signature(&func_data.type_parameters);
+
         // EXPLICIT VALIDATION: Check type references in parameters and return type for TS2304.
         // We must do this before TypeLowering because TypeLowering doesn't emit diagnostics.
         // This ensures errors like "Cannot find name 'C'" are emitted for: (x: T) => C
@@ -744,6 +747,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         // TS2677: Check that a type predicate's type is assignable to its parameter's type.
         self.check_type_predicate_assignability(idx, func_data.type_annotation, result);
+
+        self.pop_type_parameters_for_type_literal_signature(type_param_updates);
 
         result
     }
