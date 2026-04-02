@@ -1561,10 +1561,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             // Different type parameters should not be assignable
                             if s_tp.name != t_tp.name {
                                 // Check if there's a constraint relationship
-                                let s_constrained_to_t =
-                                    s_tp.constraint.map_or(false, |c| c == t_inner_return);
-                                let t_constrained_to_s =
-                                    t_tp.constraint.map_or(false, |c| c == s_inner_return);
+                                let s_constrained_to_t = s_tp.constraint == Some(t_inner_return);
+                                let t_constrained_to_s = t_tp.constraint == Some(s_inner_return);
 
                                 if !s_constrained_to_t && !t_constrained_to_s {
                                     // Different unconstrained type parameters - not assignable
@@ -2356,8 +2354,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &CallSignature,
         target: &CallSignature,
     ) -> SubtypeResult {
-        use crate::instantiation::instantiate::instantiate_type;
-
         let s_erased = erase_call_sig_to_any(source, self.interner);
         let t_erased = erase_call_sig_to_any(target, self.interner);
         self.check_function_subtype(&s_erased, &t_erased)

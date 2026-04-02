@@ -954,12 +954,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         }
                         _ => false,
                     }
+                } else if self.matches_string_intrinsic_text(t_type, text) {
+                    self.match_tt_recursive(source, next_si, 0, target, ti + 1)
                 } else {
-                    if self.matches_string_intrinsic_text(t_type, text) {
-                        self.match_tt_recursive(source, next_si, 0, target, ti + 1)
-                    } else {
-                        false
-                    }
+                    false
                 }
             }
         }

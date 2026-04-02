@@ -261,7 +261,7 @@ pub(crate) struct InferenceContext<'a> {
     pub(crate) in_contra_mode: bool,
     /// Properties accumulated during reverse mapped type inference.
     /// When a homomorphic mapped type `{ [K in keyof T]: Template<T[K]> }`
-    /// is matched against a source object, we accumulate (key_atom, value_type)
+    /// is matched against a source object, we accumulate (`key_atom`, `value_type`)
     /// pairs for each `T[K]` position encountered during template inference.
     /// After the mapped type loop completes, these are flushed into a single
     /// object candidate for T.

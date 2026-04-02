@@ -1039,8 +1039,8 @@ impl<'a> CheckerState<'a> {
             let Some(node) = self.ctx.arena.get(decl_idx) else {
                 continue;
             };
-            let decl_start = node.pos as u32;
-            let decl_end = node.end as u32;
+            let decl_start = node.pos;
+            let decl_end = node.end;
 
             for diag in &self.ctx.diagnostics {
                 if structural_error_codes.contains(&diag.code)

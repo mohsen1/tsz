@@ -206,7 +206,6 @@ impl<'a> CheckerState<'a> {
                 .filter(|text| seen.insert(text.clone()))
                 .collect();
             return match texts.as_slice() {
-                [] => None,
                 [text] => Some(text.clone()),
                 _ => None,
             };

@@ -214,10 +214,8 @@ impl<'a> CheckerState<'a> {
             Some(func.body)
         } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
             Some(method.body)
-        } else if let Some(ctor) = self.ctx.arena.get_constructor(node) {
-            Some(ctor.body)
         } else {
-            None
+            self.ctx.arena.get_constructor(node).map(|ctor| ctor.body)
         };
 
         body.is_some_and(|body_idx| self.body_has_arguments_reference(body_idx))

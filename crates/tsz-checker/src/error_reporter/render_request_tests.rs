@@ -372,9 +372,9 @@ instance.x;
     let ts2339 = diagnostics
         .iter()
         .find(|d| d.code == 2339 && d.message_text.contains("Property 'x'"))
-        .expect(&format!(
-            "Expected TS2339 for merged class namespace access, got: {diagnostics:?}"
-        ));
+        .unwrap_or_else(|| {
+            panic!("Expected TS2339 for merged class namespace access, got: {diagnostics:?}")
+        });
     assert!(
         ts2339.message_text.contains("type 'Sammy'."),
         "Expected instance-side display in TS2339, got: {:?}",
@@ -409,9 +409,7 @@ var r4 = $.sammy.x;
     let ts2339 = diagnostics
         .iter()
         .find(|d| d.code == 2339 && d.message_text.contains("Property 'x'"))
-        .expect(&format!(
-            "Expected TS2339 for interface-typed merged class namespace access, got: {diagnostics:?}"
-        ));
+        .unwrap_or_else(|| panic!("Expected TS2339 for interface-typed merged class namespace access, got: {diagnostics:?}"));
     assert!(
         ts2339.message_text.contains("type 'Sammy'."),
         "Expected instance-side display in TS2339, got: {:?}",

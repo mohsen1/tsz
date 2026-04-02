@@ -476,13 +476,7 @@ impl<'a> CheckerState<'a> {
                 message,
                 diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
             );
-            if let Some(related) = self.missing_property_related_information(
-                preferred_target,
-                missing_name,
-                tag_name_idx,
-            ) {
-                diag.related_information.push(related);
-            } else if let Some(tag_name_idx) = tag_name_idx
+            if let Some(tag_name_idx) = tag_name_idx
                 && let Some(prop_decl_idx) = self
                     .get_jsx_component_prop_declaration(tag_name_idx, &prop_name)
                     .or_else(|| self.nearest_property_declaration_before(tag_name_idx, &prop_name))

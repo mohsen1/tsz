@@ -217,7 +217,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.no_unchecked_indexed_access = enabled;
     }
 
-    pub fn set_max_mapped_keys(&mut self, max_mapped_keys: usize) {
+    pub const fn set_max_mapped_keys(&mut self, max_mapped_keys: usize) {
         self.max_mapped_keys = max_mapped_keys;
     }
 

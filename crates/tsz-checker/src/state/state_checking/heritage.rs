@@ -8,9 +8,6 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
-// Import assignability boundary for unified error code routing
-use crate::query_boundaries::assignability::RelationRequest;
-
 impl<'a> CheckerState<'a> {
     fn symbol_is_uninstantiated_namespace(
         &self,

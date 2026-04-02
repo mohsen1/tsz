@@ -239,17 +239,14 @@ impl<'a> InferenceContext<'a> {
                     };
                 if let Some(TypeData::TypeParameter(ref param_info)) =
                     self.interner.lookup(resolved_obj)
+                    && let Some(var) = self.find_type_param(param_info.name)
+                    && let Some(TypeData::Literal(LiteralValue::String(key_atom))) =
+                        self.interner.lookup(target_idx)
                 {
-                    if let Some(var) = self.find_type_param(param_info.name) {
-                        if let Some(TypeData::Literal(LiteralValue::String(key_atom))) =
-                            self.interner.lookup(target_idx)
-                        {
-                            self.reverse_mapped_properties
-                                .entry(var)
-                                .or_default()
-                                .push((key_atom, source));
-                        }
-                    }
+                    self.reverse_mapped_properties
+                        .entry(var)
+                        .or_default()
+                        .push((key_atom, source));
                 }
             }
 
@@ -571,17 +568,16 @@ impl<'a> InferenceContext<'a> {
             // candidate for the homomorphic type parameter. This handles cases
             // like `{ [K in keyof T]: Reducer<T[K], A> }` matched against
             // `{ counter1: Reducer<number> }` → T = { counter1: number }.
-            if let Some(var) = homomorphic_var {
-                if let Some(props) = self.reverse_mapped_properties.remove(&var) {
-                    if !props.is_empty() {
-                        let obj_props: Vec<PropertyInfo> = props
-                            .into_iter()
-                            .map(|(name, type_id)| PropertyInfo::new(name, type_id))
-                            .collect();
-                        let obj_type = self.interner.object(obj_props);
-                        self.add_candidate(var, obj_type, InferencePriority::HomomorphicMappedType);
-                    }
-                }
+            if let Some(var) = homomorphic_var
+                && let Some(props) = self.reverse_mapped_properties.remove(&var)
+                && !props.is_empty()
+            {
+                let obj_props: Vec<PropertyInfo> = props
+                    .into_iter()
+                    .map(|(name, type_id)| PropertyInfo::new(name, type_id))
+                    .collect();
+                let obj_type = self.interner.object(obj_props);
+                self.add_candidate(var, obj_type, InferencePriority::HomomorphicMappedType);
             }
         } else if let Some(ref string_index) = source.string_index {
             // Source has no named properties but has a string index signature

@@ -50,7 +50,7 @@ fn function_shapes_for_named_bindings(
         .map(|name| {
             binder
                 .file_locals
-                .get(*name)
+                .get(name)
                 .map(|sym_id| checker.get_type_of_symbol(sym_id))
                 .and_then(|type_id| function_shape_for_type(checker.ctx.types, type_id))
                 .map(|shape| shape.as_ref().clone())
@@ -85,7 +85,7 @@ fn normalized_function_shapes_for_named_bindings(
         .map(|name| {
             binder
                 .file_locals
-                .get(*name)
+                .get(name)
                 .map(|sym_id| checker.get_type_of_symbol(sym_id))
                 .map(|type_id| checker.evaluate_type_for_assignability(type_id))
                 .and_then(|type_id| function_shape_for_type(checker.ctx.types, type_id))
@@ -118,7 +118,7 @@ fn normalized_type_kinds_for_named_bindings(source: &str, names: &[&str]) -> Vec
         .map(|name| {
             let type_id = binder
                 .file_locals
-                .get(*name)
+                .get(name)
                 .map(|sym_id| checker.get_type_of_symbol(sym_id))
                 .map(|type_id| checker.evaluate_type_for_assignability(type_id))
                 .expect("expected binding type");
@@ -998,7 +998,7 @@ fn solver_subtype_rejects_stricter_generic_constraints_directly() {
         .map(|name| {
             binder
                 .file_locals
-                .get(*name)
+                .get(name)
                 .map(|sym_id| checker.get_type_of_symbol(sym_id))
                 .map(|type_id| checker.evaluate_type_for_assignability(type_id))
                 .expect("expected binding type")
@@ -1041,7 +1041,7 @@ fn solver_compat_assignability_currently_accepts_stricter_generic_constraints() 
         .map(|name| {
             binder
                 .file_locals
-                .get(*name)
+                .get(name)
                 .map(|sym_id| checker.get_type_of_symbol(sym_id))
                 .map(|type_id| checker.evaluate_type_for_assignability(type_id))
                 .expect("expected binding type")
