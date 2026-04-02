@@ -104,7 +104,7 @@ pub fn prepare_test_dir(
     let has_absolute_filenames = filenames
         .iter()
         .any(|(name, _)| name.starts_with('/') || is_windows_absolute_path(name));
-    let project_dir = determine_project_dir(dir_path, filenames);
+    let project_dir = determine_project_dir(dir_path, filenames, options);
 
     // Check if ALL filenames are Windows-style absolute paths (e.g., A:/foo/bar.ts).
     // These represent paths on a separate drive root that cannot exist on Unix.
@@ -547,7 +547,28 @@ pub fn prepare_binary_test_dir(
     })
 }
 
-fn determine_project_dir(dir_path: &Path, filenames: &[(String, String)]) -> std::path::PathBuf {
+fn determine_project_dir(
+    dir_path: &Path,
+    filenames: &[(String, String)],
+    options: &HashMap<String, String>,
+) -> std::path::PathBuf {
+    // Check for currentDirectory directive - it overrides the default project dir
+    // when all files are within that directory
+    let current_dir = options.get("currentdirectory").and_then(|s| {
+        let normalized = s.replace('\\', "/");
+        // Handle "/" specially - it should remain as "/" not empty string
+        if normalized == "/" {
+            Some("/".to_string())
+        } else {
+            let trimmed = normalized.trim_start_matches('/').to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        }
+    });
+
     let mut top_level_dir: Option<String> = None;
     let mut saw_package_json = false;
 
@@ -578,6 +599,26 @@ fn determine_project_dir(dir_path: &Path, filenames: &[(String, String)]) -> std
 
         if second == "package.json" {
             saw_package_json = true;
+        }
+    }
+
+    // If currentDirectory is specified and all files are within it, use it as project dir
+    if let Some(current_dir) = current_dir {
+        // Special case: "/" means root, so use the temp dir itself
+        if current_dir == "/" {
+            return dir_path.to_path_buf();
+        }
+        if let Some(ref top_level) = top_level_dir {
+            // currentDirectory might be a path like "src" - check if files are under it
+            if top_level == &current_dir || current_dir.starts_with(&format!("{}/", top_level)) {
+                return dir_path.join(&current_dir);
+            }
+        }
+        // If files are not absolute or currentDirectory doesn't match, check if we can use it anyway
+        // when there's a matching subdirectory
+        let candidate = dir_path.join(&current_dir);
+        if candidate.is_dir() {
+            return candidate;
         }
     }
 

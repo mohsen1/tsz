@@ -1000,6 +1000,51 @@ impl<'a> CheckerState<'a> {
                     };
 
                     if base_type != TypeId::ERROR {
+                        // Check: when base has numeric index signature but derived doesn't,
+                        // all derived named properties must be assignable to base's index value type.
+                        // This catches cases like:
+                        //   interface HTMLElement { [index: number]: HTMLElement; }
+                        //   interface HTMLFormElement extends HTMLElement {
+                        //     acceptCharset: string;  // Error: string not assignable to HTMLElement
+                        //   }
+                        if derived_number_index_type.is_none() {
+                            // Check if base has numeric index signature
+                            let base_num_index_value = tsz_solver::type_queries::get_object_shape(
+                                self.ctx.types,
+                                base_type,
+                            )
+                            .and_then(|shape| shape.number_index.as_ref().map(|idx| idx.value_type));
+
+                            if let Some(base_index_val) = base_num_index_value {
+                                for (member_name, member_type, _derived_member_idx, _derived_kind) in
+                                    &derived_members
+                                {
+                                    // Extract the derived property's raw type
+                                    let derived_prop_type =
+                                        tsz_solver::type_queries::find_property_in_type_by_str(
+                                            self.ctx.types,
+                                            *member_type,
+                                            member_name,
+                                        )
+                                        .map(|p| p.type_id)
+                                        .unwrap_or(*member_type);
+
+                                    // Check if property type is assignable to base index value type
+                                    if !self.is_assignable_to(derived_prop_type, base_index_val) {
+                                        self.error_at_node(
+                                            iface_data.name,
+                                            &format!(
+                                                "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
+                                            ),
+                                            diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
+                                        );
+                                        // Don't return — continue checking other bases
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
                         // Check each derived member against the base type's properties
                         for (member_name, member_type, derived_member_idx, _derived_kind) in
                             &derived_members
