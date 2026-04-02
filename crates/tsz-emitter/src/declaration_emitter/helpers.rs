@@ -11577,8 +11577,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         type_text[end + offset + ch.len_utf8()..]
             .chars()
-            .skip_while(|next| next.is_ascii_whitespace())
-            .next()
+            .find(|next| !next.is_ascii_whitespace())
             == Some(':')
     }
 
@@ -12035,8 +12034,10 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
-            for module_path in
-                self.matching_module_export_paths(binder, current_file_path, &types_ref)
+            if let Some(module_path) = self
+                .matching_module_export_paths(binder, current_file_path, &types_ref)
+                .into_iter()
+                .next()
             {
                 let mut from_path = self.strip_ts_extensions(
                     &self.calculate_relative_path(current_file_path, module_path),

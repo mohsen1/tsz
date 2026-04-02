@@ -732,7 +732,12 @@ impl<'a> CheckerState<'a> {
         {
             let s_app = self.ctx.types.type_application(s_app_id);
             let t_app = self.ctx.types.type_application(t_app_id);
-            if s_app.base == t_app.base {
+            if s_app.base == t_app.base
+                && !assign_query::contains_infer_types(self.ctx.types, actual)
+                && !assign_query::contains_infer_types(self.ctx.types, expected)
+                && !assign_query::contains_type_parameters(self.ctx.types, actual)
+                && !assign_query::contains_type_parameters(self.ctx.types, expected)
+            {
                 return false;
             }
         }

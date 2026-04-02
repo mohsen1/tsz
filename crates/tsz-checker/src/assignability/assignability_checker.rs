@@ -650,8 +650,11 @@ impl<'a> CheckerState<'a> {
             // generic shapes, but do not suppress plain `T`/`U` relations.
             // tsc reports TS2322 for distinct type parameters even when they
             // share the same constraint.
-            tsz_solver::contains_type_parameters(self.ctx.types, type_id)
-                && !is_type_parameter_like(self.ctx.types, type_id)
+            crate::query_boundaries::assignability::has_recursive_type_parameter_constraint(
+                self.ctx.types,
+                type_id,
+            ) || (tsz_solver::contains_type_parameters(self.ctx.types, type_id)
+                && !is_type_parameter_like(self.ctx.types, type_id))
         };
 
         matches!(source, TypeId::ERROR)
