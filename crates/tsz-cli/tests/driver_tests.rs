@@ -129,6 +129,77 @@ export = Foo;
 }
 
 #[test]
+fn compile_amd_dependency_comment_name_fixture_keeps_ts2792_under_ts5107() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("test.ts"),
+        r#"///<amd-dependency path='aliasedModule5' name='n1'/>
+///<amd-dependency path='unaliasedModule3'/>
+///<amd-dependency path='aliasedModule6' name='n2'/>
+///<amd-dependency path='unaliasedModule4'/>
+
+import "unaliasedModule1";
+
+import r1 = require("aliasedModule1");
+r1;
+
+import {p1, p2, p3} from "aliasedModule2";
+p1;
+
+import d from "aliasedModule3";
+d;
+
+import * as ns from "aliasedModule4";
+ns;
+
+import "unaliasedModule2";
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "amd"
+  },
+  "files": ["test.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes.iter().filter(|&&code| code == 5107).count(),
+        1,
+        "Expected one TS5107 deprecation diagnostic, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert_eq!(
+        codes.iter().filter(|&&code| code == 2882).count(),
+        2,
+        "Expected two TS2882 side-effect import diagnostics, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert_eq!(
+        codes.iter().filter(|&&code| code == 2792).count(),
+        4,
+        "Expected four TS2792 import diagnostics, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&2307),
+        "Did not expect TS2307 once Classic resolution upgrades to TS2792, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn declaration_emit_ts2883_prefers_canonical_named_reference_message() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
@@ -286,7 +357,9 @@ export default Object.assign(A, {
         "expected TS2883 on default Object.assign export, got: {ts2883_messages:#?}"
     );
     assert!(
-        ts2883_messages.iter().all(|message| !message.contains("'C'")),
+        ts2883_messages
+            .iter()
+            .all(|message| !message.contains("'C'")),
         "expected no TS2883 on exported helper C, got: {ts2883_messages:#?}"
     );
 }
@@ -428,6 +501,67 @@ export class Api<SecurityDataType = unknown> {
         3,
         "expected TS7056 on all inferred Api property declarations, got: {:#?}",
         result.diagnostics
+    );
+}
+
+#[test]
+fn compile_huge_declaration_output_truncation_skips_dts_but_keeps_js() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("test.ts"),
+        r#"type props = "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m" | "n" | "o" | "p" | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z";
+
+type manyprops = `${props}${props}`;
+
+export const c = [null as any as {[K in manyprops]: {[K2 in manyprops]: `${K}.${K2}`}}][0];
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "strict": true,
+    "declaration": true,
+    "module": "commonjs"
+  },
+  "files": ["test.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts7056: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 7056)
+        .collect();
+
+    assert_eq!(
+        ts7056.len(),
+        1,
+        "expected one TS7056, got: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        base.join("test.js").exists(),
+        "expected JS emit to continue after TS7056"
+    );
+    assert!(
+        !base.join("test.d.ts").exists(),
+        "expected declaration emit to skip test.d.ts when TS7056 is reported"
+    );
+    assert!(
+        result
+            .emitted_files
+            .iter()
+            .all(|path| path.file_name().and_then(|name| name.to_str()) != Some("test.d.ts")),
+        "test.d.ts should not be reported as emitted: {:#?}",
+        result.emitted_files
     );
 }
 
@@ -3068,6 +3202,49 @@ fn compile_with_project_dir_uses_tsconfig() {
 
     assert!(result.diagnostics.is_empty());
     assert!(config_dir.join("dist/src/index.js").is_file());
+}
+
+#[test]
+fn compile_reports_ts7005_for_exported_bare_var_in_imported_dts() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "jsx": "react",
+            "module": "commonjs",
+            "target": "es2015"
+          },
+          "include": ["*.ts", "*.tsx", "*.d.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("file.tsx"),
+        r#"declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        [s: string]: any;
+    }
+}"#,
+    );
+    write_file(&base.join("test.d.ts"), "export var React;\n");
+    write_file(
+        &base.join("react-consumer.tsx"),
+        r#"import { React } from "./test";
+var foo: any;
+var spread1 = <div x='' {...foo} y='' />;"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|d| d.code == 7005),
+        "Expected TS7005 for exported bare var in imported .d.ts, got: {:#?}",
+        result.diagnostics
+    );
 }
 
 #[test]
@@ -5783,6 +5960,67 @@ const y: originalZZZ = x;
             .iter()
             .all(|d| d.code != 2323 && d.code != 2528),
         "Expected interface/value default export merge without TS2323/TS2528, got codes: {codes:?}\nDiagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn compile_module_augmentation_default_interface_alias_merges_without_ts2300() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs"
+  },
+  "files": ["a.ts", "b.ts", "c.ts"]
+}"#,
+    );
+
+    write_file(
+        &base.join("a.ts"),
+        r#"interface I {}
+export default I;
+"#,
+    );
+
+    write_file(
+        &base.join("b.ts"),
+        r#"export {};
+declare module "./a" {
+    export default interface I { x: number; }
+}
+"#,
+    );
+
+    write_file(
+        &base.join("c.ts"),
+        r#"import I from "./a";
+function f(i: I) {
+    i.x;
+}
+"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::DUPLICATE_IDENTIFIER),
+        "Expected module augmentation default interface alias merge to avoid TS2300, got codes: {codes:?}\nDiagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics.iter().all(|d| d.code != 2339),
+        "Expected merged default interface alias to expose x in imports, got codes: {codes:?}\nDiagnostics: {:?}",
         result.diagnostics
     );
 }
@@ -11345,6 +11583,85 @@ var y = "ok";
             .iter()
             .all(|d| d.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
         "Expected nested JS enum/JSDoc namespace writes to avoid TS2339, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn compile_js_enum_object_frozen_value_type_survives_jsdoc_references() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "allowJs": true,
+            "checkJs": true,
+            "noEmit": true,
+            "module": "commonjs"
+          },
+          "files": ["index.js", "usage.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        r#"/** @enum {string} */
+const Thing = Object.freeze({
+    a: "thing",
+    b: "chill"
+});
+
+exports.Thing = Thing;
+
+/**
+ * @param {Thing} x
+ */
+function useThing(x) {}
+
+exports.useThing = useThing;
+
+/**
+ * @param {(x: Thing) => void} x
+ */
+function cbThing(x) {}
+
+exports.cbThing = cbThing;
+"#,
+    );
+    write_file(
+        &base.join("usage.js"),
+        r#"const { Thing, useThing, cbThing } = require("./index");
+
+useThing(Thing.a);
+
+/**
+ * @typedef {Object} LogEntry
+ * @property {string} type
+ * @property {number} time
+ */
+
+cbThing(type => {
+    /** @type {LogEntry} */
+    const logEntry = {
+        time: Date.now(),
+        type,
+    };
+});
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code
+                != diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE),
+        "Expected JSDoc @enum references on Object.freeze exports to resolve to the enum value type, got diagnostics: {:?}",
         result.diagnostics
     );
 }

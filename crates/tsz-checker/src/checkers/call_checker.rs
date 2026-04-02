@@ -533,6 +533,41 @@ impl<'a> CheckerState<'a> {
             .collect()
     }
 
+    pub(crate) fn collect_non_callback_and_body_assignability_diagnostics_between(
+        &self,
+        args: &[NodeIndex],
+        from_snap: &crate::context::speculation::DiagnosticSnapshot,
+        to_snap: &crate::context::speculation::DiagnosticSnapshot,
+    ) -> Vec<crate::diagnostics::Diagnostic> {
+        self.ctx
+            .diagnostics_between(from_snap, to_snap)
+            .iter()
+            .filter(|diag| {
+                !args.iter().any(|&arg_idx| {
+                    let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                        return false;
+                    };
+                    let is_callback_arg = arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION;
+                    if is_callback_arg
+                        && let Some((start, end)) = self.callback_body_span(arg_idx)
+                        && diag.start >= start
+                        && diag.start < end
+                    {
+                        return diag.code != diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                            && diag.code
+                                != diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE;
+                    }
+                    if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                        return diag.start >= arg_node.pos && diag.start < arg_node.end;
+                    }
+                    false
+                })
+            })
+            .cloned()
+            .collect()
+    }
+
     pub(crate) fn preserved_speculative_call_diagnostics(
         &self,
         snap: &crate::context::speculation::DiagnosticSnapshot,
@@ -1211,7 +1246,7 @@ impl<'a> CheckerState<'a> {
                             && diag.start >= arg_node.pos
                             && diag.start < arg_node.end;
                     let is_direct_callback_body_assignability =
-                        callback_body_start.is_some_and(|start| diag.start >= start)
+                        callback_body_start.is_some_and(|start| diag.start == start)
                             && is_provisional_assignability;
                     let keep = if !is_provisional_assignability && !is_provisional_implicit_any {
                         true
@@ -1936,6 +1971,7 @@ impl<'a> CheckerState<'a> {
         let mut has_non_count_non_type_failure = false;
         let mut best_type_mismatch: Option<(OverloadResolution, crate::context::NodeTypeCache)> =
             None;
+        let mut mismatch_recovery_return: Option<TypeId> = None;
         // When an overload returns TypeParameterConstraintViolation and there are
         // more overloads to try, we store it as a fallback and continue. If no
         // later overload succeeds, we use this fallback (e.g., for single-overload
@@ -2277,6 +2313,18 @@ impl<'a> CheckerState<'a> {
                         ..
                     } = result
                     {
+                        if mismatch_recovery_return.is_none()
+                            && !matches!(
+                                fallback_return,
+                                TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
+                            )
+                            && !crate::query_boundaries::common::is_type_deeply_any(
+                                self.ctx.types,
+                                fallback_return,
+                            )
+                        {
+                            mismatch_recovery_return = Some(fallback_return);
+                        }
                         type_mismatch_count += 1;
                         if type_mismatch_count == 1 {
                             best_type_mismatch = Some((
@@ -2453,10 +2501,12 @@ impl<'a> CheckerState<'a> {
         // return type for error recovery so that downstream code sees the expected
         // shape rather than `never`. For example, `[].concat(...)` on `never[]`
         // should still produce `never[]`, not `never`.
-        let fallback_return = signatures
-            .last()
-            .map(|s| s.return_type)
-            .unwrap_or(TypeId::NEVER);
+        let fallback_return = mismatch_recovery_return.unwrap_or_else(|| {
+            signatures
+                .last()
+                .map(|s| s.return_type)
+                .unwrap_or(TypeId::NEVER)
+        });
         Some(OverloadResolution {
             arg_types: arg_types.clone(),
             result: CallResult::NoOverloadMatch {

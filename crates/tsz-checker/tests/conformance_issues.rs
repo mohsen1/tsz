@@ -84,6 +84,107 @@ fn diagnostic_message(diagnostics: &[(u32, String)], code: u32) -> Option<&str> 
 }
 
 #[test]
+fn test_no_implicit_any_string_indexer_uses_get_set_call_suggestions() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+var c = {
+  get: (key: string) => 'foobar'
+};
+c['hello'];
+const foo = c['hello'];
+
+var d = {
+  set: (key: string) => 'foobar'
+};
+const bar = d['hello'];
+
+let e = {
+  get: (key: string) => 'foobar',
+  set: (key: string, value: string) => 'foobar'
+};
+e['hello'];
+e['hello'] = 'modified';
+
+({ get: (key: string) => 'hello', set: (key: string, value: string) => {} })['hello'] = 'modified';
+
+interface MyMap<K, T> {
+  get(key: K): T;
+  set(key: K, value: T): void;
+}
+
+interface I {
+  prop: MyMap<string, string>
+}
+declare const m: I;
+m.prop['a'];
+
+const o = { a: 0 };
+enum NumEnum { a, b }
+declare let numEnumKey: NumEnum;
+o[numEnumKey];
+"#,
+        CheckerOptions {
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let ts7052_messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7052)
+        .map(|(_, message)| message.as_str())
+        .collect();
+    let ts7053_messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7053)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert!(
+        ts7052_messages
+            .iter()
+            .any(|message| message.contains("Did you mean to call 'c.get'?")),
+        "Expected named read-side method suggestion for `c['hello']`. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts7052_messages
+            .iter()
+            .any(|message| message.contains("Did you mean to call 'e.get'?")),
+        "Expected named read-side method suggestion for `e['hello']`. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts7052_messages
+            .iter()
+            .any(|message| message.contains("Did you mean to call 'e.set'?")),
+        "Expected named write-side method suggestion for `e['hello'] = ...`. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts7052_messages
+            .iter()
+            .any(|message| message.contains("Did you mean to call 'set'?")),
+        "Expected bare write-side method suggestion for object-literal receivers. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts7052_messages
+            .iter()
+            .any(|message| message.contains("Did you mean to call 'm.prop.get'?")),
+        "Expected nested property receiver suggestion for `m.prop['a']`. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts7053_messages.iter().any(|message| {
+            message.contains("expression of type '\"hello\"' can't be used to index type '{ set: (key: string) => string; }'")
+        }),
+        "Set-only reads should remain TS7053 instead of switching to TS7052. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts7053_messages.iter().any(|message| message
+            .contains("expression of type 'NumEnum' can't be used to index type '{ a: number; }'")),
+        "Numeric enum keys should still report TS7053 on plain objects. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_invokable_union_assignments_keep_both_ts2322_diagnostics() {
     let source = r#"
 interface ConstructableA {
@@ -7801,6 +7902,33 @@ class B extends A {
     );
 }
 
+#[test]
+fn test_ts2416_type_level_base_class_constructor_call_type_arguments() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+// @strictPropertyInitialization: false
+type T1 = { n: number };
+type Constructor<T> = new () => T;
+declare function Constructor<T>(): Constructor<T>;
+
+class Base extends Constructor<T1>() {
+    n = '';
+}
+",
+    );
+
+    let relevant_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        has_error(&relevant_diagnostics, 2416),
+        "Should emit TS2416 when constructor-call base type args are applied to derived class instances.\nActual errors: {relevant_diagnostics:#?}"
+    );
+}
+
 /// TS2416 alongside TS2426 when method overrides accessor with incompatible type.
 ///
 /// tsc emits both TS2426 (kind mismatch: accessor -> method) and TS2416 (type incompatibility)
@@ -10088,6 +10216,75 @@ void s.s;
 }
 
 #[test]
+fn test_import_with_non_relative_ts_extension_emits_ts2877() {
+    let importer_source = r#"import {} from "foo.ts";"#;
+    let exported_source = "export {};";
+    let files = [
+        ("index.ts".to_string(), importer_source.to_string()),
+        ("foo.ts".to_string(), exported_source.to_string()),
+    ];
+    let entry_idx = 0usize;
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| name.clone()).collect();
+
+    for (file_name, source) in &files {
+        let mut parser = ParserState::new(file_name.clone(), source.clone());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let (mut resolved_module_paths, mut resolved_modules) =
+        build_module_resolution_maps(&file_names);
+    resolved_module_paths.insert((entry_idx, "foo.ts".to_string()), 1);
+    resolved_modules.insert("foo.ts".to_string());
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        all_arenas[entry_idx].as_ref(),
+        all_binders[entry_idx].as_ref(),
+        &types,
+        file_names[entry_idx].clone(),
+        CheckerOptions {
+            rewrite_relative_import_extensions: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(entry_idx);
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
+    checker.ctx.report_unresolved_imports = true;
+
+    checker.check_source_file(roots[entry_idx]);
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    assert!(
+        has_error(&diagnostics, 2877),
+        "Expected TS2877 for non-relative `.ts` imports when rewriteRelativeImportExtensions is enabled. Actual: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2307),
+        "Should not also emit TS2307 for this resolved import. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_exported_var_without_type_or_initializer_emits_ts7005() {
     let opts = CheckerOptions {
         no_implicit_any: true,
@@ -10098,6 +10295,20 @@ fn test_exported_var_without_type_or_initializer_emits_ts7005() {
     assert!(
         has_error(&diagnostics, 7005),
         "Expected TS7005 for exported bare var declaration. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_exported_var_without_type_or_initializer_emits_ts7005_in_dts() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_named("test.d.ts", "export var React;", opts);
+
+    assert!(
+        has_error(&diagnostics, 7005),
+        "Expected TS7005 for exported bare var in .d.ts. Actual: {diagnostics:#?}"
     );
 }
 
@@ -23213,6 +23424,45 @@ declare namespace m {
     assert_eq!(
         ts7005_count, 0,
         "TS7005 should not fire in .d.ts files, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts7005_not_emitted_for_for_of_const_binding_with_inferred_element_type() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+for (const value of [1, 2, 3]) {
+    value.toFixed();
+}
+"#,
+        CheckerOptions {
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts7005_count = diagnostics.iter().filter(|(code, _)| *code == 7005).count();
+    assert_eq!(
+        ts7005_count, 0,
+        "Loop element inference should suppress TS7005 for `for...of` bindings, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts7005_emitted_for_plain_const_without_initializer() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        "const value",
+        CheckerOptions {
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 7005),
+        "Plain `const` declarations without initializers should still report TS7005, got: {diagnostics:?}"
     );
 }
 

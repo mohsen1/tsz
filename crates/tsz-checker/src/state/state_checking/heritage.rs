@@ -619,7 +619,7 @@ impl<'a> CheckerState<'a> {
                                 // Instead of directly checking is_constructor_type and emitting TS2507,
                                 // we evaluate the type through the boundary first, then check.
                                 // This ensures proper type resolution and consistent error handling.
-                                let should_check_constructor = lib_var_override.is_none() 
+                                let should_check_constructor = lib_var_override.is_none()
                                     && symbol_type != TypeId::ERROR
                                     && !self.symbol_has_js_constructor_evidence(sym_to_check)
                                     // Skip for symbols with INTERFACE+VARIABLE but NOT CLASS
@@ -1694,8 +1694,23 @@ impl<'a> CheckerState<'a> {
         // different intersection members and naturally have different return types.
         // tsc doesn't compare return types across intersection members — the
         // instance type is the intersection of all individual return types.
-        // Only check TS2510 for overloaded signatures on a single type.
-        if tsz_solver::is_intersection_type(self.ctx.types, base_constructor_type) {
+        //
+        // Imported mixin helpers can also surface as a synthetic constructor object
+        // with multiple construct signatures plus an intersected `prototype` type
+        // instead of a raw intersection at the top level. Treat that shape the same
+        // way: it is a mixin composition artifact, not a real overload set.
+        let has_intersection_instance =
+            crate::query_boundaries::flow_analysis::instance_type_from_constructor(
+                self.ctx.types,
+                base_constructor_type,
+            )
+            .is_some_and(|instance_type| {
+                crate::query_boundaries::common::intersection_members(self.ctx.types, instance_type)
+                    .is_some()
+            });
+        if tsz_solver::is_intersection_type(self.ctx.types, base_constructor_type)
+            || has_intersection_instance
+        {
             return;
         }
 

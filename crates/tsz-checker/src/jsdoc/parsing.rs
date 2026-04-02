@@ -310,6 +310,43 @@ impl<'a> CheckerState<'a> {
         if expr.is_empty() { None } else { Some(expr) }
     }
 
+    pub(crate) fn extract_jsdoc_enum_type_expression(jsdoc: &str) -> Option<&str> {
+        let tag_pos = jsdoc.find("@enum")?;
+        let rest = &jsdoc[tag_pos + "@enum".len()..];
+        let rest_trimmed = rest.trim_start();
+        if let Some(after_open) = rest_trimmed.strip_prefix('{') {
+            let mut depth = 1usize;
+            let mut end_idx = None;
+            for (i, ch) in after_open.char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end_idx = Some(i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(end_idx) = end_idx {
+                return Some(after_open[..end_idx].trim());
+            }
+        }
+
+        let rest = rest.trim_start();
+        if rest.is_empty() || rest.starts_with('@') || rest.starts_with('*') {
+            return None;
+        }
+        let end = rest
+            .find('\n')
+            .or_else(|| rest.find("*/"))
+            .unwrap_or(rest.len());
+        let expr = rest[..end].trim().trim_end_matches('*').trim();
+        if expr.is_empty() { None } else { Some(expr) }
+    }
+
     pub(super) fn extract_jsdoc_satisfies_expression(jsdoc: &str) -> Option<&str> {
         let tag_pos = jsdoc.find("@satisfies")?;
         let rest = &jsdoc[tag_pos + "@satisfies".len()..];

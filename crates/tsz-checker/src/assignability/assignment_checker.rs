@@ -147,7 +147,10 @@ impl<'a> CheckerState<'a> {
                         .get(shorthand.name)
                         .and_then(|node| self.ctx.arena.get_identifier(node))
                         .map(|ident| ident.escaped_text.clone());
-                    (name, Some(shorthand.name))
+                    let target_idx = self
+                        .resolve_identifier_symbol(shorthand.name)
+                        .map(|_| shorthand.name);
+                    (name, target_idx)
                 } else {
                     (None, None)
                 };
@@ -533,6 +536,8 @@ impl<'a> CheckerState<'a> {
                             shorthand.name,
                             source_type,
                         );
+                        let has_value_binding =
+                            self.resolve_identifier_symbol(shorthand.name).is_some();
                         // TS2322: Check that the source property type is assignable
                         // to the target variable's declared type. This catches cases
                         // like `({ q } = numMapPoint)` where `q` comes from an index
@@ -540,14 +545,14 @@ impl<'a> CheckerState<'a> {
                         // When a default value is present (`{ x = 1 }`), narrow the
                         // source property type by stripping `undefined` before checking
                         // assignability, since the default handles the absent/undefined case.
-                        if shorthand.equals_token {
+                        if shorthand.equals_token && has_value_binding {
                             self.check_destructuring_leaf_assignability_with_default(
                                 &ident.escaped_text,
                                 source_type,
                                 shorthand.name,
                                 shorthand.object_assignment_initializer,
                             );
-                        } else {
+                        } else if has_value_binding {
                             self.check_destructuring_leaf_assignability(
                                 &ident.escaped_text,
                                 source_type,
@@ -2151,6 +2156,9 @@ impl<'a> CheckerState<'a> {
                 if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
                     return;
                 }
+                if self.array_destructuring_element_has_default_initializer(element_idx) {
+                    continue;
+                }
 
                 let tuple_type_str = self.format_type(rhs);
                 self.error_at_node(
@@ -2182,6 +2190,9 @@ impl<'a> CheckerState<'a> {
                 {
                     continue;
                 }
+                if self.array_destructuring_element_has_default_initializer(element_idx) {
+                    continue;
+                }
 
                 let all_out_of_bounds = !members.is_empty()
                     && members.iter().all(|&m| {
@@ -2207,6 +2218,18 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    fn array_destructuring_element_has_default_initializer(&self, element_idx: NodeIndex) -> bool {
+        let element_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(element_idx);
+        self.ctx
+            .arena
+            .get(element_idx)
+            .and_then(|node| self.ctx.arena.get_binary_expr(node))
+            .is_some_and(|bin| bin.operator_token == SyntaxKind::EqualsToken as u16)
     }
 
     /// TS2462: A rest element in array destructuring must be the last element.
@@ -2540,9 +2563,40 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // tsc anchors some void-assignment diagnostics to the function identifier on
+        // the RHS when the assignment target is `void` and the RHS is a function
+        // symbol reference (e.g. `function f<T>(a: T) { ... }; x = f;`).
+        if target_type == TypeId::VOID
+            && crate::query_boundaries::common::is_callable_type(self.ctx.types, source_type)
+            && self.is_identifier_rhs(right_idx)
+        {
+            let _ = self.check_assignable_or_report_at_exact_anchor(
+                source_type,
+                target_type,
+                right_idx,
+                right_idx,
+            );
+            return;
+        }
+
         // TS2322 anchoring should point at the assignment target (LHS), not the RHS expression.
         // This aligns diagnostic fingerprints with tsc for assignment-compatibility suites.
         let _ = self.check_assignable_or_report_at(source_type, target_type, right_idx, left_idx);
+    }
+
+    fn is_function_reference(&self, node_idx: NodeIndex) -> bool {
+        self.is_identifier_rhs(node_idx)
+    }
+
+    fn is_identifier_rhs(&self, node_idx: NodeIndex) -> bool {
+        let node_idx = self.ctx.arena.skip_parenthesized_and_assertions(node_idx);
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        true
     }
 
     fn deferred_generic_element_write_target(

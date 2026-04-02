@@ -154,6 +154,37 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    fn object_literal_initializer_display_type_for_receiver(
+        &mut self,
+        idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let receiver = self.access_receiver_for_diagnostic_node(idx)?;
+        let receiver_node = self.ctx.arena.get(receiver)?;
+        if receiver_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(receiver)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_idx = symbol.value_declaration;
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let init = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(decl.initializer);
+        let init_node = self.ctx.arena.get(init)?;
+        if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+
+        let init_type = self.get_type_of_node(init);
+        let init_type = self.resolve_type_for_property_access(init_type);
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, init_type)
+            .filter(|shape| shape.symbol.is_none())
+            .map(|_| init_type)
+    }
+
     fn js_constructor_receiver_display_for_node(&self, idx: NodeIndex) -> Option<String> {
         if !self.is_js_file() {
             return None;
@@ -814,7 +845,10 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         expr_idx: NodeIndex,
         arg_idx: NodeIndex,
+        prefer_write_method: bool,
     ) {
+        let prefer_write_method =
+            prefer_write_method || self.is_element_access_write_like(expr_idx);
         // Note: suppressImplicitAnyIndexErrors was removed in TypeScript 6.0.
         // tsc now emits TS5102 warning and still reports the errors.
         // TS7053 is a noImplicitAny error - suppress without it
@@ -883,7 +917,8 @@ impl<'a> CheckerState<'a> {
             // Named types like `interface Empty {}` get TS7053.
             if !is_union_or_intersection
                 && !has_any_index_signature
-                && self.is_object_literal_element_access_receiver(expr_idx)
+                && !prefer_write_method
+                && self.is_object_literal_backed_element_access_receiver(expr_idx)
             {
                 let object_str = self.property_receiver_display_for_node(object_type, expr_idx);
                 let message =
@@ -905,7 +940,8 @@ impl<'a> CheckerState<'a> {
             && !has_any_index_signature
             && let Some(num) =
                 tsz_solver::type_queries::get_number_literal_value(self.ctx.types, index_type)
-            && self.is_object_literal_element_access_receiver(expr_idx)
+            && !prefer_write_method
+            && self.is_object_literal_backed_element_access_receiver(expr_idx)
         {
             let prop_name = if num.fract() == 0.0 && num.is_finite() {
                 format!("{}", num as i64)
@@ -919,6 +955,40 @@ impl<'a> CheckerState<'a> {
                 DiagnosticAnchorKind::ElementAccessExpr,
                 &message,
                 diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+            );
+            return;
+        }
+
+        if let Some(method_suggestion) = self.no_index_signature_method_suggestion(
+            object_type,
+            index_type,
+            expr_idx,
+            prefer_write_method,
+        ) {
+            let display_object_type =
+                tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
+                    .and_then(|atom| {
+                        let prop_name = self.ctx.types.resolve_atom_ref(atom);
+                        self.fresh_empty_object_member_for_missing_union(object_type, &prop_name)
+                    })
+                    .or_else(|| {
+                        crate::query_boundaries::common::type_parameter_constraint(
+                            self.ctx.types,
+                            object_type,
+                        )
+                    })
+                    .unwrap_or(object_type);
+            let object_str = self
+                .object_literal_initializer_display_type_for_receiver(expr_idx)
+                .map(|init_type| self.format_type_for_assignability_message(init_type))
+                .unwrap_or_else(|| self.format_type_for_assignability_message(display_object_type));
+            self.error_at_anchor(
+                expr_idx,
+                DiagnosticAnchorKind::ElementAccessExpr,
+                &format!(
+                    "Element implicitly has an 'any' type because type '{object_str}' has no index signature. Did you mean to call '{method_suggestion}'?"
+                ),
+                diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_TYPE_HAS_NO_INDEX_SIGNATURE_DID_YOU_M,
             );
             return;
         }
@@ -1016,6 +1086,199 @@ impl<'a> CheckerState<'a> {
             &message,
             diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
         );
+    }
+
+    fn no_index_signature_method_suggestion(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+        expr_idx: NodeIndex,
+        prefer_write_method: bool,
+    ) -> Option<String> {
+        let method_name = if prefer_write_method { "set" } else { "get" };
+        if !self.no_index_signature_method_accepts_index(object_type, method_name, index_type) {
+            return None;
+        }
+
+        let receiver = self.access_receiver_for_diagnostic_node(expr_idx)?;
+        if self.is_named_method_suggestion_receiver(receiver)
+            && let Some(receiver_text) = self.named_method_suggestion_receiver_text(receiver)
+        {
+            if !receiver_text.is_empty() {
+                return Some(format!("{receiver_text}.{method_name}"));
+            }
+        }
+
+        Some(method_name.to_string())
+    }
+
+    fn no_index_signature_method_accepts_index(
+        &mut self,
+        object_type: TypeId,
+        method_name: &str,
+        index_type: TypeId,
+    ) -> bool {
+        let Some(method_type) = (match self
+            .resolve_property_access_with_env(object_type, method_name)
+        {
+            crate::query_boundaries::common::PropertyAccessResult::Success { type_id, .. } => {
+                Some(type_id)
+            }
+            crate::query_boundaries::common::PropertyAccessResult::PossiblyNullOrUndefined {
+                property_type: Some(type_id),
+                ..
+            } => Some(type_id),
+            _ => None,
+        }) else {
+            return false;
+        };
+
+        self.callable_accepts_index_argument(method_type, index_type)
+    }
+
+    fn callable_accepts_index_argument(
+        &mut self,
+        callable_type: TypeId,
+        index_type: TypeId,
+    ) -> bool {
+        if let Some(shape) =
+            crate::query_boundaries::property_access::function_shape(self.ctx.types, callable_type)
+        {
+            return self.signature_accepts_index_argument(&shape.params, index_type);
+        }
+
+        crate::query_boundaries::property_access::callable_shape(self.ctx.types, callable_type)
+            .is_some_and(|shape| {
+                shape
+                    .call_signatures
+                    .iter()
+                    .any(|sig| self.signature_accepts_index_argument(&sig.params, index_type))
+            })
+    }
+
+    fn signature_accepts_index_argument(
+        &mut self,
+        params: &[tsz_solver::ParamInfo],
+        index_type: TypeId,
+    ) -> bool {
+        let Some(first) = params.first() else {
+            return false;
+        };
+
+        self.ctx.types.is_assignable_to(index_type, first.type_id)
+    }
+
+    fn is_named_method_suggestion_receiver(&self, idx: NodeIndex) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == SyntaxKind::Identifier as u16
+            || node.kind == SyntaxKind::ThisKeyword as u16
+            || node.kind == SyntaxKind::SuperKeyword as u16
+        {
+            return true;
+        }
+
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        self.ctx
+            .arena
+            .get_access_expr(node)
+            .is_some_and(|access| self.is_named_method_suggestion_receiver(access.expression))
+    }
+
+    fn is_element_access_write_like(&self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let Some(ext) = self.ctx.arena.get_extended(expr_idx) else {
+            return false;
+        };
+        let Some(parent_node) = self.ctx.arena.get(ext.parent) else {
+            return false;
+        };
+
+        if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
+        {
+            return binary.left == expr_idx && self.is_assignment_operator(binary.operator_token);
+        }
+
+        if (parent_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            || parent_node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION)
+            && let Some(unary) = self.ctx.arena.get_unary_expr(parent_node)
+        {
+            return unary.operand == expr_idx
+                && (unary.operator == SyntaxKind::PlusPlusToken as u16
+                    || unary.operator == SyntaxKind::MinusMinusToken as u16);
+        }
+
+        false
+    }
+
+    fn named_method_suggestion_receiver_text(&self, idx: NodeIndex) -> Option<String> {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let node = self.ctx.arena.get(idx)?;
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .map(|ident| ident.escaped_text.clone());
+        }
+
+        if node.kind == SyntaxKind::ThisKeyword as u16 {
+            return Some("this".to_string());
+        }
+
+        if node.kind == SyntaxKind::SuperKeyword as u16 {
+            return Some("super".to_string());
+        }
+
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+
+        let access = self.ctx.arena.get_access_expr(node)?;
+        let left = self.named_method_suggestion_receiver_text(access.expression)?;
+        let right_node = self.ctx.arena.get(access.name_or_argument)?;
+        let right = self
+            .ctx
+            .arena
+            .get_identifier(right_node)?
+            .escaped_text
+            .clone();
+        Some(format!("{left}.{right}"))
+    }
+
+    fn is_object_literal_backed_element_access_receiver(&self, expr_idx: NodeIndex) -> bool {
+        let Some(receiver) = self.access_receiver_for_diagnostic_node(expr_idx) else {
+            return false;
+        };
+        self.is_object_literal_backed_receiver(receiver)
+    }
+
+    fn is_object_literal_backed_receiver(&self, idx: NodeIndex) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return true;
+        }
+
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        self.ctx
+            .arena
+            .get_access_expr(node)
+            .is_some_and(|access| self.is_object_literal_backed_receiver(access.expression))
     }
 
     /// Check if the receiver of an element access expression is an object literal

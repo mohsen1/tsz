@@ -290,6 +290,7 @@ fn run_batch_mode() -> Result<()> {
     let stdin = std::io::stdin();
     let reader = stdin.lock();
     let mut stdout = std::io::stdout().lock();
+    let cwd = std::env::current_dir().context("failed to resolve batch worker cwd")?;
 
     for line in reader.lines() {
         let line = line.context("failed to read from stdin")?;
@@ -323,7 +324,7 @@ fn run_batch_mode() -> Result<()> {
             "false",
         ]);
 
-        match driver::compile(&batch_args, project_path) {
+        match driver::compile(&batch_args, &cwd) {
             Ok(result) => {
                 if !result.diagnostics.is_empty() {
                     let mut reporter = Reporter::new(false);

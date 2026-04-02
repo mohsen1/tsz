@@ -7511,11 +7511,14 @@ impl<'a> DeclarationEmitter<'a> {
                     .as_deref()
                     .filter(|text| self.type_text_is_directly_nameable_reference(text))
                     .or_else(|| {
-                        self.type_text_is_directly_nameable_reference(&printed_type_text)
-                            .then_some(printed_type_text.as_str())
+                        let printed_is_safe_fallback = printed_type_text.starts_with("import(\"")
+                            || printed_type_text.contains('<')
+                            || printed_type_text.contains('.');
+                        (printed_is_safe_fallback
+                            && self.type_text_is_directly_nameable_reference(&printed_type_text))
+                        .then_some(printed_type_text.as_str())
                     });
-                let preferred_type_is_directly_nameable =
-                    directly_nameable_type_text.is_some();
+                let preferred_type_is_directly_nameable = directly_nameable_type_text.is_some();
 
                 // TS2883: Check for non-portable inferred type references
                 if let Some(name_text) = self.get_identifier_text(decl_name)
@@ -7579,6 +7582,14 @@ impl<'a> DeclarationEmitter<'a> {
                         self.emit_non_portable_initializer_declaration_diagnostics(
                             initializer,
                             &name_text,
+                            &file_path,
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                        );
+                    }
+                    if self.diagnostics.len() == diagnostics_before {
+                        let _ = self.emit_non_serializable_local_alias_diagnostic(
+                            &printed_type_text,
                             &file_path,
                             name_node.pos,
                             name_node.end - name_node.pos,
@@ -10911,6 +10922,24 @@ impl<'a> DeclarationEmitter<'a> {
         true
     }
 
+    pub(crate) fn emit_non_serializable_local_alias_diagnostic(
+        &mut self,
+        printed_type_text: &str,
+        file: &str,
+        pos: u32,
+        length: u32,
+    ) -> bool {
+        use tsz_common::diagnostics::Diagnostic;
+
+        if !self.printed_type_uses_non_emittable_local_alias_root(printed_type_text) {
+            return false;
+        }
+
+        self.diagnostics
+            .push(Diagnostic::from_code(7056, file, pos, length, &[]));
+        true
+    }
+
     fn find_non_serializable_property_name_in_printed_type(
         &self,
         printed_type_text: &str,
@@ -11020,6 +11049,207 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    fn printed_type_uses_non_emittable_local_alias_root(&self, printed_type_text: &str) -> bool {
+        if self.current_source_file_idx.is_none() {
+            return false;
+        }
+
+        let mut visited_names = rustc_hash::FxHashSet::default();
+        self.type_text_uses_non_emittable_local_alias_root(printed_type_text, &mut visited_names)
+    }
+
+    fn type_text_uses_non_emittable_local_alias_root(
+        &self,
+        type_text: &str,
+        visited_names: &mut rustc_hash::FxHashSet<String>,
+    ) -> bool {
+        let bytes = type_text.as_bytes();
+        let mut i = 0;
+
+        while i < bytes.len() {
+            let ch = bytes[i] as char;
+            if !Self::is_type_text_identifier_start(ch) {
+                i += 1;
+                continue;
+            }
+
+            let start = i;
+            i += 1;
+            while i < bytes.len() && Self::is_type_text_identifier_continue(bytes[i] as char) {
+                i += 1;
+            }
+
+            let ident = &type_text[start..i];
+            let prev_non_ws = type_text[..start]
+                .chars()
+                .rev()
+                .find(|c| !c.is_ascii_whitespace());
+            if prev_non_ws == Some('.') || Self::is_non_type_text_identifier_candidate(ident) {
+                continue;
+            }
+
+            if self.local_identifier_requires_serialization_guard(ident, visited_names) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn local_identifier_requires_serialization_guard(
+        &self,
+        ident: &str,
+        visited_names: &mut rustc_hash::FxHashSet<String>,
+    ) -> bool {
+        if !visited_names.insert(ident.to_string()) {
+            return false;
+        }
+
+        self.current_file_declaration_requires_serialization_guard(ident, visited_names)
+    }
+
+    fn current_file_declaration_requires_serialization_guard(
+        &self,
+        ident: &str,
+        visited_names: &mut rustc_hash::FxHashSet<String>,
+    ) -> bool {
+        let Some(decl_idx) = self.current_file_top_level_declaration_named(ident) else {
+            return false;
+        };
+        let Some(decl_node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+
+        let declaration_is_emitted = self.declaration_is_publicly_emittable(decl_node);
+
+        if let Some(alias) = self.arena.get_type_alias(decl_node)
+            && let Some(alias_type_text) = self.emit_type_node_text(alias.type_node)
+            && self.type_text_uses_non_emittable_local_alias_root(&alias_type_text, visited_names)
+        {
+            return true;
+        }
+
+        !declaration_is_emitted
+    }
+
+    fn current_file_top_level_declaration_named(&self, ident: &str) -> Option<NodeIndex> {
+        let source_idx = self.current_source_file_idx?;
+        let source_node = self.arena.get(source_idx)?;
+        let source_file = self.arena.get_source_file(source_node)?;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let stmt_node = self.arena.get(stmt_idx)?;
+
+            if self.extract_declaration_name(stmt_idx).as_deref() == Some(ident) {
+                return Some(stmt_idx);
+            }
+
+            if let Some(var_stmt) = self.arena.get_variable(stmt_node) {
+                for &decl_list_idx in &var_stmt.declarations.nodes {
+                    let decl_list_node = self.arena.get(decl_list_idx)?;
+                    let decl_list = self.arena.get_variable(decl_list_node)?;
+                    for &decl_idx in &decl_list.declarations.nodes {
+                        let decl_node = self.arena.get(decl_idx)?;
+                        let decl = self.arena.get_variable_declaration(decl_node)?;
+                        if self.get_identifier_text(decl.name).as_deref() == Some(ident) {
+                            return Some(decl_idx);
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn declaration_name_idx_from_source_arena(
+        &self,
+        source_arena: &NodeArena,
+        decl_node: &tsz_parser::parser::node::Node,
+    ) -> Option<NodeIndex> {
+        source_arena
+            .get_function(decl_node)
+            .map(|func| func.name)
+            .or_else(|| source_arena.get_class(decl_node).map(|class| class.name))
+            .or_else(|| {
+                source_arena
+                    .get_interface(decl_node)
+                    .map(|iface| iface.name)
+            })
+            .or_else(|| {
+                source_arena
+                    .get_type_alias(decl_node)
+                    .map(|alias| alias.name)
+            })
+            .or_else(|| {
+                source_arena
+                    .get_enum(decl_node)
+                    .map(|enum_data| enum_data.name)
+            })
+            .or_else(|| {
+                source_arena
+                    .get_variable_declaration(decl_node)
+                    .map(|decl| decl.name)
+            })
+            .filter(|name_idx| name_idx.is_some())
+    }
+
+    fn declaration_is_publicly_emittable(
+        &self,
+        decl_node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        if let Some(name_idx) = self.declaration_name_idx_from_source_arena(self.arena, decl_node)
+            && self.should_emit_public_api_dependency(name_idx)
+        {
+            return true;
+        }
+
+        self.stmt_has_export_modifier(decl_node)
+    }
+
+    const fn is_type_text_identifier_start(ch: char) -> bool {
+        ch.is_ascii_alphabetic() || ch == '_' || ch == '$'
+    }
+
+    const fn is_type_text_identifier_continue(ch: char) -> bool {
+        ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'
+    }
+
+    fn is_non_type_text_identifier_candidate(ident: &str) -> bool {
+        matches!(
+            ident,
+            "any"
+                | "as"
+                | "asserts"
+                | "bigint"
+                | "boolean"
+                | "false"
+                | "get"
+                | "import"
+                | "in"
+                | "infer"
+                | "is"
+                | "keyof"
+                | "never"
+                | "new"
+                | "null"
+                | "number"
+                | "object"
+                | "readonly"
+                | "set"
+                | "static"
+                | "string"
+                | "symbol"
+                | "this"
+                | "true"
+                | "typeof"
+                | "undefined"
+                | "unique"
+                | "unknown"
+                | "void"
+        )
     }
 
     fn emit_non_portable_type_node_diagnostic_from_arena(

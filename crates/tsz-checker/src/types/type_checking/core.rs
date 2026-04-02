@@ -556,7 +556,12 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 let mut refs_in_default = Vec::new();
-                self.collect_type_references_in_type(param.default, &enc_set, &mut refs_in_default);
+                self.collect_type_references_in_type_with_args(
+                    param.default,
+                    &enc_set,
+                    &mut refs_in_default,
+                    true,
+                );
                 if !refs_in_default.is_empty() {
                     // Get the type parameter name for the error message
                     let param_name = param_names
@@ -683,6 +688,16 @@ impl<'a> CheckerState<'a> {
         names_to_find: &FxHashSet<&str>,
         found: &mut Vec<(NodeIndex, String)>,
     ) {
+        self.collect_type_references_in_type_with_args(type_idx, names_to_find, found, false);
+    }
+
+    fn collect_type_references_in_type_with_args(
+        &self,
+        type_idx: NodeIndex,
+        names_to_find: &FxHashSet<&str>,
+        found: &mut Vec<(NodeIndex, String)>,
+        skip_raw_references: bool,
+    ) {
         let Some(node) = self.ctx.arena.get(type_idx) else {
             return;
         };
@@ -691,16 +706,30 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::TYPE_REFERENCE => {
                 // Check if the type name is a simple identifier matching one of the names
                 if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
-                    if let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
-                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                        && names_to_find.contains(ident.escaped_text.as_str())
-                    {
-                        found.push((type_ref.type_name, ident.escaped_text.to_string()));
+                    let is_raw_reference = type_ref.type_arguments.is_none();
+                    let should_collect = if skip_raw_references {
+                        is_raw_reference
+                    } else {
+                        true
+                    };
+
+                    if should_collect {
+                        if let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
+                            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                            && names_to_find.contains(ident.escaped_text.as_str())
+                        {
+                            found.push((type_ref.type_name, ident.escaped_text.to_string()));
+                        }
                     }
-                    // Also check type arguments
+                    // Also check type arguments.
                     if let Some(ref type_args) = type_ref.type_arguments {
                         for &arg in &type_args.nodes {
-                            self.collect_type_references_in_type(arg, names_to_find, found);
+                            self.collect_type_references_in_type_with_args(
+                                arg,
+                                names_to_find,
+                                found,
+                                skip_raw_references,
+                            );
                         }
                     }
                 }
@@ -708,25 +737,45 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::UNION_TYPE | syntax_kind_ext::INTERSECTION_TYPE => {
                 if let Some(composite) = self.ctx.arena.get_composite_type(node) {
                     for &member in &composite.types.nodes {
-                        self.collect_type_references_in_type(member, names_to_find, found);
+                        self.collect_type_references_in_type_with_args(
+                            member,
+                            names_to_find,
+                            found,
+                            skip_raw_references,
+                        );
                     }
                 }
             }
             syntax_kind_ext::ARRAY_TYPE => {
                 if let Some(arr) = self.ctx.arena.get_array_type(node) {
-                    self.collect_type_references_in_type(arr.element_type, names_to_find, found);
+                    self.collect_type_references_in_type_with_args(
+                        arr.element_type,
+                        names_to_find,
+                        found,
+                        skip_raw_references,
+                    );
                 }
             }
             syntax_kind_ext::TUPLE_TYPE => {
                 if let Some(tuple) = self.ctx.arena.get_tuple_type(node) {
                     for &elem in &tuple.elements.nodes {
-                        self.collect_type_references_in_type(elem, names_to_find, found);
+                        self.collect_type_references_in_type_with_args(
+                            elem,
+                            names_to_find,
+                            found,
+                            skip_raw_references,
+                        );
                     }
                 }
             }
             syntax_kind_ext::PARENTHESIZED_TYPE => {
                 if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
-                    self.collect_type_references_in_type(wrapped.type_node, names_to_find, found);
+                    self.collect_type_references_in_type_with_args(
+                        wrapped.type_node,
+                        names_to_find,
+                        found,
+                        skip_raw_references,
+                    );
                 }
             }
             _ => {

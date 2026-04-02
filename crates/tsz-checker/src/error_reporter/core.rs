@@ -1563,6 +1563,13 @@ impl<'a> CheckerState<'a> {
         let display_type =
             self.widen_function_like_display_type(self.widen_type_for_display(expr_type));
         let formatted = self.format_type_for_assignability_message(display_type);
+        // Keep declaration-site function signatures when the fallback display has
+        // collapsed them to an alias name. tsc uses the declared callable surface
+        // for lanes like templateLiteralTypes7 rather than a later alias-equivalent
+        // name discovered from the shared type body.
+        if annotation.contains("=>") && !formatted.contains("=>") {
+            return true;
+        }
         let resolved = self.resolve_type_for_property_access(display_type);
         let evaluated = self.judge_evaluate(resolved);
         let resolver =

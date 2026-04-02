@@ -432,6 +432,42 @@ fn(2);
 }
 
 #[test]
+fn ts2769_mixed_type_and_count_failures_anchor_shared_argument() {
+    let source = r#"
+declare const Object: {
+    assign<T extends {}, U>(target: T, source: U): T & U;
+    assign<T extends {}, U, V>(target: T, source1: U, source2: V): T & U & V;
+    assign<T extends {}, U, V, W>(target: T, source1: U, source2: V, source3: W): T & U & V & W;
+    assign(target: object, ...sources: any[]): any;
+};
+
+class Base<T> {
+    constructor(public t: T) {}
+}
+
+class Foo<T> extends Base<T> {
+    update() {
+        return Object.assign(this.t, { x: 1 });
+    }
+}
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2769)
+        .expect("expected TS2769");
+
+    let arg_start = source
+        .find("this.t")
+        .expect("expected first argument in source") as u32;
+    assert_eq!(
+        diag.start, arg_start,
+        "TS2769 should anchor at the shared offending argument, got: {diag:?}"
+    );
+}
+
+#[test]
 fn ts2769_array_best_common_type_keeps_nullable_member() {
     let source = r#"
 class Box {

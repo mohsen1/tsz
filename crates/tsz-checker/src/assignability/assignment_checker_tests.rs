@@ -1,5 +1,10 @@
 use crate::context::CheckerOptions;
+use crate::query_boundaries::common::function_shape_for_type;
+use crate::state::CheckerState;
 use crate::test_utils::{check_js_source_diagnostics, check_source};
+use tsz_binder::BinderState;
+use tsz_parser::parser::ParserState;
+use tsz_solver::{TypeData, TypeInterner};
 
 fn diagnostics_for(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     check_source(source, "test.ts", CheckerOptions::default())
@@ -16,6 +21,117 @@ fn strict_diagnostics_for(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
             ..CheckerOptions::default()
         },
     )
+}
+
+fn function_shapes_for_named_bindings(
+    source: &str,
+    names: &[&str],
+) -> Vec<Option<tsz_solver::FunctionShape>> {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker.check_source_file(root);
+
+    names
+        .iter()
+        .map(|name| {
+            binder
+                .file_locals
+                .get(*name)
+                .map(|sym_id| checker.get_type_of_symbol(sym_id))
+                .and_then(|type_id| function_shape_for_type(checker.ctx.types, type_id))
+                .map(|shape| shape.as_ref().clone())
+        })
+        .collect()
+}
+
+fn normalized_function_shapes_for_named_bindings(
+    source: &str,
+    names: &[&str],
+) -> Vec<Option<tsz_solver::FunctionShape>> {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker.check_source_file(root);
+
+    names
+        .iter()
+        .map(|name| {
+            binder
+                .file_locals
+                .get(*name)
+                .map(|sym_id| checker.get_type_of_symbol(sym_id))
+                .map(|type_id| checker.evaluate_type_for_assignability(type_id))
+                .and_then(|type_id| function_shape_for_type(checker.ctx.types, type_id))
+                .map(|shape| shape.as_ref().clone())
+        })
+        .collect()
+}
+
+fn normalized_type_kinds_for_named_bindings(source: &str, names: &[&str]) -> Vec<&'static str> {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker.check_source_file(root);
+
+    names
+        .iter()
+        .map(|name| {
+            let type_id = binder
+                .file_locals
+                .get(*name)
+                .map(|sym_id| checker.get_type_of_symbol(sym_id))
+                .map(|type_id| checker.evaluate_type_for_assignability(type_id))
+                .expect("expected binding type");
+            match checker.ctx.types.lookup(type_id) {
+                Some(TypeData::Function(_)) => "Function",
+                Some(TypeData::Callable(_)) => "Callable",
+                Some(TypeData::Object(_)) => "Object",
+                Some(TypeData::ObjectWithIndex(_)) => "ObjectWithIndex",
+                Some(_) => "Other",
+                None => "Missing",
+            }
+        })
+        .collect()
 }
 
 #[test]
@@ -626,6 +742,31 @@ fn generic_construct_signature_return_type_mismatch_ts2322() {
 }
 
 #[test]
+fn generic_function_to_void_assignment_anchor_rhs() {
+    let source = r#"
+var x: void;
+function f<T>(a: T) {}
+x = f;
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322 for function-to-void assignment");
+
+    let expected_f_offset = source
+        .find("x = f;")
+        .expect("expected rhs function reference") as u32
+        + 4;
+    assert_eq!(
+        diag.start, expected_f_offset,
+        "TS2322 should anchor at the rhs function identifier"
+    );
+    assert_eq!(diag.length, 1, "TS2322 should cover only `f`");
+}
+
+#[test]
 fn generic_construct_signature_different_arity_ts2322() {
     // When source has fewer type params than target (1 vs 2), the source is
     // more restrictive and should not be assignable.
@@ -693,5 +834,223 @@ fn generic_rest_types_direct_assignment_no_error() {
             .iter()
             .map(|d| (d.code, &d.message_text))
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn generic_function_stricter_constraints_emit_ts2322() {
+    let source = r#"
+        var f = function <T, S extends T>(x: T, y: S): void {
+            x = y
+        };
+
+        var g = function <T, S>(x: T, y: S): void { };
+
+        g = f;
+    "#;
+
+    let diagnostics = diagnostics_for(source);
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322_count,
+        1,
+        "expected TS2322 for assigning a stricter generic callback to a looser one, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn declared_generic_function_stricter_constraints_emit_ts2322() {
+    let source = r#"
+        declare let f: <T, S extends T>(x: T, y: S) => void;
+        declare let g: <T, S>(x: T, y: S) => void;
+
+        g = f;
+    "#;
+
+    let diagnostics = diagnostics_for(source);
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322_count,
+        1,
+        "expected TS2322 for declared generic signatures with stricter source constraints, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn constrained_generic_signature_preserves_type_param_constraint_metadata() {
+    let source = r#"
+        declare let f: <T, S extends T>(x: T, y: S) => void;
+        declare let g: <T, S>(x: T, y: S) => void;
+    "#;
+
+    let shapes = function_shapes_for_named_bindings(source, &["f", "g"]);
+    let f_shape = shapes[0].as_ref().expect("expected function shape for f");
+    let g_shape = shapes[1].as_ref().expect("expected function shape for g");
+
+    assert_eq!(
+        f_shape.type_params.len(),
+        2,
+        "f shape lost generic params: {f_shape:?}"
+    );
+    assert_eq!(
+        g_shape.type_params.len(),
+        2,
+        "g shape lost generic params: {g_shape:?}"
+    );
+    assert!(
+        f_shape.type_params[1].constraint.is_some(),
+        "expected constrained source type param metadata to be preserved: {f_shape:?}"
+    );
+    assert!(
+        g_shape.type_params[1].constraint.is_none(),
+        "expected unconstrained target type param metadata to stay unconstrained: {g_shape:?}"
+    );
+}
+
+#[test]
+fn assignability_normalization_preserves_generic_constraint_metadata() {
+    let source = r#"
+        declare let f: <T, S extends T>(x: T, y: S) => void;
+        declare let g: <T, S>(x: T, y: S) => void;
+    "#;
+
+    let shapes = normalized_function_shapes_for_named_bindings(source, &["f", "g"]);
+    let f_shape = shapes[0]
+        .as_ref()
+        .expect("expected normalized function shape for f");
+    let g_shape = shapes[1]
+        .as_ref()
+        .expect("expected normalized function shape for g");
+
+    assert_eq!(
+        f_shape.type_params.len(),
+        2,
+        "normalized source shape lost generic params: {f_shape:?}"
+    );
+    assert_eq!(
+        g_shape.type_params.len(),
+        2,
+        "normalized target shape lost generic params: {g_shape:?}"
+    );
+    assert!(
+        f_shape.type_params[1].constraint.is_some(),
+        "normalized source shape lost the S extends T constraint: {f_shape:?}"
+    );
+    assert!(
+        g_shape.type_params[1].constraint.is_none(),
+        "normalized target shape unexpectedly gained a constraint: {g_shape:?}"
+    );
+}
+
+#[test]
+fn assignability_normalization_keeps_generic_functions_callable_not_plain_objects() {
+    let source = r#"
+        declare let f: <T, S extends T>(x: T, y: S) => void;
+        declare let g: <T, S>(x: T, y: S) => void;
+    "#;
+
+    let kinds = normalized_type_kinds_for_named_bindings(source, &["f", "g"]);
+    assert_eq!(
+        kinds[0], "Function",
+        "expected normalized source to stay a function, got {kinds:?}"
+    );
+    assert_eq!(
+        kinds[1], "Function",
+        "expected normalized target to stay a function, got {kinds:?}"
+    );
+}
+
+#[test]
+fn solver_subtype_rejects_stricter_generic_constraints_directly() {
+    let source = r#"
+        declare let f: <T, S extends T>(x: T, y: S) => void;
+        declare let g: <T, S>(x: T, y: S) => void;
+    "#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker.check_source_file(root);
+
+    let ids: Vec<_> = ["f", "g"]
+        .iter()
+        .map(|name| {
+            binder
+                .file_locals
+                .get(*name)
+                .map(|sym_id| checker.get_type_of_symbol(sym_id))
+                .map(|type_id| checker.evaluate_type_for_assignability(type_id))
+                .expect("expected binding type")
+        })
+        .collect();
+
+    assert!(
+        !tsz_solver::is_subtype_of(checker.ctx.types, ids[0], ids[1]),
+        "direct solver subtype unexpectedly accepts stricter generic constraints"
+    );
+}
+
+#[test]
+fn solver_compat_assignability_currently_accepts_stricter_generic_constraints() {
+    let source = r#"
+        declare let f: <T, S extends T>(x: T, y: S) => void;
+        declare let g: <T, S>(x: T, y: S) => void;
+    "#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker.check_source_file(root);
+
+    let ids: Vec<_> = ["f", "g"]
+        .iter()
+        .map(|name| {
+            binder
+                .file_locals
+                .get(*name)
+                .map(|sym_id| checker.get_type_of_symbol(sym_id))
+                .map(|type_id| checker.evaluate_type_for_assignability(type_id))
+                .expect("expected binding type")
+        })
+        .collect();
+
+    let mut compat = tsz_solver::CompatChecker::new(checker.ctx.types);
+    assert!(
+        !compat.is_assignable(ids[0], ids[1]),
+        "raw compat assignability unexpectedly accepts stricter generic constraints"
     );
 }

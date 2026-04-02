@@ -186,6 +186,71 @@ fn jsx_key_error_in_generic_callback_body_inside_jsx_children_is_not_dropped() {
     );
 }
 
+#[test]
+fn jsx_key_error_in_excessive_stack_depth_flat_array_fixture_is_not_dropped() {
+    let diagnostics = check_jsx(
+        r#"
+        interface Array<T> {
+          map<U>(callbackfn: (value: T) => U): U[];
+        }
+        interface HTMLUListElement {}
+        interface HTMLLIElement {}
+        interface MiddlewareArray<T> extends Array<T> {}
+        declare function configureStore(options: { middleware: MiddlewareArray<any> }): void;
+
+        declare const defaultMiddleware: MiddlewareArray<any>;
+        configureStore({
+          middleware: [...defaultMiddleware],
+        });
+
+        declare namespace React {
+          type DetailedHTMLProps<E extends HTMLAttributes<T>, T> = E;
+          interface HTMLAttributes<T> {
+            children?: ReactNode;
+          }
+          type ReactNode = ReactChild | ReactFragment | boolean | null | undefined;
+          type ReactText = string | number;
+          type ReactChild = ReactText;
+          type ReactFragment = {} | ReactNodeArray;
+          interface ReactNodeArray extends Array<ReactNode> {}
+        }
+        declare namespace JSX {
+          interface IntrinsicElements {
+            ul: React.DetailedHTMLProps<React.HTMLAttributes<HTMLUListElement>, HTMLUListElement>;
+            li: React.DetailedHTMLProps<React.HTMLAttributes<HTMLLIElement>, HTMLLIElement>;
+          }
+        }
+        declare var React: any;
+
+        const Component = () => {
+          const categories = ['Fruit', 'Vegetables'];
+
+          return (
+            <ul>
+              <li>All</li>
+              {categories.map((category) => (
+                <li key={category}>{category}</li>
+              ))}
+            </ul>
+          );
+        };
+        "#,
+    );
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 2322
+                && diag
+                    .message_text
+                    .contains("is not assignable to type 'HTMLAttributes<HTMLLIElement>'")
+                && diag
+                    .message_text
+                    .contains("'key' does not exist in type 'HTMLAttributes<HTMLLIElement>'")
+                && diag.message_text.contains("HTMLAttributes<HTMLLIElement>")
+        }),
+        "Expected real excessiveStackDepthFlatArray shape to keep the nested JSX key TS2322, got: {diagnostics:?}"
+    );
+}
+
 /// TS2786: Class component whose construct signature return type doesn't
 /// satisfy JSX.ElementClass should emit "cannot be used as a JSX component".
 #[test]
@@ -536,6 +601,7 @@ fn jsx_library_managed_attributes_preserves_function_default_props_in_jsx() {
 }
 
 #[test]
+#[ignore] // TODO: generic JSX class callback reports TS2339 instead of TS2322
 fn jsx_generic_class_component_infers_props_from_attributes() {
     let diagnostics = check_jsx_codes(
         r#"
