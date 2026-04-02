@@ -393,14 +393,6 @@ impl<'a> CheckerState<'a> {
             Some(sym_id)
         };
 
-        if let Some((sym_id, augmenting_file_idx)) =
-            self.resolve_module_augmentation_export_for_file(target_file_idx, export_name)
-        {
-            self.ctx
-                .register_symbol_file_target(sym_id, augmenting_file_idx);
-            return Some(sym_id);
-        }
-
         if let Some(source_binder) = self.ctx.get_binder_for_file(from_file)
             && let Some((sym_id, _)) =
                 source_binder.resolve_import_with_reexports_type_only(module_specifier, export_name)
@@ -442,6 +434,14 @@ impl<'a> CheckerState<'a> {
         {
             self.ctx
                 .register_symbol_file_target(sym_id, actual_file_idx);
+            return Some(sym_id);
+        }
+
+        if let Some((sym_id, augmenting_file_idx)) =
+            self.resolve_module_augmentation_export_for_file(target_file_idx, export_name)
+        {
+            self.ctx
+                .register_symbol_file_target(sym_id, augmenting_file_idx);
             return Some(sym_id);
         }
 
@@ -577,14 +577,6 @@ impl<'a> CheckerState<'a> {
             return Some((sym_id, file_idx));
         }
 
-        // Module augmentations can introduce a module-local export that should win
-        // over inherited named/wildcard re-exports from the base file.
-        if let Some((sym_id, augmenting_file_idx)) =
-            self.resolve_module_augmentation_export_for_file(file_idx, export_name)
-        {
-            return Some((sym_id, augmenting_file_idx));
-        }
-
         // Check named re-exports before file_locals so that
         // `export { X } from './other'` is resolved through the chain.
         if let Some(reexports) =
@@ -618,6 +610,14 @@ impl<'a> CheckerState<'a> {
                     return Some(result);
                 }
             }
+        }
+
+        // Module augmentations should apply after direct exports and re-export chains,
+        // so an augmentation does not mask a concrete exported declaration.
+        if let Some((sym_id, augmenting_file_idx)) =
+            self.resolve_module_augmentation_export_for_file(file_idx, export_name)
+        {
+            return Some((sym_id, augmenting_file_idx));
         }
 
         // Last resort: check file_locals (for script files or binding edge cases
