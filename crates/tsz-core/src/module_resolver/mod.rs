@@ -573,6 +573,15 @@ impl ModuleResolver {
                     // - symlinkedWorkspaceDependenciesNoDirectLinkGeneratesNonrelativeName.ts
                     // - jsDeclarationsTypeReassignmentFromDeclaration.ts
                     if !fallback_path.exists() {
+                        // Classic resolution override: TS2307 → TS2792
+                        if request.implied_classic_resolution {
+                            return ModuleLookupResult::failed(
+                                MODULE_RESOLUTION_MODE_MISMATCH,
+                                format!(
+                                    "Cannot find module '{specifier}'. Did you mean to set the 'moduleResolution' option to 'nodenext', or to add aliases to the 'paths' option?"
+                                ),
+                            );
+                        }
                         return ModuleLookupResult::failed(
                             CANNOT_FIND_MODULE,
                             format!(

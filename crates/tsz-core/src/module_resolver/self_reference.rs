@@ -23,7 +23,7 @@ impl ModuleResolver {
     /// This version properly distinguishes between:
     /// 1. Self-reference that successfully resolved
     /// 2. Self-reference detected but exports don't resolve (should error)
-    /// 3. Not a self-reference (should continue to node_modules)
+    /// 3. Not a self-reference (package name doesn't match) - should continue searching
     pub(super) fn try_self_reference_v2(
         &self,
         package_name: &str,
@@ -53,8 +53,10 @@ impl ModuleResolver {
             if package_json_path.is_file()
                 && let Ok(package_json) = self.read_package_json(&package_json_path)
             {
-                // Check if the package name matches
-                if package_json.name.as_deref() == Some(package_name) {
+                // Check if the package name matches - this is REQUIRED for a self-reference
+                let name_matches = package_json.name.as_deref() == Some(package_name);
+                
+                if name_matches {
                     // This is a self-reference!
                     if self.resolve_package_json_exports
                         && let Some(exports) = &package_json.exports
@@ -70,21 +72,52 @@ impl ModuleResolver {
                             &subpath_key,
                             conditions,
                         ) {
-                            return SelfReferenceResultV2::Resolved(ResolvedModule {
-                                resolved_path: resolved.clone(),
-                                resolved_using_ts_extension: false,
-                                is_external: false,
-                                package_name: Some(package_name.to_string()),
-                                original_specifier: original_specifier.to_string(),
-                                extension: ModuleExtension::from_path(&resolved),
-                            });
+                            // CRITICAL: For self-references, we must ensure the resolved file
+                            // is the EXACT target specified in exports, not a TypeScript source
+                            // file found via extension substitution.
+                            //
+                            // When exports specify "./index.js" but the file doesn't exist,
+                            // and extension substitution finds "./index.ts", this should NOT
+                            // count as successful resolution. It would cause TS1479 (format
+                            // mismatch) instead of the expected TS2209/TS2307.
+                            //
+                            // We verify this by checking if the resolved path has the same
+                            // extension as what was specified in the exports target.
+                            let export_target_path = self.resolve_export_target_to_string(
+                                exports,
+                                conditions,
+                            ).map(|target| current.join(target.trim_start_matches("./")));
+                            
+                            if let Some(ref target_path) = export_target_path {
+                                // Check if the resolved path has the same extension as the target
+                                let target_ext = target_path.extension().and_then(|e| e.to_str());
+                                let resolved_ext = resolved.extension().and_then(|e| e.to_str());
+                                
+                                // If extensions don't match (e.g., target is .js but resolved is .ts),
+                                // this is extension substitution - treat as failed self-reference
+                                if target_ext == resolved_ext && resolved.is_file() {
+                                    return SelfReferenceResultV2::Resolved(ResolvedModule {
+                                        resolved_path: resolved.clone(),
+                                        resolved_using_ts_extension: false,
+                                        is_external: false,
+                                        package_name: Some(package_name.to_string()),
+                                        original_specifier: original_specifier.to_string(),
+                                        extension: ModuleExtension::from_path(&resolved),
+                                    });
+                                }
+                            }
                         }
-                        // Self-reference detected but exports didn't resolve to an existing file
-                        // This should emit TS2307, not continue to node_modules
+                        // Self-reference detected but exports didn't resolve correctly
+                        // This should emit TS2209, not continue to node_modules
                         return SelfReferenceResultV2::ExportsFailed;
                     }
+                    // Name matches but no exports field - not a self-reference for Node16+
+                    // Fall through to NotSelfReference
                 }
-                // Found a package.json but it's not a match - stop searching
+                // Found a package.json but either:
+                // - The name doesn't match, OR
+                // - The name matches but there's no exports field
+                // In both cases, stop searching and continue to node_modules resolution
                 return SelfReferenceResultV2::NotSelfReference;
             }
 
