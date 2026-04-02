@@ -1376,7 +1376,8 @@ declare module "express" {
                 "Expected Request to resolve through export= surface to real declarations"
             );
             assert!(
-                decls.iter()
+                decls
+                    .iter()
                     .any(|(_, flags, _)| (flags & tsz_binder::symbol_flags::INTERFACE) != 0),
                 "Expected export surface to include interface flags, got: {decls:#?}"
             );
