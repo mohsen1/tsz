@@ -1013,11 +1013,17 @@ impl<'a> CheckerState<'a> {
                                 self.ctx.types,
                                 base_type,
                             )
-                            .and_then(|shape| shape.number_index.as_ref().map(|idx| idx.value_type));
+                            .and_then(|shape| {
+                                shape.number_index.as_ref().map(|idx| idx.value_type)
+                            });
 
                             if let Some(base_index_val) = base_num_index_value {
-                                for (member_name, member_type, _derived_member_idx, _derived_kind) in
-                                    &derived_members
+                                for (
+                                    member_name,
+                                    member_type,
+                                    _derived_member_idx,
+                                    _derived_kind,
+                                ) in &derived_members
                                 {
                                     // Extract the derived property's raw type
                                     let derived_prop_type =
