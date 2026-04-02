@@ -188,11 +188,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // WASM environments have limited memory, but 100 is too restrictive for
         // real-world code (large SDKs, generated API types often have 150-250 keys).
         // 250 covers ~99% of real-world use cases while remaining safe for WASM.
-        #[cfg(target_arch = "wasm32")]
-        const MAX_MAPPED_KEYS: usize = 250;
-        #[cfg(not(target_arch = "wasm32"))]
-        const MAX_MAPPED_KEYS: usize = 500;
-        if key_set.string_literals.len() > MAX_MAPPED_KEYS {
+        if key_set.string_literals.len() > self.max_mapped_keys() {
             self.mark_depth_exceeded();
             return TypeId::ERROR;
         }
@@ -913,6 +909,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeData::Literal(LiteralValue::String(s)) => {
                 keys.string_literals.push(s);
                 Some(keys)
+            }
+            TypeData::TemplateLiteral(_) => {
+                let evaluated = self.evaluate(type_id);
+                if evaluated != type_id {
+                    return self.extract_mapped_keys(evaluated);
+                }
+                None
             }
             // Numeric literals become string property names (e.g., enum value 0 → "0").
             // This handles the case where a single-member enum is used as a mapped type

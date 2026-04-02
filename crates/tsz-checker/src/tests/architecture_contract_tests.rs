@@ -3663,6 +3663,8 @@ fn test_shared_def_store_propagated_through_cache_constructor() {
         node_types: Default::default(),
         symbol_dependencies: Default::default(),
         def_to_symbol: Default::default(),
+        def_types: Default::default(),
+        def_type_params: Default::default(),
         flow_analysis_cache: Default::default(),
         class_instance_type_to_decl: Default::default(),
         class_instance_type_cache: Default::default(),

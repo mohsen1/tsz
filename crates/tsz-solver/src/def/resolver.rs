@@ -635,6 +635,16 @@ impl TypeEnvironment {
         }
     }
 
+    /// Snapshot the local DefId -> TypeId cache for downstream consumers like declaration emit.
+    pub fn snapshot_def_types(&self) -> FxHashMap<u32, TypeId> {
+        self.def_types.clone()
+    }
+
+    /// Snapshot the local DefId -> type params cache for downstream consumers like declaration emit.
+    pub fn snapshot_def_type_params(&self) -> FxHashMap<u32, Vec<TypeParamInfo>> {
+        self.def_type_params.clone()
+    }
+
     // =========================================================================
     // DefKind Storage (Task #32: Graph Isomorphism)
     // =========================================================================

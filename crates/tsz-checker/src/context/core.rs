@@ -89,6 +89,8 @@ impl TypeCache {
 
         // Merge def_to_symbol mapping
         self.def_to_symbol.extend(other.def_to_symbol);
+        self.def_types.extend(other.def_types);
+        self.def_type_params.extend(other.def_type_params);
     }
 }
 
@@ -1017,12 +1019,15 @@ impl<'a> CheckerContext<'a> {
     /// Extract the persistent cache from this context.
     /// This allows saving type checking results for future queries.
     pub fn extract_cache(self) -> TypeCache {
+        let type_env = self.type_environment.into_inner();
         TypeCache {
             symbol_types: self.symbol_types,
             symbol_instance_types: self.symbol_instance_types,
             node_types: self.node_types,
             symbol_dependencies: self.symbol_dependencies,
             def_to_symbol: self.def_to_symbol.into_inner(),
+            def_types: type_env.snapshot_def_types(),
+            def_type_params: type_env.snapshot_def_type_params(),
             flow_analysis_cache: self.flow_analysis_cache.into_inner(),
             class_instance_type_to_decl: self.class_instance_type_to_decl,
             class_instance_type_cache: self.class_instance_type_cache,
@@ -1356,6 +1361,8 @@ mod tests {
             node_types: crate::context::NodeTypeCache::new(),
             symbol_dependencies: FxHashMap::default(),
             def_to_symbol: FxHashMap::default(),
+            def_types: FxHashMap::default(),
+            def_type_params: FxHashMap::default(),
             flow_analysis_cache: FxHashMap::default(),
             class_instance_type_to_decl: FxHashMap::default(),
             class_instance_type_cache: FxHashMap::default(),

@@ -66,7 +66,14 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// the same (check, extends) pair many times across distributed branches and
     /// tail-recursion iterations. Caching avoids redundant structural comparison.
     conditional_subtype_cache: FxHashMap<(TypeId, TypeId), bool>,
+    /// Ceiling for eager mapped-key expansion before bailing out.
+    max_mapped_keys: usize,
 }
+
+#[cfg(target_arch = "wasm32")]
+const DEFAULT_MAX_MAPPED_KEYS: usize = 250;
+#[cfg(not(target_arch = "wasm32"))]
+const DEFAULT_MAX_MAPPED_KEYS: usize = 500;
 
 /// Array methods that return any (used for apparent type computation).
 pub(crate) const ARRAY_METHODS_RETURN_ANY: &[&str] = &[
@@ -126,6 +133,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             def_depth: FxHashMap::default(),
             suppress_this_binding: false,
             conditional_subtype_cache: FxHashMap::default(),
+            max_mapped_keys: DEFAULT_MAX_MAPPED_KEYS,
         }
     }
 }
@@ -168,6 +176,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             def_depth: FxHashMap::default(),
             suppress_this_binding: false,
             conditional_subtype_cache: FxHashMap::default(),
+            max_mapped_keys: DEFAULT_MAX_MAPPED_KEYS,
         }
     }
 
@@ -208,6 +217,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.no_unchecked_indexed_access = enabled;
     }
 
+    pub fn set_max_mapped_keys(&mut self, max_mapped_keys: usize) {
+        self.max_mapped_keys = max_mapped_keys;
+    }
+
     /// Reset per-evaluation state so this evaluator can be reused.
     ///
     /// Clears the cache, cycle detection sets, and counters while preserving
@@ -233,6 +246,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     #[inline]
     pub(crate) const fn resolver(&self) -> &'a R {
         self.resolver
+    }
+
+    #[inline]
+    pub(crate) const fn max_mapped_keys(&self) -> usize {
+        self.max_mapped_keys
     }
 
     /// Get the query database when one is available.
