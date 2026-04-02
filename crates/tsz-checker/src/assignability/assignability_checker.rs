@@ -700,6 +700,27 @@ impl<'a> CheckerState<'a> {
             ) || (tsz_solver::contains_type_parameters(self.ctx.types, type_id)
                 && !is_type_parameter_like(self.ctx.types, type_id))
         };
+        
+        // Check if both source and target are simple generic Applications with the same base.
+        // In this case, don't suppress - let the variance check or structural comparison
+        // handle it. This fixes cases like `Foo<T>` vs `Foo<U>` where T and U are different
+        // unconstrained type parameters that should produce TS2322.
+        let are_simple_generic_applications = |s: TypeId, t: TypeId| -> bool {
+            if let (Some(s_app), Some(t_app)) = (
+                tsz_solver::type_queries::get_type_application(self.ctx.types, s),
+                tsz_solver::type_queries::get_type_application(self.ctx.types, t),
+            ) {
+                // Same base type, both contain type parameters
+                return s_app.base == t_app.base
+                    && tsz_solver::contains_type_parameters(self.ctx.types, s)
+                    && tsz_solver::contains_type_parameters(self.ctx.types, t);
+            }
+            false
+        };
+
+        if are_simple_generic_applications(source, target) {
+            return false; // Don't suppress - let the actual assignability check run
+        }
 
         matches!(source, TypeId::ERROR)
             || matches!(target, TypeId::ERROR | TypeId::ANY)
