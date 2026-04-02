@@ -12,6 +12,21 @@ use crate::span::Span;
 use std::path::Path;
 
 impl ModuleResolver {
+    fn suggested_runtime_extension(&self, resolved_ext: ModuleExtension) -> &'static str {
+        match resolved_ext {
+            ModuleExtension::Ts | ModuleExtension::Dts | ModuleExtension::Unknown => ".js",
+            ModuleExtension::Tsx => match self.jsx {
+                Some(crate::config::JsxEmit::Preserve) => ".jsx",
+                _ => ".js",
+            },
+            ModuleExtension::Js => ".js",
+            ModuleExtension::Jsx => ".jsx",
+            ModuleExtension::Mts | ModuleExtension::Mjs | ModuleExtension::DmTs => ".mjs",
+            ModuleExtension::Cts | ModuleExtension::Cjs | ModuleExtension::DCts => ".cjs",
+            ModuleExtension::Json => ".json",
+        }
+    }
+
     /// Resolve a relative import
     pub(super) fn resolve_relative(
         &self,
@@ -110,18 +125,7 @@ impl ModuleResolver {
                     });
                 }
                 let resolved_ext = ModuleExtension::from_path(&resolved);
-                // Suggest the .js extension (TypeScript convention: import .js, compile from .ts)
-                let suggested_ext = match resolved_ext {
-                    ModuleExtension::Ts
-                    | ModuleExtension::Tsx
-                    | ModuleExtension::Js
-                    | ModuleExtension::Jsx
-                    | ModuleExtension::Dts
-                    | ModuleExtension::Unknown => ".js",
-                    ModuleExtension::Mts | ModuleExtension::Mjs | ModuleExtension::DmTs => ".mjs",
-                    ModuleExtension::Cts | ModuleExtension::Cjs | ModuleExtension::DCts => ".cjs",
-                    ModuleExtension::Json => ".json",
-                };
+                let suggested_ext = self.suggested_runtime_extension(resolved_ext);
                 return Err(ResolutionFailure::ImportPathNeedsExtension {
                     specifier: specifier.to_string(),
                     suggested_extension: suggested_ext.to_string(),
