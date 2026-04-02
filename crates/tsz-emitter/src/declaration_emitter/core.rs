@@ -1861,10 +1861,7 @@ impl<'a> DeclarationEmitter<'a> {
                     (self.current_file_path.clone(), prop_name_span)
                 {
                     if self.emit_serialized_type_text_truncation_diagnostic_if_needed(
-                        &type_text,
-                        &file_path,
-                        pos,
-                        length,
+                        &type_text, &file_path, pos, length,
                     ) {
                         self.write(": any");
                         true

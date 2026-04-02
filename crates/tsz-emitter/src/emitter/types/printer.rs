@@ -327,7 +327,9 @@ impl<'a> TypePrinter<'a> {
         let def_id = cache
             .def_to_symbol
             .iter()
-            .find_map(|(def_id, &candidate_sym_id)| (candidate_sym_id == sym_id).then_some(*def_id))?;
+            .find_map(|(def_id, &candidate_sym_id)| {
+                (candidate_sym_id == sym_id).then_some(*def_id)
+            })?;
         cache.def_types.get(&def_id.0).copied()
     }
 
@@ -2353,22 +2355,16 @@ impl<'a> TypePrinter<'a> {
 
         if let Some(func_id) = visitor::function_shape_id(self.interner, type_id) {
             let func = self.interner.function_shape(func_id);
-            return func
-                .type_params
-                .iter()
-                .any(|tp| {
-                    tp.constraint
-                        .is_some_and(|constraint| {
-                            self.type_contains_lazy_def(constraint, target_def, depth + 1)
-                        })
-                        || tp.default.is_some_and(|default| {
-                            self.type_contains_lazy_def(default, target_def, depth + 1)
-                        })
+            return func.type_params.iter().any(|tp| {
+                tp.constraint.is_some_and(|constraint| {
+                    self.type_contains_lazy_def(constraint, target_def, depth + 1)
+                }) || tp.default.is_some_and(|default| {
+                    self.type_contains_lazy_def(default, target_def, depth + 1)
                 })
-                || func
-                    .params
-                    .iter()
-                    .any(|param| self.type_contains_lazy_def(param.type_id, target_def, depth + 1))
+            }) || func
+                .params
+                .iter()
+                .any(|param| self.type_contains_lazy_def(param.type_id, target_def, depth + 1))
                 || func.type_predicate.as_ref().is_some_and(|pred| {
                     pred.type_id.is_some_and(|type_id| {
                         self.type_contains_lazy_def(type_id, target_def, depth + 1)
@@ -2385,34 +2381,23 @@ impl<'a> TypePrinter<'a> {
                 .chain(callable.construct_signatures.iter())
                 .any(|sig| {
                     sig.type_params.iter().any(|tp| {
-                        tp.constraint
-                            .is_some_and(|constraint| {
-                                self.type_contains_lazy_def(constraint, target_def, depth + 1)
-                            })
-                            || tp.default.is_some_and(|default| {
-                                self.type_contains_lazy_def(default, target_def, depth + 1)
-                            })
-                    }) || sig
-                        .params
-                        .iter()
-                        .any(|param| {
-                            self.type_contains_lazy_def(param.type_id, target_def, depth + 1)
+                        tp.constraint.is_some_and(|constraint| {
+                            self.type_contains_lazy_def(constraint, target_def, depth + 1)
+                        }) || tp.default.is_some_and(|default| {
+                            self.type_contains_lazy_def(default, target_def, depth + 1)
                         })
-                        || sig.type_predicate.as_ref().is_some_and(|pred| {
-                            pred.type_id.is_some_and(|type_id| {
-                                self.type_contains_lazy_def(type_id, target_def, depth + 1)
-                            })
+                    }) || sig.params.iter().any(|param| {
+                        self.type_contains_lazy_def(param.type_id, target_def, depth + 1)
+                    }) || sig.type_predicate.as_ref().is_some_and(|pred| {
+                        pred.type_id.is_some_and(|type_id| {
+                            self.type_contains_lazy_def(type_id, target_def, depth + 1)
                         })
-                        || self.type_contains_lazy_def(sig.return_type, target_def, depth + 1)
+                    }) || self.type_contains_lazy_def(sig.return_type, target_def, depth + 1)
                 })
                 || callable.properties.iter().any(|prop| {
                     self.type_contains_lazy_def(prop.type_id, target_def, depth + 1)
                         || (prop.write_type != TypeId::UNDEFINED
-                            && self.type_contains_lazy_def(
-                                prop.write_type,
-                                target_def,
-                                depth + 1,
-                            ))
+                            && self.type_contains_lazy_def(prop.write_type, target_def, depth + 1))
                 })
                 || callable.string_index.as_ref().is_some_and(|idx| {
                     self.type_contains_lazy_def(idx.value_type, target_def, depth + 1)
@@ -2460,16 +2445,11 @@ impl<'a> TypePrinter<'a> {
 
         if let Some(mapped_id) = visitor::mapped_type_id(self.interner, type_id) {
             let mapped = self.interner.mapped_type(mapped_id);
-            return mapped
-                .type_param
-                .constraint
-                .is_some_and(|constraint| {
-                    self.type_contains_lazy_def(constraint, target_def, depth + 1)
-                })
-                || mapped.type_param.default.is_some_and(|default| {
-                    self.type_contains_lazy_def(default, target_def, depth + 1)
-                })
-                || self.type_contains_lazy_def(mapped.constraint, target_def, depth + 1)
+            return mapped.type_param.constraint.is_some_and(|constraint| {
+                self.type_contains_lazy_def(constraint, target_def, depth + 1)
+            }) || mapped.type_param.default.is_some_and(|default| {
+                self.type_contains_lazy_def(default, target_def, depth + 1)
+            }) || self.type_contains_lazy_def(mapped.constraint, target_def, depth + 1)
                 || self.type_contains_lazy_def(mapped.template, target_def, depth + 1)
                 || mapped.name_type.is_some_and(|name_type| {
                     self.type_contains_lazy_def(name_type, target_def, depth + 1)
@@ -2495,7 +2475,12 @@ impl<'a> TypePrinter<'a> {
         false
     }
 
-    fn type_contains_symbol_reference(&self, type_id: TypeId, target_sym: SymbolId, depth: u32) -> bool {
+    fn type_contains_symbol_reference(
+        &self,
+        type_id: TypeId,
+        target_sym: SymbolId,
+        depth: u32,
+    ) -> bool {
         if depth > 64 {
             return true;
         }
@@ -2526,9 +2511,11 @@ impl<'a> TypePrinter<'a> {
         if let Some(app_id) = visitor::application_id(self.interner, type_id) {
             let app = self.interner.type_application(app_id);
             return self.type_contains_symbol_reference(app.base, target_sym, depth + 1)
-                || app.args.iter().copied().any(|arg| {
-                    self.type_contains_symbol_reference(arg, target_sym, depth + 1)
-                });
+                || app
+                    .args
+                    .iter()
+                    .copied()
+                    .any(|arg| self.type_contains_symbol_reference(arg, target_sym, depth + 1));
         }
 
         if let Some(shape_id) = visitor::object_shape_id(self.interner, type_id)
@@ -2539,10 +2526,18 @@ impl<'a> TypePrinter<'a> {
                 self.type_contains_symbol_reference(property.type_id, target_sym, depth + 1)
             }) || shape.string_index.is_some_and(|index_info| {
                 self.type_contains_symbol_reference(index_info.key_type, target_sym, depth + 1)
-                    || self.type_contains_symbol_reference(index_info.value_type, target_sym, depth + 1)
+                    || self.type_contains_symbol_reference(
+                        index_info.value_type,
+                        target_sym,
+                        depth + 1,
+                    )
             }) || shape.number_index.is_some_and(|index_info| {
                 self.type_contains_symbol_reference(index_info.key_type, target_sym, depth + 1)
-                    || self.type_contains_symbol_reference(index_info.value_type, target_sym, depth + 1)
+                    || self.type_contains_symbol_reference(
+                        index_info.value_type,
+                        target_sym,
+                        depth + 1,
+                    )
             });
         }
 
@@ -2562,11 +2557,9 @@ impl<'a> TypePrinter<'a> {
         }
 
         if let Some(tuple_id) = visitor::tuple_list_id(self.interner, type_id) {
-            return self
-                .interner
-                .tuple_list(tuple_id)
-                .iter()
-                .any(|member| self.type_contains_symbol_reference(member.type_id, target_sym, depth + 1));
+            return self.interner.tuple_list(tuple_id).iter().any(|member| {
+                self.type_contains_symbol_reference(member.type_id, target_sym, depth + 1)
+            });
         }
 
         if let Some(func_id) = visitor::function_shape_id(self.interner, type_id) {
@@ -2583,10 +2576,18 @@ impl<'a> TypePrinter<'a> {
                 self.type_contains_symbol_reference(property.type_id, target_sym, depth + 1)
             }) || callable.string_index.is_some_and(|index_info| {
                 self.type_contains_symbol_reference(index_info.key_type, target_sym, depth + 1)
-                    || self.type_contains_symbol_reference(index_info.value_type, target_sym, depth + 1)
+                    || self.type_contains_symbol_reference(
+                        index_info.value_type,
+                        target_sym,
+                        depth + 1,
+                    )
             }) || callable.number_index.is_some_and(|index_info| {
                 self.type_contains_symbol_reference(index_info.key_type, target_sym, depth + 1)
-                    || self.type_contains_symbol_reference(index_info.value_type, target_sym, depth + 1)
+                    || self.type_contains_symbol_reference(
+                        index_info.value_type,
+                        target_sym,
+                        depth + 1,
+                    )
             });
         }
 
@@ -2643,19 +2644,20 @@ impl<'a> TypePrinter<'a> {
         depth: u32,
     ) -> bool {
         let func = self.interner.function_shape(func_id);
-        func.params.iter().any(|param| {
-            self.type_contains_symbol_reference(param.type_id, target_sym, depth + 1)
-        }) || self.type_contains_symbol_reference(func.return_type, target_sym, depth + 1)
+        func.params
+            .iter()
+            .any(|param| self.type_contains_symbol_reference(param.type_id, target_sym, depth + 1))
+            || self.type_contains_symbol_reference(func.return_type, target_sym, depth + 1)
             || func.this_type.is_some_and(|this_type| {
                 self.type_contains_symbol_reference(this_type, target_sym, depth + 1)
             })
             || func.type_params.iter().any(|param| {
-            param.constraint.is_some_and(|constraint| {
-                self.type_contains_symbol_reference(constraint, target_sym, depth + 1)
-            }) || param.default.is_some_and(|default| {
-                self.type_contains_symbol_reference(default, target_sym, depth + 1)
+                param.constraint.is_some_and(|constraint| {
+                    self.type_contains_symbol_reference(constraint, target_sym, depth + 1)
+                }) || param.default.is_some_and(|default| {
+                    self.type_contains_symbol_reference(default, target_sym, depth + 1)
+                })
             })
-        })
     }
 
     fn call_signature_contains_symbol_reference(
@@ -2664,9 +2666,11 @@ impl<'a> TypePrinter<'a> {
         target_sym: SymbolId,
         depth: u32,
     ) -> bool {
-        signature.params.iter().any(|param| {
-            self.type_contains_symbol_reference(param.type_id, target_sym, depth + 1)
-        }) || self.type_contains_symbol_reference(signature.return_type, target_sym, depth + 1)
+        signature
+            .params
+            .iter()
+            .any(|param| self.type_contains_symbol_reference(param.type_id, target_sym, depth + 1))
+            || self.type_contains_symbol_reference(signature.return_type, target_sym, depth + 1)
             || signature.this_type.is_some_and(|this_type| {
                 self.type_contains_symbol_reference(this_type, target_sym, depth + 1)
             })

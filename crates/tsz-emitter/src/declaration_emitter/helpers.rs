@@ -4948,7 +4948,8 @@ impl<'a> DeclarationEmitter<'a> {
             return typeof_text;
         }
 
-        if (type_id != tsz_solver::types::TypeId::ANY || !self.initializer_is_new_expression(initializer))
+        if (type_id != tsz_solver::types::TypeId::ANY
+            || !self.initializer_is_new_expression(initializer))
             && let Some(type_text) = self.preferred_expression_type_text(initializer)
         {
             return type_text;
@@ -7830,10 +7831,9 @@ impl<'a> DeclarationEmitter<'a> {
             {
             } else if let Some(type_id) = self.get_node_type_or_names(&[decl_idx, decl_name]) {
                 let printed_type_text = self.print_type_id(type_id);
-                let emitted_type_text = has_initializer
-                    .then(|| {
-                        self.declaration_emittable_type_text(initializer, type_id, &printed_type_text)
-                    });
+                let emitted_type_text = has_initializer.then(|| {
+                    self.declaration_emittable_type_text(initializer, type_id, &printed_type_text)
+                });
 
                 if has_initializer && printed_type_text.contains("any") {
                     self.maybe_emit_non_portable_function_return_diagnostic(decl_name, initializer);
@@ -9524,12 +9524,8 @@ impl<'a> DeclarationEmitter<'a> {
             .resolve_portability_import_alias(sym_id, binder)
             .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
         let symbol = binder.symbols.get(resolved_sym_id)?;
-        let needs_typeof = self.value_reference_symbol_can_use_typeof(
-            expr_idx,
-            sym_id,
-            resolved_sym_id,
-            symbol,
-        );
+        let needs_typeof =
+            self.value_reference_symbol_can_use_typeof(expr_idx, sym_id, resolved_sym_id, symbol);
         if !needs_typeof {
             return None;
         }
@@ -9547,12 +9543,7 @@ impl<'a> DeclarationEmitter<'a> {
             .resolve_portability_import_alias(sym_id, binder)
             .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
         let symbol = binder.symbols.get(resolved_sym_id)?;
-        Some(self.value_reference_symbol_can_use_typeof(
-            expr_idx,
-            sym_id,
-            resolved_sym_id,
-            symbol,
-        ))
+        Some(self.value_reference_symbol_can_use_typeof(expr_idx, sym_id, resolved_sym_id, symbol))
     }
 
     fn value_reference_symbol_can_use_typeof(
