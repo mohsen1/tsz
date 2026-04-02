@@ -4923,6 +4923,40 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    fn declaration_emittable_type_text(
+        &self,
+        initializer: NodeIndex,
+        type_id: tsz_solver::types::TypeId,
+        printed_type_text: &str,
+    ) -> String {
+        if type_id == tsz_solver::types::TypeId::ANY
+            && let Some(type_text) = self.data_view_new_expression_type_text(initializer)
+        {
+            return type_text;
+        }
+
+        if self.object_literal_prefers_syntax_type_text(initializer)
+            && let Some(type_text) =
+                self.rewrite_object_literal_computed_member_type_text(initializer, type_id)
+        {
+            return type_text;
+        }
+
+        if let Some(typeof_text) =
+            self.typeof_prefix_for_value_entity(initializer, true, Some(type_id))
+        {
+            return typeof_text;
+        }
+
+        if (type_id != tsz_solver::types::TypeId::ANY || !self.initializer_is_new_expression(initializer))
+            && let Some(type_text) = self.preferred_expression_type_text(initializer)
+        {
+            return type_text;
+        }
+
+        printed_type_text.to_string()
+    }
+
     fn explicit_asserted_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
         let mut current = expr_idx;
 
@@ -7796,15 +7830,16 @@ impl<'a> DeclarationEmitter<'a> {
             {
             } else if let Some(type_id) = self.get_node_type_or_names(&[decl_idx, decl_name]) {
                 let printed_type_text = self.print_type_id(type_id);
+                let emitted_type_text = has_initializer
+                    .then(|| {
+                        self.declaration_emittable_type_text(initializer, type_id, &printed_type_text)
+                    });
 
                 if has_initializer && printed_type_text.contains("any") {
                     self.maybe_emit_non_portable_function_return_diagnostic(decl_name, initializer);
                 }
 
-                let preferred_portable_type_text = has_initializer
-                    .then(|| self.preferred_expression_type_text(initializer))
-                    .flatten();
-                let directly_nameable_type_text = preferred_portable_type_text
+                let directly_nameable_type_text = emitted_type_text
                     .as_deref()
                     .filter(|text| self.type_text_is_directly_nameable_reference(text))
                     .or_else(|| {
@@ -7826,6 +7861,16 @@ impl<'a> DeclarationEmitter<'a> {
                     if self.diagnostics.len() == diagnostics_before && has_initializer {
                         let _ = self.emit_truncation_diagnostic_if_needed(
                             initializer,
+                            &file_path,
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                        );
+                    }
+                    if self.diagnostics.len() == diagnostics_before
+                        && let Some(type_text) = emitted_type_text.as_deref()
+                    {
+                        let _ = self.emit_serialized_type_text_truncation_diagnostic_if_needed(
+                            type_text,
                             &file_path,
                             name_node.pos,
                             name_node.end - name_node.pos,
@@ -7894,7 +7939,7 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                     if self.diagnostics.len() == diagnostics_before {
                         let _ = self.emit_non_serializable_local_alias_diagnostic(
-                            &printed_type_text,
+                            emitted_type_text.as_deref().unwrap_or(&printed_type_text),
                             &file_path,
                             name_node.pos,
                             name_node.end - name_node.pos,
@@ -7902,7 +7947,7 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                     if self.diagnostics.len() == diagnostics_before {
                         let _ = self.emit_non_serializable_import_type_diagnostic(
-                            &printed_type_text,
+                            emitted_type_text.as_deref().unwrap_or(&printed_type_text),
                             &file_path,
                             name_node.pos,
                             name_node.end - name_node.pos,
@@ -7910,7 +7955,7 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                     if self.diagnostics.len() == diagnostics_before {
                         let _ = self.emit_non_serializable_property_diagnostic(
-                            &printed_type_text,
+                            emitted_type_text.as_deref().unwrap_or(&printed_type_text),
                             &file_path,
                             name_node.pos,
                             name_node.end - name_node.pos,
@@ -7974,31 +8019,9 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                 }
 
-                if type_id == tsz_solver::types::TypeId::ANY
-                    && has_initializer
-                    && let Some(type_text) = self.data_view_new_expression_type_text(initializer)
-                {
+                if let Some(type_text) = emitted_type_text.as_deref() {
                     self.write(": ");
-                    self.write(&type_text);
-                } else if has_initializer
-                    && self.object_literal_prefers_syntax_type_text(initializer)
-                    && let Some(type_text) =
-                        self.rewrite_object_literal_computed_member_type_text(initializer, type_id)
-                {
-                    self.write(": ");
-                    self.write(&type_text);
-                } else if let Some(typeof_text) =
-                    self.typeof_prefix_for_value_entity(initializer, has_initializer, Some(type_id))
-                {
-                    // Bare identifier referencing an enum/module → emit typeof
-                    self.write(": ");
-                    self.write(&typeof_text);
-                } else if (type_id != tsz_solver::types::TypeId::ANY
-                    || !self.initializer_is_new_expression(initializer))
-                    && let Some(type_text) = self.preferred_expression_type_text(initializer)
-                {
-                    self.write(": ");
-                    self.write(&type_text);
+                    self.write(type_text);
                 } else {
                     self.write(": ");
                     self.write(&printed_type_text);
@@ -9497,16 +9520,17 @@ impl<'a> DeclarationEmitter<'a> {
         let sym_id = binder
             .get_node_symbol(expr_idx)
             .or_else(|| self.value_reference_symbol(expr_idx))?;
-        let symbol = binder.symbols.get(sym_id)?;
-        if !(symbol.has_any_flags(
-            symbol_flags::FUNCTION
-                | symbol_flags::CLASS
-                | symbol_flags::ENUM
-                | symbol_flags::VALUE_MODULE
-                | symbol_flags::METHOD,
-        ) || self.is_namespace_import_alias_symbol(sym_id))
-            || symbol.has_any_flags(symbol_flags::ENUM_MEMBER)
-        {
+        let resolved_sym_id = self
+            .resolve_portability_import_alias(sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
+        let symbol = binder.symbols.get(resolved_sym_id)?;
+        let needs_typeof = self.value_reference_symbol_can_use_typeof(
+            expr_idx,
+            sym_id,
+            resolved_sym_id,
+            symbol,
+        );
+        if !needs_typeof {
             return None;
         }
 
@@ -9519,17 +9543,68 @@ impl<'a> DeclarationEmitter<'a> {
     fn value_reference_symbol_needs_typeof(&self, expr_idx: NodeIndex) -> Option<bool> {
         let binder = self.binder?;
         let sym_id = self.value_reference_symbol(expr_idx)?;
-        let symbol = binder.symbols.get(sym_id)?;
-        Some(
-            (symbol.has_any_flags(
-                symbol_flags::FUNCTION
-                    | symbol_flags::CLASS
-                    | symbol_flags::ENUM
-                    | symbol_flags::VALUE_MODULE
-                    | symbol_flags::METHOD,
-            ) || self.is_namespace_import_alias_symbol(sym_id))
-                && !symbol.has_any_flags(symbol_flags::ENUM_MEMBER),
-        )
+        let resolved_sym_id = self
+            .resolve_portability_import_alias(sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
+        let symbol = binder.symbols.get(resolved_sym_id)?;
+        Some(self.value_reference_symbol_can_use_typeof(
+            expr_idx,
+            sym_id,
+            resolved_sym_id,
+            symbol,
+        ))
+    }
+
+    fn value_reference_symbol_can_use_typeof(
+        &self,
+        expr_idx: NodeIndex,
+        sym_id: SymbolId,
+        resolved_sym_id: SymbolId,
+        resolved_symbol: &tsz_binder::Symbol,
+    ) -> bool {
+        if resolved_symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
+            return false;
+        }
+
+        if resolved_symbol.has_any_flags(
+            symbol_flags::FUNCTION
+                | symbol_flags::CLASS
+                | symbol_flags::ENUM
+                | symbol_flags::VALUE_MODULE
+                | symbol_flags::METHOD,
+        ) || self.is_namespace_import_alias_symbol(sym_id)
+            || self.is_namespace_import_alias_symbol(resolved_sym_id)
+        {
+            return true;
+        }
+
+        self.is_value_import_alias_symbol(sym_id) && self.value_reference_type_is_callable(expr_idx)
+    }
+
+    fn value_reference_type_is_callable(&self, expr_idx: NodeIndex) -> bool {
+        let Some(interner) = self.type_interner else {
+            return false;
+        };
+        let Some(type_id) = self.get_node_type_or_names(&[expr_idx]) else {
+            return false;
+        };
+
+        tsz_solver::visitor::function_shape_id(interner, type_id).is_some()
+            || tsz_solver::visitor::callable_shape_id(interner, type_id).is_some()
+    }
+
+    fn is_value_import_alias_symbol(&self, sym_id: SymbolId) -> bool {
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        symbol.has_any_flags(symbol_flags::ALIAS)
+            && symbol.import_module.is_some()
+            && !symbol.is_type_only
+            && symbol.import_name.as_deref() != Some("*")
     }
 
     fn value_reference_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
@@ -11253,6 +11328,30 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(type_text) = self.truncation_candidate_type_text(expr_idx) else {
             return false;
         };
+
+        if type_text.chars().count() <= NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH {
+            return false;
+        }
+
+        self.diagnostics
+            .push(tsz_common::diagnostics::Diagnostic::from_code(
+                7056,
+                file,
+                pos,
+                length,
+                &[],
+            ));
+        true
+    }
+
+    pub(crate) fn emit_serialized_type_text_truncation_diagnostic_if_needed(
+        &mut self,
+        type_text: &str,
+        file: &str,
+        pos: u32,
+        length: u32,
+    ) -> bool {
+        const NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH: usize = 1_000_000;
 
         if type_text.chars().count() <= NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH {
             return false;

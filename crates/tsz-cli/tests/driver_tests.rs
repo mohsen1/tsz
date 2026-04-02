@@ -566,6 +566,60 @@ export const c = [null as any as {[K in manyprops]: {[K2 in manyprops]: `${K}.${
 }
 
 #[test]
+fn declaration_emit_imported_function_alias_avoids_ts7056() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("a.ts"),
+        r#"type O = {
+    prop: string
+    prop2: string
+}
+
+type I = {
+    prop: string
+}
+
+export const fn = (v: O['prop'], p: Omit<O, 'prop'>, key: keyof O, p2: Omit<O, keyof I>) => {};
+"#,
+    );
+    write_file(
+        &base.join("b.ts"),
+        r#"import { fn } from "./a";
+
+export const f = fn;
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "strict": true,
+    "declaration": true,
+    "module": "commonjs"
+  },
+  "files": ["a.ts", "b.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.iter().all(|d| d.code != 7056),
+        "expected no TS7056 for imported function alias emit, got: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        base.join("b.d.ts").exists(),
+        "expected declaration emit to keep b.d.ts when no TS7056 is needed"
+    );
+}
+
+#[test]
 fn declaration_emit_reports_ts2883_for_transitive_react_styled_form() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();

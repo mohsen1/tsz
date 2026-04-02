@@ -318,6 +318,29 @@ impl<'a> TypePrinter<'a> {
         Some(type_id)
     }
 
+    fn def_type_fallback(&self, def_id: tsz_solver::def::DefId) -> Option<TypeId> {
+        self.type_cache?.def_types.get(&def_id.0).copied()
+    }
+
+    fn symbol_def_type_fallback(&self, sym_id: SymbolId) -> Option<TypeId> {
+        let cache = self.type_cache?;
+        let def_id = cache
+            .def_to_symbol
+            .iter()
+            .find_map(|(def_id, &candidate_sym_id)| (candidate_sym_id == sym_id).then_some(*def_id))?;
+        cache.def_types.get(&def_id.0).copied()
+    }
+
+    fn non_qualifiable_symbol_inline_fallback(&self, sym_id: SymbolId) -> Option<TypeId> {
+        let type_id = self
+            .symbol_def_type_fallback(sym_id)
+            .or_else(|| self.symbol_type_fallback(sym_id))?;
+        if self.type_contains_symbol_reference(type_id, sym_id, 0) {
+            return None;
+        }
+        Some(type_id)
+    }
+
     fn symbol_needs_inline_type_query(&self, sym_id: SymbolId) -> bool {
         if self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id) {
             return false;
@@ -555,6 +578,15 @@ impl<'a> TypePrinter<'a> {
             }
         }
 
+        if !needs_typeof
+            && !self.symbol_is_import_qualifiable(sym_id)
+            && let Some(symbol_type) = self.non_qualifiable_symbol_inline_fallback(sym_id)
+        {
+            let mut nested = self.clone();
+            nested.current_depth += 1;
+            return Some(nested.print_type(symbol_type));
+        }
+
         if let Some(name) = self.import_qualified_symbol_name(sym_id) {
             return Some(if needs_typeof {
                 format!("typeof {name}")
@@ -564,6 +596,21 @@ impl<'a> TypePrinter<'a> {
         }
 
         None
+    }
+
+    fn symbol_is_import_qualifiable(&self, sym_id: SymbolId) -> bool {
+        let Some(arena) = self.symbol_arena else {
+            return true;
+        };
+        let Some(symbol) = arena.get(sym_id) else {
+            return true;
+        };
+
+        if symbol.has_any_flags(symbol_flags::ALIAS) && symbol.import_module.is_some() {
+            return true;
+        }
+
+        symbol.is_exported || symbol.has_any_flags(symbol_flags::EXPORT_VALUE)
     }
 
     fn print_namespace_reference(&self, sym_id: SymbolId) -> Option<String> {
@@ -665,12 +712,7 @@ impl<'a> TypePrinter<'a> {
             if let Some(arena) = self.symbol_arena
                 && let Some(symbol) = arena.get(sym_id)
                 && symbol.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE)
-                && let Some(name) =
-                    if self.can_reference_symbol_by_name(sym_id) || self.is_global_symbol(sym_id) {
-                        self.resolve_symbol_qualified_name(sym_id)
-                    } else {
-                        self.import_qualified_symbol_name(sym_id)
-                    }
+                && let Some(name) = self.print_named_symbol_reference(sym_id, false)
             {
                 return name;
             }
@@ -814,9 +856,13 @@ impl<'a> TypePrinter<'a> {
             && let Some(arena) = self.symbol_arena
             && let Some(symbol) = arena.get(sym_id)
             && !symbol.has_any_flags(symbol_flags::MODULE)
-            && let Some(name) = self.print_named_symbol_reference(sym_id, false)
         {
-            return name;
+            if !self.symbol_is_import_qualifiable(sym_id) {
+                // Non-exported foreign nominal types cannot be named via
+                // import("...").Name. Inline their structure instead.
+            } else if let Some(name) = self.print_named_symbol_reference(sym_id, false) {
+                return name;
+            }
         }
 
         if let Some(sym_id) = shape.symbol
@@ -2236,6 +2282,18 @@ impl<'a> TypePrinter<'a> {
             let needs_typeof = symbol.has_any_flags(
                 symbol_flags::ENUM | symbol_flags::VALUE_MODULE | symbol_flags::FUNCTION,
             );
+            if !needs_typeof
+                && !self.symbol_is_import_qualifiable(sym_id)
+                && let Some(symbol_type) = self
+                    .def_type_fallback(def_id)
+                    .or_else(|| self.symbol_type_fallback(sym_id))
+                && visitor::lazy_def_id(self.interner, symbol_type) != Some(def_id)
+                && !self.type_contains_lazy_def(symbol_type, def_id, 0)
+            {
+                let mut nested = self.clone();
+                nested.current_depth += 1;
+                return nested.print_type(symbol_type);
+            }
             if let Some(name) = self.print_named_symbol_reference(sym_id, needs_typeof) {
                 return name;
             }
@@ -2244,6 +2302,381 @@ impl<'a> TypePrinter<'a> {
         // Symbol is not visible or we don't have symbol info.
         // Fallback to `any` when we cannot legally name the referenced type.
         "any".to_string()
+    }
+
+    fn type_contains_lazy_def(
+        &self,
+        type_id: TypeId,
+        target_def: tsz_solver::def::DefId,
+        depth: u32,
+    ) -> bool {
+        if depth > 64 {
+            return true;
+        }
+
+        if visitor::lazy_def_id(self.interner, type_id) == Some(target_def) {
+            return true;
+        }
+
+        if let Some(app_id) = visitor::application_id(self.interner, type_id) {
+            let app = self.interner.type_application(app_id);
+            return self.type_contains_lazy_def(app.base, target_def, depth + 1)
+                || app
+                    .args
+                    .iter()
+                    .copied()
+                    .any(|arg| self.type_contains_lazy_def(arg, target_def, depth + 1));
+        }
+
+        if let Some(list_id) = visitor::union_list_id(self.interner, type_id)
+            .or_else(|| visitor::intersection_list_id(self.interner, type_id))
+        {
+            return self
+                .interner
+                .type_list(list_id)
+                .iter()
+                .copied()
+                .any(|member| self.type_contains_lazy_def(member, target_def, depth + 1));
+        }
+
+        if let Some(elem_id) = visitor::array_element_type(self.interner, type_id) {
+            return self.type_contains_lazy_def(elem_id, target_def, depth + 1);
+        }
+
+        if let Some(tuple_id) = visitor::tuple_list_id(self.interner, type_id) {
+            return self
+                .interner
+                .tuple_list(tuple_id)
+                .iter()
+                .any(|elem| self.type_contains_lazy_def(elem.type_id, target_def, depth + 1));
+        }
+
+        if let Some(func_id) = visitor::function_shape_id(self.interner, type_id) {
+            let func = self.interner.function_shape(func_id);
+            return func
+                .type_params
+                .iter()
+                .any(|tp| {
+                    tp.constraint
+                        .is_some_and(|constraint| {
+                            self.type_contains_lazy_def(constraint, target_def, depth + 1)
+                        })
+                        || tp.default.is_some_and(|default| {
+                            self.type_contains_lazy_def(default, target_def, depth + 1)
+                        })
+                })
+                || func
+                    .params
+                    .iter()
+                    .any(|param| self.type_contains_lazy_def(param.type_id, target_def, depth + 1))
+                || func.type_predicate.as_ref().is_some_and(|pred| {
+                    pred.type_id.is_some_and(|type_id| {
+                        self.type_contains_lazy_def(type_id, target_def, depth + 1)
+                    })
+                })
+                || self.type_contains_lazy_def(func.return_type, target_def, depth + 1);
+        }
+
+        if let Some(callable_id) = visitor::callable_shape_id(self.interner, type_id) {
+            let callable = self.interner.callable_shape(callable_id);
+            return callable
+                .call_signatures
+                .iter()
+                .chain(callable.construct_signatures.iter())
+                .any(|sig| {
+                    sig.type_params.iter().any(|tp| {
+                        tp.constraint
+                            .is_some_and(|constraint| {
+                                self.type_contains_lazy_def(constraint, target_def, depth + 1)
+                            })
+                            || tp.default.is_some_and(|default| {
+                                self.type_contains_lazy_def(default, target_def, depth + 1)
+                            })
+                    }) || sig
+                        .params
+                        .iter()
+                        .any(|param| {
+                            self.type_contains_lazy_def(param.type_id, target_def, depth + 1)
+                        })
+                        || sig.type_predicate.as_ref().is_some_and(|pred| {
+                            pred.type_id.is_some_and(|type_id| {
+                                self.type_contains_lazy_def(type_id, target_def, depth + 1)
+                            })
+                        })
+                        || self.type_contains_lazy_def(sig.return_type, target_def, depth + 1)
+                })
+                || callable.properties.iter().any(|prop| {
+                    self.type_contains_lazy_def(prop.type_id, target_def, depth + 1)
+                        || (prop.write_type != TypeId::UNDEFINED
+                            && self.type_contains_lazy_def(
+                                prop.write_type,
+                                target_def,
+                                depth + 1,
+                            ))
+                })
+                || callable.string_index.as_ref().is_some_and(|idx| {
+                    self.type_contains_lazy_def(idx.value_type, target_def, depth + 1)
+                })
+                || callable.number_index.as_ref().is_some_and(|idx| {
+                    self.type_contains_lazy_def(idx.value_type, target_def, depth + 1)
+                });
+        }
+
+        if let Some(shape_id) = visitor::object_shape_id(self.interner, type_id)
+            .or_else(|| visitor::object_with_index_shape_id(self.interner, type_id))
+        {
+            let shape = self.interner.object_shape(shape_id);
+            return shape.properties.iter().any(|prop| {
+                self.type_contains_lazy_def(prop.type_id, target_def, depth + 1)
+                    || (prop.write_type != TypeId::UNDEFINED
+                        && self.type_contains_lazy_def(prop.write_type, target_def, depth + 1))
+            }) || shape.string_index.as_ref().is_some_and(|idx| {
+                self.type_contains_lazy_def(idx.value_type, target_def, depth + 1)
+            }) || shape.number_index.as_ref().is_some_and(|idx| {
+                self.type_contains_lazy_def(idx.value_type, target_def, depth + 1)
+            });
+        }
+
+        if let Some(cond_id) = visitor::conditional_type_id(self.interner, type_id) {
+            let cond = self.interner.conditional_type(cond_id);
+            return self.type_contains_lazy_def(cond.check_type, target_def, depth + 1)
+                || self.type_contains_lazy_def(cond.extends_type, target_def, depth + 1)
+                || self.type_contains_lazy_def(cond.true_type, target_def, depth + 1)
+                || self.type_contains_lazy_def(cond.false_type, target_def, depth + 1);
+        }
+
+        if let Some(template_id) = visitor::template_literal_id(self.interner, type_id) {
+            return self
+                .interner
+                .template_list(template_id)
+                .iter()
+                .any(|span| match span {
+                    tsz_solver::types::TemplateSpan::Text(_) => false,
+                    tsz_solver::types::TemplateSpan::Type(inner) => {
+                        self.type_contains_lazy_def(*inner, target_def, depth + 1)
+                    }
+                });
+        }
+
+        if let Some(mapped_id) = visitor::mapped_type_id(self.interner, type_id) {
+            let mapped = self.interner.mapped_type(mapped_id);
+            return mapped
+                .type_param
+                .constraint
+                .is_some_and(|constraint| {
+                    self.type_contains_lazy_def(constraint, target_def, depth + 1)
+                })
+                || mapped.type_param.default.is_some_and(|default| {
+                    self.type_contains_lazy_def(default, target_def, depth + 1)
+                })
+                || self.type_contains_lazy_def(mapped.constraint, target_def, depth + 1)
+                || self.type_contains_lazy_def(mapped.template, target_def, depth + 1)
+                || mapped.name_type.is_some_and(|name_type| {
+                    self.type_contains_lazy_def(name_type, target_def, depth + 1)
+                });
+        }
+
+        if let Some((container, index)) = visitor::index_access_parts(self.interner, type_id) {
+            return self.type_contains_lazy_def(container, target_def, depth + 1)
+                || self.type_contains_lazy_def(index, target_def, depth + 1);
+        }
+
+        if let Some(inner) = visitor::keyof_inner_type(self.interner, type_id)
+            .or_else(|| visitor::readonly_inner_type(self.interner, type_id))
+            .or_else(|| visitor::no_infer_inner_type(self.interner, type_id))
+        {
+            return self.type_contains_lazy_def(inner, target_def, depth + 1);
+        }
+
+        if let Some((_kind, inner)) = visitor::string_intrinsic_components(self.interner, type_id) {
+            return self.type_contains_lazy_def(inner, target_def, depth + 1);
+        }
+
+        false
+    }
+
+    fn type_contains_symbol_reference(&self, type_id: TypeId, target_sym: SymbolId, depth: u32) -> bool {
+        if depth > 64 {
+            return true;
+        }
+
+        if visitor::type_query_symbol(self.interner, type_id)
+            .is_some_and(|sym_ref| sym_ref.0 == target_sym.0)
+        {
+            return true;
+        }
+
+        if let Some(def_id) = visitor::lazy_def_id(self.interner, type_id)
+            && self
+                .type_cache
+                .and_then(|cache| cache.def_to_symbol.get(&def_id))
+                .is_some_and(|&sym_id| sym_id == target_sym)
+        {
+            return true;
+        }
+
+        if visitor::object_shape_id(self.interner, type_id)
+            .or_else(|| visitor::object_with_index_shape_id(self.interner, type_id))
+            .and_then(|shape_id| self.interner.object_shape(shape_id).symbol)
+            .is_some_and(|sym_id| sym_id == target_sym)
+        {
+            return true;
+        }
+
+        if let Some(app_id) = visitor::application_id(self.interner, type_id) {
+            let app = self.interner.type_application(app_id);
+            return self.type_contains_symbol_reference(app.base, target_sym, depth + 1)
+                || app.args.iter().copied().any(|arg| {
+                    self.type_contains_symbol_reference(arg, target_sym, depth + 1)
+                });
+        }
+
+        if let Some(shape_id) = visitor::object_shape_id(self.interner, type_id)
+            .or_else(|| visitor::object_with_index_shape_id(self.interner, type_id))
+        {
+            let shape = self.interner.object_shape(shape_id);
+            return shape.properties.iter().any(|property| {
+                self.type_contains_symbol_reference(property.type_id, target_sym, depth + 1)
+            }) || shape.string_index.is_some_and(|index_info| {
+                self.type_contains_symbol_reference(index_info.key_type, target_sym, depth + 1)
+                    || self.type_contains_symbol_reference(index_info.value_type, target_sym, depth + 1)
+            }) || shape.number_index.is_some_and(|index_info| {
+                self.type_contains_symbol_reference(index_info.key_type, target_sym, depth + 1)
+                    || self.type_contains_symbol_reference(index_info.value_type, target_sym, depth + 1)
+            });
+        }
+
+        if let Some(type_list_id) = visitor::union_list_id(self.interner, type_id)
+            .or_else(|| visitor::intersection_list_id(self.interner, type_id))
+        {
+            return self
+                .interner
+                .type_list(type_list_id)
+                .iter()
+                .copied()
+                .any(|member| self.type_contains_symbol_reference(member, target_sym, depth + 1));
+        }
+
+        if let Some(elem_id) = visitor::array_element_type(self.interner, type_id) {
+            return self.type_contains_symbol_reference(elem_id, target_sym, depth + 1);
+        }
+
+        if let Some(tuple_id) = visitor::tuple_list_id(self.interner, type_id) {
+            return self
+                .interner
+                .tuple_list(tuple_id)
+                .iter()
+                .any(|member| self.type_contains_symbol_reference(member.type_id, target_sym, depth + 1));
+        }
+
+        if let Some(func_id) = visitor::function_shape_id(self.interner, type_id) {
+            return self.function_shape_contains_symbol_reference(func_id, target_sym, depth + 1);
+        }
+
+        if let Some(callable_id) = visitor::callable_shape_id(self.interner, type_id) {
+            let callable = self.interner.callable_shape(callable_id);
+            return callable.call_signatures.iter().any(|sig| {
+                self.call_signature_contains_symbol_reference(sig, target_sym, depth + 1)
+            }) || callable.construct_signatures.iter().any(|sig| {
+                self.call_signature_contains_symbol_reference(sig, target_sym, depth + 1)
+            }) || callable.properties.iter().any(|property| {
+                self.type_contains_symbol_reference(property.type_id, target_sym, depth + 1)
+            }) || callable.string_index.is_some_and(|index_info| {
+                self.type_contains_symbol_reference(index_info.key_type, target_sym, depth + 1)
+                    || self.type_contains_symbol_reference(index_info.value_type, target_sym, depth + 1)
+            }) || callable.number_index.is_some_and(|index_info| {
+                self.type_contains_symbol_reference(index_info.key_type, target_sym, depth + 1)
+                    || self.type_contains_symbol_reference(index_info.value_type, target_sym, depth + 1)
+            });
+        }
+
+        if let Some(cond_id) = visitor::conditional_type_id(self.interner, type_id) {
+            let cond = self.interner.conditional_type(cond_id);
+            return self.type_contains_symbol_reference(cond.check_type, target_sym, depth + 1)
+                || self.type_contains_symbol_reference(cond.extends_type, target_sym, depth + 1)
+                || self.type_contains_symbol_reference(cond.true_type, target_sym, depth + 1)
+                || self.type_contains_symbol_reference(cond.false_type, target_sym, depth + 1);
+        }
+
+        if let Some(template_id) = visitor::template_literal_id(self.interner, type_id) {
+            return self
+                .interner
+                .template_list(template_id)
+                .iter()
+                .any(|span| matches!(span, tsz_solver::types::TemplateSpan::Type(inner) if self.type_contains_symbol_reference(*inner, target_sym, depth + 1)));
+        }
+
+        if let Some(mapped_id) = visitor::mapped_type_id(self.interner, type_id) {
+            let mapped = self.interner.mapped_type(mapped_id);
+            return self.type_contains_symbol_reference(mapped.constraint, target_sym, depth + 1)
+                || self.type_contains_symbol_reference(mapped.template, target_sym, depth + 1)
+                || mapped.name_type.is_some_and(|name_type| {
+                    self.type_contains_symbol_reference(name_type, target_sym, depth + 1)
+                })
+                || mapped.type_param.constraint.is_some_and(|constraint| {
+                    self.type_contains_symbol_reference(constraint, target_sym, depth + 1)
+                })
+                || mapped.type_param.default.is_some_and(|default| {
+                    self.type_contains_symbol_reference(default, target_sym, depth + 1)
+                });
+        }
+
+        if let Some((container, index)) = visitor::index_access_parts(self.interner, type_id) {
+            return self.type_contains_symbol_reference(container, target_sym, depth + 1)
+                || self.type_contains_symbol_reference(index, target_sym, depth + 1);
+        }
+
+        if let Some(inner) = visitor::keyof_inner_type(self.interner, type_id)
+            .or_else(|| visitor::readonly_inner_type(self.interner, type_id))
+            .or_else(|| visitor::no_infer_inner_type(self.interner, type_id))
+        {
+            return self.type_contains_symbol_reference(inner, target_sym, depth + 1);
+        }
+
+        false
+    }
+
+    fn function_shape_contains_symbol_reference(
+        &self,
+        func_id: tsz_solver::types::FunctionShapeId,
+        target_sym: SymbolId,
+        depth: u32,
+    ) -> bool {
+        let func = self.interner.function_shape(func_id);
+        func.params.iter().any(|param| {
+            self.type_contains_symbol_reference(param.type_id, target_sym, depth + 1)
+        }) || self.type_contains_symbol_reference(func.return_type, target_sym, depth + 1)
+            || func.this_type.is_some_and(|this_type| {
+                self.type_contains_symbol_reference(this_type, target_sym, depth + 1)
+            })
+            || func.type_params.iter().any(|param| {
+            param.constraint.is_some_and(|constraint| {
+                self.type_contains_symbol_reference(constraint, target_sym, depth + 1)
+            }) || param.default.is_some_and(|default| {
+                self.type_contains_symbol_reference(default, target_sym, depth + 1)
+            })
+        })
+    }
+
+    fn call_signature_contains_symbol_reference(
+        &self,
+        signature: &tsz_solver::types::CallSignature,
+        target_sym: SymbolId,
+        depth: u32,
+    ) -> bool {
+        signature.params.iter().any(|param| {
+            self.type_contains_symbol_reference(param.type_id, target_sym, depth + 1)
+        }) || self.type_contains_symbol_reference(signature.return_type, target_sym, depth + 1)
+            || signature.this_type.is_some_and(|this_type| {
+                self.type_contains_symbol_reference(this_type, target_sym, depth + 1)
+            })
+            || signature.type_params.iter().any(|param| {
+                param.constraint.is_some_and(|constraint| {
+                    self.type_contains_symbol_reference(constraint, target_sym, depth + 1)
+                }) || param.default.is_some_and(|default| {
+                    self.type_contains_symbol_reference(default, target_sym, depth + 1)
+                })
+            })
     }
 
     /// Check if a symbol is a global (ambient) type that's always accessible.
