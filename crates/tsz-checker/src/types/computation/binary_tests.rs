@@ -681,6 +681,54 @@ fn ts2367_still_emitted_for_genuinely_unrelated_types() {
 }
 
 #[test]
+fn ts2367_widens_cross_family_literal_against_constrained_intersection() {
+    let diags = check_source_diagnostics(
+        r#"function f<T extends string | number>(x: T & number) {
+    const t1 = x === "hello";
+}"#,
+    );
+    let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2367).collect();
+    assert_eq!(
+        relevant.len(),
+        1,
+        "Expected exactly one TS2367, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.as_str()))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        relevant[0]
+            .message_text
+            .contains("types 'T & number' and 'string' have no overlap"),
+        "Expected widened string display, got: {:?}",
+        relevant[0].message_text
+    );
+}
+
+#[test]
+fn ts2367_widens_literal_unions_to_comparison_base_type() {
+    let diags = check_source_diagnostics(r#"declare let x: 1 | 2; if (x === "hello") {}"#);
+    let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2367).collect();
+    assert_eq!(
+        relevant.len(),
+        1,
+        "Expected exactly one TS2367, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.as_str()))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        relevant[0]
+            .message_text
+            .contains("types 'number' and 'string' have no overlap"),
+        "Expected comparison-base display for numeric literal union, got: {:?}",
+        relevant[0].message_text
+    );
+}
+
+#[test]
 fn no_ts2367_for_three_member_union_narrowed_in_loop() {
     // Three-member union `0 | 1 | 2` narrowed by control flow in a for-of loop.
     // This matches the f1() case from controlFlowNoIntermediateErrors.

@@ -1411,42 +1411,25 @@ impl<'a> CheckerState<'a> {
                 )
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-                // tsc preserves literal types within the same primitive family
-                // (e.g., '0' and '2' for number-to-number) but widens all literals
-                // to their primitive types across different families (e.g., '"foo"'
-                // becomes 'string' when compared against 'number').
-                let left_base = tsz_solver::type_queries::widen_literal_to_primitive(
-                    self.ctx.types,
-                    left_narrow,
-                );
-                let right_base = tsz_solver::type_queries::widen_literal_to_primitive(
-                    self.ctx.types,
-                    right_narrow,
-                );
+                // Mirror tsc's comparison display policy:
+                // - preserve literal detail when both operands stay in the same comparison family
+                //   (e.g. `1 | 2` vs `3`)
+                // - otherwise format against each side's comparison base type
+                //   (e.g. `T & number` vs `"hello"` -> `T & number` vs `string`)
+                //
+                // Using comparison-base widening here is important for unions, enums,
+                // and template/string-intrinsic types. Literal-only widening leaves
+                // unions like `1 | 2` unchanged, which drifts from tsc's `number`.
+                let left_base =
+                    tsz_solver::get_base_type_for_comparison(self.ctx.types, left_narrow);
+                let right_base =
+                    tsz_solver::get_base_type_for_comparison(self.ctx.types, right_narrow);
                 let (left_display, right_display) = if left_base == right_base {
-                    // Same primitive family: preserve all literals
+                    // Same comparison family: preserve literal detail.
                     (left_narrow, right_narrow)
                 } else {
-                    // Different families: decide whether to widen based on what kind
-                    // of types are involved.
-                    //
-                    // tsc widens literal types to their primitive forms when comparing
-                    // across different primitive families (e.g., `false` → `boolean`
-                    // vs `symbol`). But when one side is a named/compound type (enum,
-                    // type alias, intersection, etc.), literals are preserved as-is.
-                    //
-                    // The key distinction: if the "unchanged" side (where widening
-                    // was a no-op) is an intrinsic primitive type, the other literal
-                    // should still be widened. If it's a named type, preserve both.
-                    let left_is_named = left_base == left_narrow && !left_narrow.is_intrinsic();
-                    let right_is_named = right_base == right_narrow && !right_narrow.is_intrinsic();
-                    if left_is_named || right_is_named {
-                        // One side is a named/non-primitive type: preserve literals
-                        (left_narrow, right_narrow)
-                    } else {
-                        // Both sides are primitives or literals: widen to primitive
-                        (left_base, right_base)
-                    }
+                    // Different comparison families: show comparison-base types.
+                    (left_base, right_base)
                 };
                 let (left_str, right_str) = self.format_type_pair(left_display, right_display);
                 let message = format_message(
