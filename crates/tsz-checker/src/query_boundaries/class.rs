@@ -117,7 +117,8 @@ fn callable_mentions_nonlocal_type_params(checker: &CheckerState<'_>, type_id: T
 }
 
 fn unwrap_single_property_value_type(checker: &CheckerState<'_>, type_id: TypeId) -> TypeId {
-    if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(checker.ctx.types, type_id)
+    if let Some(shape) =
+        crate::query_boundaries::common::object_shape_for_type(checker.ctx.types, type_id)
         && shape.properties.len() == 1
         && !shape.properties[0].is_method
     {
