@@ -459,6 +459,16 @@ impl<'a> CheckerState<'a> {
                                 & (symbol_flags::VALUE & !symbol_flags::VALUE_MODULE))
                                 != 0;
                             if is_namespace && !has_non_namespace_value {
+                                // SUPPRESSION: For import aliases like `import * as A from "mod"`,
+                                // suppress TS2708 when the module resolution has failed (TS2307).
+                                // The namespace object from an import is always usable as a value
+                                // reference, even if the module has no value exports or failed to resolve.
+                                let has_alias = (symbol.flags & symbol_flags::ALIAS) != 0;
+                                if has_alias && symbol.import_module.is_some() {
+                                    // Skip TS2708 for import aliases - this handles cases like
+                                    // `import * as A from ""` where the module fails to resolve.
+                                    continue;
+                                }
                                 if let Some(name) = self.heritage_name_text(expr_idx) {
                                     if is_class_declaration && is_extends_clause {
                                         self.report_wrong_meaning_diagnostic(
