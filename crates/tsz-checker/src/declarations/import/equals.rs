@@ -5,6 +5,7 @@ use crate::import::core::ModuleNotFoundSite;
 use crate::state::CheckerState;
 use tsz_common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -242,10 +243,12 @@ impl<'a> CheckerState<'a> {
         }
         let mut force_module_not_found = false;
         let mut force_module_not_found_as_2307 = false;
+        let mut should_emit_module_not_found = true;
         // `declare global {}` is treated as a global augmentation, not a namespace.
         // TS1147 should only apply to true namespace contexts.
         let inside_namespace = self.is_inside_namespace_declaration(stmt_idx)
             && !self.is_inside_global_augmentation(stmt_idx);
+        let inside_global_augmentation = self.is_inside_global_augmentation(stmt_idx);
         // When in a wrong context (inside block/function), skip module resolution
         // errors. The grammar error (TS1232) is the primary diagnostic.
         let in_wrong_context = self.is_in_non_module_element_context(stmt_idx);
@@ -256,10 +259,12 @@ impl<'a> CheckerState<'a> {
             // Check if we're inside a MODULE_DECLARATION (namespace/module)
             let mut current = stmt_idx;
             let mut containing_module_name: Option<String> = None;
+            let mut containing_module_node: Option<NodeIndex> = None;
 
             while current.is_some() {
                 if let Some(node) = self.ctx.arena.get(current) {
                     if node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                        containing_module_node = Some(current);
                         // Check if this is an ambient module (declare module "...") or namespace
                         if let Some(module_decl) = self.ctx.arena.get_module(node)
                             && let Some(name_node) = self.ctx.arena.get(module_decl.name)
@@ -284,7 +289,16 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            if inside_global_augmentation && self.ctx.binder.is_external_module() {
+                    self.error_at_node(
+                    stmt_idx,
+                    diagnostic_messages::IMPORTS_ARE_NOT_PERMITTED_IN_MODULE_AUGMENTATIONS_CONSIDER_MOVING_THEM_TO_THE_EN,
+                    diagnostic_codes::IMPORTS_ARE_NOT_PERMITTED_IN_MODULE_AUGMENTATIONS_CONSIDER_MOVING_THEM_TO_THE_EN,
+                );
+            }
+
             // TS1147: Import declarations in a namespace cannot reference a module.
+            // tsc emits only TS1147 (not TS2307) when the import is inside a namespace.
             if inside_namespace {
                 self.error_at_node(
                     import.module_specifier,
@@ -292,6 +306,17 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
                 );
             }
+
+            let import_alias_sym_id = self.ctx.binder.node_symbols.get(&stmt_idx.0).copied();
+            should_emit_module_not_found = if inside_namespace {
+                self.namespace_import_alias_is_referenced(
+                    containing_module_node,
+                    stmt_idx,
+                    import_alias_sym_id,
+                )
+            } else {
+                true
+            };
 
             // TS2439: Ambient modules cannot use relative imports
             if containing_module_name.is_some()
@@ -761,6 +786,9 @@ impl<'a> CheckerState<'a> {
         }
 
         if force_module_not_found {
+            if !should_emit_module_not_found {
+                return;
+            }
             let (message, code) = self
                 .module_not_found_diagnostic_for_site(module_name, ModuleNotFoundSite::RequireLike);
             let (message, code) = if force_module_not_found_as_2307 {
@@ -804,6 +832,9 @@ impl<'a> CheckerState<'a> {
         // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.).
         let module_key = module_name.to_string();
         if let Some(error) = self.ctx.get_resolution_error(module_name) {
+            if !should_emit_module_not_found {
+                return;
+            }
             // Extract error values before mutable borrow
             let mut error_code = error.code;
             let mut error_message = error.message.clone();
@@ -828,6 +859,9 @@ impl<'a> CheckerState<'a> {
         // Fallback: Emit module-not-found error if no specific error was found.
         // Check if we've already emitted for this module (prevents duplicate emissions).
         let module_key = module_name.to_string();
+        if !should_emit_module_not_found {
+            return;
+        }
         if self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
             return;
         }
@@ -1494,9 +1528,9 @@ impl<'a> CheckerState<'a> {
     fn node_has_ancestor(&self, mut node_idx: NodeIndex, ancestor_idx: NodeIndex) -> bool {
         let mut guard = 0u32;
         loop {
-            if node_idx == ancestor_idx {
-                return true;
-            }
+        if node_idx == ancestor_idx {
+            return true;
+        }
             guard += 1;
             if guard > 4096 {
                 return false;
@@ -1509,5 +1543,54 @@ impl<'a> CheckerState<'a> {
             }
             node_idx = ext.parent;
         }
+    }
+
+    fn namespace_import_alias_is_referenced(
+        &self,
+        containing_module_node: Option<NodeIndex>,
+        import_decl_node: NodeIndex,
+        import_alias_sym_id: Option<tsz_binder::SymbolId>,
+    ) -> bool {
+        let Some(import_alias_sym_id) = import_alias_sym_id else {
+            return true;
+        };
+
+        let Some(containing_module_node) = containing_module_node else {
+            return true;
+        };
+        let Some(module_node) = self.ctx.arena.get(containing_module_node) else {
+            return true;
+        };
+        if module_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+            return true;
+        }
+        let Some(module_decl) = self.ctx.arena.get_module(module_node) else {
+            return true;
+        };
+        let Some(module_body_node) = self.ctx.arena.get(module_decl.body) else {
+            return true;
+        };
+        if module_body_node.kind != syntax_kind_ext::MODULE_BLOCK {
+            return true;
+        }
+
+        let mut stack: Vec<NodeIndex> = self.ctx.arena.get_children(module_decl.body).into_iter().collect();
+        while let Some(current_idx) = stack.pop() {
+            if current_idx == import_decl_node {
+                continue;
+            }
+            let Some(current_node) = self.ctx.arena.get(current_idx) else {
+                continue;
+            };
+            if current_node.kind == SyntaxKind::Identifier as u16
+                && self
+                    .resolve_identifier_symbol(current_idx)
+                    .is_some_and(|sym_id| sym_id == import_alias_sym_id)
+            {
+                return true;
+            }
+            stack.extend(self.ctx.arena.get_children(current_idx));
+        }
+        false
     }
 }
