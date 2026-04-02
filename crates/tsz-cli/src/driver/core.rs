@@ -1552,9 +1552,8 @@ fn compile_inner(
     }
 
     // Handle TS5107/TS5101 deprecation diagnostics based on tsc behavior:
-    // 1. If grammar errors exist (1xxx, 8xxx range), they take precedence - suppress TS5107
-    // 2. If TS5107 exists without grammar errors, TS5107 is shown but function implementation
-    //    errors (TS2389, TS2390, TS2391) are suppressed to match tsc behavior
+    // 1. If real grammar errors exist, they take precedence and suppress the deprecation.
+    // 2. Otherwise the deprecation is early-fatal and suppresses follow-on file diagnostics.
     if has_deprecation_diagnostics {
         let is_deprecation = |code: u32| {
             code == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
@@ -1592,11 +1591,9 @@ fn compile_inner(
             // Grammar errors take precedence - suppress TS5107/TS5101
             diagnostics.retain(|d| !is_deprecation(d.code));
         } else {
-            // TS5107 present without grammar errors - suppress function implementation errors
-            diagnostics.retain(|d| {
-                // Keep all except TS2389, TS2390, TS2391 (function implementation errors)
-                d.code != 2389 && d.code != 2390 && d.code != 2391
-            });
+            // TS5107/TS5101 present without real grammar errors - match tsc's
+            // early-fatal config behavior and keep only the deprecation itself.
+            diagnostics.retain(|d| is_deprecation(d.code));
         }
     }
 

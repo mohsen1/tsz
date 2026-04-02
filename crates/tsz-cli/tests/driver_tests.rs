@@ -11342,6 +11342,42 @@ function test24554(x: Test24554) {
 }
 
 #[test]
+fn ts5107_suppresses_arrow_line_terminator_follow_on_errors() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "strict": false,
+            "alwaysStrict": false,
+            "noEmit": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"var f = ()
+    => { }
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes,
+        vec![5107],
+        "Expected only TS5107 for deprecated strict expansion, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn js_checkjs_define_property_module_exports_preserve_augmented_shape() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
