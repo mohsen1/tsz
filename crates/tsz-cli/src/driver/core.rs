@@ -1379,7 +1379,7 @@ fn compile_inner(
         let has_grammar_errors = diagnostics
             .iter()
             .any(|d| is_grammar_error_for_deprecation_priority(d.code));
-        
+
         if has_grammar_errors {
             // Grammar errors take precedence - suppress TS5107/TS5101
             config_diagnostics.retain(|d| {
