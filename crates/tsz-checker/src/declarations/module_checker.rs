@@ -55,6 +55,14 @@ impl<'a> CheckerState<'a> {
         };
 
         let module_name = &literal.text;
+        // Re-exports report TS2307 per declaration site. Clear the per-module
+        // dedupe entry up front so each `export ... from "x"` statement gets
+        // one chance to report unresolved-module diagnostics, while still
+        // allowing later resolution passes in the same statement to see that
+        // this site already emitted its TS2307.
+        self.ctx
+            .modules_with_ts2307_emitted
+            .remove(module_name.as_str());
 
         // Check for circular re-exports
         if self.would_create_cycle(module_name) {
@@ -152,12 +160,18 @@ impl<'a> CheckerState<'a> {
             .is_some()
         {
             let (message, code) = self.module_not_found_diagnostic(module_name);
+            self.ctx
+                .modules_with_ts2307_emitted
+                .insert(module_name.to_string());
             self.error_at_node(export_decl.module_specifier, &message, code);
             self.ctx.import_resolution_stack.pop();
             return;
         }
 
         let (message, code) = self.module_not_found_diagnostic(module_name);
+        self.ctx
+            .modules_with_ts2307_emitted
+            .insert(module_name.to_string());
         self.error_at_node(export_decl.module_specifier, &message, code);
 
         self.ctx.import_resolution_stack.pop();
