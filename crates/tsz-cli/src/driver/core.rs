@@ -799,27 +799,6 @@ fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
         || matches!(code, 2458 | 2754)
 }
 
-/// Config-level diagnostic codes that tsc emits alongside TS5107 even for
-/// deprecated ES5 targets. These are compiler-option validation errors, not
-/// file-level semantic errors.
-fn is_config_level_code(code: u32) -> bool {
-    matches!(
-        code,
-        2318  // Cannot find global type
-            | 5024  // Compiler option requires a value
-            | 5053  // Compiler option conflict
-            | 5069  // Option not allowed
-            | 5070  // resolveJsonModule requires node
-            | 5071  // resolveJsonModule
-            | 5095  // resolveJsonModule
-            | 5101  // Option is deprecated (TS5101 variant)
-            | 5102  // Option deprecated variant
-            | 6059  // rootDir
-            | 6082  // Only emit .d.ts declaration files
-            | 18003 // No inputs found
-    )
-}
-
 fn compile_inner(
     args: &CliArgs,
     cwd: &Path,
