@@ -700,7 +700,7 @@ impl<'a> CheckerState<'a> {
             ) || (tsz_solver::contains_type_parameters(self.ctx.types, type_id)
                 && !is_type_parameter_like(self.ctx.types, type_id))
         };
-        
+
         // Check if both source and target are simple generic Applications with the same base.
         // In this case, don't suppress - let the variance check or structural comparison
         // handle it. This fixes cases like `Foo<T>` vs `Foo<U>` where T and U are different
