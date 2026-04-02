@@ -594,6 +594,10 @@ impl<'a> CheckerState<'a> {
             && self.alias_resolves_to_type_only(local_sym_id)
             && let Some(base_node) = self.ctx.arena.get(access.expression)
             && let Some(base_ident) = self.ctx.arena.get_identifier(base_node)
+            && !self.source_file_has_value_import_binding_named(
+                access.expression,
+                &base_ident.escaped_text,
+            )
         {
             self.report_wrong_meaning_diagnostic(
                 &base_ident.escaped_text,
@@ -642,16 +646,18 @@ impl<'a> CheckerState<'a> {
                 // Applies to both enum and namespace member access.
                 if let Some(local_sym_id) = self.resolve_identifier_symbol(access.expression)
                     && self.alias_resolves_to_type_only(local_sym_id)
+                    && let Some(base_node) = self.ctx.arena.get(access.expression)
+                    && let Some(base_ident) = self.ctx.arena.get_identifier(base_node)
+                    && !self.source_file_has_value_import_binding_named(
+                        access.expression,
+                        &base_ident.escaped_text,
+                    )
                 {
-                    if let Some(base_node) = self.ctx.arena.get(access.expression)
-                        && let Some(base_ident) = self.ctx.arena.get_identifier(base_node)
-                    {
-                        self.report_wrong_meaning_diagnostic(
-                            &base_ident.escaped_text,
-                            access.expression,
-                            crate::query_boundaries::name_resolution::NameLookupKind::Type,
-                        );
-                    }
+                    self.report_wrong_meaning_diagnostic(
+                        &base_ident.escaped_text,
+                        access.expression,
+                        crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                    );
                     return TypeId::ERROR;
                 }
 
@@ -1727,6 +1733,28 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
             if self.is_namespace_value_type(object_type) && !enum_instance_like_access {
+                let hidden_qualified_namespace_member_apparent_type = self
+                    .qualified_namespace_member_hidden_on_exported_surface(
+                        idx,
+                        access.expression,
+                        property_name,
+                    );
+                let hidden_qualified_namespace_member =
+                    hidden_qualified_namespace_member_apparent_type.is_some();
+                if !hidden_qualified_namespace_member {
+                    let namespace_object_type = self.resolve_type_for_property_access(object_type);
+                    if let Some(member_type) =
+                        self.resolve_namespace_value_member(namespace_object_type, property_name)
+                    {
+                        return self.finalize_property_access_result(
+                            idx,
+                            member_type,
+                            skip_flow_narrowing,
+                            false,
+                        );
+                    }
+                }
+
                 // When the object type is a TypeQuery (typeof M) for a namespace,
                 // try to resolve the property from the namespace symbol's exports.
                 // This handles `var m: typeof M; m.Point` where `m` is a variable
