@@ -72,43 +72,30 @@ impl ModuleResolver {
                             &subpath_key,
                             conditions,
                         ) {
-                            // CRITICAL: For self-references, we must ensure the resolved file
-                            // is the EXACT target specified in exports, not a TypeScript source
-                            // file found via extension substitution.
-                            //
-                            // When exports specify "./index.js" but the file doesn't exist,
-                            // and extension substitution finds "./index.ts", this should NOT
-                            // count as successful resolution. It would cause TS1479 (format
-                            // mismatch) instead of the expected TS2209/TS2307.
-                            //
-                            // We verify this by checking if the resolved path has the same
-                            // extension as what was specified in the exports target.
-                            let export_target_path = self.resolve_export_target_to_string(
-                                exports,
-                                conditions,
-                            ).map(|target| current.join(target.trim_start_matches("./")));
+                            // Check if the resolved file is a TypeScript file (.ts, .mts, .cts, .d.ts, etc.)
+                            // that was found via extension substitution for a .js export target.
+                            // For self-references, this should count as resolution failure to emit
+                            // the correct error (TS2307) instead of TS1479 (format mismatch).
+                            let resolved_str = resolved.to_string_lossy();
+                            let is_ts_file = resolved_str.ends_with(".ts")
+                                || resolved_str.ends_with(".mts")
+                                || resolved_str.ends_with(".cts");
                             
-                            if let Some(ref target_path) = export_target_path {
-                                // Check if the resolved path has the same extension as the target
-                                let target_ext = target_path.extension().and_then(|e| e.to_str());
-                                let resolved_ext = resolved.extension().and_then(|e| e.to_str());
-                                
-                                // If extensions don't match (e.g., target is .js but resolved is .ts),
-                                // this is extension substitution - treat as failed self-reference
-                                if target_ext == resolved_ext && resolved.is_file() {
-                                    return SelfReferenceResultV2::Resolved(ResolvedModule {
-                                        resolved_path: resolved.clone(),
-                                        resolved_using_ts_extension: false,
-                                        is_external: false,
-                                        package_name: Some(package_name.to_string()),
-                                        original_specifier: original_specifier.to_string(),
-                                        extension: ModuleExtension::from_path(&resolved),
-                                    });
-                                }
+                            if !is_ts_file {
+                                // Only count as resolved if it's not a TypeScript file
+                                return SelfReferenceResultV2::Resolved(ResolvedModule {
+                                    resolved_path: resolved.clone(),
+                                    resolved_using_ts_extension: false,
+                                    is_external: false,
+                                    package_name: Some(package_name.to_string()),
+                                    original_specifier: original_specifier.to_string(),
+                                    extension: ModuleExtension::from_path(&resolved),
+                                });
                             }
+                            // If it's a TypeScript file, fall through to ExportsFailed
                         }
-                        // Self-reference detected but exports didn't resolve correctly
-                        // This should emit TS2209, not continue to node_modules
+                        // Self-reference detected but exports didn't resolve to an existing file
+                        // Return ExportsFailed to signal that this should not continue to node_modules
                         return SelfReferenceResultV2::ExportsFailed;
                     }
                     // Name matches but no exports field - not a self-reference for Node16+
