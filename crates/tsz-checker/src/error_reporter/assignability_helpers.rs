@@ -2,6 +2,7 @@
 //! Extracted from `assignability.rs` for maintainability.
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+use crate::error_reporter::assignability::is_object_prototype_method;
 use crate::error_reporter::fingerprint_policy::{
     DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
 };
@@ -431,6 +432,8 @@ impl<'a> CheckerState<'a> {
 
         let mut ordered: Vec<(usize, tsz_common::interner::Atom)> =
             property_names.iter().copied().enumerate().collect();
+        let named_target = self.named_type_display_name(target_type).is_some();
+        let date_target = self.named_type_display_name(target_type).as_deref() == Some("Date");
         ordered.sort_by(|(left_index, left_name), (right_index, right_name)| {
             if array_like_target {
                 let left_text = self.ctx.types.resolve_atom_ref(*left_name);
@@ -448,6 +451,42 @@ impl<'a> CheckerState<'a> {
                     (Some(_), None) => return std::cmp::Ordering::Less,
                     (None, Some(_)) => return std::cmp::Ordering::Greater,
                     (None, None) => {}
+                }
+            }
+
+            if date_target {
+                let date_rank = |name: &str| match name {
+                    "toDateString" => Some(0_u8),
+                    "toTimeString" => Some(1),
+                    "toLocaleDateString" => Some(2),
+                    "toLocaleTimeString" => Some(3),
+                    _ => None,
+                };
+                let left_text = self.ctx.types.resolve_atom_ref(*left_name);
+                let right_text = self.ctx.types.resolve_atom_ref(*right_name);
+                match (date_rank(&left_text), date_rank(&right_text)) {
+                    (Some(left_rank), Some(right_rank)) => {
+                        let rank_ord = left_rank.cmp(&right_rank);
+                        if rank_ord != std::cmp::Ordering::Equal {
+                            return rank_ord;
+                        }
+                    }
+                    (Some(_), None) => return std::cmp::Ordering::Less,
+                    (None, Some(_)) => return std::cmp::Ordering::Greater,
+                    (None, None) => {}
+                }
+            }
+
+            if named_target {
+                let left_text = self.ctx.types.resolve_atom_ref(*left_name);
+                let right_text = self.ctx.types.resolve_atom_ref(*right_name);
+                match (
+                    is_object_prototype_method(&left_text),
+                    is_object_prototype_method(&right_text),
+                ) {
+                    (false, true) => return std::cmp::Ordering::Less,
+                    (true, false) => return std::cmp::Ordering::Greater,
+                    _ => {}
                 }
             }
 

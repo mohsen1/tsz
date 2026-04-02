@@ -185,6 +185,93 @@ o[numEnumKey];
 }
 
 #[test]
+fn test_did_you_mean_elaborations_for_expressions_which_could_be_called_regression() {
+    let source = r#"
+class Bar {
+    x!: string;
+}
+
+declare function getNum(): number;
+
+declare function foo(arg: { x: Bar, y: Date }, item: number, items?: [number, number, number]): void;
+
+foo({
+    x: Bar,
+    y: Date
+}, getNum());
+
+foo({
+    x: new Bar(),
+    y: new Date()
+}, getNum);
+
+
+foo({
+    x: new Bar(),
+    y: new Date()
+}, getNum(), [
+    1,
+    2,
+    getNum
+]);
+"#;
+
+    let diagnostics = compile_and_get_raw_diagnostics_named_with_lib_and_options(
+        "test.ts",
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start, diag.message_text.clone()))
+        .collect();
+
+    let expected = vec![
+        (
+            2741,
+            source
+                .match_indices("x: Bar")
+                .nth(1)
+                .expect("object literal x: Bar")
+                .0 as u32
+                + 3,
+            "Property 'x' is missing in type 'typeof Bar' but required in type 'Bar'."
+                .to_string(),
+        ),
+        (
+            2740,
+            source
+                .match_indices("y: Date")
+                .nth(1)
+                .expect("object literal y: Date")
+                .0 as u32
+                + 3,
+            "Type 'DateConstructor' is missing the following properties from type 'Date': toDateString, toTimeString, toLocaleDateString, toLocaleTimeString, and 38 more.".to_string(),
+        ),
+        (
+            2345,
+            source.find("getNum);").expect("callable arg") as u32,
+            "Argument of type '() => number' is not assignable to parameter of type 'number'."
+                .to_string(),
+        ),
+        (
+            2322,
+            source.rfind("getNum\n").expect("array callable element") as u32,
+            "Type '() => number' is not assignable to type 'number'.".to_string(),
+        ),
+    ];
+
+    assert_eq!(
+        actual, expected,
+        "Conformance regression for didYouMeanElaborationsForExpressionsWhichCouldBeCalled.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_invokable_union_assignments_keep_both_ts2322_diagnostics() {
     let source = r#"
 interface ConstructableA {
