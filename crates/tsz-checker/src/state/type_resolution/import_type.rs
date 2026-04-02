@@ -585,6 +585,28 @@ impl<'a> CheckerState<'a> {
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(&module_name)
         {
+            // Check if there's already a resolution error (TS2307) - don't emit TS2694 as a cascading error
+            if self
+                .ctx
+                .get_resolution_error_with_mode(&module_name, resolution_mode_override)
+                .is_some()
+            {
+                return TypeId::ERROR;
+            }
+            // Check if the module can actually be resolved from the current file
+            // If not, don't emit TS2694 (TS2307 will be emitted elsewhere)
+            if self
+                .ctx
+                .resolve_import_target_from_file_with_mode(
+                    self.ctx.current_file_idx,
+                    &module_name,
+                    resolution_mode_override,
+                )
+                .is_none()
+                && self.ctx.resolve_import_target(&module_name).is_none()
+            {
+                return TypeId::ERROR;
+            }
             if let Some(member_segments) = member_segments.as_ref()
                 && let Some(first_segment) = member_segments.first()
             {
@@ -605,6 +627,28 @@ impl<'a> CheckerState<'a> {
 
         // 2. Binder module_exports (cross-file)
         if self.ctx.binder.module_exports.contains_key(&module_name) {
+            // Check if there's already a resolution error (TS2307) - don't emit TS2694 as a cascading error
+            if self
+                .ctx
+                .get_resolution_error_with_mode(&module_name, resolution_mode_override)
+                .is_some()
+            {
+                return TypeId::ERROR;
+            }
+            // Check if the module can actually be resolved from the current file
+            // If not, don't emit TS2694 (TS2307 will be emitted elsewhere)
+            if self
+                .ctx
+                .resolve_import_target_from_file_with_mode(
+                    self.ctx.current_file_idx,
+                    &module_name,
+                    resolution_mode_override,
+                )
+                .is_none()
+                && self.ctx.resolve_import_target(&module_name).is_none()
+            {
+                return TypeId::ERROR;
+            }
             if let Some(member_segments) = member_segments.as_ref()
                 && let Some(first_segment) = member_segments.first()
             {
@@ -642,6 +686,28 @@ impl<'a> CheckerState<'a> {
 
         // 4. Declared modules (ambient modules with body)
         if self.ctx.binder.declared_modules.contains(&module_name) {
+            // Check if there's already a resolution error (TS2307) - don't emit TS2694 as a cascading error
+            if self
+                .ctx
+                .get_resolution_error_with_mode(&module_name, resolution_mode_override)
+                .is_some()
+            {
+                return TypeId::ERROR;
+            }
+            // Check if the module can actually be resolved from the current file
+            // If not, don't emit TS2694 (TS2307 will be emitted elsewhere)
+            if self
+                .ctx
+                .resolve_import_target_from_file_with_mode(
+                    self.ctx.current_file_idx,
+                    &module_name,
+                    resolution_mode_override,
+                )
+                .is_none()
+                && self.ctx.resolve_import_target(&module_name).is_none()
+            {
+                return TypeId::ERROR;
+            }
             if let Some(member_segments) = member_segments.as_ref()
                 && let Some(first_segment) = member_segments.first()
             {
@@ -709,6 +775,28 @@ impl<'a> CheckerState<'a> {
             // was never resolved. Check if any project file matches.
             let key = (self.ctx.current_file_idx, module_name.clone());
             if paths.contains_key(&key) {
+                // Check if there's already a resolution error (TS2307) - don't emit TS2694 as a cascading error
+                if self
+                    .ctx
+                    .get_resolution_error_with_mode(&module_name, resolution_mode_override)
+                    .is_some()
+                {
+                    return TypeId::ERROR;
+                }
+                // Check if the module can actually be resolved from the current file
+                // If not, don't emit TS2694 (TS2307 will be emitted elsewhere)
+                if self
+                    .ctx
+                    .resolve_import_target_from_file_with_mode(
+                        self.ctx.current_file_idx,
+                        &module_name,
+                        resolution_mode_override,
+                    )
+                    .is_none()
+                    && self.ctx.resolve_import_target(&module_name).is_none()
+                {
+                    return TypeId::ERROR;
+                }
                 if let Some(member_segments) = member_segments.as_ref()
                     && let Some(first_segment) = member_segments.first()
                 {
@@ -728,8 +816,17 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Relative specifier with no resolution data — we can't confirm it doesn't
-        // exist. Return ERROR without emitting TS2307 to avoid false positives.
+        // Relative specifier with no resolution data — emit TS2307 if the module
+        // cannot be found in the binder's module exports. This ensures we report
+        // module-not-found errors for import type expressions like `typeof import("./missing")`.
+        if report_unresolved_imports && !self.ctx.binder.module_exports.contains_key(&module_name) {
+            let (message, code) = self.module_not_found_diagnostic_for_site(
+                &module_name,
+                ModuleNotFoundSite::ImportType,
+            );
+            self.error_at_node(specifier_node, &message, code);
+        }
+
         TypeId::ERROR
     }
 
