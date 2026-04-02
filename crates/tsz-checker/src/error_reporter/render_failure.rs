@@ -1065,15 +1065,12 @@ impl<'a> CheckerState<'a> {
                 | query_utils::ArrayLikeKind::Tuple
                 | query_utils::ArrayLikeKind::Readonly(_)
         );
-        let source_is_callable = [source_type, source]
-            .into_iter()
-            .any(|candidate| {
-                tsz_solver::type_queries::get_callable_shape(self.ctx.types, candidate).is_some()
-                    || tsz_solver::type_queries::get_function_shape(self.ctx.types, candidate)
-                        .is_some()
-                    || tsz_solver::type_queries::get_construct_signatures(self.ctx.types, candidate)
-                        .is_some_and(|signatures| !signatures.is_empty())
-            });
+        let source_is_callable = [source_type, source].into_iter().any(|candidate| {
+            tsz_solver::type_queries::get_callable_shape(self.ctx.types, candidate).is_some()
+                || tsz_solver::type_queries::get_function_shape(self.ctx.types, candidate).is_some()
+                || tsz_solver::type_queries::get_construct_signatures(self.ctx.types, candidate)
+                    .is_some_and(|signatures| !signatures.is_empty())
+        });
         let target_has_stable_name = self.named_type_display_name(target_type).is_some();
         let date_target = self.named_type_display_name(target_type).as_deref() == Some("Date");
         let filtered_names: Vec<_> = property_names
@@ -1094,10 +1091,7 @@ impl<'a> CheckerState<'a> {
                 } else if target_has_stable_name {
                     !matches!(
                         s.as_ref(),
-                        "constructor"
-                            | "hasOwnProperty"
-                            | "isPrototypeOf"
-                            | "propertyIsEnumerable"
+                        "constructor" | "hasOwnProperty" | "isPrototypeOf" | "propertyIsEnumerable"
                     )
                 } else {
                     !is_object_prototype_method(&s)
@@ -1239,9 +1233,7 @@ impl<'a> CheckerState<'a> {
         {
             name
         } else {
-            self.format_type_for_assignability_message(
-                self.widen_type_for_display(display_source),
-            )
+            self.format_type_for_assignability_message(self.widen_type_for_display(display_source))
         };
         let tgt_str = if depth == 0 {
             self.format_assignability_type_for_message(target, source)
