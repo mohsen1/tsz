@@ -138,6 +138,54 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check if a declaration is inside a `declare namespace` (identifier-named)
+    /// but NOT inside a `declare module "..."` (string-literal-named).
+    ///
+    /// This distinction matters for TS2395: tsc suppresses the "individual
+    /// declarations must be all exported or all local" check inside pure ambient
+    /// namespaces but still emits it inside ambient module declarations.
+    pub(super) fn is_in_ambient_namespace_not_module(&self, decl_idx: NodeIndex) -> bool {
+        if !self.ctx.arena.is_in_ambient_context(decl_idx) {
+            return false;
+        }
+        // Walk up to find the enclosing MODULE_DECLARATION and check if its
+        // name is a string literal (declare module "...") or identifier
+        // (declare namespace X).
+        let mut current = decl_idx;
+        loop {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                // Reached top without finding a module declaration -- if we're
+                // in ambient context it's because of a .d.ts file, which is
+                // equivalent to a namespace context.
+                return true;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return true;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return true;
+            };
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                // Check if the module name is a string literal
+                if let Some(module_data) = self.ctx.arena.get_module(parent_node) {
+                    if let Some(name_node) = self.ctx.arena.get(module_data.name) {
+                        if name_node.is_string_literal() {
+                            // declare module "..." -- NOT a pure namespace
+                            return false;
+                        }
+                    }
+                }
+                // Identifier-named module declaration (namespace) -- keep
+                // walking up in case there's a string-literal module above.
+            }
+            if parent_node.kind == syntax_kind_ext::SOURCE_FILE {
+                return true;
+            }
+            current = parent;
+        }
+    }
+
     /// Get the SymbolId of the enclosing namespace for a declaration.
     /// Returns `SymbolId::NONE` for file/global scope declarations.
     /// Unlike `get_enclosing_namespace` (which returns a `NodeIndex`), this resolves
