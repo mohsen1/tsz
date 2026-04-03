@@ -1089,7 +1089,8 @@ impl Runner {
                         Ok((TestResult::Pass, file_preview.take()))
                     } else {
                         // Sort the codes for consistent display
-                        let mut expected = tsc_result.error_codes.clone();
+                        // Use filtered codes (tsc_error_codes) not unfiltered (tsc_result.error_codes)
+                        let mut expected = tsc_error_codes.clone();
                         let mut actual = compile_result.error_codes.clone();
                         expected.sort();
                         actual.sort();
@@ -1313,7 +1314,8 @@ impl Runner {
                     {
                         Ok((TestResult::Pass, file_preview.take()))
                     } else {
-                        let mut expected = tsc_result.error_codes.clone();
+                        // Use filtered codes (tsc_error_codes) not unfiltered (tsc_result.error_codes)
+                        let mut expected = tsc_error_codes.clone();
                         let mut actual = compile_result.error_codes.clone();
                         expected.sort();
                         actual.sort();
@@ -1510,7 +1512,8 @@ impl Runner {
                     {
                         Ok((TestResult::Pass, file_preview.take()))
                     } else {
-                        let mut expected = tsc_result.error_codes.clone();
+                        // Use filtered codes (tsc_error_codes) not unfiltered (tsc_result.error_codes)
+                        let mut expected = tsc_error_codes.clone();
                         let mut actual = compile_result.error_codes.clone();
                         expected.sort();
                         actual.sort();
