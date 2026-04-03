@@ -275,8 +275,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     crate::query_boundaries::common::is_generic_application_with_type_params(
                         self.ctx.types,
                         resolved_object,
-                    )
-                    || tsz_solver::is_generic_application(self.ctx.types, object_type);
+                    ) || tsz_solver::is_generic_application(self.ctx.types, object_type);
 
                 // Suppress TS2339 when the index type itself contains type parameters.
                 // This handles cases like `Options<State, Actions>[Key]` where Key is a type parameter.
