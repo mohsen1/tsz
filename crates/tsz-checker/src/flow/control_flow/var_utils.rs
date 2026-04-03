@@ -84,7 +84,7 @@ impl<'a> FlowAnalyzer<'a> {
         let Some(switch_idx) = self
             .arena
             .get_extended(flow.node)
-            .and_then(|ext| (ext.parent.is_some()).then_some(ext.parent))
+            .and_then(|ext| ext.parent.into_option())
         else {
             return false;
         };

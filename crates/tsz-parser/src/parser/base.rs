@@ -73,6 +73,14 @@ impl NodeIndex {
     pub const fn is_some(&self) -> bool {
         self.0 != u32::MAX
     }
+
+    /// Convert a sentinel-based optional `NodeIndex` into `Option<NodeIndex>`.
+    /// Returns `None` if `self` is `NONE`, otherwise `Some(self)`.
+    #[inline]
+    #[must_use]
+    pub const fn into_option(self) -> Option<NodeIndex> {
+        if self.0 == u32::MAX { None } else { Some(self) }
+    }
 }
 
 /// A list of node indices, representing children or a node array.

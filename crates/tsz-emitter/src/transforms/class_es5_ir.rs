@@ -1617,7 +1617,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     return None;
                 }
                 // Include if has initializer
-                (prop_data.initializer.is_some()).then_some(member_idx)
+                prop_data.initializer.is_some().then_some(member_idx)
             })
             .collect();
 

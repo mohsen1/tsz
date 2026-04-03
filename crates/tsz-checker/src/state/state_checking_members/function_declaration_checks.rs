@@ -358,7 +358,7 @@ impl<'a> CheckerState<'a> {
             let is_ambient =
                 self.has_declare_modifier(&func.modifiers) || self.ctx.is_declaration_file();
             if let Some(func_name) = self.get_function_name_from_node(func_idx) {
-                let name_node = (func.name.is_some()).then_some(func.name);
+                let name_node = func.name.into_option();
                 if is_ambient {
                     use crate::diagnostics::diagnostic_codes;
                     self.error_at_node_msg(
@@ -856,7 +856,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
         let func_name = self.get_function_name_from_node(func_idx);
-        let name_node = (func.name.is_some()).then_some(func.name);
+        let name_node = func.name.into_option();
         let has_wrapped_circular_return = !has_type_annotation
             && return_type == TypeId::ANY
             && self.function_has_wrapped_self_call_in_return_expression(func_idx, func.body);

@@ -740,7 +740,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx
                         .arena
                         .get_extended(clause_idx)
-                        .and_then(|ext| (ext.parent.is_some()).then_some(ext.parent))
+                        .and_then(|ext| ext.parent.into_option())
                 } else {
                     self.ctx.binder.get_switch_for_clause(clause_idx)
                 }?;
