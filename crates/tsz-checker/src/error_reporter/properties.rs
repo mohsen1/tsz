@@ -502,8 +502,7 @@ impl<'a> CheckerState<'a> {
             ) || crate::query_boundaries::common::contains_type_parameters(
                 self.ctx.types,
                 indexed_info.object_type,
-            )
-            {
+            ) {
                 return;
             }
         }
@@ -551,8 +550,7 @@ impl<'a> CheckerState<'a> {
         // Suppress TS2339 for generic mapped types that may contain the property.
         // For example, `T extends { [K in keyof U]: V }` may have properties
         // that we can't determine until the mapped type is instantiated.
-        if crate::query_boundaries::common::is_generic_mapped_type(self.ctx.types, type_id)
-        {
+        if crate::query_boundaries::common::is_generic_mapped_type(self.ctx.types, type_id) {
             return;
         }
 
