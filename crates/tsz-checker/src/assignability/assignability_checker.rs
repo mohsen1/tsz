@@ -730,6 +730,22 @@ impl<'a> CheckerState<'a> {
             return false; // Don't suppress - let the actual assignability check run
         }
 
+        // Don't suppress for generic Applications with type parameters.
+        // This fixes false TS2769 errors when passing generic return types
+        // (e.g., IterableIterator<T> from values()) to overloads.
+        let is_generic_application_with_type_params = |ty: TypeId| -> bool {
+            if let Some(app) = tsz_solver::type_queries::get_type_application(self.ctx.types, ty) {
+                if app.args.iter().any(|&arg| tsz_solver::contains_type_parameters(self.ctx.types, arg)) {
+                    return true;
+                }
+            }
+            false
+        };
+
+        if is_generic_application_with_type_params(source) || is_generic_application_with_type_params(target) {
+            return false; // Don't suppress - let the actual assignability check run
+        }
+
         matches!(source, TypeId::ERROR)
             || matches!(target, TypeId::ERROR | TypeId::ANY)
             || contains_error_application(target)
