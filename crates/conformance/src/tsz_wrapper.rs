@@ -1568,22 +1568,21 @@ fn create_symlink_path(target: &Path, link: &Path) -> std::io::Result<()> {
     }
 }
 
-/// Strip @ directive comments from test file content
-/// Removes lines like `// @strict: true` from the code
+/// Strip @ directive comments from test file content.
+/// Removes lines like `// @strict: true` from the code entirely
+/// (not just blanked) so that diagnostic line numbers match the
+/// TSC cache, which was generated with line removal.
 pub fn strip_directive_comments(content: &str) -> String {
     content
         .lines()
-        .map(|line| {
+        .filter(|line| {
             let trimmed = line.trim().trim_start_matches('\u{feff}');
-            let is_directive = trimmed.starts_with("//")
+            // Keep lines that are not @ directives
+            // Directives start with // @key: value (but not /// triple-slash refs)
+            !(trimmed.starts_with("//")
                 && !trimmed.starts_with("///")
                 && trimmed.contains("@")
-                && trimmed.contains(":");
-            if is_directive {
-                ""
-            } else {
-                line
-            }
+                && trimmed.contains(":"))
         })
         .collect::<Vec<_>>()
         .join("\n")
