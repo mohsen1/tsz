@@ -1539,11 +1539,18 @@ impl<'a> CheckerState<'a> {
                             // When esModuleInterop or allowSyntheticDefaultImports is
                             // enabled and the module uses `export =`, tsc allows named
                             // imports without emitting TS2614.
-                            let suppress_for_interop = exports_table.has("export=")
-                                && (self.ctx.compiler_options.es_module_interop
-                                    || self.ctx.compiler_options.allow_synthetic_default_imports);
+                            // Also suppress TS2614 when the module has a default export
+                            // and the user tried to import a named member that doesn't
+                            // exist - in these cases, tsc emits other errors like
+                            // TS2497 or TS2595 instead.
+                            let has_export_equals = exports_table.has("export=");
+                            let has_interop = self.ctx.compiler_options.es_module_interop
+                                || self.ctx.compiler_options.allow_synthetic_default_imports;
+                            let suppress_for_interop = has_export_equals && has_interop;
+                            let suppress_for_default = exports_table.has("default")
+                                && !exports_table.has(import_name);
 
-                            if !found_via_type && !suppress_for_interop {
+                            if !found_via_type && !suppress_for_interop && !suppress_for_default {
                                 // TS2614: Symbol doesn't exist but a default export does
                                 let message = format_message(
                                     diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
@@ -2274,12 +2281,17 @@ impl<'a> CheckerState<'a> {
                         }
 
                         // TS2714: In ambient context, export assignment expression must be
-                        // an identifier or qualified name
+                        // an identifier or qualified name. This check applies to both
+                        // `export = <expr>` and `export default <expr>` in ambient contexts.
                         let is_ambient =
                             is_declaration_file || self.is_ambient_declaration(stmt_idx);
                         if is_ambient
                             && !self.is_identifier_or_qualified_name(export_data.expression)
                         {
+                            // Only emit TS2714 when the expression is NOT an identifier
+                            // or qualified name. Valid forms like `export = X` or
+                            // `export default Y` (where X/Y are identifiers) should not
+                            // trigger this error.
                             self.error_at_node(
                                 export_data.expression,
                                 "The expression of an export assignment must be an identifier or qualified name in an ambient context.",
