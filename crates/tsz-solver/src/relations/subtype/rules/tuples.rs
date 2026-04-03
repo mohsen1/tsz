@@ -404,6 +404,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return Some(direct);
         }
 
+        // Guard: if the target has required properties that the instantiated
+        // Array<T> type doesn't have, the iterator protocol fallback below must
+        // NOT override the structural failure.  For example,
+        // `TemplateStringsArray` extends `ReadonlyArray<string>` but adds a
+        // required `raw` property — `never[]` (Array<never>) lacks `raw`, so the
+        // assignment must fail even though element types are compatible.
+        if self.target_has_extra_required_properties(instantiated, target) {
+            return Some(direct);
+        }
+
         // Fallback: iterator protocol compatibility.
         // If target is iterable and source array elements are assignable to the
         // yielded type, accept the assignment.
@@ -426,6 +436,55 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         Some(direct)
+    }
+
+    /// Check whether the target type has required properties that the source
+    /// array type doesn't provide.  This is used to guard the iterator protocol
+    /// fallback: if the target extends an array/iterable interface but declares
+    /// additional required properties (e.g., `TemplateStringsArray.raw`), the
+    /// mere element-type compatibility is not sufficient for assignability.
+    fn target_has_extra_required_properties(
+        &self,
+        instantiated_array: TypeId,
+        target: TypeId,
+    ) -> bool {
+        use crate::visitor::{object_shape_id, object_with_index_shape_id};
+
+        // Evaluate target to resolve Lazy(DefId) / Application types.
+        let target_eval = crate::evaluation::evaluate::evaluate_type(self.interner, target);
+
+        // Get the target's object shape
+        let target_shape_id = object_shape_id(self.interner, target_eval)
+            .or_else(|| object_with_index_shape_id(self.interner, target_eval));
+        let Some(target_shape_id) = target_shape_id else {
+            return false;
+        };
+        let target_shape = self.interner.object_shape(target_shape_id);
+
+        // Get the source array's object shape
+        let source_eval =
+            crate::evaluation::evaluate::evaluate_type(self.interner, instantiated_array);
+        let source_shape_id = object_shape_id(self.interner, source_eval)
+            .or_else(|| object_with_index_shape_id(self.interner, source_eval));
+        let source_shape = source_shape_id.map(|id| self.interner.object_shape(id));
+
+        // Check each required target property
+        for t_prop in &target_shape.properties {
+            if t_prop.optional {
+                continue;
+            }
+            // If the source doesn't have this property, the target has extra requirements
+            let found = source_shape.as_ref().is_some_and(|shape| {
+                shape
+                    .properties
+                    .binary_search_by_key(&t_prop.name, |p| p.name)
+                    .is_ok()
+            });
+            if !found {
+                return true;
+            }
+        }
+        false
     }
 
     /// Extract the yield type from an Iterable-like target type.
