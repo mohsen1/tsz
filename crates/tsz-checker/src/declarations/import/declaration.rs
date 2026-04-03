@@ -184,6 +184,42 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a source file contains a module augmentation (not global augmentation).
+    /// A module augmentation is a `declare module "X" { ... }` statement that extends
+    /// an existing module's type definitions. Files with only module augmentations
+    /// (and no regular exports) should not trigger TS2307 because they serve a valid
+    /// purpose in the type system.
+    fn source_file_has_module_augmentation(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt) = arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            // Must NOT be a global augmentation
+            if (stmt.flags as u32) & node_flags::GLOBAL_AUGMENTATION != 0 {
+                continue;
+            }
+            let Some(module) = arena.get_module(stmt) else {
+                continue;
+            };
+            let Some(name_node) = arena.get(module.name) else {
+                continue;
+            };
+            // Module augmentation has a string literal name (not "global" keyword)
+            if name_node.kind == SyntaxKind::StringLiteral as u16 {
+                return true;
+            }
+        }
+
+        false
+    }
+
     // =========================================================================
     // Import Declaration Validation
     // =========================================================================
@@ -1021,9 +1057,7 @@ impl<'a> CheckerState<'a> {
                             && self.ctx.compiler_options.resolve_json_module;
                         // Check if this is a .d.ts file with only `export=` (no named exports).
                         // Such files should NOT emit TS2307 here because they have a valid
-                        // export surface via the export assignment. ES-module imports from
-                        // such files are handled separately by the module resolution error
-                        // checking logic.
+                        // export surface via the export assignment.
                         let is_dts_with_only_export_assignment = if file_name.ends_with(".d.ts") {
                             if let Some(binder) = self.ctx.get_binder_for_file(target_idx) {
                                 if let Some(exports) = binder.module_exports.get(file_name) {
@@ -1037,9 +1071,19 @@ impl<'a> CheckerState<'a> {
                         } else {
                             false
                         };
+                        // Check if the file contains module augmentation (e.g., `declare module "X" { ... }`).
+                        // Files with module augmentations serve a valid purpose (extending module types)
+                        // and should not trigger TS2307 even if they have no regular exports.
+                        let has_module_augmentation =
+                            self.source_file_has_module_augmentation(arena, source_file);
                         // For non-JS, non-JSON files without export surface, emit TS2307
                         // BUT skip if it's a .d.ts file with only export= (no named exports)
-                        if !is_js_like && !is_json_module && !is_dts_with_only_export_assignment {
+                        // OR if it's a file with module augmentation
+                        if !is_js_like
+                            && !is_json_module
+                            && !is_dts_with_only_export_assignment
+                            && !has_module_augmentation
+                        {
                             let (message, code) = self.module_not_found_diagnostic(module_name);
                             if !self.ctx.modules_with_ts2307_emitted.contains(module_name) {
                                 self.ctx
