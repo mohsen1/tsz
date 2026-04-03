@@ -719,12 +719,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                         result
                     } else {
-                        // Can't determine the actual type - return PropertyNotFound
-                        // so the checker can emit TS2339 if appropriate
-                        PropertyAccessResult::PropertyNotFound {
-                            type_id: obj_type,
-                            property_name: prop_atom,
-                        }
+                        // Type is deferred (contains type parameters that prevent evaluation).
+                        // Return ANY to avoid false TS2339 errors - the checker will handle
+                        // the actual error reporting for circular or unresolvable types.
+                        PropertyAccessResult::simple(TypeId::ANY)
                     }
                 }
             }
@@ -744,12 +742,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                         result
                     } else {
-                        // Can't resolve type query - return PropertyNotFound
-                        // so the checker can emit TS2339 if appropriate
-                        PropertyAccessResult::PropertyNotFound {
-                            type_id: obj_type,
-                            property_name: prop_atom,
-                        }
+                        // TypeQuery type is deferred - return ANY to avoid false TS2339
+                        PropertyAccessResult::simple(TypeId::ANY)
                     }
                 }
             }
@@ -780,12 +774,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                         result
                     } else {
-                        // Can't evaluate - return PropertyNotFound
-                        // so the checker can emit TS2339 if appropriate
-                        PropertyAccessResult::PropertyNotFound {
-                            type_id: obj_type,
-                            property_name: prop_atom,
-                        }
+                        // Conditional type is deferred - return ANY to avoid false TS2339
+                        PropertyAccessResult::simple(TypeId::ANY)
                     }
                 }
             }
@@ -843,12 +833,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                         result
                     } else {
-                        // Can't evaluate - return PropertyNotFound
-                        // so the checker can emit TS2339 if appropriate
-                        PropertyAccessResult::PropertyNotFound {
-                            type_id: obj_type,
-                            property_name: prop_atom,
-                        }
+                        // IndexAccess type is deferred - return ANY to avoid false TS2339
+                        PropertyAccessResult::simple(TypeId::ANY)
                     }
                 }
             }
@@ -911,12 +897,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                         result
                     } else {
-                        // Can't evaluate - return PropertyNotFound
-                        // so the checker can emit TS2339 if appropriate
-                        PropertyAccessResult::PropertyNotFound {
-                            type_id: obj_type,
-                            property_name: prop_atom,
-                        }
+                        // Lazy type couldn't be resolved (likely circular) - return ANY
+                        // to avoid false TS2339 errors
+                        PropertyAccessResult::simple(TypeId::ANY)
                     }
                 }
             }
