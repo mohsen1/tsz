@@ -352,23 +352,86 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if let Some((source_fn, target_fn)) = function_info
             && source_fn.params.len() <= target_fn.params.len()
         {
-            for (source_param, target_param) in source_fn.params.iter().zip(target_fn.params.iter())
-            {
+            // When the target function is generic (e.g., `<A>(x: A) => Box<A>`),
+            // directly insert mappings for source type parameters that appear in
+            // parameter or return positions, bypassing the untracked-type-param
+            // and references-other-tracked guards. These guards prevent
+            // contamination from nested generic signatures, but contextual type
+            // parameters like `A` from the variable's type annotation are
+            // legitimate targets. Without this, inference variables (__infer_*)
+            // leak into final types because e.g. `U -> Box<A>` gets blocked.
+            if !target_fn.type_params.is_empty() {
+                for (source_param, target_param) in
+                    source_fn.params.iter().zip(target_fn.params.iter())
+                {
+                    if let Some(TypeData::TypeParameter(tp)) =
+                        self.interner.lookup(source_param.type_id)
+                        && tracked_type_params.contains(&tp.name)
+                        && substitution.get(tp.name).is_none()
+                        && target_param.type_id != TypeId::UNKNOWN
+                        && target_param.type_id != TypeId::ERROR
+                    {
+                        substitution.insert(tp.name, target_param.type_id);
+                    }
+                }
+                if let Some(TypeData::TypeParameter(tp)) =
+                    self.interner.lookup(source_fn.return_type)
+                    && tracked_type_params.contains(&tp.name)
+                    && substitution.get(tp.name).is_none()
+                    && target_fn.return_type != TypeId::UNKNOWN
+                    && target_fn.return_type != TypeId::ERROR
+                {
+                    substitution.insert(tp.name, target_fn.return_type);
+                }
+                // Recurse for non-TypeParameter positions (nested structures)
+                for (source_param, target_param) in
+                    source_fn.params.iter().zip(target_fn.params.iter())
+                {
+                    if !matches!(
+                        self.interner.lookup(source_param.type_id),
+                        Some(TypeData::TypeParameter(_))
+                    ) {
+                        self.collect_return_context_substitution(
+                            source_param.type_id,
+                            target_param.type_id,
+                            tracked_type_params,
+                            substitution,
+                            visited,
+                        );
+                    }
+                }
+                if !matches!(
+                    self.interner.lookup(source_fn.return_type),
+                    Some(TypeData::TypeParameter(_))
+                ) {
+                    self.collect_return_context_substitution(
+                        source_fn.return_type,
+                        target_fn.return_type,
+                        tracked_type_params,
+                        substitution,
+                        visited,
+                    );
+                }
+            } else {
+                for (source_param, target_param) in
+                    source_fn.params.iter().zip(target_fn.params.iter())
+                {
+                    self.collect_return_context_substitution(
+                        source_param.type_id,
+                        target_param.type_id,
+                        tracked_type_params,
+                        substitution,
+                        visited,
+                    );
+                }
                 self.collect_return_context_substitution(
-                    source_param.type_id,
-                    target_param.type_id,
+                    source_fn.return_type,
+                    target_fn.return_type,
                     tracked_type_params,
                     substitution,
                     visited,
                 );
             }
-            self.collect_return_context_substitution(
-                source_fn.return_type,
-                target_fn.return_type,
-                tracked_type_params,
-                substitution,
-                visited,
-            );
             return;
         }
 
