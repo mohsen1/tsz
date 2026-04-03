@@ -294,6 +294,14 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
+                // Skip function declarations - they can merge across module augmentation
+                let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                if decl_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                    continue;
+                }
+
                 let has_conflict = self
                     .module_augmentation_top_level_name_conflicts_with_target_export_surface(
                         decl_idx,
