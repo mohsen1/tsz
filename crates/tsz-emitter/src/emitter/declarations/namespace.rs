@@ -981,8 +981,10 @@ impl<'a> Printer<'a> {
                     if let Some(module) = self.arena.get_module(check)
                         && self.get_identifier_text_idx(module.name) == name
                     {
-                        // Namespaces are values if they're instantiated
-                        if self.is_instantiated_module(module.body) {
+                        // Ambient namespaces with value members still represent
+                        // a runtime object that may exist elsewhere, so aliases
+                        // to their value members must be preserved.
+                        if self.module_decl_has_runtime_alias_target(module) {
                             found_value = true;
                         } else {
                             found_type_only = true;
@@ -1004,6 +1006,80 @@ impl<'a> Printer<'a> {
         }
         // Unresolved: conservative default - assume runtime value
         true
+    }
+
+    fn module_decl_has_runtime_alias_target(
+        &self,
+        module: &tsz_parser::parser::node::ModuleData,
+    ) -> bool {
+        if self
+            .arena
+            .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+        {
+            return self.ambient_module_body_has_runtime_value(module.body);
+        }
+
+        self.is_instantiated_module(module.body)
+    }
+
+    fn ambient_module_body_has_runtime_value(&self, module_body: NodeIndex) -> bool {
+        let Some(body_node) = self.arena.get(module_body) else {
+            return false;
+        };
+
+        if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+            let Some(inner_module) = self.arena.get_module(body_node) else {
+                return false;
+            };
+            return self.module_decl_has_runtime_alias_target(inner_module);
+        }
+
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return false;
+        };
+        let Some(statements) = &block.statements else {
+            return false;
+        };
+
+        statements.nodes.iter().any(|&stmt_idx| {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                return false;
+            };
+
+            match stmt_node.kind {
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION
+                    || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION =>
+                {
+                    false
+                }
+                k if k == syntax_kind_ext::EXPORT_DECLARATION => self
+                    .arena
+                    .get_export_decl(stmt_node)
+                    .filter(|export| !export.is_type_only)
+                    .and_then(|export| self.arena.get(export.export_clause))
+                    .is_some_and(|inner| self.ambient_namespace_statement_has_runtime_value(inner)),
+                _ => self.ambient_namespace_statement_has_runtime_value(stmt_node),
+            }
+        })
+    }
+
+    fn ambient_namespace_statement_has_runtime_value(&self, stmt_node: &Node) -> bool {
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION
+                || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION =>
+            {
+                false
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => self
+                .arena
+                .get_module(stmt_node)
+                .is_some_and(|module| self.module_decl_has_runtime_alias_target(module)),
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => self
+                .arena
+                .get_import_decl(stmt_node)
+                .is_some_and(|import| !import.is_type_only),
+            _ => true,
+        }
     }
 
     pub(in crate::emitter) fn namespace_alias_target_has_runtime_value(
@@ -1145,10 +1221,7 @@ impl<'a> Printer<'a> {
                 if self.get_identifier_text_idx(module.name) != name {
                     return None;
                 }
-                // `declare namespace` with instantiated content (classes, functions,
-                // enums) has runtime value — the `declare` keyword means the value
-                // exists elsewhere, not that there is no runtime value.
-                let runtime = self.is_instantiated_module(module.body);
+                let runtime = self.module_decl_has_runtime_alias_target(module);
                 Some((runtime, if runtime { Some(module.body) } else { None }))
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
@@ -1455,6 +1528,7 @@ impl<'a> Printer<'a> {
 
 #[cfg(test)]
 mod tests {
+    use crate::emitter::ModuleKind;
     use crate::output::printer::{PrintOptions, Printer};
     use tsz_parser::ParserState;
 
@@ -1485,6 +1559,58 @@ mod tests {
         assert!(
             output.contains("class C {"),
             "Class C should be emitted inside namespace M2.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn top_level_import_alias_to_ambient_namespace_value_emits_runtime_alias() {
+        let source = "declare namespace foo { const await: any; }\n\n// await allowed in import=namespace when not a module\nimport await = foo.await;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(
+            &parser.arena,
+            PrintOptions {
+                module: ModuleKind::ESNext,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var await = foo.await;"),
+            "Ambient namespace value aliases should be preserved in JS emit.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn top_level_import_alias_to_ambient_namespace_value_is_erased_in_modules() {
+        let source = "export {};\ndeclare namespace foo { const await: any; }\n\n// await disallowed in import=namespace when in a module\nimport await = foo.await;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(
+            &parser.arena,
+            PrintOptions {
+                module: ModuleKind::ESNext,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("var await = foo.await;"),
+            "Module-scoped ambient namespace aliases should still be erased when unused.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("export {};"),
+            "Module marker should be preserved when the alias is erased.\nOutput:\n{output}"
         );
     }
 
