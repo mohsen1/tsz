@@ -652,6 +652,7 @@ impl<'a> CheckerState<'a> {
                 && self.has_jsdoc_override_tag(param_idx),
             has_dynamic_name: false,
             has_computed_non_literal_name: false,
+            from_interface: false,
         })
     }
 
@@ -766,6 +767,7 @@ impl<'a> CheckerState<'a> {
             is_jsdoc_override: false,
             has_dynamic_name: false,
             has_computed_non_literal_name: false,
+            from_interface: true,
         };
         let is_visible = visibility != crate::class_checker::MemberVisibility::Private;
         Self::record_unified_member(info, is_visible, summary, self);
@@ -928,6 +930,7 @@ impl<'a> CheckerState<'a> {
                 is_jsdoc_override: false,
                 has_dynamic_name: false,
                 has_computed_non_literal_name: false,
+                from_interface: false,
             },
             display_name,
             kind,

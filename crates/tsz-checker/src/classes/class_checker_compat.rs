@@ -1559,6 +1559,7 @@ impl<'a> CheckerState<'a> {
                                     && self.has_jsdoc_override_tag(param_idx),
                                 has_dynamic_name: false,
                                 has_computed_non_literal_name: false,
+                                from_interface: false,
                             };
                             return Some(info);
                         }
