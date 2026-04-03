@@ -447,10 +447,17 @@ impl<'a> CheckerState<'a> {
         // the return type is `Constructor<Tagged> & T` - the instance type should have
         // properties from both sides of the intersection, but we may not resolve them
         // properly when T is still generic.
-        if let Some(members) = crate::query_boundaries::common::intersection_members(self.ctx.types, type_id) {
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
+        {
             let has_unresolved_type_param = members.iter().any(|&member| {
-                crate::query_boundaries::state::checking::is_type_parameter_like(self.ctx.types, member)
-                    || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, member)
+                crate::query_boundaries::state::checking::is_type_parameter_like(
+                    self.ctx.types,
+                    member,
+                ) || crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    member,
+                )
             });
             if has_unresolved_type_param {
                 return;

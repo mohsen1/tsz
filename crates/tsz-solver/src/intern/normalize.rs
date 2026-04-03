@@ -843,6 +843,33 @@ impl TypeInterner {
             return members.contains(&source);
         }
 
+        // Handle source union: every member must be a subtype of the target.
+        // This enables reduction of unions like `('hello' | undefined) <: (string | undefined)`
+        // which arise from optional parameter types in function subtype checks.
+        if let Some(TypeData::Union(s_members)) = s_data {
+            let s_members = self.type_list(s_members);
+            // Guard: only handle small unions to avoid O(N*M) blowup
+            if s_members.len() <= 8 {
+                return s_members
+                    .iter()
+                    .all(|&m| self.is_subtype_shallow_depth(m, target, depth - 1));
+            }
+            return false;
+        }
+
+        // Handle non-literal, non-builtin source against target union.
+        // Generalizes the existing literal and builtin checks above to cover
+        // cases like Function <: (Function | undefined).
+        if let Some(TypeData::Union(t_members)) = t_data {
+            let t_members = self.type_list(t_members);
+            if t_members.len() <= 8 {
+                return t_members
+                    .iter()
+                    .any(|&m| self.is_subtype_shallow_depth(source, m, depth - 1));
+            }
+            return false;
+        }
+
         // Handle structural type comparisons
         match (s_data, t_data) {
             (
