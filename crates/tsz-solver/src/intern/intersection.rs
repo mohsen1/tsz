@@ -400,6 +400,29 @@ impl TypeInterner {
     }
 
     fn try_merge_callables_in_intersection(&self, members: &[TypeId]) -> Option<TypeId> {
+        // Don't merge when multiple members contribute construct signatures.
+        // This preserves the intersection structure so that `resolve_intersection_new`
+        // can properly intersect the instance types (mixin pattern). Merging would
+        // collapse `(new => A) & (new => B)` into a single callable with two
+        // construct overloads treated as overloads, losing the intersection semantics.
+        let mut construct_source_count = 0;
+        for &member in members {
+            let has_construct = match self.lookup(member) {
+                Some(TypeData::Function(func_id)) => self.function_shape(func_id).is_constructor,
+                Some(TypeData::Callable(callable_id)) => !self
+                    .callable_shape(callable_id)
+                    .construct_signatures
+                    .is_empty(),
+                _ => false,
+            };
+            if has_construct {
+                construct_source_count += 1;
+                if construct_source_count > 1 {
+                    return None; // Don't merge: keep intersection of constructors
+                }
+            }
+        }
+
         let mut call_signatures: Vec<CallSignature> = Vec::new();
         let mut construct_signatures: Vec<CallSignature> = Vec::new();
         let mut properties: Vec<PropertyInfo> = Vec::new();
