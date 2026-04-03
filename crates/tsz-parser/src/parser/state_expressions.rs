@@ -699,6 +699,13 @@ impl ParserState {
             let name = self.parse_identifier_name();
             let param_end = self.token_end();
 
+            // Check if 'await' is used as parameter name in a context where it's reserved
+            // (static block or async context). This should emit TS1005 at the arrow position.
+            let name_kind = self.arena.get(name).map(|n| n.kind);
+            let is_await_param = name_kind == Some(SyntaxKind::AwaitKeyword as u16);
+            let is_await_reserved =
+                is_await_param && (self.in_static_block_context() || self.in_async_context());
+
             let param = self.arena.add_parameter(
                 syntax_kind_ext::PARAMETER,
                 param_start,
@@ -712,6 +719,10 @@ impl ParserState {
                     initializer: NodeIndex::NONE,
                 },
             );
+            // Emit TS1005 at arrow position if 'await' was used as parameter in reserved context
+            if is_await_reserved && self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+                self.error_token_expected(";");
+            }
             self.make_node_list(vec![param])
         };
 
@@ -1449,9 +1460,13 @@ impl ParserState {
                     // Special case: Don't emit TS1109 for 'await' in computed property names like { [await]: foo }
                     // In this context, 'await' is used as an identifier and CloseBracketToken is expected
                     let is_computed_property_context = next_token == SyntaxKind::CloseBracketToken;
+                    // Special case: Don't emit TS1109 for 'await' when followed by colon (labeled statement)
+                    // The labeled statement parser will emit TS1003 (Identifier expected) in static blocks
+                    let is_label_context = next_token == SyntaxKind::ColonToken;
 
                     if !has_following_expression
                         && !is_computed_property_context
+                        && !is_label_context
                         && self.in_static_block_context()
                     {
                         // In static blocks, tsc treats `await` as a keyword and

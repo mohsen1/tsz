@@ -2082,9 +2082,12 @@ impl ParserState {
         // Check if the property name requires `:` syntax (can't be a shorthand property).
         // Shorthand properties only work with identifiers, not:
         // - Reserved words (class, function, etc.)
+        // - Contextually reserved words (await in async/static contexts)
         // - String literals ("key")
         // - Numeric literals (0, 1, etc.)
         let requires_colon = self.is_reserved_word()
+            || (self.is_token(SyntaxKind::AwaitKeyword)
+                && (self.in_async_context() || self.in_static_block_context()))
             || self.is_token(SyntaxKind::StringLiteral)
             || self.is_token(SyntaxKind::NumericLiteral)
             || self.is_token(SyntaxKind::BigIntLiteral)

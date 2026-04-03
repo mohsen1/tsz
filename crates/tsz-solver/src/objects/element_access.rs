@@ -142,6 +142,7 @@ impl<'a> ElementAccessEvaluator<'a> {
                 | TypeData::Tuple(_)
                 | TypeData::Object(_)
                 | TypeData::ObjectWithIndex(_)
+                | TypeData::Callable(_)
                 | TypeData::StringIntrinsic { .. }
                 | TypeData::Literal(LiteralValue::String(_))
                 | TypeData::Intersection(_)

@@ -631,3 +631,23 @@ fn stray_at_before_enum_prefers_ts1109_over_decorator_recovery() {
         "should not emit TS1146 for stray '@' before enum, got {diags:?}"
     );
 }
+
+/// Test that 'await' as a label in a static block emits TS1003 (Identifier expected).
+#[test]
+fn test_await_label_in_static_block_emits_ts1003() {
+    let source = r#"class C {
+    static {
+        await:
+        break await;
+    }
+}"#;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+
+    // Should emit TS1003 for 'await' as label in static block
+    assert!(
+        codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED),
+        "Expected TS1003 for 'await' as label in static block, got codes: {codes:?}"
+    );
+}
