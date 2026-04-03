@@ -464,6 +464,16 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Suppress TS2339 for types that contain conditional types which may resolve
+        // to have the property once the type parameters are instantiated.
+        // For example: `FirstParameter<typeof h>["foo"]` where `FirstParameter<T>` is
+        // `T extends (x: infer P) => unknown ? P : unknown`. When the conditional type
+        // cannot be resolved (e.g., during generic inference), tsc defers the check
+        // rather than emitting a false TS2339.
+        if crate::query_boundaries::common::contains_conditional_type(self.ctx.types, type_id) {
+            return;
+        }
+
         if self
             .resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::PropertyToken)
             .is_some()

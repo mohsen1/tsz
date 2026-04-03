@@ -164,7 +164,7 @@ pub(crate) fn type_parameter_has_conditional_constraint(
 }
 
 /// Recursively check if a type contains a conditional type.
-fn contains_conditional_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+pub(crate) fn contains_conditional_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if tsz_solver::type_queries::is_conditional_type(db, type_id) {
         return true;
     }
