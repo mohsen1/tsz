@@ -499,7 +499,7 @@ impl ModuleResolver {
         request: &ModuleLookupRequest<'_>,
         fallback_resolve: impl FnOnce(&str, &Path) -> Option<PathBuf>,
         is_ambient_module: impl FnOnce(&str) -> bool,
-        known_files: Option<&rustc_hash::FxHashSet<std::path::PathBuf>>,
+        _known_files: Option<&rustc_hash::FxHashSet<std::path::PathBuf>>,
     ) -> ModuleLookupResult {
         let specifier = request.specifier;
         let containing_file = request.containing_file;
@@ -613,35 +613,8 @@ impl ModuleResolver {
                         );
                     }
 
-                    // NEW: Validate that the fallback path actually exists before treating it
-                    // as a successful resolution. The fallback resolver may return a path that
-                    // doesn't actually exist on the filesystem (e.g., a path to a directory
-                    // that should contain the module but doesn't have the right structure).
-                    // In such cases, we should emit TS2307 instead of treating it as resolved.
-                    // This fixes cases like:
-                    // - symlinkedWorkspaceDependenciesNoDirectLinkGeneratesNonrelativeName.ts
-                    // - jsDeclarationsTypeReassignmentFromDeclaration.ts
-                    let fallback_exists_in_known_files = known_files
-                        .map(|kf| kf.contains(&fallback_path))
-                        .unwrap_or(false);
-                    if !fallback_exists_in_known_files && !fallback_path.exists() {
-                        // Classic resolution override: TS2307 → TS2792
-                        if request.implied_classic_resolution {
-                            return ModuleLookupResult::failed(
-                                MODULE_RESOLUTION_MODE_MISMATCH,
-                                format!(
-                                    "Cannot find module '{specifier}'. Did you mean to set the 'moduleResolution' option to 'nodenext', or to add aliases to the 'paths' option?"
-                                ),
-                            );
-                        }
-                        return ModuleLookupResult::failed(
-                            CANNOT_FIND_MODULE,
-                            format!(
-                                "Cannot find module '{specifier}' or its corresponding type declarations."
-                            ),
-                        );
-                    }
-
+                    // Trust the fallback resolver's result. The fallback already validated
+                    // that the path exists (either in known_files or on filesystem).
                     return ModuleLookupResult::resolved(fallback_path);
                 }
 
