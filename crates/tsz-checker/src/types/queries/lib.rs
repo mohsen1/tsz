@@ -1091,6 +1091,12 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if let Some(member_id) = module_export_member_id {
+                    // Check type-only wildcard export guard for module exports path
+                    if let Some(ref module_specifier) = import_module
+                        && self.is_member_type_only_wildcard_export(module_specifier, property_name)
+                    {
+                        return None;
+                    }
                     let Some(member_type) =
                         self.resolve_validated_namespace_member(sym_id, member_id, property_name)
                     else {
