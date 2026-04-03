@@ -976,14 +976,10 @@ impl<'a> CheckerState<'a> {
 
         let widened = self.widen_literal_type(inferred_yield);
         // When strictNullChecks is off, tsc widens null/undefined yield types
-        // to `any` — but NOT when the yield type is purely `undefined` (from
-        // bare `yield;` or `yield undefined`).  In that case the generator's
-        // yield type is `void`, which is intentional and must not trigger
-        // TS7055.
+        // to `any`. A bare `yield;` produces `undefined`, which in non-strict
+        // mode is widened to `any` and should trigger TS7055 (matching tsc).
         let final_yield = if !self.ctx.strict_null_checks()
             && tsz_solver::type_queries::is_only_null_or_undefined(self.ctx.types, widened)
-            && inferred_yield != TypeId::UNDEFINED
-            && widened != TypeId::UNDEFINED
         {
             TypeId::ANY
         } else {
