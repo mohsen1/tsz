@@ -673,50 +673,51 @@ impl<'a> CheckerState<'a> {
                 // Enqueue this interface's own bases (grandparent interfaces)
                 if let Some(ref heritage_clauses) = iface.heritage_clauses {
                     for &hc_idx in &heritage_clauses.nodes {
-                        if let Some(hc_node) = self.ctx.arena.get(hc_idx)
-                            && let Some(hc) = self.ctx.arena.get_heritage_clause(hc_node)
-                            && hc.token == SyntaxKind::ExtendsKeyword as u16
-                        {
-                            for &ancestor_type_idx in &hc.types.nodes {
-                                let (ancestor_expr, ancestor_type_args_opt) =
-                                    if let Some(ancestor_node) =
-                                        self.ctx.arena.get(ancestor_type_idx)
-                                        && let Some(eat) =
-                                            self.ctx.arena.get_expr_type_args(ancestor_node)
-                                    {
-                                        let args: Vec<TypeId> = eat
-                                            .type_arguments
-                                            .as_ref()
-                                            .map(|a| {
-                                                a.nodes
-                                                    .iter()
-                                                    .map(|&arg_idx| {
-                                                        instantiate_type(
-                                                            self.ctx.types,
-                                                            self.get_type_from_type_node(arg_idx),
-                                                            &substitution,
-                                                        )
-                                                    })
-                                                    .collect()
+                        let Some(hc_node) = self.ctx.arena.get(hc_idx) else {
+                            continue;
+                        };
+                        let Some(hc) = self.ctx.arena.get_heritage_clause(hc_node) else {
+                            continue;
+                        };
+                        if hc.token != SyntaxKind::ExtendsKeyword as u16 {
+                            continue;
+                        }
+                        for &ancestor_type_idx in &hc.types.nodes {
+                            let (ancestor_expr, ancestor_type_args_opt) = if let Some(ancestor_node) =
+                                self.ctx.arena.get(ancestor_type_idx)
+                                && let Some(eat) = self.ctx.arena.get_expr_type_args(ancestor_node)
+                            {
+                                let args: Vec<TypeId> = eat
+                                    .type_arguments
+                                    .as_ref()
+                                    .map(|a| {
+                                        a.nodes
+                                            .iter()
+                                            .map(|&arg_idx| {
+                                                instantiate_type(
+                                                    self.ctx.types,
+                                                    self.get_type_from_type_node(arg_idx),
+                                                    &substitution,
+                                                )
                                             })
-                                            .unwrap_or_default();
-                                        (eat.expression, Some(args))
-                                    } else {
-                                        (ancestor_type_idx, None)
-                                    };
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                (eat.expression, Some(args))
+                            } else {
+                                (ancestor_type_idx, None)
+                            };
 
-                                if let Some(ancestor_sym_id) =
-                                    self.resolve_heritage_symbol(ancestor_expr)
-                                    && let Some(ancestor_sym) =
-                                        self.ctx.binder.get_symbol(ancestor_sym_id)
-                                {
-                                    for &decl_idx in &ancestor_sym.declarations {
-                                        if let Some(dn) = self.ctx.arena.get(decl_idx)
-                                            && self.ctx.arena.get_interface(dn).is_some()
-                                        {
-                                            worklist
-                                                .push((decl_idx, ancestor_type_args_opt.clone()));
-                                        }
+                            if let Some(ancestor_sym_id) =
+                                self.resolve_heritage_symbol(ancestor_expr)
+                                && let Some(ancestor_sym) =
+                                    self.ctx.binder.get_symbol(ancestor_sym_id)
+                            {
+                                for &decl_idx in &ancestor_sym.declarations {
+                                    if let Some(dn) = self.ctx.arena.get(decl_idx)
+                                        && self.ctx.arena.get_interface(dn).is_some()
+                                    {
+                                        worklist.push((decl_idx, ancestor_type_args_opt.clone()));
                                     }
                                 }
                             }

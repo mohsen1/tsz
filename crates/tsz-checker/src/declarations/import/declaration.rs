@@ -1620,16 +1620,19 @@ impl<'a> CheckerState<'a> {
                             {
                                 let mut any_instantiated = false;
                                 for &decl_idx in &resolved_sym.declarations {
-                                    if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
-                                        if decl_node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_DECLARATION {
-                                                        if self.is_namespace_declaration_instantiated(decl_idx) {
-                                                            any_instantiated = true;
-                                                            break;
-                                                        }
-                                                    } else {
-                                                        any_instantiated = true;
-                                                        break;
-                                                    }
+                                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                                        continue;
+                                    };
+                                    if decl_node.kind
+                                        == tsz_parser::parser::syntax_kind_ext::MODULE_DECLARATION
+                                    {
+                                        if self.is_namespace_declaration_instantiated(decl_idx) {
+                                            any_instantiated = true;
+                                            break;
+                                        }
+                                    } else {
+                                        any_instantiated = true;
+                                        break;
                                     }
                                 }
                                 has_value = any_instantiated;
