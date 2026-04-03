@@ -917,6 +917,10 @@ impl<'a> CheckerState<'a> {
         // TS2339 ("Property X does not exist") instead of TS7053. tsc uses TS2339
         // for literal element access keys on simple types like `{}`, but uses
         // TS7053 for unions with partial index signature presence.
+        //
+        // Also handle union index types where at least one member is a string
+        // literal that doesn't exist on the object type. In this case, emit
+        // TS2339 for the first missing property (matching tsc behavior).
         let is_union_or_intersection =
             crate::query_boundaries::common::union_members(self.ctx.types, object_type).is_some()
                 || tsz_solver::type_queries::get_intersection_members(self.ctx.types, object_type)
@@ -928,6 +932,21 @@ impl<'a> CheckerState<'a> {
         let has_any_index_signature = idx_resolver.resolve_string_index(object_type).is_some()
             || idx_resolver.resolve_number_index(object_type).is_some();
 
+        // Helper closure to emit TS2339 for a missing property
+        let emit_ts2339_for_missing_prop =
+            |prop_name_str: &str, object_type: TypeId, expr_idx: NodeIndex, checker: &mut Self| {
+                let object_str = checker.property_receiver_display_for_node(object_type, expr_idx);
+                let message =
+                    format!("Property '{prop_name_str}' does not exist on type '{object_str}'.");
+                checker.error_at_anchor(
+                    expr_idx,
+                    DiagnosticAnchorKind::ElementAccessExpr,
+                    &message,
+                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                );
+            };
+
+        // Check if index is a string literal
         if let Some(atom) =
             tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
         {
@@ -961,16 +980,41 @@ impl<'a> CheckerState<'a> {
                 && !prefer_write_method
                 && self.is_object_literal_backed_element_access_receiver(expr_idx)
             {
-                let object_str = self.property_receiver_display_for_node(object_type, expr_idx);
-                let message =
-                    format!("Property '{prop_name_str}' does not exist on type '{object_str}'.");
-                self.error_at_anchor(
-                    expr_idx,
-                    DiagnosticAnchorKind::ElementAccessExpr,
-                    &message,
-                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                );
+                emit_ts2339_for_missing_prop(prop_name_str, object_type, expr_idx, self);
                 return;
+            }
+        }
+        // Check if index is a union of string literals (e.g., 'a' | 'b' | 'z')
+        // If so and the receiver is an object literal, emit TS2339 for the first
+        // missing property instead of TS7053.
+        else if !is_union_or_intersection
+            && !has_any_index_signature
+            && !prefer_write_method
+            && self.is_object_literal_backed_element_access_receiver(expr_idx)
+        {
+            if let Some(union_members) =
+                tsz_solver::type_queries::get_union_members(self.ctx.types, index_type)
+            {
+                // Find the first string literal member that doesn't exist as a property
+                for member in union_members {
+                    if let Some(atom) =
+                        tsz_solver::type_queries::get_string_literal_value(self.ctx.types, member)
+                    {
+                        let prop_name = self.ctx.types.resolve_atom_ref(atom);
+                        let prop_name_str: &str = &prop_name;
+
+                        // Check if this property exists on the object type
+                        let prop_exists = self
+                            .resolve_property_access_with_env(object_type, prop_name_str)
+                            .is_success();
+
+                        if !prop_exists {
+                            // Property doesn't exist - emit TS2339
+                            emit_ts2339_for_missing_prop(prop_name_str, object_type, expr_idx, self);
+                            return;
+                        }
+                    }
+                }
             }
         }
 
