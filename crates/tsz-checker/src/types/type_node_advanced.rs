@@ -91,6 +91,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let object_type = self.check(indexed_access.object_type);
             let index_type = self.check(indexed_access.index_type);
 
+            // Early return for ANY/ERROR types - prevents cascading TS2339 errors
+            // when a type is implicitly 'any' due to circular reference (TS7022/TS7024)
+            if object_type == TypeId::ANY
+                || object_type == TypeId::ERROR
+                || tsz_solver::is_error_type(self.ctx.types, object_type)
+            {
+                return factory.index_access(object_type, index_type);
+            }
+
             // TS2538: Check if the index type is valid (string, number, symbol, or literal thereof)
             if let Some(invalid_member) = self.get_invalid_index_type_member(index_type)
                 && let Some(inode) = self.ctx.arena.get(indexed_access.index_type)

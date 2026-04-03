@@ -1220,10 +1220,17 @@ impl<'a> CheckerState<'a> {
                 index_type_for_check,
             ) {
                 let property_name = self.ctx.types.resolve_atom(prop_atom);
-                if self.union_restricted_literal_property_is_missing(
-                    &property_name,
-                    object_type_for_check,
-                ) {
+                // Suppress TS2339 for ANY/ERROR/conditional/generic types (circular reference implicit any)
+                if object_type != TypeId::ANY
+                    && object_type != TypeId::ERROR
+                    && !tsz_solver::is_error_type(self.ctx.types, object_type)
+                    && !tsz_solver::is_conditional_type(self.ctx.types, object_type)
+                    && !tsz_solver::is_generic_application(self.ctx.types, object_type)
+                    && self.union_restricted_literal_property_is_missing(
+                        &property_name,
+                        object_type_for_check,
+                    )
+                {
                     let object_type_str = self
                         .node_text(data.object_type)
                         .map(|text| {
@@ -1427,7 +1434,14 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
-        if object_type == TypeId::ERROR || index_type == TypeId::ERROR {
+        // Suppress errors for ERROR/ANY types to prevent cascading diagnostics
+        if object_type == TypeId::ERROR
+            || index_type == TypeId::ERROR
+            || object_type == TypeId::ANY
+            || index_type == TypeId::ANY
+            || tsz_solver::is_error_type(self.ctx.types, object_type)
+            || tsz_solver::is_error_type(self.ctx.types, index_type)
+        {
             return false;
         }
 
@@ -1558,8 +1572,14 @@ impl<'a> CheckerState<'a> {
             tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
         {
             let property_name = self.ctx.types.resolve_atom(prop_atom);
-            if self
-                .union_restricted_literal_property_is_missing(&property_name, concrete_object_type)
+            // Suppress TS2339 for ANY/ERROR/conditional/generic types (circular reference implicit any)
+            if object_type != TypeId::ANY
+                && object_type != TypeId::ERROR
+                && !tsz_solver::is_error_type(self.ctx.types, object_type)
+                && !tsz_solver::is_conditional_type(self.ctx.types, object_type)
+                && !tsz_solver::is_generic_application(self.ctx.types, object_type)
+                && self
+                    .union_restricted_literal_property_is_missing(&property_name, concrete_object_type)
             {
                 let object_type_str = self.format_type(object_type);
                 let message = format_message(
@@ -1578,10 +1598,16 @@ impl<'a> CheckerState<'a> {
             {
                 return false;
             }
-            if !matches!(
-                self.resolve_property_access_with_env(concrete_object_type, &property_name),
-                tsz_solver::operations::property::PropertyAccessResult::Success { .. }
-            ) && self.get_index_key_kind(index_type) == Some((true, false))
+            // Suppress TS2339 for ANY/ERROR/conditional types (circular reference implicit any)
+            // Conditional types like Parameters<T> may not be fully resolvable when T has circular reference
+            if object_type != TypeId::ANY
+                && object_type != TypeId::ERROR
+                && !tsz_solver::is_error_type(self.ctx.types, object_type)
+                && !tsz_solver::is_conditional_type(self.ctx.types, object_type)
+                && !matches!(
+                    self.resolve_property_access_with_env(concrete_object_type, &property_name),
+                    tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+                ) && self.get_index_key_kind(index_type) == Some((true, false))
                 && !self.is_element_indexable(concrete_object_type, true, false)
                 && !object_is_type_parameter_ref
                 && (object_has_named_shape || object_is_array_like)
