@@ -1145,6 +1145,11 @@ async function runParallel(opts, testsToRun) {
     const numWorkers = Math.min(opts.workers, testsToRun.length);
     const chunks = distributeTests(testsToRun, numWorkers);
 
+    // Wall-clock timeout per test: if a worker sends no result for this long, kill it.
+    // This catches infinite loops in the Rust server that the per-request Atomics.wait
+    // timeout (30s) cannot fully guard against (a test may make dozens of requests).
+    const WORKER_WATCHDOG_MS = opts.testTimeout * 4; // 60s default (4x the 15s per-test timeout)
+
     console.log(`  Spawning ${chunks.length} workers (timeout: ${opts.testTimeout}ms, mem limit: ${opts.memoryLimitMB}MB)...`);
 
     let passed = 0;
@@ -1160,6 +1165,8 @@ async function runParallel(opts, testsToRun) {
 
     // Track per-worker status for crash recovery
     const workerProgress = new Map(); // workerId -> { total, completed }
+    // Track last activity time per worker for watchdog
+    const workerLastActivity = new Map(); // workerId -> timestamp
 
     return new Promise((resolve) => {
         let activeWorkers = chunks.length;
@@ -1178,9 +1185,13 @@ async function runParallel(opts, testsToRun) {
             activeWorkers--;
             if (activeWorkers === 0) {
                 if (!opts.verbose) printProgress();
+                clearInterval(watchdog);
                 resolve({ passed, failed, timedOut, errors, testResults, bridgeRestarts, memoryWarnings, workerStats });
             }
         }
+
+        // Map worker index -> child process for watchdog kill
+        const workerChildren = new Map();
 
         for (let i = 0; i < chunks.length; i++) {
             const child = fork(workerFile, [], {
@@ -1189,13 +1200,16 @@ async function runParallel(opts, testsToRun) {
                 execArgv: [`--max-old-space-size=${opts.memoryLimitMB}`],
             });
 
+            workerChildren.set(i, child);
             workerProgress.set(i, { total: chunks[i].length, completed: 0 });
+            workerLastActivity.set(i, Date.now());
 
             // Suppress child stdout/stderr
             child.stdout.on("data", () => {});
             child.stderr.on("data", () => {});
 
             child.on("message", (msg) => {
+                workerLastActivity.set(i, Date.now());
                 if (msg.type === "ready") {
                     // Worker initialized
                 } else if (msg.type === "result") {
@@ -1259,20 +1273,31 @@ async function runParallel(opts, testsToRun) {
             });
 
             child.on("exit", (code, signal) => {
+                workerChildren.delete(i);
                 if (code !== 0 && code !== null) {
-                    // Worker crashed (likely OOM killed or segfault)
+                    // Worker crashed (likely OOM killed, segfault, or watchdog kill)
                     const wp = workerProgress.get(i);
                     const remaining = wp ? wp.total - wp.completed : 0;
                     if (remaining > 0) {
-                        const reason = signal === "SIGKILL" ? "OOM killed" : `exit code ${code}`;
-                        console.error(`  \x1b[31mWorker ${i} crashed (${reason}), ${remaining} tests lost\x1b[0m`);
+                        const reason = signal === "SIGKILL" ? "OOM killed"
+                            : signal === "SIGTERM" ? "watchdog killed (stuck test)"
+                            : `exit code ${code}`;
+                        console.error(`\n  \x1b[31mWorker ${i} crashed (${reason}), ${remaining} tests lost\x1b[0m`);
                         // Count remaining tests as failed
                         failed += remaining;
+                        timedOut += remaining;
                         for (let j = wp.completed; j < wp.total; j++) {
                             errors.push({
                                 file: chunks[i][j],
                                 error: `Worker crashed (${reason})`,
-                                timedOut: false,
+                                timedOut: true,
+                            });
+                            testResults.push({
+                                file: chunks[i][j],
+                                status: "timeout",
+                                timedOut: true,
+                                error: `Worker crashed (${reason})`,
+                                elapsed: 0,
                             });
                         }
                     }
@@ -1291,6 +1316,28 @@ async function runParallel(opts, testsToRun) {
                 memoryThreshold: opts.memoryLimitMB * 1024 * 1024,
             });
         }
+
+        // Watchdog: periodically check if any worker is stuck (no messages for WORKER_WATCHDOG_MS)
+        const watchdog = setInterval(() => {
+            const now = Date.now();
+            for (const [wid, lastTime] of workerLastActivity.entries()) {
+                if (now - lastTime > WORKER_WATCHDOG_MS && workerChildren.has(wid)) {
+                    const child = workerChildren.get(wid);
+                    const wp = workerProgress.get(wid);
+                    const currentTest = wp ? chunks[wid][wp.completed] : "unknown";
+                    console.error(`\n  \x1b[33mWatchdog: Worker ${wid} stuck for ${((now - lastTime) / 1000).toFixed(0)}s on ${path.basename(currentTest || "unknown")}, killing...\x1b[0m`);
+                    child.kill("SIGTERM");
+                    // Give it 5s to exit gracefully, then force kill
+                    setTimeout(() => {
+                        try { child.kill("SIGKILL"); } catch {}
+                    }, 5000);
+                }
+            }
+            // Stop watchdog when all workers are done
+            if (workerChildren.size === 0) {
+                clearInterval(watchdog);
+            }
+        }, 10000); // Check every 10 seconds
     });
 }
 

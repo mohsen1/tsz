@@ -913,7 +913,7 @@ jobs:
   fourslash:
     name: "Fourslash (${{ matrix.shard }}/15)"
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     needs: [changes, test-build]
     continue-on-error: true
     strategy:
