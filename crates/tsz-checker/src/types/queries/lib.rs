@@ -2006,6 +2006,12 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(member_id) = direct_member_id {
+            // Check type-only wildcard export guard for direct members
+            if let Some(ref module_specifier) = import_module
+                && self.is_member_type_only_wildcard_export(module_specifier, property_name)
+            {
+                return None;
+            }
             let Some(member_type) =
                 self.resolve_validated_namespace_member(sym_id, member_id, property_name)
             else {
@@ -2019,6 +2025,12 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(member_id) = module_export_member_id {
+            // Check type-only wildcard export guard for module exports path
+            if let Some(ref module_specifier) = import_module
+                && self.is_member_type_only_wildcard_export(module_specifier, property_name)
+            {
+                return None;
+            }
             let Some(member_type) =
                 self.resolve_validated_namespace_member(sym_id, member_id, property_name)
             else {
@@ -2032,6 +2044,10 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(ref module_specifier) = import_module {
+            // Check type-only wildcard export guard before resolving module member
+            if self.is_member_type_only_wildcard_export(module_specifier, property_name) {
+                return None;
+            }
             if let Some(member_id) = self.resolve_module_member_from_specifier(
                 module_specifier,
                 property_name,

@@ -420,6 +420,43 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Suppress TS2339 for indexed access types on generic conditional/mapped types.
+        // For example, `Parameters<DataFirst>["length"]` where `Parameters<T>` is a
+        // conditional type. When the type argument is generic, tsc defers the check
+        // rather than emitting a false TS2339.
+        if crate::query_boundaries::common::is_index_access_type(self.ctx.types, type_id) {
+            return;
+        }
+
+        // Suppress TS2339 for types that are generic type parameters with conditional
+        // type constraints. For example, when accessing a property on a type parameter
+        // like `T extends SomeConditionalType`, the property may exist on the resolved
+        // conditional type but we can't determine it until the type parameter is
+        // instantiated with a concrete type.
+        if crate::query_boundaries::state::checking::is_type_parameter_like(self.ctx.types, type_id)
+            && crate::query_boundaries::common::type_parameter_has_conditional_constraint(
+                self.ctx.types,
+                type_id,
+            )
+        {
+            return;
+        }
+
+        // Suppress TS2339 when the type is an intersection containing type parameters
+        // that haven't been resolved yet. This commonly occurs with mixin patterns where
+        // the return type is `Constructor<Tagged> & T` - the instance type should have
+        // properties from both sides of the intersection, but we may not resolve them
+        // properly when T is still generic.
+        if let Some(members) = crate::query_boundaries::common::intersection_members(self.ctx.types, type_id) {
+            let has_unresolved_type_param = members.iter().any(|&member| {
+                crate::query_boundaries::state::checking::is_type_parameter_like(self.ctx.types, member)
+                    || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, member)
+            });
+            if has_unresolved_type_param {
+                return;
+            }
+        }
+
         if self
             .resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::PropertyToken)
             .is_some()

@@ -395,6 +395,17 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // Skip function declarations - they can merge across module augmentation.
+                // Check if any of the conflict declarations for this export name are functions.
+                let conflict_decls = self
+                    .module_augmentation_conflict_declarations_for_current_file(&export_name);
+                let has_function_merge = conflict_decls.iter().any(|(_decl_idx, flags, _, _, _)| {
+                    (*flags & tsz_binder::symbol_flags::FUNCTION) != 0
+                });
+                if has_function_merge {
+                    continue;
+                }
+
                 self.error_at_node_msg(
                     spec_idx,
                     diagnostic_codes::DUPLICATE_IDENTIFIER,
