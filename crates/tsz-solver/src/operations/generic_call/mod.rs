@@ -6,10 +6,9 @@
 //! - Trivial single-type-param fast path
 //! - Placeholder normalization
 
-
+use crate::TypeDatabase;
 use crate::instantiation::instantiate::{TypeInstantiator, TypeSubstitution};
 use crate::types::{TypeData, TypeId};
-use crate::TypeDatabase;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Global counter for generating unique inference placeholder names.
@@ -84,7 +83,6 @@ mod inference_helpers;
 mod normalization;
 mod resolve;
 mod return_context;
-
 
 /// Check if a type contains literal types — recursing into unions, intersections,
 /// and object properties. Used to detect discriminated union constraints like

@@ -3,9 +3,7 @@
 use crate::inference::infer::{InferenceContext, InferenceVar};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
-use crate::types::{
-    FunctionShape, ParamInfo, TypeData, TypeId, TypeParamInfo,
-};
+use crate::types::{FunctionShape, ParamInfo, TypeData, TypeId, TypeParamInfo};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{constraint_is_primitive_type, unique_placeholder_name};

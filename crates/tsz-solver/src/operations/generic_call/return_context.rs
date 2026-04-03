@@ -51,7 +51,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         self.interner.function(shape)
     }
 
-    pub(super) fn normalize_function_shape_params_for_context(&self, shape: &FunctionShape) -> FunctionShape {
+    pub(super) fn normalize_function_shape_params_for_context(
+        &self,
+        shape: &FunctionShape,
+    ) -> FunctionShape {
         use crate::type_queries::unpack_tuple_rest_parameter;
 
         let mut normalized = shape.clone();
@@ -153,7 +156,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         false
     }
 
-    pub(super) fn contains_tuple_like_parameter_target(db: &dyn crate::TypeDatabase, type_id: TypeId) -> bool {
+    pub(super) fn contains_tuple_like_parameter_target(
+        db: &dyn crate::TypeDatabase,
+        type_id: TypeId,
+    ) -> bool {
         if crate::type_queries::get_tuple_elements(db, type_id).is_some() {
             return true;
         }
