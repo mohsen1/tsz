@@ -2913,15 +2913,14 @@ function foo4<T extends U, U extends V, V extends Date>(t: T, u: U, v: V) {
 }
 
 #[test]
-#[ignore = "Requires deferred indexed access evaluation for intersections with type parameters - see conformance test compiler/indexedAccessRelation.ts"]
 fn indexed_access_on_intersection_preserves_deferred_constraints() {
-    // Repro from TypeScript#14723 / conformance test indexedAccessRelation.ts.
+    // Repro from TypeScript#14723 / conformance test compiler/indexedAccessRelation.ts.
     //
-    // Root cause: when evaluating (S & State<T>)["a"] in the mapped type
-    // template for Pick<S & State<T>, K>, the solver distributes the indexed
-    // access over the intersection and drops the deferred S["a"] result,
-    // producing just T | undefined. This makes T trivially assignable and
-    // TS2322 is missed.
+    // Fixed: when evaluating (S & State<T>)["a"] in the mapped type
+    // template for Pick<S & State<T>, K>, the solver now preserves deferred
+    // IndexAccess types for unconstrained type parameters.
+    // This ensures S["a"] is included in the result (S["a"] & (T | undefined)),
+    // making T not assignable and TS2322 correctly emitted.
     //
     // tsc keeps (S & State<T>)["a"] as a deferred indexed access type,
     // which correctly rejects T as not assignable to the full expression.
