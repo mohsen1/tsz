@@ -404,7 +404,7 @@ impl TypeInterner {
         // This preserves the intersection structure so that `resolve_intersection_new`
         // can properly intersect the instance types (mixin pattern). Merging would
         // collapse `(new => A) & (new => B)` into a single callable with two
-        // construct overloads treated as overloads, losing the intersection semantics.
+        // construct signatures treated as overloads, losing the intersection semantics.
         let mut construct_source_count = 0;
         for &member in members {
             let has_construct = match self.lookup(member) {
