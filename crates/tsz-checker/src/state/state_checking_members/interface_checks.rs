@@ -117,7 +117,14 @@ impl<'a> CheckerState<'a> {
             // TS1169: Computed property in interface must have literal/unique symbol type
             if let Some(member_node) = self.ctx.arena.get(member_idx) {
                 if let Some(sig) = self.ctx.arena.get_signature(member_node) {
-                    self.check_interface_computed_property_name(sig.name);
+                    {
+                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.check_computed_property_requires_literal(
+                            sig.name,
+                            diagnostic_messages::A_COMPUTED_PROPERTY_NAME_IN_AN_INTERFACE_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYPE,
+                            diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_AN_INTERFACE_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYPE,
+                        );
+                    }
                 }
                 // TS2344: Eagerly resolve set accessor parameter type annotations.
                 // tsc checks all type annotations during declaration checking, even

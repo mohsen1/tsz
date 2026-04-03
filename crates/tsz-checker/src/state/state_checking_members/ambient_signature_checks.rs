@@ -68,7 +68,14 @@ impl<'a> CheckerState<'a> {
                 })
             });
         if !suppress_ts1166 {
-            self.check_class_computed_property_name(prop.name);
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.check_computed_property_requires_literal(
+                    prop.name,
+                    diagnostic_messages::A_COMPUTED_PROPERTY_NAME_IN_A_CLASS_PROPERTY_DECLARATION_MUST_HAVE_A_SIMPLE_LITE,
+                    diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_A_CLASS_PROPERTY_DECLARATION_MUST_HAVE_A_SIMPLE_LITE,
+                );
+            }
         }
         self.check_modifier_combinations(&prop.modifiers);
 
