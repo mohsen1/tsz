@@ -254,10 +254,20 @@ pub fn instance_type_from_constructor(db: &dyn TypeDatabase, type_id: TypeId) ->
             }
         }
         ConstructorInstanceKind::Intersection(members) => {
-            // TypeScript takes the first member with construct signatures
-            members
+            // For intersection constructors (mixin pattern), the instance type
+            // is the intersection of all members' instance types.
+            // e.g. (new () => A) & (new () => B) → instance type is A & B
+            let instance_types: Vec<TypeId> = members
                 .into_iter()
-                .find_map(|m| instance_type_from_constructor(db, m))
+                .filter_map(|m| instance_type_from_constructor(db, m))
+                .collect();
+            if instance_types.is_empty() {
+                None
+            } else if instance_types.len() == 1 {
+                Some(instance_types[0])
+            } else {
+                Some(db.intersection(instance_types))
+            }
         }
         ConstructorInstanceKind::None => None,
     }
