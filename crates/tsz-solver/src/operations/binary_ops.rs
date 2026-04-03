@@ -860,12 +860,20 @@ impl<'a> BinaryOpEvaluator<'a> {
         if left == right {
             return left;
         }
+        let db = self.interner.as_type_database();
         // If right is a subtype of left, drop right (e.g., never[] <: number[])
-        if crate::relations::subtype::is_subtype_of_with_db(self.interner, right, left) {
+        // But don't let an empty object type `{}` absorb a more specific object type.
+        // tsc's strictSubtypeRelation prevents `{a: string}` from being reduced
+        // to `{}` in union reduction for `||` / `??` result types.
+        if crate::relations::subtype::is_subtype_of_with_db(self.interner, right, left)
+            && !crate::visitors::visitor_predicates::is_empty_object_type(db, left)
+        {
             return left;
         }
         // If left is a subtype of right, drop left
-        if crate::relations::subtype::is_subtype_of_with_db(self.interner, left, right) {
+        if crate::relations::subtype::is_subtype_of_with_db(self.interner, left, right)
+            && !crate::visitors::visitor_predicates::is_empty_object_type(db, right)
+        {
             return right;
         }
         self.interner.union2(left, right)
