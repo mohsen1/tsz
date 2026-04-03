@@ -2972,7 +2972,6 @@ class Comp<T extends Foo, S> extends Component<S & State<T>>
 /// shortcut (`check_array_interface_subtype`) checked only `Array<T> <: target`
 /// without verifying the target's extra declared properties.
 #[test]
-#[ignore] // TODO: array-to-interface assignability skips extra required property check
 fn test_ts2322_array_not_assignable_to_interface_extending_array_with_extra_props() {
     let source = r#"
         interface ArrayWithExtra extends ReadonlyArray<string> {
