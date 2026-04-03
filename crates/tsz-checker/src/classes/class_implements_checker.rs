@@ -453,22 +453,24 @@ impl<'a> CheckerState<'a> {
                     // via the solver's resolved type
                     if let Some(ref heritage) = iface.heritage_clauses {
                         for &clause_idx in &heritage.nodes {
-                            if let Some(clause_node) = self.ctx.arena.get(clause_idx)
-                                && let Some(heritage_clause) =
-                                    self.ctx.arena.get_heritage_clause(clause_node)
-                            {
-                                for &type_idx in &heritage_clause.types.nodes {
-                                    let base_type = self.get_type_from_type_node(type_idx);
-                                    let base_type = self.evaluate_type_for_assignability(base_type);
-                                    if let Some(shape) = tsz_solver::type_queries::get_object_shape(
-                                        self.ctx.types,
-                                        base_type,
-                                    ) {
-                                        for prop in &shape.properties {
-                                            let member_name =
-                                                self.ctx.types.resolve_atom(prop.name);
-                                            implemented_members.insert(member_name);
-                                        }
+                            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                                continue;
+                            };
+                            let Some(heritage_clause) =
+                                self.ctx.arena.get_heritage_clause(clause_node)
+                            else {
+                                continue;
+                            };
+                            for &type_idx in &heritage_clause.types.nodes {
+                                let base_type = self.get_type_from_type_node(type_idx);
+                                let base_type = self.evaluate_type_for_assignability(base_type);
+                                if let Some(shape) = tsz_solver::type_queries::get_object_shape(
+                                    self.ctx.types,
+                                    base_type,
+                                ) {
+                                    for prop in &shape.properties {
+                                        let member_name = self.ctx.types.resolve_atom(prop.name);
+                                        implemented_members.insert(member_name);
                                     }
                                 }
                             }
