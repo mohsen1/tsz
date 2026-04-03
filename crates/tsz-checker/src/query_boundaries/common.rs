@@ -146,6 +146,71 @@ pub(crate) fn type_parameter_default(db: &dyn TypeDatabase, type_id: TypeId) -> 
     tsz_solver::type_queries::get_type_parameter_default(db, type_id)
 }
 
+/// Check if a type parameter has a constraint that contains a conditional type.
+/// This is used to suppress false-positive TS2339 errors when accessing properties
+/// on generic conditional types like `Parameters<T>["length"]` where the property
+/// may exist on the resolved conditional type but we can't determine it until
+/// the type parameter is instantiated.
+pub(crate) fn type_parameter_has_conditional_constraint(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    // Get the constraint of the type parameter
+    if let Some(constraint) = tsz_solver::type_queries::get_type_parameter_constraint(db, type_id) {
+        // Check if the constraint contains a conditional type
+        return contains_conditional_type(db, constraint);
+    }
+    false
+}
+
+/// Recursively check if a type contains a conditional type.
+fn contains_conditional_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if tsz_solver::type_queries::is_conditional_type(db, type_id) {
+        return true;
+    }
+
+    // Check type application arguments
+    if let Some(app) = tsz_solver::type_queries::get_type_application(db, type_id) {
+        if app
+            .args
+            .iter()
+            .any(|&arg| contains_conditional_type(db, arg))
+        {
+            return true;
+        }
+    }
+
+    // Check intersection members
+    if let Some(members) = tsz_solver::type_queries::get_intersection_members(db, type_id) {
+        if members
+            .iter()
+            .any(|&member| contains_conditional_type(db, member))
+        {
+            return true;
+        }
+    }
+
+    // Check union members
+    if let Some(members) = tsz_solver::type_queries::get_union_members(db, type_id) {
+        if members
+            .iter()
+            .any(|&member| contains_conditional_type(db, member))
+        {
+            return true;
+        }
+    }
+
+    // Check index access types
+    if let Some((object_type, index_type)) =
+        tsz_solver::type_queries::get_index_access_types(db, type_id)
+    {
+        return contains_conditional_type(db, object_type)
+            || contains_conditional_type(db, index_type);
+    }
+
+    false
+}
+
 pub(crate) fn is_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_mapped_type(db, type_id)
 }
