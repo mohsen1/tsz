@@ -339,8 +339,19 @@ impl<'a> CheckerState<'a> {
             // effectively an array, not a fixed-length tuple.  Don't force
             // tuple inference in that case — the array literal should be typed
             // as an array (e.g., `(string | number)[]`), not a tuple.
+            // However, when the rest element's type is a type parameter (e.g.,
+            // `[...T]` where `T extends Container<unknown>[]`), we should still
+            // force tuple inference. The `[...T]` pattern is specifically used in
+            // TypeScript to trigger tuple inference from array literal arguments.
             if elems.iter().all(|e| e.rest) {
-                None
+                let has_type_param_rest = elems.iter().any(|e| {
+                    e.rest && tsz_solver::type_queries::is_type_parameter(self.ctx.types, e.type_id)
+                });
+                if has_type_param_rest {
+                    Some(elems)
+                } else {
+                    None
+                }
             } else {
                 Some(elems)
             }
