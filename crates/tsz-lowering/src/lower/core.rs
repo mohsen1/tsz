@@ -790,7 +790,7 @@ impl<'a> TypeLowering<'a> {
             .get_extended(node_idx)
             .map_or(NodeIndex::NONE, |info| info.parent);
 
-        while !parent.is_none() {
+        while parent.is_some() {
             let parent_node = self.arena.get(parent)?;
             if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
                 && let Some(module) = self.arena.get_module(parent_node)
