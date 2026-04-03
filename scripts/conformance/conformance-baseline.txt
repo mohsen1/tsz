@@ -41,9 +41,7 @@ FAIL TypeScript/tests/cases/compiler/controlFlowFunctionLikeCircular1.ts | expec
 FAIL TypeScript/tests/cases/compiler/crashDeclareGlobalTypeofExport.ts | expected:[TS2451,TS2502] actual:[TS2440,TS2451]
 FAIL TypeScript/tests/cases/compiler/crashInsourcePropertyIsRelatableToTargetProperty.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/dataViewConstructor.ts | expected:[TS2345] actual:[TS2345]
-FAIL TypeScript/tests/cases/compiler/declarationEmitAliasFromIndirectFile.ts | expected:[] actual:[TS2456]
 FAIL TypeScript/tests/cases/compiler/declarationEmitClassMemberWithComputedPropertyName.ts | expected:[] actual:[TS7056]
-FAIL TypeScript/tests/cases/compiler/declarationEmitCommonJsModuleReferencedType.ts | expected:[TS2883] actual:[TS2883]
 FAIL TypeScript/tests/cases/compiler/declarationEmitForGlobalishSpecifierSymlink.ts | expected:[TS2307] actual:[TS2694]
 FAIL TypeScript/tests/cases/compiler/declarationEmitForGlobalishSpecifierSymlink2.ts | expected:[TS2307] actual:[TS2694]
 FAIL TypeScript/tests/cases/compiler/declarationEmitHigherOrderRetainedGenerics.ts | expected:[] actual:[TS2339]
@@ -77,7 +75,6 @@ FAIL TypeScript/tests/cases/compiler/duplicateIdentifierRelatedSpans5.ts | expec
 FAIL TypeScript/tests/cases/compiler/duplicateIdentifierRelatedSpans_moduleAugmentation.ts | expected:[TS2451] actual:[TS2451]
 FAIL TypeScript/tests/cases/compiler/duplicateObjectLiteralProperty_computedName3.ts | expected:[TS1117] actual:[TS1117]
 FAIL TypeScript/tests/cases/compiler/duplicatePackage_globalMerge.ts | expected:[TS2306,TS2669] actual:[TS2307]
-FAIL TypeScript/tests/cases/compiler/duplicatePackage_relativeImportWithinPackage.ts | expected:[] actual:[TS2348]
 FAIL TypeScript/tests/cases/compiler/elidedJSImport1.ts | expected:[TS2591,TS2708,TS18042] actual:[TS2591]
 FAIL TypeScript/tests/cases/compiler/emitCapturingThisInTupleDestructuring1.ts | expected:[TS2493,TS7010,TS7017,TS7041] actual:[TS2493,TS7010,TS7017,TS7041]
 FAIL TypeScript/tests/cases/compiler/emitClassExpressionInDeclarationFile.ts | expected:[] actual:[TS2339]
@@ -228,7 +225,7 @@ FAIL TypeScript/tests/cases/compiler/jsxNamespaceImplicitImportJSXNamespaceFromC
 FAIL TypeScript/tests/cases/compiler/jsxNamespaceImplicitImportJSXNamespaceFromPragmaPickedOverGlobalOne.tsx | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixIntrinsics.tsx | expected:[TS2322,TS2339] actual:[TS2322,TS2339]
 FAIL TypeScript/tests/cases/compiler/jsxPartialSpread.tsx | expected:[] actual:[TS2339]
-FAIL TypeScript/tests/cases/compiler/jsxRuntimePragma.ts | expected:[] actual:[TS2874,TS2879]
+FAIL TypeScript/tests/cases/compiler/jsxRuntimePragma.ts | expected:[] actual:[TS2740,TS2741,TS2874,TS2879]
 FAIL TypeScript/tests/cases/compiler/keepImportsInDts2.ts | expected:[TS5107] actual:[TS2792]
 FAIL TypeScript/tests/cases/compiler/keepImportsInDts4.ts | expected:[TS5101,TS5107] actual:[TS2792]
 FAIL TypeScript/tests/cases/compiler/keyRemappingKeyofResult.ts | expected:[TS2322] actual:[TS2322]
@@ -268,7 +265,6 @@ FAIL TypeScript/tests/cases/compiler/moduleAugmentationImportsAndExports1.ts | e
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationImportsAndExports4.ts | expected:[TS2322,TS2454,TS2564] actual:[TS2322,TS2454,TS2564]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationImportsAndExports5.ts | expected:[TS2322,TS2454,TS2564] actual:[TS2322,TS2454,TS2564]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationImportsAndExports6.ts | expected:[TS2322,TS2454,TS2564] actual:[TS2322,TS2454,TS2564]
-FAIL TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule5.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationsImports3.ts | expected:[TS5101,TS5107] actual:[TS2792]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationsImports4.ts | expected:[TS5101,TS5107] actual:[TS2792]
 FAIL TypeScript/tests/cases/compiler/moduleElementsInWrongContext.ts | expected:[TS1184,TS1231,TS1232,TS1233,TS1234,TS1235,TS1258,TS2305,TS2307] actual:[TS1184,TS1202,TS2307]
@@ -2458,6 +2454,7 @@ PASS TypeScript/tests/cases/compiler/declInput3.ts
 PASS TypeScript/tests/cases/compiler/declInput4.ts
 PASS TypeScript/tests/cases/compiler/declarationAssertionNodeNotReusedWhenTypeNotEquivalent1.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitAliasExportStar.ts
+PASS TypeScript/tests/cases/compiler/declarationEmitAliasFromIndirectFile.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitAliasInlineing.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitAmdModuleDefault.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitAmdModuleNameDirective.ts
@@ -2485,6 +2482,7 @@ PASS TypeScript/tests/cases/compiler/declarationEmitClassPrivateConstructor2.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitClassSetAccessorParamNameInJs.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitClassSetAccessorParamNameInJs2.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitClassSetAccessorParamNameInJs3.ts
+PASS TypeScript/tests/cases/compiler/declarationEmitCommonJsModuleReferencedType.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitCommonSourceDirectoryDoesNotContainAllFiles.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitComputedNameCausesImportToBePainted.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitComputedNameConstEnumAlias.ts
@@ -2986,6 +2984,7 @@ PASS TypeScript/tests/cases/compiler/duplicateOverloadInTypeAugmentation1.ts
 PASS TypeScript/tests/cases/compiler/duplicatePackage.ts
 PASS TypeScript/tests/cases/compiler/duplicatePackage_packageIdIncludesSubModule.ts
 PASS TypeScript/tests/cases/compiler/duplicatePackage_referenceTypes.ts
+PASS TypeScript/tests/cases/compiler/duplicatePackage_relativeImportWithinPackage.ts
 PASS TypeScript/tests/cases/compiler/duplicatePackage_relativeImportWithinPackage_scoped.ts
 PASS TypeScript/tests/cases/compiler/duplicatePackage_subModule.ts
 PASS TypeScript/tests/cases/compiler/duplicatePackage_withErrors.ts
@@ -4937,6 +4936,7 @@ PASS TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule1.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule2.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule3.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule4.ts
+PASS TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule5.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationInDependency.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationInDependency2.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationNoNewNames.ts
