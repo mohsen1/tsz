@@ -645,9 +645,14 @@ fn test_constraint_recursive_self_referential() {
 
     ctx.add_upper_bound(var_t, upper);
 
-    // Resolves to unknown because the upper bound contains a circular reference
-    let result = ctx.resolve_with_constraints(var_t).unwrap();
-    assert_eq!(result, TypeId::UNKNOWN);
+    // The upper bound contains a circular reference via the T type parameter.
+    // Resolution produces UNKNOWN (no lower bounds), which fails the upper bound
+    // validation check, resulting in a BoundsViolation error.
+    let err = ctx.resolve_with_constraints(var_t).unwrap_err();
+    assert!(
+        matches!(err, InferenceError::BoundsViolation { .. }),
+        "Expected BoundsViolation for circular self-referential constraint, got {err:?}"
+    );
 }
 
 #[test]

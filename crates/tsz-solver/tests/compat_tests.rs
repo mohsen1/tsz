@@ -995,11 +995,12 @@ fn test_weak_union_allows_overlap() {
 }
 
 #[test]
-fn test_weak_union_source_with_one_common_member_allows() {
-    // When source is a union, if ANY member has common property with target, allow assignment.
-    // Source: { a } | { c } (one member has common property "a" with target)
+fn test_weak_union_source_with_one_common_member_rejects() {
+    // When source is a union, each source member is checked individually against the target.
+    // Source: { a } | { c } where { c } has no common property with any target member.
     // Target: { a? } | { b? }
-    // This should be assignable because { a } has overlap with { a? }
+    // tsc rejects this because { c: number } has no overlap with any weak target member,
+    // triggering weak type rejection for that source member.
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
@@ -1013,17 +1014,16 @@ fn test_weak_union_source_with_one_common_member_allows() {
     let target = interner.union(vec![weak_a, weak_b]);
 
     // Source: union { a: number } | { c: number }
-    // { a: number } has common property with target's { a?: number }
-    // { c: number } does NOT have common property
-    // But since { a: number } has overlap, the source union overall should be allowed
+    // { a: number } has common property with target, but { c: number } does not.
+    // Each source member is checked individually, so { c } fails the weak type check.
     let source_with_a = interner.object(vec![PropertyInfo::new(a, TypeId::NUMBER)]);
     let source_with_c = interner.object(vec![PropertyInfo::new(c, TypeId::NUMBER)]);
     let source = interner.union(vec![source_with_a, source_with_c]);
 
-    // Should be assignable: at least one member of source has common property
+    // Rejected: { c: number } member lacks common property with weak union target
     assert!(
-        checker.is_assignable(source, target),
-        "Union source with one overlapping member should be assignable to weak union target"
+        !checker.is_assignable(source, target),
+        "Union source where one member lacks common property should be rejected"
     );
 }
 
@@ -1060,11 +1060,13 @@ fn test_weak_union_source_all_members_lack_common_rejects() {
 }
 
 #[test]
-fn test_weak_union_nested_union_source() {
+fn test_weak_union_nested_union_source_rejects() {
     // Test with nested unions in source
     // Source: ({ a } | { c }) | { d }
     // Target: { a? } | { b? }
-    // Should be allowed because { a } in the nested union has overlap
+    // Rejected because individual source union members { c } and { d } have no
+    // common property with any weak target member. Each source member is checked
+    // individually against the target.
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
@@ -1085,10 +1087,10 @@ fn test_weak_union_nested_union_source() {
     let inner_union = interner.union(vec![source_with_a, source_with_c]);
     let source = interner.union(vec![inner_union, source_with_d]);
 
-    // Should be assignable: { a } in nested union has overlap
+    // Rejected: { c } and { d } members lack common property with weak union target
     assert!(
-        checker.is_assignable(source, target),
-        "Nested union source with one overlapping member should be assignable"
+        !checker.is_assignable(source, target),
+        "Nested union source where some members lack common property should be rejected"
     );
 }
 
@@ -3323,17 +3325,19 @@ fn test_exact_optional_property_types_toggle_behavior() {
 
 #[test]
 fn test_strict_null_checks_off_null_assignable_to_anything() {
-    // With strictNullChecks=false, null is assignable to everything (like never)
+    // With strictNullChecks=false, null is assignable to most types.
+    // Exception: null is NOT assignable to void (only undefined is).
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
     checker.set_strict_null_checks(false);
 
-    // null is assignable to all types
+    // null is assignable to primitive types
     assert!(checker.is_assignable(TypeId::NULL, TypeId::STRING));
     assert!(checker.is_assignable(TypeId::NULL, TypeId::NUMBER));
     assert!(checker.is_assignable(TypeId::NULL, TypeId::BOOLEAN));
-    assert!(checker.is_assignable(TypeId::NULL, TypeId::VOID));
+    // null is NOT assignable to void — only undefined is (tsc intrinsic rule)
+    assert!(!checker.is_assignable(TypeId::NULL, TypeId::VOID));
 
     // undefined is also assignable to everything
     assert!(checker.is_assignable(TypeId::UNDEFINED, TypeId::STRING));

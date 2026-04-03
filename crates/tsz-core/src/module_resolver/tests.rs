@@ -2098,7 +2098,7 @@ fn test_lookup_extension_suggestion_esm() {
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
-    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
 
     assert!(
         result.resolved_path.is_none(),
@@ -2150,7 +2150,7 @@ fn test_lookup_extension_suggestion_tsx_preserve_uses_jsx() {
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
-    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
 
     assert!(
         result.resolved_path.is_none(),
@@ -2198,7 +2198,7 @@ fn test_lookup_extension_suggestion_tsx_react_uses_js() {
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
-    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
 
     assert!(
         result.resolved_path.is_none(),
@@ -2239,7 +2239,7 @@ fn test_lookup_cjs_esm_mismatch_classic_resolution() {
         no_implicit_any: false,
         implied_classic_resolution: true,
     };
-    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
 
     let error = result.error.expect("should have an error");
     assert_eq!(
@@ -2283,7 +2283,7 @@ fn test_lookup_json_module_without_flag() {
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
-    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
 
     let error = result.error.expect("should have an error");
     assert_eq!(
@@ -2319,7 +2319,7 @@ fn test_lookup_ambient_module_suppresses_error() {
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
-    let result = resolver.lookup(&request, |_, _| None, |spec| spec == "my-ambient");
+    let result = resolver.lookup(&request, |_, _| None, |spec| spec == "my-ambient", None);
 
     assert!(result.resolved_path.is_none(), "ambient has no file path");
     assert!(
@@ -2368,7 +2368,7 @@ fn test_lookup_untyped_js_module_no_implicit_any() {
         no_implicit_any: true,
         implied_classic_resolution: false,
     };
-    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
     assert!(
         result.treat_as_resolved,
         "untyped JS should be treated as resolved"
@@ -2387,7 +2387,7 @@ fn test_lookup_untyped_js_module_no_implicit_any() {
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
-    let result2 = resolver.lookup(&request_no_strict, |_, _| None, |_| false);
+    let result2 = resolver.lookup(&request_no_strict, |_, _| None, |_| false, None);
     assert!(
         result2.treat_as_resolved,
         "untyped JS should be resolved without error"
@@ -2428,7 +2428,7 @@ fn test_lookup_fallback_success() {
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
-    let result = resolver.lookup(&request, |_, _| Some(fake_target_clone), |_| false);
+    let result = resolver.lookup(&request, |_, _| Some(fake_target_clone), |_| false, None);
 
     assert!(
         result.resolved_path.is_some(),
@@ -2478,7 +2478,7 @@ fn test_lookup_node16_esm_extensionless_fallback_error() {
     };
     // Primary resolution emits TS2835 (extension suggestion).
     // Even if fallback would find the file, the primary error takes priority.
-    let result = resolver.lookup(&request, |_, _| Some(fake_target_clone), |_| false);
+    let result = resolver.lookup(&request, |_, _| Some(fake_target_clone), |_| false, None);
 
     assert!(
         result.resolved_path.is_none(),
@@ -2538,7 +2538,7 @@ fn test_lookup_package_exports_subpath() {
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
-    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
 
     assert!(
         result.resolved_path.is_some(),
@@ -2593,7 +2593,7 @@ fn test_lookup_resolution_mode_override_selects_import_condition() {
         implied_classic_resolution: false,
     };
     let result_without_override =
-        resolver.lookup(&request_without_override, |_, _| None, |_| false);
+        resolver.lookup(&request_without_override, |_, _| None, |_| false, None);
     assert!(
         result_without_override.error.is_some(),
         "CJS implied mode should follow the missing require condition"
@@ -2610,7 +2610,8 @@ fn test_lookup_resolution_mode_override_selects_import_condition() {
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
-    let result_with_override = resolver.lookup(&request_with_override, |_, _| None, |_| false);
+    let result_with_override =
+        resolver.lookup(&request_with_override, |_, _| None, |_| false, None);
 
     assert!(
         result_with_override.resolved_path.is_some(),
@@ -2669,7 +2670,7 @@ fn test_lookup_module_preserve_uses_syntax_directed_conditions() {
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
-    let esm_result = resolver.lookup(&esm_request, |_, _| None, |_| false);
+    let esm_result = resolver.lookup(&esm_request, |_, _| None, |_| false, None);
     let esm_path = esm_result
         .resolved_path
         .expect("module preserve import should select the import condition");
@@ -2690,7 +2691,7 @@ fn test_lookup_module_preserve_uses_syntax_directed_conditions() {
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
-    let cjs_result = resolver.lookup(&cjs_request, |_, _| None, |_| false);
+    let cjs_result = resolver.lookup(&cjs_request, |_, _| None, |_| false, None);
     let cjs_path = cjs_result
         .resolved_path
         .expect("module preserve require should select the require condition");
@@ -2751,7 +2752,7 @@ fn test_lookup_module_preserve_honors_forced_cts_and_mts_conditions() {
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
-    let mts_result = resolver.lookup(&mts_request, |_, _| None, |_| false);
+    let mts_result = resolver.lookup(&mts_request, |_, _| None, |_| false, None);
     let mts_path = mts_result
         .resolved_path
         .expect(".mts import should stay on the import condition");
@@ -2772,7 +2773,7 @@ fn test_lookup_module_preserve_honors_forced_cts_and_mts_conditions() {
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
-    let cts_result = resolver.lookup(&cts_request, |_, _| None, |_| false);
+    let cts_result = resolver.lookup(&cts_request, |_, _| None, |_| false, None);
     let cts_path = cts_result
         .resolved_path
         .expect(".cts import should stay on the require condition");
@@ -2847,7 +2848,7 @@ fn test_lookup_versioned_types_condition_prefers_matching_export_branch() {
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
-    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
 
     let resolved_path = result
         .resolved_path
@@ -2914,7 +2915,9 @@ fn test_package_imports_exact_mapping_does_not_mark_ts_extension_usage() {
         implied_classic_resolution: false,
     };
 
-    let outcome = resolver.lookup(&request, |_, _| None, |_| false).classify();
+    let outcome = resolver
+        .lookup(&request, |_, _| None, |_| false, None)
+        .classify();
     assert!(outcome.resolved_path.is_some());
     assert!(
         !outcome.resolved_using_ts_extension,
@@ -2962,7 +2965,9 @@ fn test_package_imports_pattern_marks_ts_extension_usage() {
         implied_classic_resolution: false,
     };
 
-    let outcome = resolver.lookup(&request, |_, _| None, |_| false).classify();
+    let outcome = resolver
+        .lookup(&request, |_, _| None, |_| false, None)
+        .classify();
     assert!(outcome.resolved_path.is_some());
     assert!(
         outcome.resolved_using_ts_extension,
@@ -3075,7 +3080,7 @@ fn test_lookup_ts5097_ts_extension_not_found() {
         implied_classic_resolution: false,
     };
 
-    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
     let outcome = result.classify();
 
     let error = outcome
@@ -3125,7 +3130,7 @@ fn test_lookup_ts5097_mts_extension_not_found() {
         implied_classic_resolution: false,
     };
 
-    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
     let outcome = result.classify();
 
     let error = outcome
@@ -3170,7 +3175,7 @@ fn test_lookup_ts_extension_resolves_when_file_exists() {
         implied_classic_resolution: false,
     };
 
-    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
     let outcome = result.classify();
 
     // When the file exists, Node resolution resolves it successfully
@@ -3212,7 +3217,7 @@ fn test_lookup_jsx_not_enabled_classify_outcome() {
         implied_classic_resolution: false,
     };
 
-    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
     let outcome = result.classify();
 
     assert!(
@@ -3258,7 +3263,7 @@ fn test_lookup_successful_resolution_classify() {
         implied_classic_resolution: false,
     };
 
-    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
     let outcome = result.classify();
 
     assert!(
@@ -3305,7 +3310,7 @@ fn test_lookup_ts2307_plain_no_upgrade() {
         implied_classic_resolution: false,
     };
 
-    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
     let outcome = result.classify();
 
     assert!(!outcome.is_resolved, "Not-found should not be resolved");
@@ -3349,7 +3354,7 @@ fn test_lookup_ts2732_nonexistent_json_without_resolve_json_module() {
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
-    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
     let outcome = result.classify();
 
     assert!(
@@ -3395,7 +3400,7 @@ fn test_lookup_ts2732_not_emitted_when_resolve_json_module_enabled() {
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
-    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
     let outcome = result.classify();
 
     let error = outcome.error.expect("Expected error for missing .json");
@@ -3441,7 +3446,7 @@ fn test_lookup_path_mapping_failure_produces_ts2307_via_lookup() {
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
-    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
     let outcome = result.classify();
 
     assert!(
@@ -3489,7 +3494,7 @@ fn test_lookup_fallback_rescues_not_found() {
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
-    let result = resolver.lookup(&request, |_, _| Some(fallback_path), |_| false);
+    let result = resolver.lookup(&request, |_, _| Some(fallback_path), |_| false, None);
     let outcome = result.classify();
 
     assert!(outcome.is_resolved, "Fallback should mark as resolved");
@@ -3606,7 +3611,7 @@ fn test_lookup_classic_implied_resolution_upgrades_to_ts2792() {
         no_implicit_any: false,
         implied_classic_resolution: true,
     };
-    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
     let outcome = result.classify();
 
     assert!(!outcome.is_resolved);
@@ -3651,7 +3656,7 @@ fn test_lookup_bare_json_specifier_nonexistent_upgrades_to_ts2732() {
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
-    let result = resolver.lookup(&request, |_, _| None, |_| false);
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
     let outcome = result.classify();
 
     let error = outcome.error.expect("Expected error for bare .json import");
@@ -3689,7 +3694,7 @@ fn test_lookup_classify_ambient_no_path_no_error() {
         no_implicit_any: false,
         implied_classic_resolution: false,
     };
-    let result = resolver.lookup(&request, |_, _| None, |spec| spec == "my-ambient-mod");
+    let result = resolver.lookup(&request, |_, _| None, |spec| spec == "my-ambient-mod", None);
     let outcome = result.classify();
 
     assert!(outcome.is_resolved, "Ambient module should be resolved");

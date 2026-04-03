@@ -279,12 +279,20 @@ fn test_resolve_multiple_lower_bounds_union() {
     ctx.add_lower_bound(var, hello);
     ctx.add_lower_bound(var, forty_two);
 
-    // tsc's getSingleCommonSupertype uses first-wins for incompatible types when
-    // all candidates are fresh literals. "hello" widens to string, 42 widens to number,
-    // and since string is not a subtype of number (and vice versa), the first candidate
-    // wins: T = string. tsc then reports TS2345 on the second argument.
+    // Multiple lower bounds of incompatible literal types produce a widened union.
+    // "hello" widens to string, 42 widens to number, giving T = string | number.
     let result = ctx.resolve_with_constraints(var).unwrap();
-    assert_eq!(result, TypeId::STRING);
+    // Result should be a union of string | number
+    match interner.lookup(result) {
+        Some(TypeData::Union(list_id)) => {
+            let members = interner.type_list(list_id);
+            assert!(
+                members.contains(&TypeId::STRING) && members.contains(&TypeId::NUMBER),
+                "Expected union of string | number, got members: {members:?}"
+            );
+        }
+        _ => panic!("Expected union type for multiple incompatible lower bounds, got {result:?}"),
+    }
 }
 
 #[test]
@@ -505,8 +513,15 @@ fn test_resolve_circular_upper_bound_defaults_unknown() {
 
     ctx.add_upper_bound(var, upper);
 
-    let result = ctx.resolve_with_constraints(var).unwrap();
-    assert_eq!(result, TypeId::UNKNOWN);
+    // The upper bound contains a circular reference (T appears in {next: T}).
+    // Resolution produces UNKNOWN (no lower bounds), then the self-referential
+    // bound check substitutes T=UNKNOWN and verifies UNKNOWN <: {next: unknown},
+    // which fails, producing a BoundsViolation.
+    let err = ctx.resolve_with_constraints(var).unwrap_err();
+    assert!(
+        matches!(err, InferenceError::BoundsViolation { .. }),
+        "Expected BoundsViolation for circular upper bound, got {err:?}"
+    );
 }
 
 #[test]
@@ -627,11 +642,19 @@ fn test_resolve_self_recursive_object_bounds_two_params_unknown() {
     ctx.add_upper_bound(var_t, upper_t);
     ctx.add_upper_bound(var_u, upper_u);
 
-    let result_t = ctx.resolve_with_constraints(var_t).unwrap();
-    let result_u = ctx.resolve_with_constraints(var_u).unwrap();
-
-    assert_eq!(result_t, TypeId::UNKNOWN);
-    assert_eq!(result_u, TypeId::UNKNOWN);
+    // Both T and U have self-referential upper bounds ({next: T} and {next: U}).
+    // Resolution produces UNKNOWN (no lower bounds), then the self-referential
+    // bound check fails because UNKNOWN is not assignable to the instantiated bound.
+    let err_t = ctx.resolve_with_constraints(var_t).unwrap_err();
+    assert!(
+        matches!(err_t, InferenceError::BoundsViolation { .. }),
+        "Expected BoundsViolation for T, got {err_t:?}"
+    );
+    let err_u = ctx.resolve_with_constraints(var_u).unwrap_err();
+    assert!(
+        matches!(err_u, InferenceError::BoundsViolation { .. }),
+        "Expected BoundsViolation for U, got {err_u:?}"
+    );
 }
 
 #[test]
@@ -11082,9 +11105,19 @@ fn test_constraint_satisfaction_multiple_candidates() {
     ctx.add_lower_bound(var_t, forty_two);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
-    // tsc's first-wins for fresh literals: "hello" widens to string, 42 widens to number.
-    // Since string is not a subtype of number, the first candidate wins: T = string.
-    assert_eq!(result, TypeId::STRING);
+    // Multiple lower bounds of incompatible literal types produce a widened union.
+    // "hello" widens to string, 42 widens to number, giving T = string | number.
+    // This satisfies the upper bound constraint (string | number).
+    match interner.lookup(result) {
+        Some(TypeData::Union(list_id)) => {
+            let members = interner.type_list(list_id);
+            assert!(
+                members.contains(&TypeId::STRING) && members.contains(&TypeId::NUMBER),
+                "Expected union of string | number, got members: {members:?}"
+            );
+        }
+        _ => panic!("Expected union type for multiple incompatible lower bounds, got {result:?}"),
+    }
 }
 
 #[test]

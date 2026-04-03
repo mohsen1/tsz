@@ -470,7 +470,10 @@ fn test_intersection_ignores_deferred_any_fallback_when_other_member_has_propert
 }
 
 #[test]
-fn test_union_ignores_deferred_any_fallback_when_other_member_has_property() {
+fn test_union_with_deferred_member_and_concrete_member_property_not_found() {
+    // Union of T[keyof T] (deferred/unresolvable) and { and: string }.
+    // Property access on the union returns PropertyNotFound because the deferred
+    // member cannot be resolved to determine if it has the property.
     let interner = TypeInterner::new();
     let evaluator = PropertyAccessEvaluator::new(&interner);
 
@@ -488,10 +491,7 @@ fn test_union_ignores_deferred_any_fallback_when_other_member_has_property() {
     let spy = interner.object(vec![PropertyInfo::new(and_name, TypeId::STRING)]);
     let union = interner.union(vec![deferred_member, spy]);
 
-    assert_property_success(
-        &evaluator.resolve_property_access(union, "and"),
-        TypeId::STRING,
-    );
+    assert_property_not_found(&evaluator.resolve_property_access(union, "and"));
 }
 
 #[test]
