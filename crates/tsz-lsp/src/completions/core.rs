@@ -956,8 +956,7 @@ impl<'a> Completions<'a> {
                     if !seen.insert(name_str.clone()) {
                         continue;
                     }
-                    let mut item =
-                        CompletionItem::new(name_str, CompletionItemKind::Parameter);
+                    let mut item = CompletionItem::new(name_str, CompletionItemKind::Parameter);
                     item.sort_text = Some(sort_priority::LOCATION_PRIORITY.to_string());
                     items.push(item);
                 }
