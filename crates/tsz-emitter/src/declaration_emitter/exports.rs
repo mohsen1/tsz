@@ -1703,7 +1703,17 @@ impl<'a> DeclarationEmitter<'a> {
                 .get(module.name)
                 .and_then(|n| self.arena.get_identifier(n))
                 .is_some_and(|ident| ident.escaped_text == "global");
-            if is_identifier_namespace && !is_global {
+            let referenced_by_export_equals = self
+                .current_source_file_idx
+                .and_then(|source_idx| self.arena.get(source_idx))
+                .and_then(|source_node| self.arena.get_source_file(source_node))
+                .map(|source_file| self.source_file_export_equals_names(source_file))
+                .and_then(|names| {
+                    self.get_identifier_text(module.name)
+                        .map(|name| names.contains(&name))
+                })
+                .unwrap_or(false);
+            if is_identifier_namespace && !is_global && !referenced_by_export_equals {
                 return;
             }
         }

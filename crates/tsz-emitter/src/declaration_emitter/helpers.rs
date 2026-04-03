@@ -1916,6 +1916,41 @@ impl<'a> DeclarationEmitter<'a> {
         names
     }
 
+    pub(crate) fn source_file_export_equals_names(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> FxHashSet<String> {
+        let mut names = FxHashSet::default();
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_ASSIGNMENT {
+                continue;
+            }
+            let Some(assign) = self.arena.get_export_assignment(stmt_node) else {
+                continue;
+            };
+            if !assign.is_export_equals {
+                continue;
+            }
+
+            let Some(expr_node) = self.arena.get(assign.expression) else {
+                continue;
+            };
+            if expr_node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let Some(ident) = self.arena.get_identifier(expr_node) else {
+                continue;
+            };
+            names.insert(ident.escaped_text.clone());
+        }
+
+        names
+    }
+
     pub(crate) fn collect_js_namespace_export_aliases(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
