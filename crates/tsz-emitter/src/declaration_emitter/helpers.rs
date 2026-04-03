@@ -455,84 +455,15 @@ impl<'a> DeclarationEmitter<'a> {
                 has_import = true;
             }
 
-            match stmt_node.kind {
-                k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                    if let Some(func) = self.arena.get_function(stmt_node)
-                        && self
-                            .arena
-                            .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
-                    {
-                        has_export = true;
-                    }
-                }
-                k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                    if let Some(class) = self.arena.get_class(stmt_node)
-                        && self
-                            .arena
-                            .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
-                    {
-                        has_export = true;
-                    }
-                }
-                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                    if let Some(iface) = self.arena.get_interface(stmt_node)
-                        && self
-                            .arena
-                            .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword)
-                    {
-                        has_export = true;
-                    }
-                }
-                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                    if let Some(alias) = self.arena.get_type_alias(stmt_node)
-                        && self
-                            .arena
-                            .has_modifier(&alias.modifiers, SyntaxKind::ExportKeyword)
-                    {
-                        has_export = true;
-                    }
-                }
-                k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                    if let Some(enum_data) = self.arena.get_enum(stmt_node)
-                        && self
-                            .arena
-                            .has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword)
-                    {
-                        has_export = true;
-                    }
-                }
-                k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                    if let Some(var_stmt) = self.arena.get_variable(stmt_node)
-                        && self
-                            .arena
-                            .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
-                    {
-                        has_export = true;
-                    }
-                }
-                k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                    if let Some(module) = self.arena.get_module(stmt_node)
-                        && self
-                            .arena
-                            .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword)
-                    {
-                        has_export = true;
-                    }
-                }
-                k if k == syntax_kind_ext::EXPORT_DECLARATION
-                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT =>
-                {
-                    has_export = true;
-                }
-                k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
-                    if self
+            if self.stmt_has_export_modifier(stmt_node)
+                || stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                || stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                || (stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+                    && self
                         .js_supported_commonjs_named_export_for_statement(stmt_idx)
-                        .is_some()
-                    {
-                        has_export = true;
-                    }
-                }
-                _ => {}
+                        .is_some())
+            {
+                has_export = true;
             }
         }
 
