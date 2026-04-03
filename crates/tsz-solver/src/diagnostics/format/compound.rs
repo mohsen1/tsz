@@ -1,7 +1,7 @@
 //! Compound type formatting methods for `TypeFormatter`.
 
-use super::needs_property_name_quotes;
 use super::TypeFormatter;
+use super::needs_property_name_quotes;
 use crate::types::{
     CallSignature, CallableShape, ConditionalType, FunctionShape, LiteralValue, MappedModifier,
     MappedType, ObjectShape, ParamInfo, PropertyInfo, SymbolRef, TemplateSpan, TupleElement,
@@ -224,7 +224,11 @@ impl<'a> TypeFormatter<'a> {
         format!("<{}>", parts.join(", "))
     }
 
-    pub(super) fn format_params(&mut self, params: &[ParamInfo], this_type: Option<TypeId>) -> Vec<String> {
+    pub(super) fn format_params(
+        &mut self,
+        params: &[ParamInfo],
+        this_type: Option<TypeId>,
+    ) -> Vec<String> {
         let mut rendered = Vec::with_capacity(params.len() + usize::from(this_type.is_some()));
 
         if let Some(this_ty) = this_type {
@@ -1045,7 +1049,11 @@ impl<'a> TypeFormatter<'a> {
 
     /// Resolve a `DefId` to a human-readable name via the definition store,
     /// falling back to `"<prefix>(<raw_id>)"` if unavailable.
-    pub(super) fn format_def_id(&mut self, def_id: crate::def::DefId, fallback_prefix: &str) -> String {
+    pub(super) fn format_def_id(
+        &mut self,
+        def_id: crate::def::DefId,
+        fallback_prefix: &str,
+    ) -> String {
         if let Some(def_store) = self.def_store
             && let Some(def) = def_store.get(def_id)
         {
@@ -1091,7 +1099,10 @@ impl<'a> TypeFormatter<'a> {
     /// Some checker paths still materialize fallback `Lazy(DefId(symbol_id))` nodes
     /// without registering the `DefId` in the definition store. When that happens,
     /// use the raw id as a `SymbolId` if it resolves in the active symbol arena.
-    pub(super) fn format_raw_def_id_symbol_fallback(&mut self, def_id: crate::def::DefId) -> Option<String> {
+    pub(super) fn format_raw_def_id_symbol_fallback(
+        &mut self,
+        def_id: crate::def::DefId,
+    ) -> Option<String> {
         let sym_id = SymbolId(def_id.0);
         self.format_symbol_name(sym_id)
     }
