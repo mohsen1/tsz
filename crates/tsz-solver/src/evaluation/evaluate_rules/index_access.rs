@@ -514,6 +514,26 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                     return Some(TypeId::ERROR);
                 }
                 if result == TypeId::UNDEFINED {
+                    // Check if the member is a type parameter without a meaningful constraint.
+                    // If so, create a deferred IndexAccess to preserve the constraint.
+                    // This ensures (S & State<T>)["a"] produces S["a"] & (T | undefined)
+                    // even when the index is generic (e.g., inferred as "a" from context).
+                    if let Some(TypeData::TypeParameter(param_info)) =
+                        self.evaluator.interner().lookup(member)
+                    {
+                        let has_meaningful_constraint = param_info.constraint.is_some_and(|c| {
+                            c != TypeId::UNKNOWN && c != TypeId::ANY
+                        });
+                        if !has_meaningful_constraint {
+                            // Create a deferred IndexAccess for the type parameter
+                            // without a meaningful constraint
+                            let deferred = self
+                                .evaluator
+                                .interner()
+                                .index_access(member, self.index_type);
+                            deferred_results.push(deferred);
+                        }
+                    }
                     continue;
                 }
                 if crate::type_queries::is_index_access_type(self.evaluator.interner(), result) {
@@ -530,6 +550,17 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                 return Some(crate::utils::intersection_or_single(
                     self.evaluator.interner(),
                     concrete_results,
+                ));
+            }
+
+            // If no concrete results but we have deferred results, return those.
+            // This handles cases like `(S & State<T>)["a"]` where S is a type parameter
+            // without a meaningful constraint - we need to preserve S["a"] as a deferred
+            // IndexAccess to ensure correct assignability checking.
+            if !deferred_results.is_empty() {
+                return Some(crate::utils::intersection_or_single(
+                    self.evaluator.interner(),
+                    deferred_results,
                 ));
             }
 
@@ -590,13 +621,21 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                 return Some(TypeId::ERROR);
             }
             if result == TypeId::UNDEFINED {
-                // Check if the member is a type parameter without a constraint.
-                // If so, create a deferred IndexAccess to preserve the constraint.
+                // Check if the member is a type parameter without a meaningful constraint.
+                // A constraint is "meaningful" if it provides actual structural information
+                // beyond just `unknown` or `any`. TypeScript 6.0+ gives unconstrained type
+                // parameters an implicit constraint of `unknown`, but for indexed access
+                // purposes, we should still treat them as deferred to preserve assignability
+                // constraints like `(S & State<T>)["a"] = S["a"] & (T | undefined)`.
                 if let Some(TypeData::TypeParameter(param_info)) =
                     self.evaluator.interner().lookup(member)
                 {
-                    if param_info.constraint.is_none() {
-                        // Create a deferred IndexAccess for the unconstrained type parameter
+                    let has_meaningful_constraint = param_info.constraint.is_some_and(|c| {
+                        c != TypeId::UNKNOWN && c != TypeId::ANY
+                    });
+                    if !has_meaningful_constraint {
+                        // Create a deferred IndexAccess for the type parameter
+                        // without a meaningful constraint
                         let deferred = self
                             .evaluator
                             .interner()
