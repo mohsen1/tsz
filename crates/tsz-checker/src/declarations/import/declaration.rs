@@ -961,11 +961,13 @@ impl<'a> CheckerState<'a> {
                 }
                 // Side-effect imports use TS2882 instead of TS2307/TS2792,
                 // but only when noUncheckedSideEffectImports is enabled.
-                // When disabled, side-effect imports with resolution errors are silently ignored.
+                // When disabled (default), tsc silently ignores all resolution failures.
                 if is_side_effect_import {
-                    // When the driver has already reported a resolution error for this side-effect import,
-                    // emit it as TS2882 even when noUncheckedSideEffectImports is disabled.
-                    // This ensures module-not-found errors are not silently swallowed (matches tsc behavior).
+                    if !self.ctx.compiler_options.no_unchecked_side_effect_imports {
+                        self.ctx.import_resolution_stack.pop();
+                        return;
+                    }
+                    // noUncheckedSideEffectImports is enabled — convert to TS2882
                     if error_code
                         == crate::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
                         || error_code
@@ -979,9 +981,6 @@ impl<'a> CheckerState<'a> {
                             diagnostic_messages::CANNOT_FIND_MODULE_OR_TYPE_DECLARATIONS_FOR_SIDE_EFFECT_IMPORT_OF,
                             &[module_name],
                         );
-                    } else if !self.ctx.compiler_options.no_unchecked_side_effect_imports {
-                        self.ctx.import_resolution_stack.pop();
-                        return;
                     }
                 } else {
                     let (fallback_message, fallback_code) = self.module_not_found_diagnostic(module_name);
@@ -1328,6 +1327,13 @@ impl<'a> CheckerState<'a> {
         }
 
         tracing::trace!(%module_name, "check_import_declaration: fallback - emitting module-not-found error");
+
+        // Side-effect imports are silently ignored when noUncheckedSideEffectImports is false
+        if is_side_effect_import && !self.ctx.compiler_options.no_unchecked_side_effect_imports {
+            self.ctx.import_resolution_stack.pop();
+            return;
+        }
+
         // Fallback: Emit module-not-found error if no specific error was found
         // Check if we've already emitted for this module (prevents duplicate emissions)
         if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
