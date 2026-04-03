@@ -198,6 +198,22 @@ impl<'a> ElementAccessEvaluator<'a> {
                 }
                 false
             }
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = self.interner.callable_shape(shape_id);
+                checker.reset();
+                if checker.is_subtype_of(index_type, TypeId::STRING) && shape.string_index.is_none()
+                {
+                    return true;
+                }
+                checker.reset();
+                if checker.is_subtype_of(index_type, TypeId::NUMBER)
+                    && shape.number_index.is_none()
+                    && shape.string_index.is_none()
+                {
+                    return true;
+                }
+                false
+            }
             _ => false,
         }
     }
