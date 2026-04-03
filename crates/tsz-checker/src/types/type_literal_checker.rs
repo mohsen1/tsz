@@ -689,7 +689,6 @@ impl<'a> CheckerState<'a> {
     /// - **`ObjectWithIndex`**: If has index signatures
     /// - **Object**: Plain object type otherwise
     pub(crate) fn get_type_from_type_literal(&mut self, idx: NodeIndex) -> TypeId {
-        eprintln!("DEBUG: get_type_from_type_literal called");
         use tsz_parser::parser::syntax_kind_ext::{
             CALL_SIGNATURE, CONSTRUCT_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
         };
@@ -743,8 +742,6 @@ impl<'a> CheckerState<'a> {
             let Some(member) = self.ctx.arena.get(member_idx) else {
                 continue;
             };
-            eprintln!("DEBUG: Processing member kind={}", member.kind);
-
             if let Some(sig) = self.ctx.arena.get_signature(member) {
                 match member.kind {
                     CALL_SIGNATURE => {
@@ -858,7 +855,6 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some(index_sig) = self.ctx.arena.get_index_signature(member) {
-                eprintln!("DEBUG: Found index signature member");
                 let param_idx = index_sig
                     .parameters
                     .nodes
@@ -920,25 +916,16 @@ impl<'a> CheckerState<'a> {
 
                 // TS2693: Check if parameter name without type annotation
                 // refers to a type (e.g., `[K]: number` where `K` is a type alias).
-                eprintln!(
-                    "DEBUG: Checking index sig, has_grammar_error={}, type_ann.is_none()={}",
-                    has_param_grammar_error,
-                    param_data.type_annotation.is_none()
-                );
                 if !has_param_grammar_error && param_data.type_annotation.is_none() {
-                    eprintln!("DEBUG: Inside TS2693 check");
                     if let Some(name_node) = self.ctx.arena.get(param_data.name) {
-                        eprintln!("DEBUG: Got name_node");
                         if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                             let name = &ident.escaped_text;
-                            eprintln!("DEBUG: Got identifier name={}", name);
                             // Check if this identifier resolves to a type symbol
                             if let Some(sym_id) = self
                                 .ctx
                                 .binder
                                 .resolve_identifier(self.ctx.arena, param_data.name)
                             {
-                                eprintln!("DEBUG: Resolved symbol sym_id={:?}", sym_id);
                                 if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                                     let has_type = (symbol.flags & tsz_binder::symbol_flags::TYPE)
                                         != 0
@@ -948,10 +935,6 @@ impl<'a> CheckerState<'a> {
                                             != 0;
                                     let has_value =
                                         (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0;
-                                    eprintln!(
-                                        "DEBUG: Symbol flags={:x} has_type={} has_value={}",
-                                        symbol.flags, has_type, has_value
-                                    );
                                     if has_type && !has_value {
                                         // The identifier refers to a type-only symbol
                                         // Emit TS2693: Type only used as value
