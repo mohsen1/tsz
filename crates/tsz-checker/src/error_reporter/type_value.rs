@@ -224,6 +224,17 @@ impl<'a> CheckerState<'a> {
                     ),
                 ),
             }
+        } else if self.is_computed_property_in_type_member(idx) {
+            // TS2690: Type used as computed property key in type literal.
+            // Suggest mapped type syntax: "Did you mean to use 'P in K'?"
+            let suggested_var = Self::suggest_mapped_type_variable(name);
+            (
+                diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_DID_YOU_MEAN_TO_USE_IN,
+                format_message(
+                    diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_DID_YOU_MEAN_TO_USE_IN,
+                    &[name, &suggested_var],
+                ),
+            )
         } else {
             // TS2693: Generic type-only error
             (
@@ -236,6 +247,96 @@ impl<'a> CheckerState<'a> {
         };
 
         self.error_at_node(idx, &message, code);
+    }
+
+    /// Check if the identifier at `idx` is used as a computed property name
+    /// inside a type member (property signature, method signature, etc.) within
+    /// a type literal or interface declaration.
+    ///
+    /// This detects patterns like `type T = { [K]: number }` where `K` is a type
+    /// alias being used as a computed property key, which should get TS2690
+    /// (with mapped type suggestion) instead of TS2693.
+    fn is_computed_property_in_type_member(&self, idx: NodeIndex) -> bool {
+        // Walk up: Identifier -> ComputedPropertyName -> TypeMember -> TypeLiteral/Interface
+        let Some(ext) = self.ctx.arena.get_extended(idx) else {
+            return false;
+        };
+        let Some(parent) = self.ctx.arena.get(ext.parent) else {
+            return false;
+        };
+        if parent.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+
+        let Some(parent_ext) = self.ctx.arena.get_extended(ext.parent) else {
+            return false;
+        };
+        let Some(grandparent) = self.ctx.arena.get(parent_ext.parent) else {
+            return false;
+        };
+
+        // The computed property name must be inside a type member
+        let is_type_member = matches!(
+            grandparent.kind,
+            syntax_kind_ext::PROPERTY_SIGNATURE
+                | syntax_kind_ext::METHOD_SIGNATURE
+                | syntax_kind_ext::INDEX_SIGNATURE
+        );
+        if !is_type_member {
+            return false;
+        }
+
+        // The type member must be inside a type literal or interface
+        let Some(grandparent_ext) = self.ctx.arena.get_extended(parent_ext.parent) else {
+            return false;
+        };
+        let Some(great_grandparent) = self.ctx.arena.get(grandparent_ext.parent) else {
+            return false;
+        };
+        if !matches!(
+            great_grandparent.kind,
+            syntax_kind_ext::TYPE_LITERAL | syntax_kind_ext::INTERFACE_DECLARATION
+        ) {
+            return false;
+        }
+
+        // tsc only suggests mapped type syntax when the computed property is the
+        // sole member of the type literal. When there are multiple members,
+        // it can't simply be converted to a mapped type, so TS2693 is emitted.
+        use tsz_parser::parser::node::NodeAccess;
+        let children = self.ctx.arena.get_children(grandparent_ext.parent);
+        let member_count = children
+            .iter()
+            .filter(|&&child| {
+                self.ctx.arena.get(child).is_some_and(|n| {
+                    matches!(
+                        n.kind,
+                        syntax_kind_ext::PROPERTY_SIGNATURE
+                            | syntax_kind_ext::METHOD_SIGNATURE
+                            | syntax_kind_ext::INDEX_SIGNATURE
+                            | syntax_kind_ext::CALL_SIGNATURE
+                            | syntax_kind_ext::CONSTRUCT_SIGNATURE
+                    )
+                })
+            })
+            .count();
+        member_count <= 1
+    }
+
+    /// Generate a suggested variable name for a mapped type suggestion.
+    ///
+    /// tsc uses the first character of the type name. If the type name is a
+    /// single character (so the suggestion would equal the name itself),
+    /// it falls back to `"P"`.
+    fn suggest_mapped_type_variable(type_name: &str) -> String {
+        let first_char = type_name.chars().next().unwrap_or('P');
+        let suggested = first_char.to_string();
+        if suggested == type_name {
+            // Single-char type name - use a fallback to avoid suggesting `[K in K]`
+            "P".to_string()
+        } else {
+            suggested
+        }
     }
 
     /// Determine if the identifier at `idx` resolves to a symbol that was
