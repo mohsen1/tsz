@@ -35,7 +35,7 @@ impl<'a> CheckerState<'a> {
             block.statements.nodes.iter().rev().find_map(|&stmt_idx| {
                 let stmt = self.ctx.arena.get(stmt_idx)?;
                 let ret = self.ctx.arena.get_return_statement(stmt)?;
-                (!ret.expression.is_none()).then_some(ret.expression)
+                (ret.expression.is_some()).then_some(ret.expression)
             })?
         } else {
             func.body

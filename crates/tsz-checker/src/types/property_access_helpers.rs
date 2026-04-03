@@ -2192,14 +2192,14 @@ impl<'a> CheckerState<'a> {
         }
 
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else {
             symbol
                 .declarations
                 .iter()
                 .copied()
-                .find(|decl| !decl.is_none())?
+                .find(|decl| decl.is_some())?
         };
         if !self.ctx.arena.is_const_variable_declaration(decl_idx) {
             return None;

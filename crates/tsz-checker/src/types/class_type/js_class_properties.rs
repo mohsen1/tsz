@@ -375,7 +375,7 @@ impl CheckerState<'_> {
             }
             let is_readonly = self.jsdoc_has_readonly_tag(stmt_idx);
 
-            if !rhs_idx.is_none() && self.js_assignment_rhs_is_void_zero(rhs_idx) {
+            if rhs_idx.is_some() && self.js_assignment_rhs_is_void_zero(rhs_idx) {
                 if let Some(parent_sym) = parent_sym
                     && let Some(symbol) = self.ctx.binder.get_symbol(parent_sym)
                 {
@@ -400,7 +400,7 @@ impl CheckerState<'_> {
             let type_id = if let Some(jsdoc_type) = self.js_statement_declared_type(stmt_idx) {
                 any_is_explicit = true;
                 jsdoc_type
-            } else if !rhs_idx.is_none() {
+            } else if rhs_idx.is_some() {
                 let mut rhs_type =
                     self.js_constructor_assignment_rhs_type(rhs_idx, &param_type_map);
                 let rhs_is_direct_empty_array =
@@ -444,13 +444,13 @@ impl CheckerState<'_> {
                         && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                     {
                         let decl = symbol.value_declaration;
-                        if !decl.is_none() {
+                        if decl.is_some() {
                             // Check if the declaration has an inline type annotation
                             let has_inline_type = self.ctx.arena.get(decl).is_some_and(|d| {
                                 self.ctx
                                     .arena
                                     .get_parameter(d)
-                                    .is_some_and(|p| !p.type_annotation.is_none())
+                                    .is_some_and(|p| p.type_annotation.is_some())
                             });
                             // Check if the enclosing function's JSDoc has
                             // a @param {type} tag for this parameter
@@ -671,7 +671,7 @@ impl CheckerState<'_> {
             k if k == syntax_kind_ext::IF_STATEMENT => {
                 if let Some(if_stmt) = self.ctx.arena.get_if_statement(node) {
                     self.collect_nested_js_this_assignment_statements(if_stmt.then_statement, out);
-                    if !if_stmt.else_statement.is_none() {
+                    if if_stmt.else_statement.is_some() {
                         self.collect_nested_js_this_assignment_statements(
                             if_stmt.else_statement,
                             out,

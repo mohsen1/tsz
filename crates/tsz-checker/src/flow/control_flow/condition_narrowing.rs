@@ -264,7 +264,7 @@ impl<'a> FlowAnalyzer<'a> {
 
             if idx == clause_idx {
                 saw_current = true;
-                if !clause.expression.is_none() {
+                if clause.expression.is_some() {
                     narrowed = self.narrow_by_switch_clause(
                         narrowed,
                         switch_expr,

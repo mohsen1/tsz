@@ -25,7 +25,7 @@ impl<'a> CheckerState<'a> {
             .get_extended(node_idx)
             .map_or(NodeIndex::NONE, |info| info.parent);
 
-        while !current.is_none() {
+        while current.is_some() {
             let Some(parent) = self.ctx.arena.get(current) else {
                 break;
             };

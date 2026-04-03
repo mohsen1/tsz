@@ -3949,7 +3949,7 @@ impl<'a> Printer<'a> {
                 self.write("static ");
                 self.write("#");
                 self.write(storage_name);
-                if !prop.initializer.is_none() {
+                if prop.initializer.is_some() {
                     self.write(" = ");
                     self.emit_expression(prop.initializer);
                 }
@@ -3957,7 +3957,7 @@ impl<'a> Printer<'a> {
             } else {
                 self.write("#");
                 self.write(storage_name);
-                if !prop.initializer.is_none() {
+                if prop.initializer.is_some() {
                     self.write(" = ");
                     self.emit_expression(prop.initializer);
                 }

@@ -391,7 +391,7 @@ impl<'a> CheckerState<'a> {
         let snap = self.ctx.snapshot_return_type();
 
         if self.ctx.is_checking_statements
-            && !function_idx.is_none()
+            && function_idx.is_some()
             && !self.contextual_return_suppresses_circularity(return_context)
             && let Some(function_node) = self.ctx.arena.get(function_idx)
         {

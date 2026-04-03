@@ -5880,7 +5880,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.collect_unique_return_type_text_from_statement(
                         if_data.then_statement,
                         preferred,
-                    ) && !if_data.else_statement.is_none()
+                    ) && if_data.else_statement.is_some()
                         && self.collect_unique_return_type_text_from_statement(
                             if_data.else_statement,
                             preferred,
@@ -5891,12 +5891,12 @@ impl<'a> DeclarationEmitter<'a> {
                     self.collect_unique_return_type_text_from_statement(
                         try_data.try_block,
                         preferred,
-                    ) && !try_data.catch_clause.is_none()
+                    ) && try_data.catch_clause.is_some()
                         && self.collect_unique_return_type_text_from_statement(
                             try_data.catch_clause,
                             preferred,
                         )
-                        && !try_data.finally_block.is_none()
+                        && try_data.finally_block.is_some()
                         && self.collect_unique_return_type_text_from_statement(
                             try_data.finally_block,
                             preferred,
@@ -8935,7 +8935,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.collect_unique_return_identifier_from_statement(
                         if_data.then_statement,
                         returned_identifier,
-                    ) && !if_data.else_statement.is_none()
+                    ) && if_data.else_statement.is_some()
                         && self.collect_unique_return_identifier_from_statement(
                             if_data.else_statement,
                             returned_identifier,
@@ -8946,12 +8946,12 @@ impl<'a> DeclarationEmitter<'a> {
                     self.collect_unique_return_identifier_from_statement(
                         try_data.try_block,
                         returned_identifier,
-                    ) && !try_data.catch_clause.is_none()
+                    ) && try_data.catch_clause.is_some()
                         && self.collect_unique_return_identifier_from_statement(
                             try_data.catch_clause,
                             returned_identifier,
                         )
-                        && !try_data.finally_block.is_none()
+                        && try_data.finally_block.is_some()
                         && self.collect_unique_return_identifier_from_statement(
                             try_data.finally_block,
                             returned_identifier,
@@ -9292,15 +9292,15 @@ impl<'a> DeclarationEmitter<'a> {
                 .get_if_statement(stmt_node)
                 .is_some_and(|if_data| {
                     self.statement_returns_identifier(if_data.then_statement, name)
-                        || (!if_data.else_statement.is_none()
+                        || (if_data.else_statement.is_some()
                             && self.statement_returns_identifier(if_data.else_statement, name))
                 }),
             k if k == syntax_kind_ext::TRY_STATEMENT => {
                 self.arena.get_try(stmt_node).is_some_and(|try_data| {
                     self.statement_returns_identifier(try_data.try_block, name)
-                        || (!try_data.catch_clause.is_none()
+                        || (try_data.catch_clause.is_some()
                             && self.statement_returns_identifier(try_data.catch_clause, name))
-                        || (!try_data.finally_block.is_none()
+                        || (try_data.finally_block.is_some()
                             && self.statement_returns_identifier(try_data.finally_block, name))
                 })
             }

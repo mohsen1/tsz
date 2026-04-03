@@ -816,7 +816,7 @@ impl<'a> CheckerState<'a> {
                 .and_then(|n| self.ctx.arena.get_identifier(n))
                 .is_some_and(|ident| ident.escaped_text == predicate_name);
             if param_name_matches {
-                if !param_data.type_annotation.is_none() {
+                if param_data.type_annotation.is_some() {
                     param_type = Some(self.get_type_from_type_node(param_data.type_annotation));
                 }
                 break;

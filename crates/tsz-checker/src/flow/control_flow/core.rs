@@ -2175,7 +2175,7 @@ impl<'a> FlowAnalyzer<'a> {
         let Some(symbol) = self.binder.get_symbol(sym_id) else {
             return false;
         };
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else if let Some(&first) = symbol.declarations.first() {
             first

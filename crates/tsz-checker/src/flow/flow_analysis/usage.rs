@@ -673,7 +673,7 @@ impl<'a> CheckerState<'a> {
         //   is an IIFE that executes immediately.
         let decl_scope = self.find_enclosing_function_or_source_file(decl_id_to_check);
         let usage_scope = self.find_enclosing_function_or_source_file(idx);
-        if decl_scope != usage_scope && !decl_scope.is_none() {
+        if decl_scope != usage_scope && decl_scope.is_some() {
             let decl_is_source_file = self
                 .ctx
                 .arena

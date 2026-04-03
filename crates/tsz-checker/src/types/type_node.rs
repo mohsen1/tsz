@@ -817,7 +817,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     continue;
                 };
                 if self.ctx.arena.get_identifier_text(param_data.name) == Some(predicate_name) {
-                    param_type = (!param_data.type_annotation.is_none())
+                    param_type = (param_data.type_annotation.is_some())
                         .then(|| self.check(param_data.type_annotation));
                     break;
                 }

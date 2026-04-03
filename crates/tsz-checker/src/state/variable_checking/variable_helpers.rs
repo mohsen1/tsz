@@ -1615,7 +1615,7 @@ impl<'a> CheckerState<'a> {
                     let mut parent = arena
                         .get_extended(variable_decl_idx)
                         .map_or(NodeIndex::NONE, |info| info.parent);
-                    while !parent.is_none() {
+                    while parent.is_some() {
                         let Some(parent_node) = arena.get(parent) else {
                             break;
                         };
@@ -1652,7 +1652,7 @@ impl<'a> CheckerState<'a> {
                     let init_sym_id = self
                         .resolve_alias_symbol(init_sym_id, &mut Vec::new())
                         .unwrap_or(init_sym_id);
-                    if !init_sym_id.is_none()
+                    if init_sym_id.is_some()
                         && self.symbol_decl_file_idx(init_sym_id) != owner_file_idx
                     {
                         return true;
@@ -1893,7 +1893,7 @@ impl<'a> CheckerState<'a> {
         let mut namespace_names = Vec::new();
         let mut root_namespace_sym = SymbolId::NONE;
         let mut parent_sym_id = symbol.parent;
-        while !parent_sym_id.is_none() {
+        while parent_sym_id.is_some() {
             let Some(parent_symbol) = self.get_symbol_from_any_binder(parent_sym_id) else {
                 break;
             };
@@ -1978,7 +1978,7 @@ impl<'a> CheckerState<'a> {
                     let mut parent = arena
                         .get_extended(variable_decl_idx)
                         .map_or(NodeIndex::NONE, |info| info.parent);
-                    while !parent.is_none() {
+                    while parent.is_some() {
                         let Some(parent_node) = arena.get(parent) else {
                             break;
                         };
@@ -2001,7 +2001,7 @@ impl<'a> CheckerState<'a> {
                 let mut parent = arena
                     .get_extended(variable_decl_idx)
                     .map_or(NodeIndex::NONE, |info| info.parent);
-                while !parent.is_none() {
+                while parent.is_some() {
                     let Some(parent_node) = arena.get(parent) else {
                         break;
                     };

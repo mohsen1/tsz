@@ -563,7 +563,7 @@ impl<'a> CheckerState<'a> {
             .map_or(NodeIndex::NONE, |info| info.parent);
         let mut prefixes = Vec::new();
 
-        while !parent.is_none() {
+        while parent.is_some() {
             let parent_node = arena.get(parent)?;
             if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
                 && let Some(module) = arena.get_module(parent_node)

@@ -1709,7 +1709,7 @@ impl<'a> CheckerState<'a> {
                             }
                         } else if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE
                             && let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node)
-                            && !attr_data.initializer.is_none()
+                            && attr_data.initializer.is_some()
                         {
                             self.compute_type_of_node(attr_data.initializer);
                         }
@@ -1981,7 +1981,7 @@ impl<'a> CheckerState<'a> {
                                 }
                             } else if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE
                                 && let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node)
-                                && !attr_data.initializer.is_none()
+                                && attr_data.initializer.is_some()
                             {
                                 let attr_value_idx = if let Some(init_node) =
                                     self.ctx.arena.get(attr_data.initializer)
