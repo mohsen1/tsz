@@ -175,10 +175,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     }
                 }
                 // Union of tuples all out of bounds → TS2339
-                else if let Some(members) = crate::query_boundaries::common::union_members(
-                    self.ctx.types,
-                    object_for_tuple_check,
-                ) {
+                // But suppress if object type is ANY/ERROR (circular reference implicit any)
+                else if object_type != TypeId::ANY
+                    && object_type != TypeId::ERROR
+                    && !tsz_solver::is_error_type(self.ctx.types, object_type)
+                    && let Some(members) = crate::query_boundaries::common::union_members(
+                        self.ctx.types,
+                        object_for_tuple_check,
+                    )
+                {
                     let all_out_of_bounds = !members.is_empty()
                         && members.iter().all(|&m| {
                             if let Some(elems) =
