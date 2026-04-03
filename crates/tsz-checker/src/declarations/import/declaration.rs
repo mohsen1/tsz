@@ -963,16 +963,26 @@ impl<'a> CheckerState<'a> {
                 // but only when noUncheckedSideEffectImports is enabled.
                 // When disabled, side-effect imports with resolution errors are silently ignored.
                 if is_side_effect_import {
-                    if !self.ctx.compiler_options.no_unchecked_side_effect_imports {
+                    // When the driver has already reported a resolution error for this side-effect import,
+                    // emit it as TS2882 even when noUncheckedSideEffectImports is disabled.
+                    // This ensures module-not-found errors are not silently swallowed (matches tsc behavior).
+                    if error_code
+                        == crate::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+                        || error_code
+                            == crate::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O
+                    {
+                        use crate::diagnostics::{
+                            diagnostic_codes, diagnostic_messages, format_message,
+                        };
+                        error_code = diagnostic_codes::CANNOT_FIND_MODULE_OR_TYPE_DECLARATIONS_FOR_SIDE_EFFECT_IMPORT_OF;
+                        error_message = format_message(
+                            diagnostic_messages::CANNOT_FIND_MODULE_OR_TYPE_DECLARATIONS_FOR_SIDE_EFFECT_IMPORT_OF,
+                            &[module_name],
+                        );
+                    } else if !self.ctx.compiler_options.no_unchecked_side_effect_imports {
                         self.ctx.import_resolution_stack.pop();
                         return;
                     }
-                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-                    error_code = diagnostic_codes::CANNOT_FIND_MODULE_OR_TYPE_DECLARATIONS_FOR_SIDE_EFFECT_IMPORT_OF;
-                    error_message = format_message(
-                        diagnostic_messages::CANNOT_FIND_MODULE_OR_TYPE_DECLARATIONS_FOR_SIDE_EFFECT_IMPORT_OF,
-                        &[module_name],
-                    );
                 } else {
                     let (fallback_message, fallback_code) = self.module_not_found_diagnostic(module_name);
                     error_code = fallback_code;
