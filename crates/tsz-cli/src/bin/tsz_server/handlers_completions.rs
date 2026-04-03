@@ -495,11 +495,12 @@ impl Server {
             ),
             import_stmt,
         )];
+        let module_specifier_str = module_specifier.to_string();
         let item = CompletionItem::new(label.to_string(), kind)
             .with_has_action()
             .with_sort_text(sort_priority::AUTO_IMPORT)
-            .with_source(module_specifier.to_string())
-            .with_source_display(module_specifier.to_string())
+            .with_source(module_specifier_str.clone())
+            .with_source_display(module_specifier_str)
             .with_kind_modifiers("export".to_string())
             .with_insert_text(insert_text)
             .with_additional_edits(edits);
@@ -610,8 +611,9 @@ impl Server {
                 continue;
             };
             let name = raw_name.trim().trim_matches('"').trim_matches('\'');
-            if Self::is_identifier(name) && seen.insert(name.to_string()) {
-                out.push(name.to_string());
+            let name_str = name.to_string();
+            if Self::is_identifier(name) && seen.insert(name_str.clone()) {
+                out.push(name_str);
             }
         }
         out
@@ -689,8 +691,9 @@ impl Server {
                     if head.ends_with('?') {
                         head = head.trim_end_matches('?').trim();
                     }
-                    if Self::is_identifier(head) && seen.insert(head.to_string()) {
-                        members.push(head.to_string());
+                    let head_str = head.to_string();
+                    if Self::is_identifier(head) && seen.insert(head_str.clone()) {
+                        members.push(head_str);
                     }
                 }
                 modules.push((module_name.to_string(), alias, members));
