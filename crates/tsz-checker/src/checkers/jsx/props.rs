@@ -869,8 +869,10 @@ impl<'a> CheckerState<'a> {
             if !self.is_assignable_to(spread_type, target) {
                 let spread_name = self.format_type(spread_type);
                 let target_name = format!("IntrinsicAttributes & {spread_name}");
-                let message =
-                    format!("Type '{spread_name}' is not assignable to type '{target_name}'.");
+                let message = format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&spread_name, &target_name],
+                );
                 use crate::diagnostics::diagnostic_codes;
                 self.error_at_node(
                     tag_name_idx,
@@ -1583,9 +1585,13 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 self.format_type(attr_value_type)
                             };
+                            let source_display = format!("{{ {attr_name}: {attr_type_name}; }}");
+                            let base = format_message(
+                                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                                &[&source_display, &display_target],
+                            );
                             let message = format!(
-                                "Type '{{ {attr_name}: {attr_type_name}; }}' is not assignable to type '{display_target}'.\n  \
-                                     Object literal may only specify known properties, \
+                                "{base}\n  Object literal may only specify known properties, \
                                      and '{attr_name}' does not exist in type '{display_target}'."
                             );
                             use crate::diagnostics::diagnostic_codes;
@@ -2196,9 +2202,12 @@ impl<'a> CheckerState<'a> {
             })
             .collect();
         let source_type = self.format_type(self.ctx.types.factory().object(properties));
-        let message = format!(
-            "Type '{source_type}' is not assignable to type '{display_target}'.\n  Property 'children' does not exist on type '{display_target}'."
+        let base = format_message(
+            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_type, display_target],
         );
+        let message =
+            format!("{base}\n  Property 'children' does not exist on type '{display_target}'.");
         use crate::diagnostics::diagnostic_codes;
         self.error_at_node(
             tag_name_idx,
@@ -2560,8 +2569,10 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
             let spread_name = self.format_type(spread_type);
-            let message =
-                format!("Type '{spread_name}' is not assignable to type '{props_display}'.");
+            let message = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&spread_name, &props_display],
+            );
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node(
                 tag_name_idx,
@@ -2603,8 +2614,9 @@ impl<'a> CheckerState<'a> {
                             return false;
                         }
                         let spread_name = self.format_type(spread_type);
-                        let message = format!(
-                            "Type '{spread_name}' is not assignable to type '{props_display}'."
+                        let message = format_message(
+                            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                            &[&spread_name, &props_display],
                         );
                         use crate::diagnostics::diagnostic_codes;
                         self.error_at_node(
@@ -2676,8 +2688,10 @@ impl<'a> CheckerState<'a> {
         // tsc uses the props type name, not the full IntrinsicAttributes intersection.
         if has_type_mismatch {
             let spread_name = self.format_type(spread_type);
-            let message =
-                format!("Type '{spread_name}' is not assignable to type '{props_display}'.");
+            let message = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&spread_name, &props_display],
+            );
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node(
                 tag_name_idx,
