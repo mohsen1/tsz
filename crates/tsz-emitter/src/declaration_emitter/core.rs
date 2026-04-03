@@ -3534,6 +3534,23 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(&printed);
         } else {
             match init_node.kind {
+                k if k == SyntaxKind::NumericLiteral as u16 => {
+                    self.write("number");
+                }
+                k if k == SyntaxKind::StringLiteral as u16 => {
+                    self.write("string");
+                }
+                k if k == SyntaxKind::BigIntLiteral as u16 => {
+                    self.write("bigint");
+                }
+                k if k == SyntaxKind::TrueKeyword as u16
+                    || k == SyntaxKind::FalseKeyword as u16 =>
+                {
+                    self.write("boolean");
+                }
+                k if k == SyntaxKind::NullKeyword as u16 => {
+                    self.write("null");
+                }
                 k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                     self.write("{}");
                 }
