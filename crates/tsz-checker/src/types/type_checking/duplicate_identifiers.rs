@@ -188,7 +188,10 @@ impl<'a> CheckerState<'a> {
                             | symbol_flags::CONST_ENUM
                             | symbol_flags::TYPE_ALIAS))
                         == 0;
-                if !is_interface_merge && !is_var_merge {
+                // Function declarations merge across files via module augmentation.
+                let is_function_merge = (symbol.flags & symbol_flags::FUNCTION) != 0
+                    && !module_augmentation_declarations.is_empty();
+                if !is_interface_merge && !is_var_merge && !is_function_merge {
                     cross_file_conflicts.push(symbol.escaped_name.clone());
                 }
             }
@@ -636,12 +639,6 @@ impl<'a> CheckerState<'a> {
 
                     for group in scope_groups.values() {
                         if group.len() <= 1 {
-                            continue;
-                        }
-                        if group
-                            .iter()
-                            .all(|&(decl_idx, _, _, _)| self.is_ambient_declaration(decl_idx))
-                        {
                             continue;
                         }
                         let all_functions = group
