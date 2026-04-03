@@ -1267,19 +1267,36 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     &target_instantiated,
                     &target_to_source_substitution,
                 );
-            } else {
-                // Strategy 2: When alpha-rename fails due to incompatible constraints,
-                // the source has stricter constraints than the target. Inference would
-                // incorrectly succeed by inferring unconstrained types. Instead, we reject
-                // the assignment immediately.
-                //
-                // Example:
-                //   source: <T, S extends T>(x: T, y: S) => void
-                //   target: <T, S>(x: T, y: S) => void
-                //   constraint check: unknown <: T (false) → alpha-rename fails
-                //   → source is stricter, so assignment should fail (TS2322)
+            } else if mapped_constraint_sensitive {
+                // When mapped/indexed types are involved, constraint differences are
+                // semantically significant and cannot be erased safely. Reject immediately.
                 self.type_param_equivalences.truncate(equiv_start);
                 return SubtypeResult::False;
+            } else {
+                // Strategy 2: When alpha-rename fails due to incompatible constraints
+                // in non-mapped contexts, fall through to constraint erasure (tsc's
+                // `getErasedSignature` behavior). Both signatures have their type params
+                // replaced with their constraints (or `unknown` if unconstrained) and
+                // then compared structurally.
+                //
+                // Example that should PASS:
+                //   source: <T extends {p: string}>(x: T[]) => void
+                //   target: <S extends {p: string}[]>(x: S) => void
+                //   erased: (x: {p: string}[]) => void vs (x: {p: string}[]) => void → OK
+                //
+                // Example that should FAIL:
+                //   source: <T extends string>(x: T[]) => void
+                //   target: <S extends number[]>(x: S) => void
+                //   erased: (x: string[]) => void vs (x: number[]) => void → FAIL
+                let source_canonical =
+                    erase_type_params_to_constraints(&source_instantiated.type_params);
+                source_instantiated =
+                    self.instantiate_function_shape(&source_instantiated, &source_canonical);
+
+                let target_canonical =
+                    erase_type_params_to_constraints(&target_instantiated.type_params);
+                target_instantiated =
+                    self.instantiate_function_shape(&target_instantiated, &target_canonical);
             }
         }
 
