@@ -597,6 +597,20 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
+        // Special case: Do not suppress for union types containing indexed access types.
+        // For example, `(S & State<T>)["a"] | undefined` is a union where one member
+        // is an indexed access type. We should emit TS2322 for these cases because
+        // the indexed access may resolve to a type that is not assignable from the source.
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, target)
+        {
+            if members.iter().any(|&member| {
+                crate::query_boundaries::common::is_index_access_type(self.ctx.types, member)
+            }) {
+                return false; // Must not suppress for unions containing indexed access types
+            }
+        }
+
         // Check if a type contains an error application (e.g., error<any>)
         // This happens when type resolution fails for qualified names like React.ReactElement
         // in function return type positions. Suppress the false positive TS2322.
@@ -697,6 +711,20 @@ impl<'a> CheckerState<'a> {
                 || crate::query_boundaries::common::is_index_access_type(self.ctx.types, type_id)
             {
                 return false;
+            }
+            // Also check for union types containing indexed access types.
+            // For example, `(S & State<T>)["a"] | undefined` is a union where
+            // one member is an indexed access type. We should not suppress TS2322
+            // for these cases because the indexed access may resolve to a type
+            // that is not assignable from the source.
+            if let Some(members) =
+                crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+            {
+                if members.iter().any(|&member| {
+                    crate::query_boundaries::common::is_index_access_type(self.ctx.types, member)
+                }) {
+                    return false; // Don't suppress for unions containing indexed access types
+                }
             }
             // Keep the generic false-positive suppression for genuinely complex
             // generic shapes, but do not suppress plain `T`/`U` relations.
