@@ -1152,16 +1152,26 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                             let name = &ident.escaped_text;
                             // Check if this identifier resolves to a type symbol
-                            if let Some(sym_id) = self.ctx.binder.resolve_identifier(self.ctx.arena, param_data.name) {
+                            if let Some(sym_id) = self
+                                .ctx
+                                .binder
+                                .resolve_identifier(self.ctx.arena, param_data.name)
+                            {
                                 if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                                    let has_type = (symbol.flags & tsz_binder::symbol_flags::TYPE) != 0
-                                        || (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0
-                                        || (symbol.flags & tsz_binder::symbol_flags::INTERFACE) != 0;
-                                    let has_value = (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0;
+                                    let has_type = (symbol.flags & tsz_binder::symbol_flags::TYPE)
+                                        != 0
+                                        || (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS)
+                                            != 0
+                                        || (symbol.flags & tsz_binder::symbol_flags::INTERFACE)
+                                            != 0;
+                                    let has_value =
+                                        (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0;
                                     if has_type && !has_value {
                                         // The identifier refers to a type-only symbol
                                         // Emit TS2693: Type only used as value
-                                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                                        use crate::diagnostics::{
+                                            diagnostic_codes, diagnostic_messages, format_message,
+                                        };
                                         let message = format_message(
                                             diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
                                             &[name],
