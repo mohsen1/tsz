@@ -840,7 +840,14 @@ impl<'a> CheckerState<'a> {
                     // TS1170: Computed property in type literal must have literal/unique symbol type
                     if let Some(member_node) = self.ctx.arena.get(member_idx) {
                         if let Some(sig) = self.ctx.arena.get_signature(member_node) {
-                            self.check_type_literal_computed_property_name(sig.name);
+                            {
+                                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                                self.check_computed_property_requires_literal(
+                                    sig.name,
+                                    diagnostic_messages::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
+                                    diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
+                                );
+                            }
                         } else if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
                             // For get/set accessors in type literals, use TS2464
                             // (general computed property check) matching tsc behavior
