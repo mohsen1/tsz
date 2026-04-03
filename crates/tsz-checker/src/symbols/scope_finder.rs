@@ -1979,6 +1979,11 @@ impl<'a> CheckerState<'a> {
             let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
                 return false;
             };
+            // Computed property names contain expression positions, not type positions.
+            // `[K]: number` should emit TS2693 if K is a type, not suppress it.
+            if parent_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                return false;
+            }
             match parent_node.kind {
                 // Type nodes: identifier is in a type position
                 syntax_kind_ext::TYPE_REFERENCE
