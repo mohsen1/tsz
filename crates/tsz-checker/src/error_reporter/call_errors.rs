@@ -395,7 +395,20 @@ impl<'a> CheckerState<'a> {
 
         let prefer_number_index = prop_node.kind == SyntaxKind::NumericLiteral as u16;
 
-        let index_value_type = [target_type, resolved_target, evaluated_target]
+        // For type parameters, also check the constraint for index signatures
+        let constraint_target = crate::query_boundaries::common::type_parameter_constraint(
+            self.ctx.types,
+            target_type,
+        );
+
+        let candidates: Vec<TypeId> = [target_type, resolved_target, evaluated_target]
+            .into_iter()
+            .chain(constraint_target.into_iter())
+            .chain(constraint_target.map(|c| self.resolve_type_for_property_access(c)))
+            .chain(constraint_target.map(|c| self.judge_evaluate(c)))
+            .collect();
+
+        let index_value_type = candidates
             .into_iter()
             .filter_map(|candidate| {
                 tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
@@ -2167,6 +2180,7 @@ impl<'a> CheckerState<'a> {
 
         // Get target property names and check for missing required ones.
         // We use the solver's object shape to get the canonical set of target properties.
+        let original_target_type = target_type;
         let target_type = self.resolve_type_for_property_access(target_type);
         let target_type = self.evaluate_type_with_env(target_type);
         let target_type = self.resolve_lazy_type(target_type);
@@ -2184,6 +2198,33 @@ impl<'a> CheckerState<'a> {
             "isPrototypeOf",
             "propertyIsEnumerable",
         ];
+
+        // For type parameters with index signature constraints, don't consider properties
+        // as "missing" - index signatures accept any property name.
+        let has_index_signature = [original_target_type, target_type]
+            .into_iter()
+            .chain(
+                crate::query_boundaries::common::type_parameter_constraint(
+                    self.ctx.types,
+                    original_target_type,
+                )
+                .into_iter(),
+            )
+            .chain(
+                crate::query_boundaries::common::type_parameter_constraint(
+                    self.ctx.types,
+                    target_type,
+                )
+                .into_iter(),
+            )
+            .filter_map(|candidate| {
+                tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
+            })
+            .any(|shape| shape.string_index.is_some() || shape.number_index.is_some());
+
+        if has_index_signature {
+            return false;
+        }
 
         if let Some(shape) = crate::query_boundaries::assignability::object_shape_for_type(
             self.ctx.types,
