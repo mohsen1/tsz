@@ -593,6 +593,7 @@ pub(super) fn read_source_files(
                             )
                         },
                         |_| false,
+                        Some(&seen),
                     )
                     .classify();
                 if let Some(resolved) = outcome.resolved_path {

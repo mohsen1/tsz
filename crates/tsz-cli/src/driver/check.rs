@@ -720,6 +720,7 @@ pub(super) fn collect_diagnostics(
                         program.declared_modules.contains(spec)
                             || program.shorthand_ambient_modules.contains(spec)
                     },
+                    Some(&program_paths),
                 );
 
                 // Classify the lookup result into a driver-facing outcome

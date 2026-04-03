@@ -499,6 +499,7 @@ impl ModuleResolver {
         request: &ModuleLookupRequest<'_>,
         fallback_resolve: impl FnOnce(&str, &Path) -> Option<PathBuf>,
         is_ambient_module: impl FnOnce(&str) -> bool,
+        known_files: Option<&rustc_hash::FxHashSet<std::path::PathBuf>>,
     ) -> ModuleLookupResult {
         let specifier = request.specifier;
         let containing_file = request.containing_file;
@@ -514,6 +515,7 @@ impl ModuleResolver {
             request.resolution_mode_override,
         ) {
             Ok(resolved_module) => {
+                eprintln!("[DEBUG lookup] Primary resolution succeeded for '{}': {:?}", specifier, resolved_module.resolved_path);
                 // TS7016: If the resolved file is a JS file from node_modules
                 // (external package), noImplicitAny is enabled, and this is a
                 // CJS require() call, emit TS7016 alongside the successful resolution.
@@ -537,6 +539,7 @@ impl ModuleResolver {
                 }
             }
             Err(failure) => {
+                eprintln!("[DEBUG lookup] Primary resolution FAILED for '{}': {:?}", specifier, failure);
                 // JsxNotEnabled: file exists but --jsx is not set.
                 // Mark as resolved (suppress TS2307) but record the JSX error.
                 let jsx_resolved =
@@ -572,7 +575,10 @@ impl ModuleResolver {
                     // This fixes cases like:
                     // - symlinkedWorkspaceDependenciesNoDirectLinkGeneratesNonrelativeName.ts
                     // - jsDeclarationsTypeReassignmentFromDeclaration.ts
-                    if !fallback_path.exists() {
+                    let fallback_exists_in_known_files = known_files
+                        .map(|kf| kf.contains(&fallback_path))
+                        .unwrap_or(false);
+                    if !fallback_exists_in_known_files && !fallback_path.exists() {
                         // Classic resolution override: TS2307 → TS2792
                         if request.implied_classic_resolution {
                             return ModuleLookupResult::failed(
