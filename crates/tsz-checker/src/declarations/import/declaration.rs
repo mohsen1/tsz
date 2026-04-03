@@ -1019,8 +1019,27 @@ impl<'a> CheckerState<'a> {
                             || file_name.ends_with(".cjs");
                         let is_json_module = file_name.ends_with(".json")
                             && self.ctx.compiler_options.resolve_json_module;
+                        // Check if this is a .d.ts file with only `export=` (no named exports).
+                        // Such files should NOT emit TS2307 here because they have a valid
+                        // export surface via the export assignment. ES-module imports from
+                        // such files are handled separately by the module resolution error
+                        // checking logic.
+                        let is_dts_with_only_export_assignment = if file_name.ends_with(".d.ts") {
+                            if let Some(binder) = self.ctx.get_binder_for_file(target_idx) {
+                                if let Some(exports) = binder.module_exports.get(file_name) {
+                                    exports.has("export=") && exports.len() == 1
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
                         // For non-JS, non-JSON files without export surface, emit TS2307
-                        if !is_js_like && !is_json_module {
+                        // BUT skip if it's a .d.ts file with only export= (no named exports)
+                        if !is_js_like && !is_json_module && !is_dts_with_only_export_assignment {
                             let (message, code) = self.module_not_found_diagnostic(module_name);
                             if !self.ctx.modules_with_ts2307_emitted.contains(module_name) {
                                 self.ctx

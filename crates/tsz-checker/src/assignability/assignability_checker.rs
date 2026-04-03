@@ -601,13 +601,34 @@ impl<'a> CheckerState<'a> {
         // For example, `(S & State<T>)["a"] | undefined` is a union where one member
         // is an indexed access type. We should emit TS2322 for these cases because
         // the indexed access may resolve to a type that is not assignable from the source.
+        //
+        // However, if the union or its indexed access types contain error applications
+        // (e.g., `keyof error` when React type resolution fails), we should still
+        // suppress the diagnostic to avoid false positives on unresolved types.
         if let Some(members) =
             crate::query_boundaries::common::union_members(self.ctx.types, target)
         {
-            if members.iter().any(|&member| {
+            let has_indexed_access = members.iter().any(|&member| {
                 crate::query_boundaries::common::is_index_access_type(self.ctx.types, member)
-            }) {
-                return false; // Must not suppress for unions containing indexed access types
+            });
+            if has_indexed_access {
+                // Check if any indexed access type or its components contain errors
+                let indexed_access_has_errors = members.iter().any(|&member| {
+                    if crate::query_boundaries::common::is_index_access_type(self.ctx.types, member)
+                    {
+                        // Check if the indexed access type itself or any nested types contain errors
+                        Self::type_contains_error_application(self.ctx.types, member)
+                    } else {
+                        false
+                    }
+                });
+                // Also check if the target union itself contains error applications
+                let union_has_errors =
+                    Self::type_contains_error_application(self.ctx.types, target);
+                // Only prevent suppression if there are indexed access types AND no errors
+                if !indexed_access_has_errors && !union_has_errors {
+                    return false; // Must not suppress for unions containing indexed access types without errors
+                }
             }
         }
 
@@ -717,13 +738,34 @@ impl<'a> CheckerState<'a> {
             // one member is an indexed access type. We should not suppress TS2322
             // for these cases because the indexed access may resolve to a type
             // that is not assignable from the source.
+            //
+            // However, if the indexed access types contain error applications
+            // (e.g., when type resolution fails), we should still allow suppression
+            // to avoid false positives on unresolved types.
             if let Some(members) =
                 crate::query_boundaries::common::union_members(self.ctx.types, type_id)
             {
-                if members.iter().any(|&member| {
+                let has_indexed_access = members.iter().any(|&member| {
                     crate::query_boundaries::common::is_index_access_type(self.ctx.types, member)
-                }) {
-                    return false; // Don't suppress for unions containing indexed access types
+                });
+                if has_indexed_access {
+                    // Check if any indexed access type contains error applications
+                    let indexed_access_has_errors = members.iter().any(|&member| {
+                        if crate::query_boundaries::common::is_index_access_type(
+                            self.ctx.types, member,
+                        ) {
+                            Self::type_contains_error_application(self.ctx.types, member)
+                        } else {
+                            false
+                        }
+                    });
+                    // Also check if the union itself contains error applications
+                    let union_has_errors =
+                        Self::type_contains_error_application(self.ctx.types, type_id);
+                    // Only prevent suppression if there are indexed access types AND no errors
+                    if !indexed_access_has_errors && !union_has_errors {
+                        return false; // Don't suppress for unions containing indexed access types without errors
+                    }
                 }
             }
             // Keep the generic false-positive suppression for genuinely complex
