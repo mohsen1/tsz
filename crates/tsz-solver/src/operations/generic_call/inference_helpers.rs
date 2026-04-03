@@ -3,9 +3,7 @@
 use crate::inference::infer::{InferenceContext, InferenceVar};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::{AssignabilityChecker, CallEvaluator};
-use crate::types::{
-    FunctionShape, ParamInfo, TypeData, TypeId, TypePredicate,
-};
+use crate::types::{FunctionShape, ParamInfo, TypeData, TypeId, TypePredicate};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
@@ -1219,5 +1217,4 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             _ => None,
         }
     }
-
 }
