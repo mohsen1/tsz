@@ -753,6 +753,17 @@ fn types_are_comparable_inner(
         return types_have_common_properties(db, source, target, depth);
     }
 
+    // Enum comparability: a literal is comparable to an enum if it matches any enum member.
+    // Enums store their member types as a union in the second TypeId field.
+    // For string enums, string literals are comparable if they match any member value.
+    // For numeric enums, number literals are comparable if they match any member value.
+    if let Some(TypeData::Enum(_def_id, members_type_id)) = db.lookup(source) {
+        return types_are_comparable_inner(db, members_type_id, target, depth + 1);
+    }
+    if let Some(TypeData::Enum(_def_id, members_type_id)) = db.lookup(target) {
+        return types_are_comparable_inner(db, source, members_type_id, depth + 1);
+    }
+
     // Check primitive ↔ literal comparability
     // string is comparable to any string literal
     // number is comparable to any numeric literal
