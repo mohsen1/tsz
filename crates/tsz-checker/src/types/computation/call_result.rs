@@ -1017,14 +1017,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check if this symbol has structural error diagnostics
-        let has_errors = self.symbol_has_structural_errors(symbol_id);
-        if has_errors {
-            eprintln!(
-                "DEBUG: Suppressing TS2769 for symbol {:?} due to structural errors",
-                symbol_id
-            );
-        }
-        has_errors
+        self.symbol_has_structural_errors(symbol_id)
     }
 
     /// Check if a symbol has structural error diagnostics (TS2420, TS2430, TS2694).
