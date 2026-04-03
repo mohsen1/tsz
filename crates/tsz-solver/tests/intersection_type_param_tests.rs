@@ -238,3 +238,75 @@ fn test_intersection_type_params_assignable_to_constraint_union_intersection() {
         "T & U should be assignable to (A | B) & T & U when T extends A and U extends B"
     );
 }
+
+/// Test that indexed access on intersection with unconstrained type parameter
+/// correctly produces a deferred IndexAccess that blocks assignability.
+/// This is the core of the indexedAccessRelation.ts test case.
+#[test]
+fn test_indexed_access_intersection_with_unconstrained_type_param() {
+    use crate::TypeEvaluator;
+    use crate::types::Visibility;
+
+    let interner = TypeInterner::new();
+
+    // Create S (unconstrained type parameter, implicit constraint = unknown)
+    let s_name = interner.intern_string("S");
+    let s_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: s_name,
+        constraint: Some(TypeId::UNKNOWN),
+        default: None,
+        is_const: false,
+    }));
+
+    // Create T (constrained type parameter, e.g., extends Foo)
+    let foo = interner.object(vec![]); // Simplified Foo
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: Some(foo),
+        default: None,
+        is_const: false,
+    }));
+
+    // Create State<T> = { a?: T }
+    let a_name = interner.intern_string("a");
+    let state_t = interner.object(vec![PropertyInfo {
+        name: a_name,
+        type_id: interner.union2(t_param, TypeId::UNDEFINED),
+        write_type: interner.union2(t_param, TypeId::UNDEFINED),
+        optional: true,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+    }]);
+
+    // Create intersection S & State<T>
+    let intersection = interner.intersection(vec![s_param, state_t]);
+
+    // Create index type "a"
+    let index_a = interner.literal_string("a");
+
+    // Evaluate (S & State<T>)["a"]
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let index_access = interner.index_access(intersection, index_a);
+    let result = evaluator.evaluate(index_access);
+
+    println!("Result of (S & State<T>)['a']: {:?}", result);
+    println!("Result type data: {:?}", interner.lookup(result));
+
+    // Check if T is assignable to the result - it should NOT be
+    // The result should be S["a"] & (T | undefined), and T is not assignable to S["a"]
+    let mut checker = SubtypeChecker::new(&interner);
+    let is_subtype = checker.is_subtype_of(t_param, result);
+    println!("T <: result? {} (should be false)", is_subtype);
+
+    // T should NOT be assignable to (S & State<T>)["a"] because S["a"] is unknown
+    assert!(
+        !is_subtype,
+        "T should not be assignable to (S & State<T>)['a'] since S['a'] could be any type"
+    );
+}
