@@ -551,6 +551,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Sort related information for consistent, deterministic fingerprint ordering.
+        // This ensures fingerprint-only tests match tsc's expected diagnostic output.
+        normalized.sort_by(|a, b| {
+            a.file
+                .cmp(&b.file)
+                .then(a.start.cmp(&b.start))
+                .then(a.message_text.cmp(&b.message_text))
+        });
+
         normalized
     }
 
