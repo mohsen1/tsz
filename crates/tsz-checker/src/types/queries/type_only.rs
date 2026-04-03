@@ -7,6 +7,8 @@
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::flags::node_flags;
+use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -427,6 +429,77 @@ impl<'a> CheckerState<'a> {
             };
             // Check if the member is type-only in the target module
             if self.is_export_type_only_across_binders(import_module, member_name) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Returns true when this symbol is an import alias declared inside a module
+    /// or global augmentation where imports are forbidden.
+    pub(crate) fn symbol_is_import_alias_in_forbidden_augmentation(
+        &self,
+        sym_id: SymbolId,
+    ) -> bool {
+        let lib_binders = self.get_lib_binders();
+        let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+            return false;
+        };
+
+        let symbol_arena: &NodeArena = self
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(|arena| arena.as_ref())
+            .unwrap_or(self.ctx.arena);
+
+        let is_alias_decl_in_forbidden_augmentation = |decl_idx: NodeIndex, arena: &NodeArena| {
+            let Some(decl_node) = arena.get(decl_idx) else {
+                return false;
+            };
+            if decl_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                return false;
+            }
+
+            let mut current = decl_idx;
+            for _ in 0..16 {
+                let Some(ext) = arena.get_extended(current) else {
+                    return false;
+                };
+                let parent_idx = ext.parent;
+                if parent_idx.is_none() {
+                    return false;
+                }
+                let Some(parent_node) = arena.get(parent_idx) else {
+                    return false;
+                };
+                if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                    if u32::from(parent_node.flags) & node_flags::GLOBAL_AUGMENTATION != 0 {
+                        return true;
+                    }
+                    if let Some(module_decl) = arena.get_module(parent_node)
+                        && let Some(name_node) = arena.get(module_decl.name)
+                        && name_node.kind == SyntaxKind::StringLiteral as u16
+                    {
+                        return true;
+                    }
+                }
+                current = parent_idx;
+            }
+
+            false
+        };
+
+        if symbol.value_declaration.is_some()
+            && is_alias_decl_in_forbidden_augmentation(symbol.value_declaration, symbol_arena)
+        {
+            return true;
+        }
+
+        for &decl_idx in &symbol.declarations {
+            if is_alias_decl_in_forbidden_augmentation(decl_idx, symbol_arena) {
                 return true;
             }
         }
@@ -897,11 +970,11 @@ impl<'a> CheckerState<'a> {
         let ident = self.ctx.arena.get_identifier(node)?;
         let name = &ident.escaped_text;
 
-        let sym_id = self.resolve_identifier_symbol(expr_idx)?;
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expr_idx)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if (symbol.flags & symbol_flags::ALIAS) != 0 && symbol.import_module.is_some() {
-            return None;
-        }
 
         let is_namespace = (symbol.flags & symbol_flags::NAMESPACE_MODULE) != 0;
         let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
