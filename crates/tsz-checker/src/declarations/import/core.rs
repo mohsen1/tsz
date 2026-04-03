@@ -1547,8 +1547,8 @@ impl<'a> CheckerState<'a> {
                             let has_interop = self.ctx.compiler_options.es_module_interop
                                 || self.ctx.compiler_options.allow_synthetic_default_imports;
                             let suppress_for_interop = has_export_equals && has_interop;
-                            let suppress_for_default = exports_table.has("default")
-                                && !exports_table.has(import_name);
+                            let suppress_for_default =
+                                exports_table.has("default") && !exports_table.has(import_name);
 
                             if !found_via_type && !suppress_for_interop && !suppress_for_default {
                                 // TS2614: Symbol doesn't exist but a default export does
