@@ -1371,10 +1371,9 @@ fn compile_inner(
         diagnostics.retain(|d| !binary_file_names_to_suppress.contains(&d.file));
     }
 
-    // Handle TS5107/TS5101 deprecation diagnostics based on tsc behavior:
-    // tsc 6.0 treats TS5107/TS5101 as fatal - compilation stops and only
-    // config-level diagnostics are reported, UNLESS grammar errors exist
-    // which take precedence over deprecation warnings.
+    // Handle TS5107/TS5101 deprecation diagnostics.
+    // tsc can return TS5107/TS5101 together with file diagnostics; in practice,
+    // grammar errors should suppress these deprecation diagnostics.
     if has_deprecation_diagnostics {
         let has_grammar_errors = diagnostics
             .iter()
@@ -1392,11 +1391,11 @@ fn compile_inner(
             // TS5107 takes priority (fatal) - suppress most file-level diagnostics.
             // Preserve:
             // - Global-level TS2318 ("Cannot find global type") identified by empty file name and position 0
-            // - Module resolution errors (TS2792, TS2882, etc.) that the checker emitted
+            // - Module resolution errors that the checker emitted (classic/side-effect imports)
             diagnostics.retain(|d| {
                 (d.code == 2318 && d.file.is_empty() && d.start == 0)
-                    || d.code == 2792 // Classic resolution error (TS2792)
-                    || d.code == 2882 // Side-effect import error (TS2882)
+                    || d.code == 2792
+                    || d.code == 2882
             });
         }
     }
