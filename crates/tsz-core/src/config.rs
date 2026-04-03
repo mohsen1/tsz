@@ -1262,6 +1262,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 let is_coercible_bool_string = expected_type == "boolean"
                     && key != "isolatedModules"
                     && key != "allowImportingTsExtensions"
+                    && key != "allowArbitraryExtensions"
                     && value.is_string()
                     && matches!(
                         value.as_str().unwrap_or("").trim().to_lowercase().as_str(),
