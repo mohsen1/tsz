@@ -428,8 +428,9 @@ impl<'a> Completions<'a> {
 
         for &(name, kind) in GLOBAL_VARS {
             if !seen_names.contains(name) {
-                seen_names.insert(name.to_string());
-                let mut item = CompletionItem::new(name.to_string(), kind);
+                let name_str = name.to_string();
+                seen_names.insert(name_str.clone());
+                let mut item = CompletionItem::new(name_str, kind);
                 let is_deprecated = DEPRECATED_GLOBALS.contains(&name);
                 if is_deprecated {
                     item.sort_text = Some(sort_priority::deprecated(if member_request {
@@ -951,11 +952,12 @@ impl<'a> Completions<'a> {
                     let Some(name) = self.arena.get_identifier_text(param.name) else {
                         continue;
                     };
-                    if !seen.insert(name.to_string()) {
+                    let name_str = name.to_string();
+                    if !seen.insert(name_str.clone()) {
                         continue;
                     }
                     let mut item =
-                        CompletionItem::new(name.to_string(), CompletionItemKind::Parameter);
+                        CompletionItem::new(name_str, CompletionItemKind::Parameter);
                     item.sort_text = Some(sort_priority::LOCATION_PRIORITY.to_string());
                     items.push(item);
                 }

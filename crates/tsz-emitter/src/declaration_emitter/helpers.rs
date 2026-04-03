@@ -1343,8 +1343,9 @@ impl<'a> DeclarationEmitter<'a> {
                 .map(str::trim)
                 .filter(|name| !name.is_empty())
             {
-                if seen.insert(name.to_string()) {
-                    params.push(name.to_string());
+                let name_str = name.to_string();
+                if seen.insert(name_str.clone()) {
+                    params.push(name_str);
                 }
             }
         }
