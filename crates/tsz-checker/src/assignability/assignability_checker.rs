@@ -817,6 +817,24 @@ impl<'a> CheckerState<'a> {
             false
         };
 
+        // Check if target contains indexed access type - these should NOT be suppressed
+        // even when source has type parameters, because indexed access may resolve
+        // to incompatible types (e.g., (S & State<T>)["a"] may not accept T)
+        let target_contains_indexed_access = || -> bool {
+            if crate::query_boundaries::common::is_index_access_type(self.ctx.types, target) {
+                return true;
+            }
+            // Check union members for indexed access types
+            if let Some(members) =
+                crate::query_boundaries::common::union_members(self.ctx.types, target)
+            {
+                return members.iter().any(|&member| {
+                    crate::query_boundaries::common::is_index_access_type(self.ctx.types, member)
+                });
+            }
+            false
+        };
+
         if is_generic_application_with_type_params(source)
             || is_generic_application_with_type_params(target)
         {
@@ -841,9 +859,12 @@ impl<'a> CheckerState<'a> {
             // still generic/unresolved too; once the source has reduced to a concrete
             // type, tsc surfaces the mismatch even if the target still mentions an
             // outer type parameter (for example Assign<T, U> receiving a concrete U).
+            // EXCEPTION: Don't suppress when target contains indexed access types - these
+            // may resolve to incompatible concrete types that should produce TS2322.
             || (should_suppress_for_complex_type(target)
                 && contains_type_parameters(source)
-                && !is_callable_or_function(target))
+                && !is_callable_or_function(target)
+                && !target_contains_indexed_access())
             // Suppress TS2322 for callable types where the source contains generic type
             // parameters that may not have been fully inferred from context. When both
             // source and target contain type parameters that are COMPLETELY disjoint
