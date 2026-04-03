@@ -65,6 +65,7 @@ fn compile_and_get_raw_diagnostics_named(
         file_name.to_string(),
         options,
     );
+    checker.ctx.report_unresolved_imports = true;
 
     checker.check_source_file(root);
 
