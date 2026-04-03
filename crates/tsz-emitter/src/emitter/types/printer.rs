@@ -902,9 +902,16 @@ impl<'a> TypePrinter<'a> {
         // Filter out internal properties that tsc strips from .d.ts output:
         // - `prototype`: class constructor prototype property
         // - `__private_brand_*`: internal private member brand fields
+        // - `length`, `name`: standard Function.prototype properties
+        // - `arguments`, `caller`: legacy Function.prototype properties
         let should_skip_property = |prop: &tsz_solver::types::PropertyInfo| {
             let name = self.resolve_atom(prop.name);
-            name == "prototype" || name.starts_with("__private_brand_")
+            name == "prototype"
+                || name.starts_with("__private_brand_")
+                || name == "length"
+                || name == "name"
+                || name == "arguments"
+                || name == "caller"
         };
 
         // When indent context is set, format as multi-line (matching tsc's .d.ts output)
@@ -1183,7 +1190,13 @@ impl<'a> TypePrinter<'a> {
             || callable.number_index.is_some()
             || callable.properties.iter().any(|prop| {
                 let prop_name = self.resolve_atom(prop.name);
-                prop_name != "prototype" && !prop_name.starts_with("__private_brand_")
+                // Filter out internal properties
+                prop_name != "prototype"
+                    && !prop_name.starts_with("__private_brand_")
+                    && prop_name != "length"
+                    && prop_name != "name"
+                    && prop_name != "arguments"
+                    && prop_name != "caller"
             })
         {
             return None;
@@ -1881,7 +1894,17 @@ impl<'a> TypePrinter<'a> {
         // → use arrow function syntax: (params) => ReturnType
         let has_properties = callable.properties.iter().any(|p| {
             let name = self.resolve_atom(p.name);
-            name != "prototype" && !name.starts_with("__private_brand_")
+            // Filter out internal properties that don't affect the external type shape:
+            // - prototype: Function.prototype, not part of the external interface
+            // - __private_brand_*: internal private brand markers
+            // - length, name: standard Function.prototype properties
+            // - arguments, caller: legacy Function.prototype properties
+            name != "prototype"
+                && !name.starts_with("__private_brand_")
+                && name != "length"
+                && name != "name"
+                && name != "arguments"
+                && name != "caller"
         });
         if callable.call_signatures.len() == 1
             && callable.construct_signatures.is_empty()
@@ -1918,7 +1941,18 @@ impl<'a> TypePrinter<'a> {
         // Add properties (filter out internal props tsc strips from .d.ts)
         for prop in &callable.properties {
             let name = self.resolve_atom(prop.name);
-            if name == "prototype" || name.starts_with("__private_brand_") {
+            // Filter out internal properties that don't affect the external type shape:
+            // - prototype: Function.prototype, not part of the external interface
+            // - __private_brand_*: internal private brand markers
+            // - length, name: standard Function.prototype properties
+            // - arguments, caller: legacy Function.prototype properties
+            if name == "prototype"
+                || name.starts_with("__private_brand_")
+                || name == "length"
+                || name == "name"
+                || name == "arguments"
+                || name == "caller"
+            {
                 continue;
             }
 
@@ -2169,7 +2203,13 @@ impl<'a> TypePrinter<'a> {
         let callable = self.interner.callable_shape(callable_id);
         let has_properties = callable.properties.iter().any(|prop| {
             let name = self.resolve_atom(prop.name);
-            name != "prototype" && !name.starts_with("__private_brand_")
+            // Filter out internal properties
+            name != "prototype"
+                && !name.starts_with("__private_brand_")
+                && name != "length"
+                && name != "name"
+                && name != "arguments"
+                && name != "caller"
         });
 
         callable.symbol.is_none()
@@ -2188,7 +2228,13 @@ impl<'a> TypePrinter<'a> {
         let callable = self.interner.callable_shape(callable_id);
         let has_properties = callable.properties.iter().any(|prop| {
             let name = self.resolve_atom(prop.name);
-            name != "prototype" && !name.starts_with("__private_brand_")
+            // Filter out internal properties
+            name != "prototype"
+                && !name.starts_with("__private_brand_")
+                && name != "length"
+                && name != "name"
+                && name != "arguments"
+                && name != "caller"
         });
 
         if callable.symbol.is_none()
@@ -2925,7 +2971,13 @@ impl<'a> TypePrinter<'a> {
         let callable = self.interner.callable_shape(callable_id);
         let has_properties = callable.properties.iter().any(|p| {
             let name = self.resolve_atom(p.name);
-            name != "prototype" && !name.starts_with("__private_brand_")
+            // Filter out internal properties
+            name != "prototype"
+                && !name.starts_with("__private_brand_")
+                && name != "length"
+                && name != "name"
+                && name != "arguments"
+                && name != "caller"
         });
         // A callable renders as `new (...) => T` when it has a single construct
         // signature and no call signatures or extra members.
