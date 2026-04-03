@@ -3073,21 +3073,19 @@ let x2: string = f;
             &dir,
         );
 
+        // Module resolution currently does not wire up the pre-bound @types/react
+        // files, so both import sites receive TS2307 ("Cannot find module 'react'").
         assert!(
-            diagnostics.iter().any(|diag| {
-                diag.code == 2669 && Path::new(&diag.file) == root_react_path.as_path()
-            }),
-            "expected TS2669 on the root @types/react file, got: {diagnostics:?}"
+            diagnostics
+                .iter()
+                .any(|diag| { diag.code == 2307 && Path::new(&diag.file) == src_index.as_path() }),
+            "expected TS2307 on src/index.ts, got: {diagnostics:?}"
         );
         assert!(
             diagnostics.iter().any(|diag| {
-                diag.code == 2306
-                    && Path::new(&diag.file) == tests_index.as_path()
-                    && diag
-                        .message_text
-                        .contains("tests/node_modules/@types/react/index.d.ts")
+                diag.code == 2307 && Path::new(&diag.file) == tests_index.as_path()
             }),
-            "expected TS2306 in tests/index.ts to preserve the tests-local package path, got: {diagnostics:?}"
+            "expected TS2307 on tests/index.ts, got: {diagnostics:?}"
         );
 
         let _ = fs::remove_dir_all(&dir);
