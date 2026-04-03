@@ -715,7 +715,7 @@ impl<'a> CheckerState<'a> {
                                 // (e.g. `p.x` where `p: Point` inside class
                                 // Point) can find properties.
                                 let from_node_cache = if cached.is_none() {
-                                    let decl = if !symbol.value_declaration.is_none() {
+                                    let decl = if symbol.value_declaration.is_some() {
                                         Some(symbol.value_declaration)
                                     } else {
                                         symbol.declarations.first().copied()
@@ -1109,7 +1109,7 @@ impl<'a> CheckerState<'a> {
                     .get(&sym_id)
                     .copied()
                     .or_else(|| {
-                        let decl = if !symbol.value_declaration.is_none() {
+                        let decl = if symbol.value_declaration.is_some() {
                             Some(symbol.value_declaration)
                         } else {
                             symbol.declarations.first().copied()
@@ -1332,7 +1332,7 @@ impl<'a> CheckerState<'a> {
                     .get(&sym_id)
                     .copied()
                     .or_else(|| {
-                        let decl = if !symbol.value_declaration.is_none() {
+                        let decl = if symbol.value_declaration.is_some() {
                             Some(symbol.value_declaration)
                         } else {
                             symbol.declarations.first().copied()

@@ -2229,7 +2229,7 @@ impl<'a> CheckerState<'a> {
                             & (symbol_flags::FUNCTION_SCOPED_VARIABLE
                                 | symbol_flags::BLOCK_SCOPED_VARIABLE)
                             != 0;
-                        if has_interface && has_variable && !sym.value_declaration.is_none() {
+                        if has_interface && has_variable && sym.value_declaration.is_some() {
                             let vd = sym.value_declaration;
                             let vd_type =
                                 self.type_of_value_declaration_for_symbol(export_sym_id, vd);

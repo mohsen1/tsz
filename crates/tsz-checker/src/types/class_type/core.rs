@@ -517,11 +517,11 @@ impl<'a> CheckerState<'a> {
                     // partial instance type already includes those implicit members while
                     // we type-check the initializer itself.
                     if self.ctx.is_js_file()
-                        && !prop.initializer.is_none()
+                        && prop.initializer.is_some()
                         && let Some(init_node) = self.ctx.arena.get(prop.initializer)
                         && init_node.kind == syntax_kind_ext::ARROW_FUNCTION
                         && let Some(init_func) = self.ctx.arena.get_function(init_node)
-                        && !init_func.body.is_none()
+                        && init_func.body.is_some()
                     {
                         self.collect_js_constructor_this_properties(
                             init_func.body,
@@ -666,7 +666,7 @@ impl<'a> CheckerState<'a> {
                     // In JS/checkJs mode, method body `this.prop = value` assignments
                     // serve as property declarations (same as constructor assignments).
                     // Scan before deferring so properties are in the partial `this` type.
-                    if self.ctx.is_js_file() && !method.body.is_none() {
+                    if self.ctx.is_js_file() && method.body.is_some() {
                         self.collect_js_constructor_this_properties(
                             method.body,
                             &mut properties,

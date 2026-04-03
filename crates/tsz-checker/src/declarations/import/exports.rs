@@ -33,7 +33,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             // Wildcard re-export: no export clause + has module specifier
-            if !export_decl.export_clause.is_none() || !export_decl.module_specifier.is_some() {
+            if export_decl.export_clause.is_some() || !export_decl.module_specifier.is_some() {
                 continue;
             }
             let Some(spec_node) = self.ctx.arena.get(export_decl.module_specifier) else {

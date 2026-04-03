@@ -760,7 +760,7 @@ impl<'a> CheckerState<'a> {
         target_idx: NodeIndex,
         default_expr: NodeIndex,
     ) {
-        let has_default = !default_expr.is_none();
+        let has_default = default_expr.is_some();
         // Resolve the source property type. For numeric property names on
         // tuple/array types, use element type access directly to avoid
         // TypeId mismatches from string-based property resolution.

@@ -48,7 +48,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx
                         .arena
                         .get_function(expr_node)
-                        .and_then(|func| (!func.name.is_none()).then_some(func.name))
+                        .and_then(|func| (func.name.is_some()).then_some(func.name))
                         .and_then(|name_idx| {
                             self.ctx
                                 .binder

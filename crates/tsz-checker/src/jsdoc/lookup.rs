@@ -191,10 +191,10 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or(0);
                 let is_merged_type_alias_value = (flags & symbol_flags::TYPE_ALIAS) != 0
                     && (flags & symbol_flags::VARIABLE) != 0
-                    && value_decl.is_some_and(|decl| !decl.is_none());
+                    && value_decl.is_some_and(|decl| decl.is_some());
                 let result = if self.is_merged_interface_value_symbol(sym)
                     || ((flags & symbol_flags::CLASS) != 0
-                        && value_decl.is_some_and(|decl| !decl.is_none()))
+                        && value_decl.is_some_and(|decl| decl.is_some()))
                     || is_merged_type_alias_value
                 {
                     self.type_of_value_declaration_for_symbol(
