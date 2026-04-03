@@ -891,6 +891,7 @@ impl<'a> CheckerState<'a> {
             && !should_rewrite_module_specifier(module_name)
             && !self.resolved_via_directory_index(module_name)
             && self.module_target_is_typescript_input_file(module_name)
+            && !self.resolved_module_is_from_node_modules(module_name)
             && let Some(ext) = ts_extension_suffix(module_name)
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -2111,6 +2112,25 @@ impl<'a> CheckerState<'a> {
         } else {
             format!("./{resolved}")
         }
+    }
+
+    /// Returns `true` if `specifier` resolves to a file inside `node_modules/`.
+    /// Mirrors tsc's `isExternalLibraryImport` — external library imports should
+    /// not trigger TS2877 rewrite-extension warnings.
+    fn resolved_module_is_from_node_modules(&self, specifier: &str) -> bool {
+        let Some(target_idx) = self.ctx.resolve_import_target(specifier) else {
+            return false;
+        };
+        let Some(arenas) = self.ctx.all_arenas.as_ref() else {
+            return false;
+        };
+        let Some(target_arena) = arenas.get(target_idx) else {
+            return false;
+        };
+        let Some(source_file) = target_arena.source_files.first() else {
+            return false;
+        };
+        source_file.file_name.contains("/node_modules/")
     }
 
     /// Returns `true` if `specifier` resolves to a non-declaration TypeScript input

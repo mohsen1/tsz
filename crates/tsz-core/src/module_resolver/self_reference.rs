@@ -101,7 +101,7 @@ impl ModuleResolver {
                         }
                         // Self-reference detected but exports didn't resolve to an existing file
                         // Check if this is due to ambiguous project root (TS2209)
-                        if self.root_dir.is_none() {
+                        if self.root_dir.is_none() && self.out_dir.is_none() {
                             return SelfReferenceResultV2::AmbiguousRoot {
                                 export_map_entry: subpath_key,
                                 package_json_path: package_json_path.display().to_string(),
