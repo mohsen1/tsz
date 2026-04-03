@@ -515,7 +515,10 @@ impl ModuleResolver {
             request.resolution_mode_override,
         ) {
             Ok(resolved_module) => {
-                eprintln!("[DEBUG lookup] Primary resolution succeeded for '{}': {:?}", specifier, resolved_module.resolved_path);
+                eprintln!(
+                    "[DEBUG lookup] Primary resolution succeeded for '{}': {:?}",
+                    specifier, resolved_module.resolved_path
+                );
                 // TS7016: If the resolved file is a JS file from node_modules
                 // (external package), noImplicitAny is enabled, and this is a
                 // CJS require() call, emit TS7016 alongside the successful resolution.
@@ -539,7 +542,10 @@ impl ModuleResolver {
                 }
             }
             Err(failure) => {
-                eprintln!("[DEBUG lookup] Primary resolution FAILED for '{}': {:?}", specifier, failure);
+                eprintln!(
+                    "[DEBUG lookup] Primary resolution FAILED for '{}': {:?}",
+                    specifier, failure
+                );
                 // JsxNotEnabled: file exists but --jsx is not set.
                 // Mark as resolved (suppress TS2307) but record the JSX error.
                 let jsx_resolved =
