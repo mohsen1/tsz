@@ -1356,7 +1356,7 @@ impl Parser {
 
         let mut current = start_idx;
         let mut depth = 0;
-        while !current.is_none() && depth < 20 {
+        while current.is_some() && depth < 20 {
             if let Some(node) = arena.get(current) {
                 let kind_name = format!("kind={}", node.kind);
                 let scope_info = if let Some(&scope_id) = binder.node_scope_ids.get(&current.0) {

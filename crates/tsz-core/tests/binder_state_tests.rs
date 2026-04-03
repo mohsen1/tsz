@@ -359,7 +359,7 @@ fn assert_bound_state_resolves_param_impl(
         }
         let mut current = idx;
         let mut in_body = false;
-        while !current.is_none() {
+        while current.is_some() {
             if current == function_body {
                 in_body = true;
                 break;
@@ -409,7 +409,7 @@ fn node_is_within(
     container: crate::parser::NodeIndex,
 ) -> bool {
     let mut current = node_idx;
-    while !current.is_none() {
+    while current.is_some() {
         if current == container {
             return true;
         }
