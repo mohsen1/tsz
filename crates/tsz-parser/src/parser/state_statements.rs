@@ -591,9 +591,14 @@ impl ParserState {
             SyntaxKind::AsyncKeyword => self.parse_statement_async_declaration_or_expression(),
             SyntaxKind::AwaitKeyword => {
                 // await using declaration (ES2022)
-                // Look ahead to see if it's "await using"
+                // Look ahead to see if it's "await using" or "await:" (labeled statement)
                 if self.look_ahead_is_await_using_declaration() {
                     self.parse_variable_statement()
+                } else if self.is_identifier_or_keyword() && self.look_ahead_is_labeled_statement()
+                {
+                    // 'await' as a label (e.g., "await: statement")
+                    // In static blocks or async contexts, this will emit TS1003
+                    self.parse_labeled_statement()
                 } else {
                     self.parse_expression_statement()
                 }
@@ -1305,6 +1310,24 @@ impl ParserState {
 
         // Parse the label (identifier)
         let label = self.parse_identifier_name();
+
+        // Check if 'await' is used as a label in a context where it's reserved
+        // (static block or async context). Emit TS1003 (Identifier expected).
+        if let Some(ident) = self.arena.get_identifier_at(label) {
+            if ident.escaped_text == "await"
+                && (self.in_static_block_context() || self.in_async_context())
+            {
+                use tsz_common::diagnostics::diagnostic_codes;
+                if let Some(label_node) = self.arena.get(label) {
+                    self.parse_error_at(
+                        label_node.pos,
+                        label_node.end - label_node.pos,
+                        "Identifier expected.",
+                        diagnostic_codes::IDENTIFIER_EXPECTED,
+                    );
+                }
+            }
+        }
 
         // Check for duplicate labels (TS1114) and record this label
         let label_name = if let Some(label_node) = self.arena.get(label) {
