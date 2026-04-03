@@ -16,6 +16,11 @@ pub(super) enum SelfReferenceResultV2 {
     ExportsFailed,
     /// Not a self-reference (package name doesn't match) - should continue searching
     NotSelfReference,
+    /// TS2209: Project root is ambiguous for export map entry
+    AmbiguousRoot {
+        export_map_entry: String,
+        package_json_path: String,
+    },
 }
 
 impl ModuleResolver {
@@ -95,7 +100,13 @@ impl ModuleResolver {
                             // If it's a TypeScript file, fall through to ExportsFailed
                         }
                         // Self-reference detected but exports didn't resolve to an existing file
-                        // Return ExportsFailed to signal that this should not continue to node_modules
+                        // Check if this is due to ambiguous project root (TS2209)
+                        if self.root_dir.is_none() {
+                            return SelfReferenceResultV2::AmbiguousRoot {
+                                export_map_entry: subpath_key,
+                                package_json_path: package_json_path.display().to_string(),
+                            };
+                        }
                         return SelfReferenceResultV2::ExportsFailed;
                     }
                     // Name matches but no exports field - not a self-reference for Node16+

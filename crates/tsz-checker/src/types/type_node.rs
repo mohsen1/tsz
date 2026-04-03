@@ -1145,6 +1145,40 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     }
                 }
 
+                // TS2693: Check if parameter name without type annotation
+                // refers to a type (e.g., `[K]: number` where `K` is a type alias).
+                if !has_param_grammar_error && param_data.type_annotation.is_none() {
+                    if let Some(name_node) = self.ctx.arena.get(param_data.name) {
+                        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                            let name = &ident.escaped_text;
+                            // Check if this identifier resolves to a type symbol
+                            if let Some(sym_id) = self.ctx.binder.resolve_identifier(self.ctx.arena, param_data.name) {
+                                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                                    let has_type = (symbol.flags & tsz_binder::symbol_flags::TYPE) != 0
+                                        || (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0
+                                        || (symbol.flags & tsz_binder::symbol_flags::INTERFACE) != 0;
+                                    let has_value = (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0;
+                                    if has_type && !has_value {
+                                        // The identifier refers to a type-only symbol
+                                        // Emit TS2693: Type only used as value
+                                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                                        let message = format_message(
+                                            diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+                                            &[name],
+                                        );
+                                        self.ctx.error(
+                                            name_node.pos,
+                                            name_node.end - name_node.pos,
+                                            message,
+                                            diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 let value_type = if index_sig.type_annotation.is_some() {
                     self.check(index_sig.type_annotation)
                 } else {
