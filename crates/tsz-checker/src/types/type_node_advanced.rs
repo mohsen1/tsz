@@ -175,10 +175,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     }
                 }
                 // Union of tuples all out of bounds → TS2339
-                // But suppress if object type is ANY/ERROR (circular reference implicit any)
+                // But suppress if object type is ANY/ERROR/conditional/generic (circular reference implicit any)
                 else if object_type != TypeId::ANY
                     && object_type != TypeId::ERROR
                     && !tsz_solver::is_error_type(self.ctx.types, object_type)
+                    && !tsz_solver::is_conditional_type(self.ctx.types, object_type)
+                    && !tsz_solver::is_generic_application(self.ctx.types, object_type)
                     && let Some(members) = crate::query_boundaries::common::union_members(
                         self.ctx.types,
                         object_for_tuple_check,
@@ -273,7 +275,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     crate::query_boundaries::common::is_generic_application_with_type_params(
                         self.ctx.types,
                         resolved_object,
-                    );
+                    )
+                    || tsz_solver::is_generic_application(self.ctx.types, object_type);
 
                 // Suppress TS2339 when the index type itself contains type parameters.
                 // This handles cases like `Options<State, Actions>[Key]` where Key is a type parameter.
@@ -293,11 +296,16 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             object_type,
                         );
 
+                // Suppress TS2339 for conditional types (e.g., Parameters<T>) that may not be
+                // fully resolvable when T has circular reference
+                let is_conditional = tsz_solver::is_conditional_type(self.ctx.types, object_type);
+
                 if !is_type_param
                     && !is_error_or_any
                     && !is_generic_application
                     && !index_has_type_params
                     && !is_lazy_with_potential_generic
+                    && !is_conditional
                 {
                     let prop_result =
                         crate::query_boundaries::property_access::resolve_property_access(
