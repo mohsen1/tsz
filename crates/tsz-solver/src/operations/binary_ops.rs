@@ -821,6 +821,8 @@ impl<'a> BinaryOpEvaluator<'a> {
             }
         } else if op == "||" {
             // left || right
+            // tsc uses UnionReduction.Subtype for || result types, which removes
+            // structural subtypes (e.g., never[] from number[] | never[] → number[]).
             let truthy_left = ctx.narrow_by_truthiness(left);
             let falsy_left = ctx.narrow_to_falsy(left);
 
@@ -829,10 +831,11 @@ impl<'a> BinaryOpEvaluator<'a> {
             } else if truthy_left == TypeId::NEVER {
                 right
             } else {
-                self.interner.union2(truthy_left, right)
+                self.union2_subtype_reduce(truthy_left, right)
             }
         } else {
             // left ?? right
+            // tsc uses UnionReduction.Subtype for ?? result types.
             let non_nullish_left = ctx.narrow_by_nullishness(left, NullishFilter::ExcludeNullish);
             let nullish_left = ctx.narrow_by_nullishness(left, NullishFilter::KeepNullish);
 
@@ -841,11 +844,31 @@ impl<'a> BinaryOpEvaluator<'a> {
             } else if non_nullish_left == TypeId::NEVER {
                 right
             } else {
-                self.interner.union2(non_nullish_left, right)
+                self.union2_subtype_reduce(non_nullish_left, right)
             }
         };
 
         BinaryOpResult::Success(result)
+    }
+
+    /// Create a union of two types with subtype reduction.
+    /// Matches tsc's `getUnionType([...], UnionReduction.Subtype)` behavior:
+    /// if one type is a subtype of the other, the subtype is removed.
+    /// This is used for `||` and `??` result types where tsc reduces
+    /// e.g. `number[] | never[]` to `number[]`.
+    fn union2_subtype_reduce(&self, left: TypeId, right: TypeId) -> TypeId {
+        if left == right {
+            return left;
+        }
+        // If right is a subtype of left, drop right (e.g., never[] <: number[])
+        if crate::relations::subtype::is_subtype_of_with_db(self.interner, right, left) {
+            return left;
+        }
+        // If left is a subtype of right, drop left
+        if crate::relations::subtype::is_subtype_of_with_db(self.interner, left, right) {
+            return right;
+        }
+        self.interner.union2(left, right)
     }
 
     /// Check if a type is number-like (number, number literal, numeric enum, or any).

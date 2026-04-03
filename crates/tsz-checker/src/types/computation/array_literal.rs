@@ -214,49 +214,22 @@ impl<'a> CheckerState<'a> {
         };
 
         if array.elements.nodes.is_empty() {
-            // Empty array literal: infer from context or use never[]/any[]
-            // TypeScript uses "evolving array types" where [] starts as never[] and widens
-            // via control flow.
-
-            // When [] is the receiver of a property/element access (e.g., `[].map(...)`),
-            // always use `never[]` regardless of any leaked contextual type. Without this,
-            // nested generic calls like `[].map(() => [].map(p => ({ X: p })))` propagate
-            // the outer callback's inferred return type into the inner [], causing false
-            // TS2322 errors.
-            if self.empty_array_literal_prefers_never(idx) {
-                return factory.array(TypeId::NEVER);
-            }
-
+            // Empty array literal: always never[] in strict mode, any[] otherwise.
+            // This matches tsc's checkArrayLiteral which unconditionally uses
+            // implicitNeverType for empty arrays in strict mode, regardless of
+            // contextual type. The contextual type does NOT affect the element type
+            // of an empty array literal — [] is always never[].
+            //
+            // For operators like ||= and ??=, tsc uses UnionReduction.Subtype in
+            // the result type computation, which removes never[] when a compatible
+            // array type is present (e.g., number[] | never[] → number[]).
+            // For &&, no subtype reduction is applied, so undefined | never[] stays.
             if let Some(contextual) = contextual_type {
                 let resolved = self.resolve_type_for_property_access(contextual);
                 let resolved = self.resolve_lazy_type(resolved);
-                // Strip null/undefined from union contextual types before extracting
-                // array/tuple structure. For example, when the contextual type is
-                // `number[] | undefined` (from `results ||= []` where results: number[] | undefined),
-                // we need to extract `number` as the element type from `number[]`.
-                // Without this, get_array_element_type fails on the union and we fall
-                // through to never[], causing false TS2345 on subsequent .push() calls.
                 let resolved = tsz_solver::remove_nullish(self.ctx.types, resolved);
                 if tsz_solver::type_queries::is_tuple_type(self.ctx.types, resolved) {
                     return factory.tuple(vec![]);
-                } else if let Some(t_elem) =
-                    tsz_solver::type_queries::get_array_element_type(self.ctx.types, resolved)
-                {
-                    // When the contextual element type is a TypeParameter, unknown, or any,
-                    // it carries no useful type information for an empty array (typically
-                    // happens when `[]` is an argument for a generic parameter like `T[]`).
-                    // Use never[] instead, matching tsc behavior where empty arrays always
-                    // start as never[] regardless of contextual type. This prevents
-                    // inference from being polluted with unknown/any from the contextual
-                    // type parameter's constraint.
-                    if t_elem == TypeId::UNKNOWN
-                        || t_elem == TypeId::ANY
-                        || tsz_solver::type_queries::is_type_parameter(self.ctx.types, t_elem)
-                    {
-                        // Fall through to never[]/any[] below
-                    } else {
-                        return factory.array(t_elem);
-                    }
                 }
             }
 
