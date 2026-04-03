@@ -591,7 +591,10 @@ impl<'a> DeclarationEmitter<'a> {
         resolved
     }
 
-    pub(in crate::declaration_emitter) fn is_namespace_import_alias_symbol(&self, sym_id: SymbolId) -> bool {
+    pub(in crate::declaration_emitter) fn is_namespace_import_alias_symbol(
+        &self,
+        sym_id: SymbolId,
+    ) -> bool {
         let Some(binder) = self.binder else {
             return false;
         };
@@ -732,7 +735,10 @@ impl<'a> DeclarationEmitter<'a> {
         Some(source_specifier)
     }
 
-    pub(in crate::declaration_emitter) fn node_modules_package_info(&self, path: &str) -> Option<(String, String)> {
+    pub(in crate::declaration_emitter) fn node_modules_package_info(
+        &self,
+        path: &str,
+    ) -> Option<(String, String)> {
         use std::path::{Component, Path};
 
         let components: Vec<_> = Path::new(path).components().collect();
@@ -806,7 +812,10 @@ impl<'a> DeclarationEmitter<'a> {
         Some((root_key, specifier))
     }
 
-    pub(in crate::declaration_emitter) fn declaration_runtime_relative_path(&self, relative_path: &str) -> Option<String> {
+    pub(in crate::declaration_emitter) fn declaration_runtime_relative_path(
+        &self,
+        relative_path: &str,
+    ) -> Option<String> {
         let relative_path = relative_path.replace('\\', "/");
 
         for (decl_ext, runtime_ext) in [
@@ -928,7 +937,11 @@ impl<'a> DeclarationEmitter<'a> {
         Some(subpath_key.trim_start_matches("./").to_string())
     }
 
-    pub(in crate::declaration_emitter) fn match_exports_wildcard(&self, pattern: &str, value: &str) -> Option<String> {
+    pub(in crate::declaration_emitter) fn match_exports_wildcard(
+        &self,
+        pattern: &str,
+        value: &str,
+    ) -> Option<String> {
         let star_idx = pattern.find('*')?;
         let prefix = &pattern[..star_idx];
         let suffix = &pattern[star_idx + 1..];
@@ -936,7 +949,11 @@ impl<'a> DeclarationEmitter<'a> {
         Some(middle.to_string())
     }
 
-    pub(in crate::declaration_emitter) fn apply_exports_wildcard(&self, pattern: &str, wildcard: &str) -> String {
+    pub(in crate::declaration_emitter) fn apply_exports_wildcard(
+        &self,
+        pattern: &str,
+        wildcard: &str,
+    ) -> String {
         pattern
             .replace('*', wildcard)
             .trim_start_matches("./")
@@ -959,7 +976,10 @@ impl<'a> DeclarationEmitter<'a> {
         path.to_string()
     }
 
-    pub(in crate::declaration_emitter) fn normalized_source_path(&self, path: &str) -> std::path::PathBuf {
+    pub(in crate::declaration_emitter) fn normalized_source_path(
+        &self,
+        path: &str,
+    ) -> std::path::PathBuf {
         use std::path::Component;
 
         std::path::Path::new(&self.strip_ts_extensions(path))
@@ -968,7 +988,11 @@ impl<'a> DeclarationEmitter<'a> {
             .collect()
     }
 
-    pub(in crate::declaration_emitter) fn paths_refer_to_same_source_file(&self, current_path: &str, source_path: &str) -> bool {
+    pub(in crate::declaration_emitter) fn paths_refer_to_same_source_file(
+        &self,
+        current_path: &str,
+        source_path: &str,
+    ) -> bool {
         let current = self.normalized_source_path(current_path);
         let source = self.normalized_source_path(source_path);
 
@@ -1075,7 +1099,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.import_plan = plan;
     }
 
-    pub(in crate::declaration_emitter) fn emit_import_modules(&mut self, modules: &[PlannedImportModule]) {
+    pub(in crate::declaration_emitter) fn emit_import_modules(
+        &mut self,
+        modules: &[PlannedImportModule],
+    ) {
         for module in modules {
             self.write_indent();
             self.write("import { ");

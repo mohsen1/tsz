@@ -30,7 +30,6 @@ use tsz_scanner::SyntaxKind;
 use super::DtsCacheResolver;
 
 impl<'a> DeclarationEmitter<'a> {
-
     /// Emit required imports at the beginning of the .d.ts file.
     ///
     /// This should be called before emitting other declarations.
@@ -575,7 +574,11 @@ impl<'a> DeclarationEmitter<'a> {
         module_specifier == candidate
     }
 
-    pub(in crate::declaration_emitter) fn module_export_path_rank(&self, module_path: &str, module_specifier: &str) -> (usize, usize) {
+    pub(in crate::declaration_emitter) fn module_export_path_rank(
+        &self,
+        module_path: &str,
+        module_specifier: &str,
+    ) -> (usize, usize) {
         use std::path::{Component, Path};
 
         if module_specifier.starts_with('.') || module_specifier.starts_with('/') {
@@ -1362,5 +1365,4 @@ impl<'a> DeclarationEmitter<'a> {
             .push(Diagnostic::from_code(7056, file, pos, length, &[]));
         true
     }
-
 }

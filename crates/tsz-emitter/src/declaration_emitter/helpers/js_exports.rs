@@ -27,7 +27,13 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 #[allow(unused_imports)]
 use tsz_scanner::SyntaxKind;
 
-use super::{JsFoldedNamedExports, JsNamespaceExportAliases, JsCommonjsSyntheticStatements, JsCommonjsNamedExports, JsCommonjsExpandoDeclKind, JsCommonjsExpandoDeclarations, JsStaticMethodAugmentationGroup, JsStaticMethodAugmentations, JsClassLikePrototypeMembers, JsStaticMethodKey, JsStaticMethodInfo, JsStaticMethodAugmentationEntry, JsDefinedPropertyDecl, JsdocParamDecl};
+use super::{
+    JsClassLikePrototypeMembers, JsCommonjsExpandoDeclKind, JsCommonjsExpandoDeclarations,
+    JsCommonjsNamedExports, JsCommonjsSyntheticStatements, JsDefinedPropertyDecl,
+    JsFoldedNamedExports, JsNamespaceExportAliases, JsStaticMethodAugmentationEntry,
+    JsStaticMethodAugmentationGroup, JsStaticMethodAugmentations, JsStaticMethodInfo,
+    JsStaticMethodKey, JsdocParamDecl,
+};
 
 impl<'a> DeclarationEmitter<'a> {
     pub(crate) fn collect_js_export_equals_names(
@@ -640,7 +646,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn js_commonjs_named_export_value_initializer_supported(&self, initializer: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn js_commonjs_named_export_value_initializer_supported(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
         self.js_synthetic_export_value_type_text(initializer)
             .is_some()
     }
@@ -666,7 +675,10 @@ impl<'a> DeclarationEmitter<'a> {
             .is_some_and(|class_name| class_name == export_name)
     }
 
-    pub(in crate::declaration_emitter) fn js_commonjs_void_zero_export_init(&self, expr_idx: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn js_commonjs_void_zero_export_init(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
         let expr_idx = self
             .arena
             .skip_parenthesized_and_assertions_and_comma(expr_idx);
@@ -1055,7 +1067,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn groupable_js_reexport_info(&self, export_idx: NodeIndex) -> Option<(String, bool)> {
+    pub(in crate::declaration_emitter) fn groupable_js_reexport_info(
+        &self,
+        export_idx: NodeIndex,
+    ) -> Option<(String, bool)> {
         let export_node = self.arena.get(export_idx)?;
         if export_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
             return None;
@@ -1210,7 +1225,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.emitted_module_indicator = true;
     }
 
-    pub(in crate::declaration_emitter) fn js_commonjs_export_equals_name(&self, stmt_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn js_commonjs_export_equals_name(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<String> {
         let stmt_node = self.arena.get(stmt_idx)?;
         if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
             return None;
@@ -1597,7 +1615,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn is_module_exports_reference(&self, idx: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn is_module_exports_reference(
+        &self,
+        idx: NodeIndex,
+    ) -> bool {
         let idx = self.arena.skip_parenthesized_and_assertions_and_comma(idx);
         let Some(node) = self.arena.get(idx) else {
             return false;
@@ -1613,7 +1634,10 @@ impl<'a> DeclarationEmitter<'a> {
             && self.get_identifier_text(access.name_or_argument).as_deref() == Some("exports")
     }
 
-    pub(in crate::declaration_emitter) fn is_exports_identifier_reference(&self, idx: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn is_exports_identifier_reference(
+        &self,
+        idx: NodeIndex,
+    ) -> bool {
         self.get_identifier_text(idx).as_deref() == Some("exports")
     }
 
@@ -1667,5 +1691,4 @@ impl<'a> DeclarationEmitter<'a> {
             entry.push((export_name, local_name));
         }
     }
-
 }

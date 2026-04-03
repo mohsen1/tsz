@@ -72,7 +72,11 @@ impl<'a> DeclarationEmitter<'a> {
         self.infer_fallback_type_text_at(node_id, self.indent_level)
     }
 
-    pub(in crate::declaration_emitter) fn infer_fallback_type_text_at(&self, node_id: NodeIndex, depth: u32) -> Option<String> {
+    pub(in crate::declaration_emitter) fn infer_fallback_type_text_at(
+        &self,
+        node_id: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
         if !node_id.is_some() {
             return None;
         }
@@ -120,7 +124,11 @@ impl<'a> DeclarationEmitter<'a> {
     /// For numeric operators (`+`, `-`, `*`, `/`, `%`, `**`, bitwise), if both
     /// operands resolve to `number`, the result is `number`.
     /// For `+` specifically, if either operand is `string`, the result is `string`.
-    pub(in crate::declaration_emitter) fn infer_arithmetic_binary_type_text(&self, node_id: NodeIndex, depth: u32) -> Option<String> {
+    pub(in crate::declaration_emitter) fn infer_arithmetic_binary_type_text(
+        &self,
+        node_id: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
         if depth > 8 {
             return None;
         }
@@ -165,7 +173,11 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     /// Resolve the primitive type of an operand for arithmetic type inference.
-    pub(in crate::declaration_emitter) fn infer_operand_type_text(&self, node_id: NodeIndex, depth: u32) -> Option<String> {
+    pub(in crate::declaration_emitter) fn infer_operand_type_text(
+        &self,
+        node_id: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
         // Try preferred expression first (finds declared types)
         if let Some(text) = self.preferred_expression_type_text(node_id) {
             return Some(text);
@@ -243,7 +255,10 @@ impl<'a> DeclarationEmitter<'a> {
         printed_type_text.to_string()
     }
 
-    pub(in crate::declaration_emitter) fn explicit_asserted_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn explicit_asserted_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let mut current = expr_idx;
 
         for _ in 0..100 {
@@ -279,7 +294,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn truncation_candidate_type_node(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(in crate::declaration_emitter) fn truncation_candidate_type_node(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let mut current = expr_idx;
 
         for _ in 0..100 {
@@ -317,7 +335,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn truncation_candidate_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn truncation_candidate_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let type_node = self.truncation_candidate_type_node(expr_idx)?;
         if let Some(type_id) = self.get_node_type_or_names(&[type_node]) {
             let printed = self.print_type_id(type_id);
@@ -328,7 +349,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_type_node_text(type_node)
     }
 
-    pub(in crate::declaration_emitter) fn estimated_truncation_candidate_length(&self, expr_idx: NodeIndex) -> Option<usize> {
+    pub(in crate::declaration_emitter) fn estimated_truncation_candidate_length(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<usize> {
         let type_node = self.truncation_candidate_type_node(expr_idx)?;
         self.estimate_serialized_type_length(type_node, &FxHashMap::default(), 0)
     }
@@ -526,7 +550,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn find_local_type_alias_type_node(&self, name: &str) -> Option<NodeIndex> {
+    pub(in crate::declaration_emitter) fn find_local_type_alias_type_node(
+        &self,
+        name: &str,
+    ) -> Option<NodeIndex> {
         let binder = self.binder?;
         let symbol = binder
             .file_locals
@@ -539,7 +566,10 @@ impl<'a> DeclarationEmitter<'a> {
             .map(|alias| alias.type_node)
     }
 
-    pub(in crate::declaration_emitter) fn type_reference_name_text(&self, name_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn type_reference_name_text(
+        &self,
+        name_idx: NodeIndex,
+    ) -> Option<String> {
         let name_node = self.arena.get(name_idx)?;
         if name_node.kind == SyntaxKind::Identifier as u16 {
             return self.get_identifier_text(name_idx);
@@ -551,7 +581,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn serialized_property_name_length(&self, name: &str) -> usize {
+    pub(in crate::declaration_emitter) fn serialized_property_name_length(
+        &self,
+        name: &str,
+    ) -> usize {
         let mut chars = name.chars();
         let Some(first) = chars.next() else {
             return 2;
@@ -566,7 +599,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn skip_parenthesized_expression(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(in crate::declaration_emitter) fn skip_parenthesized_expression(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let mut current = expr_idx;
         loop {
             let node = self.arena.get(current)?;
@@ -623,7 +659,10 @@ impl<'a> DeclarationEmitter<'a> {
         (normalized != "asserts").then_some(normalized)
     }
 
-    pub(in crate::declaration_emitter) fn scan_asserts_parameter_type_text(&self, start: u32) -> Option<String> {
+    pub(in crate::declaration_emitter) fn scan_asserts_parameter_type_text(
+        &self,
+        start: u32,
+    ) -> Option<String> {
         let text = self.source_file_text.as_deref()?;
         let bytes = text.as_bytes();
         let start = usize::try_from(start).ok()?;
@@ -673,12 +712,18 @@ impl<'a> DeclarationEmitter<'a> {
         (!rescued.is_empty()).then_some(rescued)
     }
 
-    pub(in crate::declaration_emitter) fn undefined_identifier_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn undefined_identifier_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         (self.get_identifier_text(expr_idx).as_deref() == Some("undefined"))
             .then(|| "any".to_string())
     }
 
-    pub(in crate::declaration_emitter) fn reference_declared_type_annotation_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn reference_declared_type_annotation_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let sym_id = self.value_reference_symbol(expr_idx)?;
         let binder = self.binder?;
         let symbol = binder.symbols.get(sym_id)?;
@@ -720,7 +765,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn local_type_annotation_text(&self, type_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn local_type_annotation_text(
+        &self,
+        type_idx: NodeIndex,
+    ) -> Option<String> {
         let text = self.source_file_text.as_deref()?;
         let node = self.arena.get(type_idx)?;
         let start = usize::try_from(node.pos).ok()?;
@@ -729,12 +777,18 @@ impl<'a> DeclarationEmitter<'a> {
         (!slice.is_empty()).then(|| slice.to_string())
     }
 
-    pub(in crate::declaration_emitter) fn preferred_annotation_name_text(&self, type_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn preferred_annotation_name_text(
+        &self,
+        type_idx: NodeIndex,
+    ) -> Option<String> {
         let raw = self.local_type_annotation_text(type_idx)?;
         Self::simple_type_reference_name(&raw).map(|_| raw)
     }
 
-    pub(in crate::declaration_emitter) fn call_expression_declared_return_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn call_expression_declared_return_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
             return None;
@@ -776,7 +830,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn tagged_template_declared_return_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn tagged_template_declared_return_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind != syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION {
             return None;
@@ -818,7 +875,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn nameable_new_expression_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn nameable_new_expression_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind != syntax_kind_ext::NEW_EXPRESSION {
             return None;
@@ -834,7 +894,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn type_argument_list_source_text(&self, type_args: Option<&NodeList>) -> Vec<String> {
+    pub(in crate::declaration_emitter) fn type_argument_list_source_text(
+        &self,
+        type_args: Option<&NodeList>,
+    ) -> Vec<String> {
         let Some(list) = type_args else {
             return Vec::new();
         };
@@ -873,7 +936,10 @@ impl<'a> DeclarationEmitter<'a> {
             })
     }
 
-    pub(in crate::declaration_emitter) fn declaration_constructor_expression_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn declaration_constructor_expression_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_idx = self.skip_parenthesized_expression(expr_idx)?;
         let expr_node = self.arena.get(expr_idx)?;
 
@@ -891,7 +957,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn identifier_constructor_reference_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn identifier_constructor_reference_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let ident = self.get_identifier_text(expr_idx)?;
         let binder = self.binder?;
         let sym_id = self.resolve_identifier_symbol(expr_idx, &ident)?;
@@ -913,7 +982,11 @@ impl<'a> DeclarationEmitter<'a> {
         Some(ident)
     }
 
-    pub(in crate::declaration_emitter) fn resolve_identifier_symbol(&self, expr_idx: NodeIndex, ident: &str) -> Option<SymbolId> {
+    pub(in crate::declaration_emitter) fn resolve_identifier_symbol(
+        &self,
+        expr_idx: NodeIndex,
+        ident: &str,
+    ) -> Option<SymbolId> {
         let binder = self.binder?;
         let no_libs: &[Arc<BinderState>] = &[];
         binder
@@ -924,7 +997,10 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| binder.file_locals.get(ident))
     }
 
-    pub(in crate::declaration_emitter) fn array_literal_expression_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn array_literal_expression_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         let array = self.arena.get_literal_expr(expr_node)?;
         if array.elements.nodes.is_empty() {
@@ -988,7 +1064,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn short_circuit_expression_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn short_circuit_expression_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         let binary = self.arena.get_binary_expr(expr_node)?;
         if binary.operator_token != SyntaxKind::BarBarToken as u16 {
@@ -1005,7 +1084,10 @@ impl<'a> DeclarationEmitter<'a> {
             })
     }
 
-    pub(in crate::declaration_emitter) fn emit_type_node_text(&self, type_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn emit_type_node_text(
+        &self,
+        type_idx: NodeIndex,
+    ) -> Option<String> {
         self.arena.get(type_idx)?;
 
         let mut scratch = if let (Some(type_cache), Some(type_interner), Some(binder)) =
@@ -1032,7 +1114,10 @@ impl<'a> DeclarationEmitter<'a> {
         Some(scratch.writer.take_output())
     }
 
-    pub(in crate::declaration_emitter) fn expression_is_always_truthy_for_decl_emit(&self, expr_idx: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn expression_is_always_truthy_for_decl_emit(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
         let Some(expr_idx) = self.skip_parenthesized_expression(expr_idx) else {
             return false;
         };
@@ -1305,7 +1390,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn object_literal_member_name_text(&self, name_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn object_literal_member_name_text(
+        &self,
+        name_idx: NodeIndex,
+    ) -> Option<String> {
         self.resolved_computed_property_name_text(name_idx)
             .or_else(|| self.infer_property_name_text(name_idx))
     }
@@ -1391,7 +1479,10 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| self.infer_fallback_type_text_at(initializer, depth))
     }
 
-    pub(in crate::declaration_emitter) fn enum_member_widened_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn enum_member_widened_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
         let expr_node = self.arena.get(expr_idx)?;
         let access = self.arena.get_access_expr(expr_node)?;
@@ -1415,7 +1506,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.nameable_constructor_expression_text(enum_expr)
     }
 
-    pub(in crate::declaration_emitter) fn infer_property_name_text(&self, node_id: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn infer_property_name_text(
+        &self,
+        node_id: NodeIndex,
+    ) -> Option<String> {
         let node = self.arena.get(node_id)?;
         if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             let computed = self.arena.get_computed_property(node)?;
@@ -1487,7 +1581,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.get_source_slice(node.pos, node.end)
     }
 
-    pub(in crate::declaration_emitter) fn skip_parenthesized_non_null_and_comma(&self, mut idx: NodeIndex) -> NodeIndex {
+    pub(in crate::declaration_emitter) fn skip_parenthesized_non_null_and_comma(
+        &self,
+        mut idx: NodeIndex,
+    ) -> NodeIndex {
         for _ in 0..100 {
             let Some(node) = self.arena.get(idx) else {
                 return idx;
@@ -1516,7 +1613,10 @@ impl<'a> DeclarationEmitter<'a> {
         idx
     }
 
-    pub(in crate::declaration_emitter) fn semantic_simple_enum_access(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(in crate::declaration_emitter) fn semantic_simple_enum_access(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
         let expr_node = self.arena.get(expr_idx)?;
         if !self.is_simple_enum_access(expr_node) {
@@ -1597,7 +1697,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.simple_enum_access_member_text(assertion.expression)
     }
 
-    pub(in crate::declaration_emitter) fn invalid_const_enum_object_access(&self, expr_idx: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn invalid_const_enum_object_access(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
         let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
         let Some(expr_node) = self.arena.get(expr_idx) else {
             return false;
@@ -1657,7 +1760,10 @@ impl<'a> DeclarationEmitter<'a> {
             .is_some_and(|arg| arg.kind != SyntaxKind::StringLiteral as u16)
     }
 
-    pub(in crate::declaration_emitter) fn object_literal_prefers_syntax_type_text(&self, initializer: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn object_literal_prefers_syntax_type_text(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
         let Some(init_node) = self.arena.get(initializer) else {
             return false;
         };
@@ -1839,7 +1945,9 @@ impl<'a> DeclarationEmitter<'a> {
         false
     }
 
-    pub(in crate::declaration_emitter) fn object_literal_property_name_prefixes(name_text: &str) -> Vec<String> {
+    pub(in crate::declaration_emitter) fn object_literal_property_name_prefixes(
+        name_text: &str,
+    ) -> Vec<String> {
         let mut prefixes = vec![format!("{name_text}:")];
 
         if let Some(unquoted) = name_text
@@ -1867,7 +1975,10 @@ impl<'a> DeclarationEmitter<'a> {
         prefixes
     }
 
-    pub(in crate::declaration_emitter) fn object_literal_member_needs_syntax_override(&self, member_idx: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn object_literal_member_needs_syntax_override(
+        &self,
+        member_idx: NodeIndex,
+    ) -> bool {
         let Some(member_node) = self.arena.get(member_idx) else {
             return false;
         };
@@ -1899,7 +2010,10 @@ impl<'a> DeclarationEmitter<'a> {
             || self.enum_member_widened_type_text(initializer).is_some()
     }
 
-    pub(in crate::declaration_emitter) fn object_literal_member_name_idx(&self, member_node: &Node) -> Option<NodeIndex> {
+    pub(in crate::declaration_emitter) fn object_literal_member_name_idx(
+        &self,
+        member_node: &Node,
+    ) -> Option<NodeIndex> {
         if let Some(data) = self.arena.get_property_assignment(member_node) {
             return Some(data.name);
         }
@@ -1914,7 +2028,10 @@ impl<'a> DeclarationEmitter<'a> {
             .map(|data| data.name)
     }
 
-    pub(in crate::declaration_emitter) fn object_literal_member_initializer(&self, member_node: &Node) -> Option<NodeIndex> {
+    pub(in crate::declaration_emitter) fn object_literal_member_initializer(
+        &self,
+        member_node: &Node,
+    ) -> Option<NodeIndex> {
         if let Some(data) = self.arena.get_property_assignment(member_node) {
             return Some(data.initializer);
         }
@@ -1929,5 +2046,4 @@ impl<'a> DeclarationEmitter<'a> {
                 && name.ends_with(']')
                 && name[2..name.len().saturating_sub(1)].parse::<f64>().is_ok())
     }
-
 }
