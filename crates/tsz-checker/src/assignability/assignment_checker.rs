@@ -1490,6 +1490,111 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// In JS files, assignments like `exports.n = {}` or `module.exports.n = {}`
+    /// where `n` is subsequently augmented with property assignments (e.g., `exports.n.K = ...`)
+    /// are JS container declarations. The type of the container is built up from all
+    /// property assignments, so the initial value assignment should not be checked
+    /// against the augmented type. tsc treats these as declarations, not assignments.
+    fn is_js_container_export_declaration(&self, target_idx: NodeIndex) -> bool {
+        use tsz_binder::symbol_flags;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        if !self.is_js_file() {
+            return false;
+        }
+
+        let target_idx = self.ctx.arena.skip_parenthesized(target_idx);
+        let Some(target_node) = self.ctx.arena.get(target_idx) else {
+            return false;
+        };
+
+        // Must be a property access expression (e.g., `exports.n` or `module.exports.n`)
+        if target_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        // Check if the base of the property access chain is rooted at `exports` or `module.exports`
+        let Some(access) = self.ctx.arena.get_access_expr(target_node) else {
+            return false;
+        };
+
+        let is_exports_rooted = self.is_exports_rooted_access(access.expression);
+        if !is_exports_rooted {
+            return false;
+        }
+
+        // Check if the target symbol has namespace-like members (is a JS container)
+        if let Some(sym_id) = self.resolve_qualified_symbol(target_idx) {
+            if let Some(symbol) = self
+                .get_cross_file_symbol(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(sym_id))
+            {
+                // Check for namespace/module flags or non-empty members/exports
+                if (symbol.flags
+                    & (symbol_flags::NAMESPACE_MODULE
+                        | symbol_flags::VALUE_MODULE
+                        | symbol_flags::MODULE))
+                    != 0
+                {
+                    return true;
+                }
+                if symbol.members.as_ref().is_some_and(|m| !m.is_empty()) {
+                    return true;
+                }
+                if symbol.exports.as_ref().is_some_and(|e| !e.is_empty()) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check if an expression is rooted at `exports` or `module.exports`.
+    /// Walks up the property access chain to the root.
+    fn is_exports_rooted_access(&self, expr_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let idx = self.ctx.arena.skip_parenthesized(expr_idx);
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        // Direct `exports` identifier
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .is_some_and(|ident| ident.escaped_text == "exports");
+        }
+
+        // Property access: check for `module.exports` or recurse
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if let Some(access) = self.ctx.arena.get_access_expr(node) {
+                // Check for `module.exports`
+                let is_module = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(access.expression)
+                    .is_some_and(|ident| ident.escaped_text == "module");
+                let is_exports = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(access.name_or_argument)
+                    .is_some_and(|ident| ident.escaped_text == "exports");
+                if is_module && is_exports {
+                    return true;
+                }
+
+                // Recurse for deeper chains like `exports.n.K`
+                return self.is_exports_rooted_access(access.expression);
+            }
+        }
+
+        false
+    }
+
     fn is_js_namespace_enum_rebind_assignment_target(&self, target_idx: NodeIndex) -> bool {
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::syntax_kind_ext;
@@ -1797,6 +1902,17 @@ impl<'a> CheckerState<'a> {
             // false excess-property errors before assignability is even skipped.
             // However, when an explicit JSDoc `@type` provides the assignment target,
             // tsc does contextually type the RHS from that declared type.
+            if !has_explicit_jsdoc_left_type {
+                return self.get_type_of_node(right_idx);
+            }
+        }
+
+        if !is_const && self.is_js_container_export_declaration(left_idx) {
+            // In JS files, assignments like `exports.n = {}` or `module.exports.b = function() {}`
+            // where the target is later augmented with property assignments (e.g., `exports.n.K = ...`)
+            // are JS container declarations. The type flows from the RHS, not into the RHS.
+            // Without this suppression, tsz would emit false TS2741 errors checking `{}` against
+            // the augmented type `{ K: () => void }`.
             if !has_explicit_jsdoc_left_type {
                 return self.get_type_of_node(right_idx);
             }
