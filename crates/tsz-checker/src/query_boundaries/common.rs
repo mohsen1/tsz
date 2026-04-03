@@ -163,6 +163,20 @@ pub(crate) fn type_parameter_has_conditional_constraint(
     false
 }
 
+/// Check if a type parameter has a constraint that contains a generic mapped type.
+/// This is used to suppress false-positive TS2339 errors when accessing properties
+/// on type parameters with mapped type constraints like `T extends { [K in keyof U]: V }`
+/// where U is another type parameter. The mapped type cannot be fully resolved until
+/// U is instantiated.
+pub(crate) fn type_parameter_has_mapped_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Get the constraint of the type parameter
+    if let Some(constraint) = tsz_solver::type_queries::get_type_parameter_constraint(db, type_id) {
+        // Check if the constraint contains a generic mapped type
+        return is_generic_mapped_type(db, constraint);
+    }
+    false
+}
+
 /// Recursively check if a type contains a conditional type.
 pub(crate) fn contains_conditional_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if tsz_solver::type_queries::is_conditional_type(db, type_id) {

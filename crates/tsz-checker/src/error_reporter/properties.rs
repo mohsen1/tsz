@@ -442,6 +442,18 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Suppress TS2339 for type parameters with generic mapped type constraints.
+        // For example, `T extends { [K in keyof U]: V }` where U is another type parameter.
+        // The mapped type cannot be fully resolved until U is instantiated.
+        if crate::query_boundaries::state::checking::is_type_parameter_like(self.ctx.types, type_id)
+            && crate::query_boundaries::common::type_parameter_has_mapped_constraint(
+                self.ctx.types,
+                type_id,
+            )
+        {
+            return;
+        }
+
         // Suppress TS2339 when the type is an intersection containing type parameters
         // that haven't been resolved yet. This commonly occurs with mixin patterns where
         // the return type is `Constructor<Tagged> & T` - the instance type should have
