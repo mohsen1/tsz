@@ -710,7 +710,7 @@ mod tests {
     use crate::test_utils::check_source_diagnostics;
 
     #[test]
-    fn emits_ts2693_for_recovered_computed_type_keyword() {
+    fn emits_ts2690_for_computed_type_keyword_in_type_member() {
         let diagnostics = check_source_diagnostics(
             r#"
 namespace m1 {
@@ -729,9 +729,11 @@ class C1 {}
 "#,
         );
 
+        // TS2690 is emitted (with mapped type suggestion) instead of TS2693
+        // when a type is used as a computed property key in a type member
         assert!(
-            diagnostics.iter().any(|diag| diag.code == 2693),
-            "Expected TS2693 for recovered computed type keyword, got: {diagnostics:?}",
+            diagnostics.iter().any(|diag| diag.code == 2690),
+            "Expected TS2690 for computed type keyword in type member, got: {diagnostics:?}",
         );
     }
 
