@@ -2079,20 +2079,14 @@ fn resolve_package_root(
                 return Some(resolved);
             }
         }
-
-        // Only resolve index file fallback when package.json exists.
-        // This matches TypeScript's behavior for packages in node_modules -
-        // a package directory without package.json should not resolve via index files.
-        if let Some(resolved) = resolve_package_entry(package_root, "index", options, package_type)
-        {
-            return Some(resolved);
-        }
     }
 
-    // Without package.json, the package directory doesn't have a valid entry point.
-    // This is the expected behavior for symlink tests like
-    // declarationEmitForGlobalishSpecifierSymlink.ts where packages without
-    // proper package.json should fail to resolve with TS2307.
+    // Try index file fallback regardless of whether package.json exists.
+    // This matches TypeScript's behavior for packages in node_modules.
+    if let Some(resolved) = resolve_package_entry(package_root, "index", options, package_type) {
+        return Some(resolved);
+    }
+
     None
 }
 
