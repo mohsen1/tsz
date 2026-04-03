@@ -409,9 +409,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 let start = if let Some(sf) = self.ctx.arena.source_files.first() {
                     let bytes = sf.text.as_bytes();
                     let mut pos = decl_pos as usize;
-                    while pos < bytes.len()
-                        && matches!(bytes[pos], b' ' | b'\t' | b'\r' | b'\n')
-                    {
+                    while pos < bytes.len() && matches!(bytes[pos], b' ' | b'\t' | b'\r' | b'\n') {
                         pos += 1;
                     }
                     pos as u32
@@ -640,8 +638,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     }
 
                     if kind == syntax_kind_ext::EXPORT_DECLARATION {
-                        let Some(export_decl) = self.ctx.arena.get_export_decl(stmt_node)
-                        else {
+                        let Some(export_decl) = self.ctx.arena.get_export_decl(stmt_node) else {
                             continue;
                         };
                         if export_decl.is_default_export
@@ -656,8 +653,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                         };
                         match clause_node.kind {
                             syntax_kind_ext::VARIABLE_STATEMENT => {
-                                if let Some(var_stmt) = self.ctx.arena.get_variable(clause_node)
-                                {
+                                if let Some(var_stmt) = self.ctx.arena.get_variable(clause_node) {
                                     for &decl_list_idx in &var_stmt.declarations.nodes {
                                         let Some(decl_list_node) =
                                             self.ctx.arena.get(decl_list_idx)
@@ -679,10 +675,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                                             .get_variable_declaration(decl_node)
                                                         && let Some(name_node) =
                                                             self.ctx.arena.get(decl.name)
-                                                        && let Some(ident) = self
-                                                            .ctx
-                                                            .arena
-                                                            .get_identifier(name_node)
+                                                        && let Some(ident) =
+                                                            self.ctx.arena.get_identifier(name_node)
                                                         && register_value_name(
                                                             &ident.escaped_text,
                                                             decl.name,
@@ -699,18 +693,12 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                                     }
                                                 }
                                             }
-                                        } else if let Some(decl) = self
-                                            .ctx
-                                            .arena
-                                            .get_variable_declaration(decl_list_node)
-                                            && let Some(name_node) =
-                                                self.ctx.arena.get(decl.name)
+                                        } else if let Some(decl) =
+                                            self.ctx.arena.get_variable_declaration(decl_list_node)
+                                            && let Some(name_node) = self.ctx.arena.get(decl.name)
                                             && let Some(ident) =
                                                 self.ctx.arena.get_identifier(name_node)
-                                            && register_value_name(
-                                                &ident.escaped_text,
-                                                decl.name,
-                                            )
+                                            && register_value_name(&ident.escaped_text, decl.name)
                                             && let Some(node) = self.ctx.arena.get(decl.name)
                                         {
                                             self.ctx.error(
@@ -726,8 +714,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                             syntax_kind_ext::FUNCTION_DECLARATION => {
                                 if let Some(func) = self.ctx.arena.get_function(clause_node)
                                     && let Some(name_node) = self.ctx.arena.get(func.name)
-                                    && let Some(ident) =
-                                        self.ctx.arena.get_identifier(name_node)
+                                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                                     && register_value_name(&ident.escaped_text, func.name)
                                     && let Some(node) = self.ctx.arena.get(func.name)
                                 {
@@ -742,8 +729,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                             syntax_kind_ext::CLASS_DECLARATION => {
                                 if let Some(class) = self.ctx.arena.get_class(clause_node)
                                     && let Some(name_node) = self.ctx.arena.get(class.name)
-                                    && let Some(ident) =
-                                        self.ctx.arena.get_identifier(name_node)
+                                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                                     && register_value_name(&ident.escaped_text, class.name)
                                     && let Some(node) = self.ctx.arena.get(class.name)
                                 {
@@ -758,8 +744,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                             syntax_kind_ext::ENUM_DECLARATION => {
                                 if let Some(enm) = self.ctx.arena.get_enum(clause_node)
                                     && let Some(name_node) = self.ctx.arena.get(enm.name)
-                                    && let Some(ident) =
-                                        self.ctx.arena.get_identifier(name_node)
+                                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                                 {
                                     if let Some(specifier) = module_specifier.as_deref()
                                         && let Some((existing_sym_id, owner_idx)) = self
@@ -810,19 +795,16 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                 .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
                         {
                             for &decl_list_idx in &var_stmt.declarations.nodes {
-                                let Some(decl_list_node) = self.ctx.arena.get(decl_list_idx)
-                                else {
+                                let Some(decl_list_node) = self.ctx.arena.get(decl_list_idx) else {
                                     continue;
                                 };
-                                if decl_list_node.kind
-                                    == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                                if decl_list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
                                 {
                                     if let Some(decl_list) =
                                         self.ctx.arena.get_variable(decl_list_node)
                                     {
                                         for &decl_idx in &decl_list.declarations.nodes {
-                                            if let Some(decl_node) =
-                                                self.ctx.arena.get(decl_idx)
+                                            if let Some(decl_node) = self.ctx.arena.get(decl_idx)
                                                 && let Some(decl) = self
                                                     .ctx
                                                     .arena
@@ -835,8 +817,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                                     &ident.escaped_text,
                                                     decl.name,
                                                 )
-                                                && let Some(node) =
-                                                    self.ctx.arena.get(decl.name)
+                                                && let Some(node) = self.ctx.arena.get(decl.name)
                                             {
                                                 self.ctx.error(
                                                                         node.pos,
@@ -850,8 +831,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                 } else if let Some(decl) =
                                     self.ctx.arena.get_variable_declaration(decl_list_node)
                                     && let Some(name_node) = self.ctx.arena.get(decl.name)
-                                    && let Some(ident) =
-                                        self.ctx.arena.get_identifier(name_node)
+                                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                                     && register_value_name(&ident.escaped_text, decl.name)
                                     && let Some(node) = self.ctx.arena.get(decl.name)
                                 {

@@ -296,8 +296,7 @@ impl<'a> CheckerState<'a> {
         // Emit deferred TS2875 (JSX import source not found) if set.
         // This is deferred because the check runs inside JSX element type
         // resolution which may be inside a speculative call-checker context.
-        if let Some((node_idx, runtime_path)) = self.ctx.deferred_jsx_import_source_error.take()
-        {
+        if let Some((node_idx, runtime_path)) = self.ctx.deferred_jsx_import_source_error.take() {
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node_msg(
                 node_idx,
