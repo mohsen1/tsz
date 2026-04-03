@@ -100,10 +100,22 @@ impl ModuleResolver {
                 // extension addition (e.g., ./foo → ./foo.ts). If the resolution went through
                 // a directory index (e.g., ./pkg → ./pkg/index.d.ts), don't suggest an
                 // extension (TS2834) because adding .js to the specifier won't work.
+                let resolved_ext = ModuleExtension::from_path(&resolved);
+                // When the resolved file is .tsx and jsx is configured, tsc
+                // allows the extensionless import because the .tsx file will be
+                // compiled to .jsx (preserve) or .js (react/react-jsx/etc.).
+                if resolved_ext == ModuleExtension::Tsx && self.jsx.is_some() {
+                    return Ok(ResolvedModule {
+                        resolved_path: resolved.clone(),
+                        resolved_using_ts_extension: false,
+                        is_external: false,
+                        package_name: None,
+                        original_specifier: specifier.to_string(),
+                        extension: resolved_ext,
+                    });
+                }
                 let resolved_via_index = {
                     let resolved_path = Path::new(&resolved);
-                    // Check if resolved through directory index (e.g., ./pkg → ./pkg/index.d.ts)
-                    // file_stem() returns "index.d" for "index.d.ts", so also check file_name starts with "index."
                     resolved_path.file_name().is_some_and(|name| {
                         let name = name.to_string_lossy();
                         name == "index.ts"
@@ -116,7 +128,6 @@ impl ModuleResolver {
                     })
                 };
                 if resolved_via_index {
-                    // Directory index resolution - no suggestion (TS2834)
                     return Err(ResolutionFailure::ImportPathNeedsExtension {
                         specifier: specifier.to_string(),
                         suggested_extension: String::new(),
@@ -124,7 +135,6 @@ impl ModuleResolver {
                         span: specifier_span,
                     });
                 }
-                let resolved_ext = ModuleExtension::from_path(&resolved);
                 let suggested_ext = self.suggested_runtime_extension(resolved_ext);
                 return Err(ResolutionFailure::ImportPathNeedsExtension {
                     specifier: specifier.to_string(),
