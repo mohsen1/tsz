@@ -103,6 +103,14 @@ pub(crate) fn is_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_this_type(db, type_id)
 }
 
+/// Check if a type contains `never` (e.g. an intersection reduced to `never`).
+///
+/// Used to detect cases where property access should return `error` to suppress
+/// cascading diagnostics (matching tsc behavior for `never` types).
+pub(crate) fn contains_never_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::contains_never_type_db(db, type_id)
+}
+
 /// Extract object and index types from an IndexAccess type (T[K]).
 ///
 /// Returns `None` if `type_id` is not an `IndexAccess` type.

@@ -1449,7 +1449,7 @@ impl<'a> CheckerState<'a> {
         // Also handle intersections that contain `never` (e.g., when mixin classes have
         // conflicting private members that reduce the intersection to `never`).
         if object_type == TypeId::NEVER
-            || tsz_solver::type_queries::contains_never_type_db(self.ctx.types, object_type)
+            || access_query::contains_never_type(self.ctx.types, object_type)
         {
             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                 let property_name = &ident.escaped_text;

@@ -10688,6 +10688,7 @@ impl<'a> DeclarationEmitter<'a> {
         (depth_after_package, module_path.len())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn collect_non_portable_references_in_symbol_declaration_inner(
         &self,
         sym_id: SymbolId,
