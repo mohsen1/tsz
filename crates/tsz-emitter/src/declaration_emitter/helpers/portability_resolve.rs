@@ -139,7 +139,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn printed_type_uses_non_emittable_local_alias_root(&self, printed_type_text: &str) -> bool {
+    pub(in crate::declaration_emitter) fn printed_type_uses_non_emittable_local_alias_root(
+        &self,
+        printed_type_text: &str,
+    ) -> bool {
         if self.current_source_file_idx.is_none() {
             return false;
         }
@@ -204,7 +207,10 @@ impl<'a> DeclarationEmitter<'a> {
         false
     }
 
-    pub(in crate::declaration_emitter) fn type_text_identifier_is_member_name(type_text: &str, end: usize) -> bool {
+    pub(in crate::declaration_emitter) fn type_text_identifier_is_member_name(
+        type_text: &str,
+        end: usize,
+    ) -> bool {
         let mut iter = type_text[end..]
             .char_indices()
             .skip_while(|(_, ch)| ch.is_ascii_whitespace());
@@ -266,7 +272,10 @@ impl<'a> DeclarationEmitter<'a> {
         false
     }
 
-    pub(in crate::declaration_emitter) fn current_file_top_level_declaration_named(&self, ident: &str) -> Option<NodeIndex> {
+    pub(in crate::declaration_emitter) fn current_file_top_level_declaration_named(
+        &self,
+        ident: &str,
+    ) -> Option<NodeIndex> {
         let source_idx = self.current_source_file_idx?;
         let source_node = self.arena.get(source_idx)?;
         let source_file = self.arena.get_source_file(source_node)?;
@@ -351,7 +360,9 @@ impl<'a> DeclarationEmitter<'a> {
         ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'
     }
 
-    pub(in crate::declaration_emitter) fn is_non_type_text_identifier_candidate(ident: &str) -> bool {
+    pub(in crate::declaration_emitter) fn is_non_type_text_identifier_candidate(
+        ident: &str,
+    ) -> bool {
         matches!(
             ident,
             "any"
@@ -447,7 +458,10 @@ impl<'a> DeclarationEmitter<'a> {
         true
     }
 
-    pub(in crate::declaration_emitter) fn find_symbol_for_import_type_text(&self, printed: &str) -> Option<SymbolId> {
+    pub(in crate::declaration_emitter) fn find_symbol_for_import_type_text(
+        &self,
+        printed: &str,
+    ) -> Option<SymbolId> {
         let (module_specifier, first_name) = self.parse_import_type_text(printed)?;
         let binder = self.binder?;
         let current_path = self.current_file_path.as_deref()?;
@@ -470,7 +484,10 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    pub(in crate::declaration_emitter) fn parse_import_type_text(&self, printed: &str) -> Option<(String, String)> {
+    pub(in crate::declaration_emitter) fn parse_import_type_text(
+        &self,
+        printed: &str,
+    ) -> Option<(String, String)> {
         let rest = printed.strip_prefix("import(\"")?;
         let (module_specifier, tail) = rest.split_once("\")")?;
         let tail = tail.strip_prefix('.')?;
@@ -603,7 +620,11 @@ impl<'a> DeclarationEmitter<'a> {
         )
     }
 
-    pub(in crate::declaration_emitter) fn rightmost_name_text_in_arena(&self, arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn rightmost_name_text_in_arena(
+        &self,
+        arena: &NodeArena,
+        idx: NodeIndex,
+    ) -> Option<String> {
         let node = arena.get(idx)?;
         if let Some(ident) = arena.get_identifier(node) {
             return Some(ident.escaped_text.clone());
@@ -617,7 +638,11 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn find_symbol_in_arena_by_name(&self, arena: &NodeArena, name: &str) -> Option<SymbolId> {
+    pub(in crate::declaration_emitter) fn find_symbol_in_arena_by_name(
+        &self,
+        arena: &NodeArena,
+        name: &str,
+    ) -> Option<SymbolId> {
         let binder = self.binder?;
         let arena_addr = arena as *const NodeArena as usize;
 
@@ -743,7 +768,10 @@ impl<'a> DeclarationEmitter<'a> {
         Some(rest[..end].to_string())
     }
 
-    pub(in crate::declaration_emitter) fn extract_reference_types_from_text(&self, source_text: &str) -> Vec<String> {
+    pub(in crate::declaration_emitter) fn extract_reference_types_from_text(
+        &self,
+        source_text: &str,
+    ) -> Vec<String> {
         source_text
             .lines()
             .filter_map(|line| {
@@ -830,7 +858,10 @@ impl<'a> DeclarationEmitter<'a> {
         ));
     }
 
-    pub(in crate::declaration_emitter) fn type_text_is_directly_nameable_reference(&self, printed: &str) -> bool {
+    pub(in crate::declaration_emitter) fn type_text_is_directly_nameable_reference(
+        &self,
+        printed: &str,
+    ) -> bool {
         if printed == "any" || printed.is_empty() {
             return false;
         }
@@ -870,7 +901,10 @@ impl<'a> DeclarationEmitter<'a> {
     /// the type is already nameable from the consumer's perspective and the
     /// deeper type-graph portability walk can be skipped.
     #[allow(dead_code)]
-    pub(in crate::declaration_emitter) fn printed_type_contains_non_portable_import(&self, printed: &str) -> bool {
+    pub(in crate::declaration_emitter) fn printed_type_contains_non_portable_import(
+        &self,
+        printed: &str,
+    ) -> bool {
         let mut remaining = printed;
         while let Some(start) = remaining.find("import(\"") {
             let after_prefix = &remaining[start + 8..]; // skip `import("`
@@ -934,7 +968,10 @@ impl<'a> DeclarationEmitter<'a> {
     /// Check whether a bare package specifier with a subpath is publicly accessible.
     /// Returns `true` when the package has no `exports` field (all subpaths accessible)
     /// or the exports map explicitly maps the subpath.
-    pub(in crate::declaration_emitter) fn is_bare_specifier_subpath_publicly_accessible(&self, specifier: &str) -> bool {
+    pub(in crate::declaration_emitter) fn is_bare_specifier_subpath_publicly_accessible(
+        &self,
+        specifier: &str,
+    ) -> bool {
         use std::path::Path;
 
         let mut parts = specifier.split('/');
@@ -980,7 +1017,10 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     /// Find the filesystem path of a package root directory.
-    pub(in crate::declaration_emitter) fn find_package_root_for_name(&self, package_name: &str) -> Option<String> {
+    pub(in crate::declaration_emitter) fn find_package_root_for_name(
+        &self,
+        package_name: &str,
+    ) -> Option<String> {
         let needle = format!("node_modules/{package_name}/");
         for source_path in self.arena_to_path.values() {
             if let Some(idx) = source_path.find(&needle) {
@@ -998,7 +1038,11 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     /// Check whether a package's exports map allows a given subpath.
-    pub(in crate::declaration_emitter) fn exports_map_allows_subpath(&self, exports: &serde_json::Value, subpath: &str) -> bool {
+    pub(in crate::declaration_emitter) fn exports_map_allows_subpath(
+        &self,
+        exports: &serde_json::Value,
+        subpath: &str,
+    ) -> bool {
         match exports {
             serde_json::Value::String(target) => {
                 subpath == "." || self.match_export_target(".", target, subpath).is_some()
@@ -1455,7 +1499,9 @@ impl<'a> DeclarationEmitter<'a> {
         )
     }
 
-    pub(in crate::declaration_emitter) fn ts2883_relative_node_modules_path(path: String) -> String {
+    pub(in crate::declaration_emitter) fn ts2883_relative_node_modules_path(
+        path: String,
+    ) -> String {
         if path.starts_with("../") {
             if let Some(path) = path.strip_suffix("../node_modules") {
                 return format!("{path}..node_modules");
@@ -1625,7 +1671,11 @@ impl<'a> DeclarationEmitter<'a> {
             })
     }
 
-    pub(in crate::declaration_emitter) fn resolve_portability_symbol(&self, sym_id: SymbolId, binder: &BinderState) -> SymbolId {
+    pub(in crate::declaration_emitter) fn resolve_portability_symbol(
+        &self,
+        sym_id: SymbolId,
+        binder: &BinderState,
+    ) -> SymbolId {
         let mut current = sym_id;
         let mut seen = rustc_hash::FxHashSet::default();
 
@@ -1755,7 +1805,11 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn symbol_has_portability_declaration(&self, sym_id: SymbolId, binder: &BinderState) -> bool {
+    pub(in crate::declaration_emitter) fn symbol_has_portability_declaration(
+        &self,
+        sym_id: SymbolId,
+        binder: &BinderState,
+    ) -> bool {
         let Some(symbol) = binder.symbols.get(sym_id) else {
             return false;
         };
@@ -1779,7 +1833,11 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     /// Get the source file path for a symbol via the binder's `symbol_arenas` and `arena_to_path`.
-    pub(in crate::declaration_emitter) fn get_symbol_source_path(&self, sym_id: SymbolId, binder: &BinderState) -> Option<String> {
+    pub(in crate::declaration_emitter) fn get_symbol_source_path(
+        &self,
+        sym_id: SymbolId,
+        binder: &BinderState,
+    ) -> Option<String> {
         let source_arena = binder.symbol_arenas.get(&sym_id)?;
         let arena_addr = Arc::as_ptr(source_arena) as usize;
         self.arena_to_path.get(&arena_addr).cloned()

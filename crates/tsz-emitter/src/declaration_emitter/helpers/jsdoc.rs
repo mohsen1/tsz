@@ -27,7 +27,7 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 #[allow(unused_imports)]
 use tsz_scanner::SyntaxKind;
 
-use super::{JsdocTypeAliasDecl, JsdocParamDecl};
+use super::{JsdocParamDecl, JsdocTypeAliasDecl};
 
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn statement_has_attached_jsdoc(
@@ -111,7 +111,9 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    pub(in crate::declaration_emitter) fn extract_jsdoc_type_expression(jsdoc: &str) -> Option<&str> {
+    pub(in crate::declaration_emitter) fn extract_jsdoc_type_expression(
+        jsdoc: &str,
+    ) -> Option<&str> {
         let typedef_pos = jsdoc.find("@typedef");
         let mut tag_pos = jsdoc.find("@type");
 
@@ -228,7 +230,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.jsdoc_name_like_type_expr_for_pos(node.pos)
     }
 
-    pub(in crate::declaration_emitter) fn leading_jsdoc_comment_chain_for_pos(&self, pos: u32) -> Vec<String> {
+    pub(in crate::declaration_emitter) fn leading_jsdoc_comment_chain_for_pos(
+        &self,
+        pos: u32,
+    ) -> Vec<String> {
         let Some(text) = self.source_file_text.as_deref() else {
             return Vec::new();
         };
@@ -279,7 +284,10 @@ impl<'a> DeclarationEmitter<'a> {
         chain
     }
 
-    pub(in crate::declaration_emitter) fn leading_jsdoc_comment_chain_for_node_or_ancestors(&self, idx: NodeIndex) -> Vec<String> {
+    pub(in crate::declaration_emitter) fn leading_jsdoc_comment_chain_for_node_or_ancestors(
+        &self,
+        idx: NodeIndex,
+    ) -> Vec<String> {
         let mut current = idx;
         for _ in 0..5 {
             let Some(node) = self.arena.get(current) else {
@@ -329,7 +337,10 @@ impl<'a> DeclarationEmitter<'a> {
         (text.to_string(), false)
     }
 
-    pub(in crate::declaration_emitter) fn normalize_jsdoc_type_text(type_expr: &str, rest: bool) -> String {
+    pub(in crate::declaration_emitter) fn normalize_jsdoc_type_text(
+        type_expr: &str,
+        rest: bool,
+    ) -> String {
         let trimmed = type_expr.trim();
         let normalized = if trimmed == "*" { "any" } else { trimmed };
         if rest {
@@ -339,7 +350,9 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn parse_jsdoc_param_decl(line: &str) -> Option<JsdocParamDecl> {
+    pub(in crate::declaration_emitter) fn parse_jsdoc_param_decl(
+        line: &str,
+    ) -> Option<JsdocParamDecl> {
         let rest = line.strip_prefix("@param")?.trim();
         let (raw_type_expr, raw_name) = Self::parse_jsdoc_braced_type_and_name(rest)?;
         let raw_name = raw_name
@@ -368,7 +381,9 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    pub(in crate::declaration_emitter) fn parse_jsdoc_param_decls(jsdoc: &str) -> Vec<JsdocParamDecl> {
+    pub(in crate::declaration_emitter) fn parse_jsdoc_param_decls(
+        jsdoc: &str,
+    ) -> Vec<JsdocParamDecl> {
         jsdoc
             .lines()
             .map(|raw_line| raw_line.trim_start_matches('*').trim())
@@ -574,7 +589,9 @@ impl<'a> DeclarationEmitter<'a> {
         true
     }
 
-    pub(in crate::declaration_emitter) fn parse_jsdoc_callback_alias(jsdoc: &str) -> Option<(String, String)> {
+    pub(in crate::declaration_emitter) fn parse_jsdoc_callback_alias(
+        jsdoc: &str,
+    ) -> Option<(String, String)> {
         let mut name = None;
         let mut params = Vec::new();
         let mut return_type = None;
@@ -674,7 +691,9 @@ impl<'a> DeclarationEmitter<'a> {
         params
     }
 
-    pub(in crate::declaration_emitter) fn parse_jsdoc_typedef_alias(jsdoc: &str) -> Option<(String, String)> {
+    pub(in crate::declaration_emitter) fn parse_jsdoc_typedef_alias(
+        jsdoc: &str,
+    ) -> Option<(String, String)> {
         let normalized = Self::normalize_jsdoc_block(jsdoc);
         let tag_pos = normalized.find("@typedef")?;
         let rest = normalized[tag_pos + "@typedef".len()..].trim();
@@ -689,7 +708,9 @@ impl<'a> DeclarationEmitter<'a> {
         Some((name.to_string(), type_expr.to_string()))
     }
 
-    pub(in crate::declaration_emitter) fn parse_jsdoc_braced_type_and_name(text: &str) -> Option<(&str, &str)> {
+    pub(in crate::declaration_emitter) fn parse_jsdoc_braced_type_and_name(
+        text: &str,
+    ) -> Option<(&str, &str)> {
         let text = text.trim();
         if !text.starts_with('{') {
             return None;
@@ -735,7 +756,9 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    pub(in crate::declaration_emitter) fn parse_jsdoc_property_type_alias(jsdoc: &str) -> Option<(String, String)> {
+    pub(in crate::declaration_emitter) fn parse_jsdoc_property_type_alias(
+        jsdoc: &str,
+    ) -> Option<(String, String)> {
         let (name, base_type) = Self::parse_jsdoc_typedef_alias(jsdoc)?;
         if name == "default" || !matches!(base_type.as_str(), "Object" | "object") {
             return None;
@@ -837,7 +860,9 @@ impl<'a> DeclarationEmitter<'a> {
         Some((name, type_text))
     }
 
-    pub(in crate::declaration_emitter) fn normalize_jsdoc_primitive_type_name(type_name: &str) -> String {
+    pub(in crate::declaration_emitter) fn normalize_jsdoc_primitive_type_name(
+        type_name: &str,
+    ) -> String {
         match type_name.trim() {
             "String" => "string".to_string(),
             "Number" => "number".to_string(),
@@ -851,7 +876,9 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn parse_jsdoc_type_alias_decl(jsdoc: &str) -> Option<JsdocTypeAliasDecl> {
+    pub(in crate::declaration_emitter) fn parse_jsdoc_type_alias_decl(
+        jsdoc: &str,
+    ) -> Option<JsdocTypeAliasDecl> {
         let type_params = Self::parse_jsdoc_template_params(jsdoc);
         let description_lines = Self::jsdoc_description_lines(jsdoc);
 
@@ -891,7 +918,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn render_jsdoc_type_alias_decl(decl: &JsdocTypeAliasDecl, exported: bool) -> Option<String> {
+    pub(in crate::declaration_emitter) fn render_jsdoc_type_alias_decl(
+        decl: &JsdocTypeAliasDecl,
+        exported: bool,
+    ) -> Option<String> {
         let mut source = String::new();
         if !decl.description_lines.is_empty() {
             source.push_str("/**\n");
@@ -928,7 +958,11 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn emit_rendered_jsdoc_type_alias(&mut self, decl: JsdocTypeAliasDecl, exported: bool) {
+    pub(in crate::declaration_emitter) fn emit_rendered_jsdoc_type_alias(
+        &mut self,
+        decl: JsdocTypeAliasDecl,
+        exported: bool,
+    ) {
         if !self.emitted_jsdoc_type_aliases.insert(decl.name.clone()) {
             return;
         }
@@ -1123,5 +1157,4 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_rendered_jsdoc_type_alias(decl, false);
         }
     }
-
 }

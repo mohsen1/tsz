@@ -491,5 +491,4 @@ impl<'a> DeclarationEmitter<'a> {
             self.indent_level -= 1;
         }
     }
-
 }

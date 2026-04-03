@@ -163,15 +163,14 @@ impl tsz_solver::def::resolver::TypeResolver for DtsCacheResolver<'_> {
     }
 }
 
-
-mod emit_node;
-mod jsdoc;
-mod js_exports;
-mod visibility;
 mod comments_source;
+mod emit_node;
+mod function_analysis;
+mod js_exports;
+mod jsdoc;
+mod portability_check;
+mod portability_resolve;
 mod type_inference;
 mod type_printing;
 mod variable_decl;
-mod function_analysis;
-mod portability_check;
-mod portability_resolve;
+mod visibility;

@@ -574,5 +574,4 @@ impl<'a> DeclarationEmitter<'a> {
 
         targets
     }
-
 }

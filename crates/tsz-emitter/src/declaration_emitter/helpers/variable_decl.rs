@@ -28,7 +28,6 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> DeclarationEmitter<'a> {
-
     /// Emit type annotation (or literal initializer) for a single variable declaration.
     ///
     /// Handles: literal const initializers, explicit type annotations, unique symbol,
@@ -357,7 +356,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn data_view_new_expression_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn data_view_new_expression_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind != syntax_kind_ext::NEW_EXPRESSION {
             return None;
@@ -375,7 +377,10 @@ impl<'a> DeclarationEmitter<'a> {
         Some(format!("DataView<{backing_type}>"))
     }
 
-    pub(in crate::declaration_emitter) fn data_view_backing_store_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn data_view_backing_store_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         if let Some(type_id) = self.get_node_type_or_names(&[expr_idx])
             && type_id != tsz_solver::types::TypeId::ANY
         {
@@ -436,7 +441,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn initializer_is_new_expression(&self, initializer: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn initializer_is_new_expression(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
         let initializer = self.skip_parenthesized_non_null_and_comma(initializer);
         self.arena
             .get(initializer)
@@ -503,7 +511,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn retain_synthetic_module_extends_alias_dependencies(&mut self, module_idx: NodeIndex) {
+    pub(in crate::declaration_emitter) fn retain_synthetic_module_extends_alias_dependencies(
+        &mut self,
+        module_idx: NodeIndex,
+    ) {
         let Some(module_node) = self.arena.get(module_idx) else {
             return;
         };
@@ -529,7 +540,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn retain_direct_type_symbols_for_public_api(&mut self, type_id: tsz_solver::TypeId) {
+    pub(in crate::declaration_emitter) fn retain_direct_type_symbols_for_public_api(
+        &mut self,
+        type_id: tsz_solver::TypeId,
+    ) {
         let (Some(used_symbols), Some(type_cache), Some(interner)) = (
             self.used_symbols.as_mut(),
             self.type_cache.as_ref(),
@@ -571,7 +585,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn emit_direct_symbol_dependency_for_type(&mut self, type_id: tsz_solver::TypeId) {
+    pub(in crate::declaration_emitter) fn emit_direct_symbol_dependency_for_type(
+        &mut self,
+        type_id: tsz_solver::TypeId,
+    ) {
         let Some(binder) = self.binder else {
             return;
         };
@@ -905,7 +922,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn reference_declared_type_id(&self, expr_idx: NodeIndex) -> Option<tsz_solver::types::TypeId> {
+    pub(in crate::declaration_emitter) fn reference_declared_type_id(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<tsz_solver::types::TypeId> {
         let sym_id = self.value_reference_symbol(expr_idx)?;
         let binder = self.binder?;
         let symbol = binder.symbols.get(sym_id)?;
@@ -935,7 +955,9 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn simple_type_reference_name(type_text: &str) -> Option<String> {
+    pub(in crate::declaration_emitter) fn simple_type_reference_name(
+        type_text: &str,
+    ) -> Option<String> {
         let trimmed = type_text.trim();
         if trimmed.is_empty()
             || trimmed.contains("=>")
@@ -986,7 +1008,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(") => ");
     }
 
-    pub(in crate::declaration_emitter) fn function_initializer_has_inline_parameter_comments(&self, initializer: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn function_initializer_has_inline_parameter_comments(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
         if self.remove_comments {
             return false;
         }
@@ -1010,7 +1035,10 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    pub(in crate::declaration_emitter) fn function_initializer_is_self_returning(&self, initializer: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn function_initializer_is_self_returning(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
         let Some(init_node) = self.arena.get(initializer) else {
             return false;
         };
@@ -1026,7 +1054,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.function_body_returns_identifier(func.body, &name)
     }
 
-    pub(in crate::declaration_emitter) fn function_initializer_returns_unique_identifier(&self, initializer: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn function_initializer_returns_unique_identifier(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
         let Some(init_node) = self.arena.get(initializer) else {
             return false;
         };
@@ -1070,7 +1101,11 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn function_body_returns_identifier(&self, body_idx: NodeIndex, name: &str) -> bool {
+    pub(in crate::declaration_emitter) fn function_body_returns_identifier(
+        &self,
+        body_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
         let Some(body_node) = self.arena.get(body_idx) else {
             return false;
         };
@@ -1125,7 +1160,10 @@ impl<'a> DeclarationEmitter<'a> {
         true
     }
 
-    pub(in crate::declaration_emitter) fn function_body_unique_return_identifier(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(in crate::declaration_emitter) fn function_body_unique_return_identifier(
+        &self,
+        body_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let body_node = self.arena.get(body_idx)?;
         let block = self.arena.get_block(body_node)?;
         let mut returned_identifier = None;
@@ -1139,7 +1177,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn function_body_single_return_expression(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(in crate::declaration_emitter) fn function_body_single_return_expression(
+        &self,
+        body_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let body_node = self.arena.get(body_idx)?;
         let block = self.arena.get_block(body_node)?;
         let stmt_idx = *block.statements.nodes.first()?;
@@ -1271,5 +1312,4 @@ impl<'a> DeclarationEmitter<'a> {
             _ => true,
         }
     }
-
 }

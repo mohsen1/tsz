@@ -832,5 +832,4 @@ impl<'a> DeclarationEmitter<'a> {
             self.writer.add_source(state.source_name.clone(), content);
         }
     }
-
 }

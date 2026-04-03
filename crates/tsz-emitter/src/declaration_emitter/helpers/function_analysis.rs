@@ -130,7 +130,10 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    pub(in crate::declaration_emitter) fn is_object_define_property_call(&self, expr_idx: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn is_object_define_property_call(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
         let expr_node = match self.arena.get(expr_idx) {
             Some(node) => node,
             None => return false,
@@ -164,7 +167,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.get_identifier_text(access.expression).as_deref() == Some("Object")
     }
 
-    pub(in crate::declaration_emitter) fn js_define_property_name(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn js_define_property_name(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         if let Some(identifier) = self.arena.get_identifier(expr_node) {
             return Some(identifier.escaped_text.clone());
@@ -174,7 +180,10 @@ impl<'a> DeclarationEmitter<'a> {
             .map(|literal| literal.text.clone())
     }
 
-    pub(in crate::declaration_emitter) fn js_define_property_descriptor(&self, expr_idx: NodeIndex) -> Option<(String, bool)> {
+    pub(in crate::declaration_emitter) fn js_define_property_descriptor(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<(String, bool)> {
         let expr_node = self.arena.get(expr_idx)?;
         let object = self.arena.get_literal_expr(expr_node)?;
         let mut value_expr = None;
@@ -207,7 +216,10 @@ impl<'a> DeclarationEmitter<'a> {
         Some((type_text, !writable))
     }
 
-    pub(in crate::declaration_emitter) fn js_string_concatenation_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn js_string_concatenation_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
             return None;
@@ -225,7 +237,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn js_expression_is_string_like(&self, expr_idx: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn js_expression_is_string_like(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
         let Some(expr_node) = self.arena.get(expr_idx) else {
             return false;
         };
@@ -238,7 +253,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_string_concatenation_type_text(expr_idx).is_some()
     }
 
-    pub(in crate::declaration_emitter) fn emit_function_initializer_call_signature(&mut self, initializer: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn emit_function_initializer_call_signature(
+        &mut self,
+        initializer: NodeIndex,
+    ) -> bool {
         let Some(init_node) = self.arena.get(initializer) else {
             return false;
         };
@@ -279,7 +297,10 @@ impl<'a> DeclarationEmitter<'a> {
         true
     }
 
-    pub(in crate::declaration_emitter) fn declaration_property_name_text(&self, name: &str) -> String {
+    pub(in crate::declaration_emitter) fn declaration_property_name_text(
+        &self,
+        name: &str,
+    ) -> String {
         let mut chars = name.chars();
         let Some(first) = chars.next() else {
             return "\"\"".to_string();
@@ -293,7 +314,11 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn statement_returns_identifier(&self, stmt_idx: NodeIndex, name: &str) -> bool {
+    pub(in crate::declaration_emitter) fn statement_returns_identifier(
+        &self,
+        stmt_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
             return false;
         };
@@ -351,7 +376,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn return_expression_identifier(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(in crate::declaration_emitter) fn return_expression_identifier(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind == SyntaxKind::Identifier as u16 {
             return Some(expr_idx);
@@ -365,7 +393,11 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn return_expression_is_identifier(&self, expr_idx: NodeIndex, name: &str) -> Option<bool> {
+    pub(in crate::declaration_emitter) fn return_expression_is_identifier(
+        &self,
+        expr_idx: NodeIndex,
+        name: &str,
+    ) -> Option<bool> {
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind == SyntaxKind::Identifier as u16 {
             return Some(
@@ -382,7 +414,10 @@ impl<'a> DeclarationEmitter<'a> {
         Some(false)
     }
 
-    pub(in crate::declaration_emitter) fn type_has_visible_declaration_members(&self, type_id: tsz_solver::types::TypeId) -> bool {
+    pub(in crate::declaration_emitter) fn type_has_visible_declaration_members(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+    ) -> bool {
         let Some(interner) = self.type_interner else {
             return false;
         };
@@ -426,7 +461,10 @@ impl<'a> DeclarationEmitter<'a> {
         false
     }
 
-    pub(in crate::declaration_emitter) fn parameter_has_leading_inline_block_comment(&self, param_pos: u32) -> bool {
+    pub(in crate::declaration_emitter) fn parameter_has_leading_inline_block_comment(
+        &self,
+        param_pos: u32,
+    ) -> bool {
         let Some(ref text) = self.source_file_text else {
             return false;
         };
@@ -581,7 +619,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn direct_value_reference_typeof_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn direct_value_reference_typeof_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
         let binder = self.binder?;
         let sym_id = binder
@@ -603,7 +644,10 @@ impl<'a> DeclarationEmitter<'a> {
         Some(format!("typeof {reference_text}"))
     }
 
-    pub(in crate::declaration_emitter) fn value_reference_symbol_needs_typeof(&self, expr_idx: NodeIndex) -> Option<bool> {
+    pub(in crate::declaration_emitter) fn value_reference_symbol_needs_typeof(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<bool> {
         let binder = self.binder?;
         let sym_id = self.value_reference_symbol(expr_idx)?;
         let resolved_sym_id = self
@@ -639,7 +683,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.is_value_import_alias_symbol(sym_id) && self.value_reference_type_is_callable(expr_idx)
     }
 
-    pub(in crate::declaration_emitter) fn value_reference_type_is_callable(&self, expr_idx: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn value_reference_type_is_callable(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
         let Some(interner) = self.type_interner else {
             return false;
         };
@@ -651,7 +698,10 @@ impl<'a> DeclarationEmitter<'a> {
             || tsz_solver::visitor::callable_shape_id(interner, type_id).is_some()
     }
 
-    pub(in crate::declaration_emitter) fn is_value_import_alias_symbol(&self, sym_id: SymbolId) -> bool {
+    pub(in crate::declaration_emitter) fn is_value_import_alias_symbol(
+        &self,
+        sym_id: SymbolId,
+    ) -> bool {
         let Some(binder) = self.binder else {
             return false;
         };
@@ -665,7 +715,10 @@ impl<'a> DeclarationEmitter<'a> {
             && symbol.import_name.as_deref() != Some("*")
     }
 
-    pub(in crate::declaration_emitter) fn value_reference_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
+    pub(in crate::declaration_emitter) fn value_reference_symbol(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<SymbolId> {
         let binder = self.binder?;
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind == SyntaxKind::Identifier as u16 {
@@ -709,7 +762,10 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     /// Resolve `this` to the innermost enclosing class symbol by position.
-    pub(in crate::declaration_emitter) fn resolve_enclosing_class_symbol(&self, this_idx: NodeIndex) -> Option<SymbolId> {
+    pub(in crate::declaration_emitter) fn resolve_enclosing_class_symbol(
+        &self,
+        this_idx: NodeIndex,
+    ) -> Option<SymbolId> {
         let binder = self.binder?;
         let this_node = self.arena.get(this_idx)?;
         let this_pos = this_node.pos;
@@ -767,7 +823,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn js_special_initializer_type_text(&self, initializer: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn js_special_initializer_type_text(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<String> {
         let init_node = self.arena.get(initializer)?;
 
         if self.is_import_meta_url_expression(initializer) {
@@ -782,7 +841,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn initializer_uses_inaccessible_class_constructor(&self, initializer: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn initializer_uses_inaccessible_class_constructor(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
         let Some(init_node) = self.arena.get(initializer) else {
             return false;
         };
@@ -800,7 +862,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.symbol_has_inaccessible_constructor(sym_id)
     }
 
-    pub(in crate::declaration_emitter) fn new_expression_target_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
+    pub(in crate::declaration_emitter) fn new_expression_target_symbol(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<SymbolId> {
         let binder = self.binder?;
         if let Some(sym_id) = binder.get_node_symbol(expr_idx) {
             return Some(sym_id);
@@ -821,7 +886,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn symbol_has_inaccessible_constructor(&self, sym_id: SymbolId) -> bool {
+    pub(in crate::declaration_emitter) fn symbol_has_inaccessible_constructor(
+        &self,
+        sym_id: SymbolId,
+    ) -> bool {
         let Some(binder) = self.binder else {
             return false;
         };
@@ -856,7 +924,10 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    pub(in crate::declaration_emitter) fn js_literal_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn js_literal_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         match expr_node.kind {
             k if k == SyntaxKind::StringLiteral as u16 => self
@@ -914,7 +985,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn const_literal_initializer_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn const_literal_initializer_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         match expr_node.kind {
             k if k == syntax_kind_ext::AWAIT_EXPRESSION => self
@@ -980,7 +1054,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn const_literal_identity_call_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn const_literal_identity_call_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
             return None;
@@ -1043,7 +1120,10 @@ impl<'a> DeclarationEmitter<'a> {
             })
     }
 
-    pub(in crate::declaration_emitter) fn is_import_meta_url_expression(&self, expr_idx: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn is_import_meta_url_expression(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
         let Some(expr_node) = self.arena.get(expr_idx) else {
             return false;
         };
