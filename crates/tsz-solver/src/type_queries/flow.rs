@@ -611,6 +611,20 @@ fn types_are_comparable_inner(
         return true;
     }
 
+    // Lazy (unresolved nominal reference like interface/class/enum) cannot be
+    // structurally decomposed at the solver level. When encountered during a
+    // property-level comparability check (depth > 0), assume the types are
+    // comparable — the prior assignability checks already rejected the strict
+    // case. At depth 0 the caller should have evaluated/resolved top-level
+    // types, so Lazy is unexpected; fall through to other checks.
+    if depth > 0 {
+        if matches!(db.lookup(source), Some(TypeData::Lazy(_)))
+            || matches!(db.lookup(target), Some(TypeData::Lazy(_)))
+        {
+            return true;
+        }
+    }
+
     // Unwrap ReadonlyType wrappers — `readonly T[]` is comparable to `T[]`
     if let Some(TypeData::ReadonlyType(inner)) = db.lookup(source) {
         return types_are_comparable_inner(db, inner, target, depth + 1);
@@ -835,6 +849,16 @@ fn is_primitive_comparable(db: &dyn TypeDatabase, base: TypeId, other: TypeId) -
         && (other == TypeId::BOOLEAN_TRUE || other == TypeId::BOOLEAN_FALSE)
     {
         return true;
+    }
+    // Enum members are comparable via their underlying structural (literal) type.
+    // E.g., `AutomationMode.NONE` (Enum(_, "")) is comparable to `""` and to `string`.
+    if let Some(TypeData::Enum(_, structural)) = db.lookup(base) {
+        return is_primitive_comparable(db, structural, other)
+            || is_primitive_comparable(db, other, structural);
+    }
+    if let Some(TypeData::Enum(_, structural)) = db.lookup(other) {
+        return is_primitive_comparable(db, base, structural)
+            || is_primitive_comparable(db, structural, base);
     }
     false
 }
