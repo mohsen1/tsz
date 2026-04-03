@@ -580,6 +580,14 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // In tsc, the resolution-mode attribute check only applies when using
+        // Node16/NodeNext module resolution. For other module modes (es2015,
+        // esnext, bundler, etc.), type-only imports can have any attributes
+        // without triggering TS1463/TS1453.
+        if !self.ctx.compiler_options.module.is_node_module() {
+            return;
+        }
+
         let Some(attr_node) = self.ctx.arena.get(attributes_idx) else {
             return;
         };

@@ -1539,18 +1539,12 @@ impl<'a> CheckerState<'a> {
                             // When esModuleInterop or allowSyntheticDefaultImports is
                             // enabled and the module uses `export =`, tsc allows named
                             // imports without emitting TS2614.
-                            // Also suppress TS2614 when the module has a default export
-                            // and the user tried to import a named member that doesn't
-                            // exist - in these cases, tsc emits other errors like
-                            // TS2497 or TS2595 instead.
                             let has_export_equals = exports_table.has("export=");
                             let has_interop = self.ctx.compiler_options.es_module_interop
                                 || self.ctx.compiler_options.allow_synthetic_default_imports;
                             let suppress_for_interop = has_export_equals && has_interop;
-                            let suppress_for_default =
-                                exports_table.has("default") && !exports_table.has(import_name);
 
-                            if !found_via_type && !suppress_for_interop && !suppress_for_default {
+                            if !found_via_type && !suppress_for_interop {
                                 // TS2614: Symbol doesn't exist but a default export does
                                 let message = format_message(
                                     diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,

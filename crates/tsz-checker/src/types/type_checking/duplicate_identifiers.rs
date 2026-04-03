@@ -586,15 +586,17 @@ impl<'a> CheckerState<'a> {
             // TS2395
             let mut has_ts2395 = false;
 
-            // Skip TS2395 when all local declarations are in an ambient context
-            // (e.g., inside a `declare namespace`). In ambient contexts, the
+            // Skip TS2395 when all local declarations are in a `declare namespace`
+            // (identifier-named ambient namespace). In these contexts, the
             // distinction between exported and non-exported declarations is
             // irrelevant because ambient declarations don't produce runtime code.
-            // tsc also skips this check for ambient declarations.
+            // However, `declare module "..."` (string-literal-named module
+            // declarations) SHOULD still emit TS2395 — tsc treats these as
+            // module scopes where export consistency matters.
             let all_ambient = declarations
                 .iter()
                 .filter(|(_, _, is_local, _, _)| *is_local)
-                .all(|(decl_idx, _, _, _, _)| self.ctx.arena.is_in_ambient_context(*decl_idx));
+                .all(|(decl_idx, _, _, _, _)| self.is_in_ambient_namespace_not_module(*decl_idx));
 
             if !all_ambient {
                 {
