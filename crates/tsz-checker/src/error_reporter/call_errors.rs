@@ -396,10 +396,8 @@ impl<'a> CheckerState<'a> {
         let prefer_number_index = prop_node.kind == SyntaxKind::NumericLiteral as u16;
 
         // For type parameters, also check the constraint for index signatures
-        let constraint_target = crate::query_boundaries::common::type_parameter_constraint(
-            self.ctx.types,
-            target_type,
-        );
+        let constraint_target =
+            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, target_type);
 
         let candidates: Vec<TypeId> = [target_type, resolved_target, evaluated_target]
             .into_iter()
