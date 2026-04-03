@@ -718,6 +718,13 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // For intersection types (e.g., typeof X & Function), expand to the full
+        // type representation rather than using the alias name. This matches tsc's
+        // behavior in assignability messages for complex intersection types.
+        if tsz_solver::type_queries::get_intersection_members(self.ctx.types, ty).is_some() {
+            return None;
+        }
+
         let def_id = self.ctx.definition_store.find_type_alias_by_body(ty)?;
         let def = self.ctx.definition_store.get(def_id)?;
         // Only use the alias for non-generic type aliases.  Generic aliases
