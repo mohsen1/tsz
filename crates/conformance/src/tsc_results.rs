@@ -11,8 +11,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileMetadata {
     /// Last modified time in milliseconds
+    #[serde(default)]
     pub mtime_ms: u64,
     /// File size in bytes
+    #[serde(default)]
     pub size: u64,
     /// TypeScript version used to generate this cache entry.
     #[serde(default)]
