@@ -349,6 +349,15 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
 
+            // Import aliases inside global/module augmentations are forbidden as
+            // runtime values. Suppress their value lookup so we don't emit
+            // downstream false errors (e.g., TS2322).
+            if !self.is_identifier_in_type_position(idx)
+                && self.symbol_is_import_alias_in_forbidden_augmentation(sym_id)
+            {
+                return TypeId::ERROR;
+            }
+
             if self.alias_resolves_to_type_only(sym_id) {
                 // Duplicate import-equals aliases may merge type-only and value targets
                 // under one symbol. If a value import binding with the same local name

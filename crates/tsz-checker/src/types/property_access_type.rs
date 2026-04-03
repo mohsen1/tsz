@@ -1538,6 +1538,51 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
 
+            if let Some(base_sym_id) = self.resolve_identifier_symbol(access.expression)
+                && let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym_id)
+                && (base_symbol.flags & symbol_flags::ALIAS) != 0
+                && base_symbol.import_module.is_some()
+                && base_symbol
+                    .import_name
+                    .as_ref()
+                    .is_none_or(|name| name == "*")
+            {
+                if let Some(member_type) =
+                    self.resolve_namespace_value_member_from_symbol(base_sym_id, property_name)
+                {
+                    return self.finalize_property_access_result(
+                        idx,
+                        member_type,
+                        skip_flow_narrowing,
+                        false,
+                    );
+                }
+
+                if self.is_in_type_only_position(idx)
+                    && let Some(member_sym_id) =
+                        base_symbol
+                            .import_module
+                            .as_deref()
+                            .and_then(|module_specifier| {
+                                self.resolve_effective_module_exports_from_file(
+                                    module_specifier,
+                                    Some(base_symbol.decl_file_idx as usize),
+                                )
+                                .and_then(|exports| exports.get(property_name))
+                            })
+                {
+                    let member_type = self.get_type_of_symbol(member_sym_id);
+                    if member_type != TypeId::ERROR && member_type != TypeId::UNKNOWN {
+                        return self.finalize_property_access_result(
+                            idx,
+                            member_type,
+                            skip_flow_narrowing,
+                            false,
+                        );
+                    }
+                }
+            }
+
             let enum_instance_like_access = self
                 .is_enum_instance_property_access(object_type, access.expression)
                 || access_query::type_parameter_constraint(self.ctx.types, object_type)

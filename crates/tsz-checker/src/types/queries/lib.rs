@@ -893,19 +893,37 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if let Some(member_id) = direct_member_id {
-                    return self.resolve_validated_namespace_member(
-                        sym_id,
-                        member_id,
-                        property_name,
-                    );
+                    let Some(member_type) =
+                        self.resolve_validated_namespace_member(sym_id, member_id, property_name)
+                    else {
+                        return None;
+                    };
+                    return if let Some(module_specifier) = import_module.as_deref() {
+                        Some(self.apply_module_augmentations(
+                            module_specifier,
+                            property_name,
+                            member_type,
+                        ))
+                    } else {
+                        Some(member_type)
+                    };
                 }
 
                 if let Some(member_id) = module_export_member_id {
-                    return self.resolve_validated_namespace_member(
-                        sym_id,
-                        member_id,
-                        property_name,
-                    );
+                    let Some(member_type) =
+                        self.resolve_validated_namespace_member(sym_id, member_id, property_name)
+                    else {
+                        return None;
+                    };
+                    return if let Some(module_specifier) = import_module.as_deref() {
+                        Some(self.apply_module_augmentations(
+                            module_specifier,
+                            property_name,
+                            member_type,
+                        ))
+                    } else {
+                        Some(member_type)
+                    };
                 }
 
                 // Check for re-exports from other modules
@@ -917,7 +935,16 @@ impl<'a> CheckerState<'a> {
                         property_name,
                         &mut visited_aliases,
                     ) {
-                        return self.get_validated_member_type(reexported_sym, property_name);
+                        let Some(member_type) =
+                            self.get_validated_member_type(reexported_sym, property_name)
+                        else {
+                            return None;
+                        };
+                        return Some(self.apply_module_augmentations(
+                            module_specifier,
+                            property_name,
+                            member_type,
+                        ));
                     }
 
                     if self
@@ -942,11 +969,20 @@ impl<'a> CheckerState<'a> {
                     && let Some(member_id) = self
                         .resolve_namespace_member_from_all_binders(sym_name.as_str(), property_name)
                 {
-                    return self.resolve_validated_namespace_member(
-                        sym_id,
-                        member_id,
-                        property_name,
-                    );
+                    let Some(member_type) =
+                        self.resolve_validated_namespace_member(sym_id, member_id, property_name)
+                    else {
+                        return None;
+                    };
+                    return if let Some(module_specifier) = import_module.as_deref() {
+                        Some(self.apply_module_augmentations(
+                            module_specifier,
+                            property_name,
+                            member_type,
+                        ))
+                    } else {
+                        Some(member_type)
+                    };
                 }
 
                 if sym_flags & symbol_flags::MODULE != 0
@@ -1031,28 +1067,44 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if let Some(member_id) = direct_member_id {
-                    // Check if the member is from a type-only wildcard export
-                    // For namespace imports (import * as ns from './mod'), we need to check
-                    // if the member was re-exported via `export type * from '...'` and is type-only.
-                    if let Some(ref module_specifier) = import_module {
-                        if self.is_member_type_only_wildcard_export(module_specifier, property_name)
-                        {
-                            return None;
-                        }
+                    // Keep the main-branch type-only wildcard export guard for namespace
+                    // imports, then apply the PR's augmentation-aware direct member path.
+                    if let Some(ref module_specifier) = import_module
+                        && self.is_member_type_only_wildcard_export(module_specifier, property_name)
+                    {
+                        return None;
                     }
-                    return self.resolve_validated_namespace_member(
-                        sym_id,
-                        member_id,
-                        property_name,
-                    );
+                    let Some(member_type) =
+                        self.resolve_validated_namespace_member(sym_id, member_id, property_name)
+                    else {
+                        return None;
+                    };
+                    return if let Some(module_specifier) = import_module.as_deref() {
+                        Some(self.apply_module_augmentations(
+                            module_specifier,
+                            property_name,
+                            member_type,
+                        ))
+                    } else {
+                        Some(member_type)
+                    };
                 }
 
                 if let Some(member_id) = module_export_member_id {
-                    return self.resolve_validated_namespace_member(
-                        sym_id,
-                        member_id,
-                        property_name,
-                    );
+                    let Some(member_type) =
+                        self.resolve_validated_namespace_member(sym_id, member_id, property_name)
+                    else {
+                        return None;
+                    };
+                    return if let Some(module_specifier) = import_module.as_deref() {
+                        Some(self.apply_module_augmentations(
+                            module_specifier,
+                            property_name,
+                            member_type,
+                        ))
+                    } else {
+                        Some(member_type)
+                    };
                 }
 
                 if let Some(ref module_specifier) = import_module
@@ -1948,11 +2000,29 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(member_id) = direct_member_id {
-            return self.resolve_validated_namespace_member(sym_id, member_id, property_name);
+            let Some(member_type) =
+                self.resolve_validated_namespace_member(sym_id, member_id, property_name)
+            else {
+                return None;
+            };
+            return if let Some(module_specifier) = import_module.as_deref() {
+                Some(self.apply_module_augmentations(module_specifier, property_name, member_type))
+            } else {
+                Some(member_type)
+            };
         }
 
         if let Some(member_id) = module_export_member_id {
-            return self.resolve_validated_namespace_member(sym_id, member_id, property_name);
+            let Some(member_type) =
+                self.resolve_validated_namespace_member(sym_id, member_id, property_name)
+            else {
+                return None;
+            };
+            return if let Some(module_specifier) = import_module.as_deref() {
+                Some(self.apply_module_augmentations(module_specifier, property_name, member_type))
+            } else {
+                Some(member_type)
+            };
         }
 
         if let Some(ref module_specifier) = import_module {
@@ -1961,7 +2031,16 @@ impl<'a> CheckerState<'a> {
                 property_name,
                 decl_file_idx,
             ) {
-                return self.resolve_validated_namespace_member(sym_id, member_id, property_name);
+                let Some(member_type) =
+                    self.resolve_validated_namespace_member(sym_id, member_id, property_name)
+                else {
+                    return None;
+                };
+                return Some(self.apply_module_augmentations(
+                    module_specifier,
+                    property_name,
+                    member_type,
+                ));
             }
 
             let mut visited_aliases = Vec::new();
@@ -1970,7 +2049,16 @@ impl<'a> CheckerState<'a> {
                 property_name,
                 &mut visited_aliases,
             ) {
-                return self.get_validated_member_type(reexported_sym, property_name);
+                let Some(member_type) =
+                    self.get_validated_member_type(reexported_sym, property_name)
+                else {
+                    return None;
+                };
+                return Some(self.apply_module_augmentations(
+                    module_specifier,
+                    property_name,
+                    member_type,
+                ));
             }
 
             if self.module_augmentation_introduces_member(module_specifier, property_name) {
@@ -1982,7 +2070,12 @@ impl<'a> CheckerState<'a> {
                 && let Some(member_id) =
                     self.resolve_namespace_member_across_binders(&umd_name, property_name)
             {
-                return self.resolve_validated_namespace_member(sym_id, member_id, property_name);
+                let Some(member_type) =
+                    self.resolve_validated_namespace_member(sym_id, member_id, property_name)
+                else {
+                    return None;
+                };
+                return Some(member_type);
             }
         }
 
@@ -1996,7 +2089,16 @@ impl<'a> CheckerState<'a> {
             && let Some(member_id) =
                 self.resolve_namespace_member_across_binders(sym_name.as_str(), property_name)
         {
-            return self.resolve_validated_namespace_member(sym_id, member_id, property_name);
+            let Some(member_type) =
+                self.resolve_validated_namespace_member(sym_id, member_id, property_name)
+            else {
+                return None;
+            };
+            return if let Some(module_specifier) = import_module.as_deref() {
+                Some(self.apply_module_augmentations(module_specifier, property_name, member_type))
+            } else {
+                Some(member_type)
+            };
         }
 
         None
