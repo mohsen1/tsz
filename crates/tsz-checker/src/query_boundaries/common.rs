@@ -215,6 +215,22 @@ pub(crate) fn is_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_mapped_type(db, type_id)
 }
 
+/// Check if a type is a generic application type with type parameters in its arguments.
+/// For example, `Options<State, Actions>` where `State` or `Actions` are type parameters.
+pub(crate) fn is_generic_application_with_type_params(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    if let Some(app) = tsz_solver::type_queries::get_type_application(db, type_id) {
+        // Check if any type argument contains type parameters
+        return app
+            .args
+            .iter()
+            .any(|&arg| contains_type_parameters(db, arg));
+    }
+    false
+}
+
 /// Check if a type is a *generic* mapped type — one whose key constraint still
 /// contains type parameters (e.g., `{ [K in keyof T]: ... }` where T is unresolved).
 /// Mapped types with concrete key types (like `Partial<ConcreteType>`) return false

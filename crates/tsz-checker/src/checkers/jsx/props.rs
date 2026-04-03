@@ -1559,8 +1559,21 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
 
+                        // Check if the component has type parameters. This handles cases like
+                        // class components with generic props where the display target is
+                        // `IntrinsicAttributes & IntrinsicClassAttributes<ElemClass<T>> & { x: number; }`
+                        // but the props_type has been instantiated to a concrete type.
+                        let component_has_type_params = component_type.is_some_and(|comp| {
+                            self.is_generic_jsx_component(comp)
+                                || tsz_solver::contains_type_parameters(self.ctx.types, comp)
+                        }) || special_attr_component_type.is_some_and(|comp| {
+                            self.is_generic_jsx_component(comp)
+                                || tsz_solver::contains_type_parameters(self.ctx.types, comp)
+                        });
+
                         if !has_string_index // excess property check
                             && !props_has_type_params
+                            && !component_has_type_params
                             && !attr_name.starts_with("data-")
                             && !attr_name.starts_with("aria-")
                         {
