@@ -294,11 +294,24 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                // Skip function declarations - they can merge across module augmentation
-                let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
-                    continue;
+                // Skip function declarations - they can merge across module augmentation.
+                // For `export function x()`, decl_idx is the export declaration (kind 273),
+                // but the export_clause contains the actual function declaration.
+                let is_exported_function = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                    let Some(export_decl) = self.ctx.arena.get_export_decl(stmt_node) else {
+                        continue;
+                    };
+                    let Some(clause_node) = self.ctx.arena.get(export_decl.export_clause) else {
+                        continue;
+                    };
+                    clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                } else {
+                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    decl_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
                 };
-                if decl_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                if is_exported_function {
                     continue;
                 }
 

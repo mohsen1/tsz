@@ -254,7 +254,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     resolved_object,
                 );
 
-                if !is_type_param {
+                // Suppress TS2339 when the object type is ANY or ERROR - this prevents
+                // cascading errors when a variable has implicit any due to circular reference
+                // (TS7022/TS7024 already reported for the circularity)
+                let is_error_or_any = object_type == TypeId::ANY
+                    || object_type == TypeId::ERROR
+                    || tsz_solver::is_error_type(self.ctx.types, object_type);
+
+                if !is_type_param && !is_error_or_any {
                     let prop_result =
                         crate::query_boundaries::property_access::resolve_property_access(
                             self.ctx.types,
