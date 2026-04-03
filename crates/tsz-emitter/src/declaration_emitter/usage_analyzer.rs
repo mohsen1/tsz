@@ -1545,6 +1545,13 @@ impl<'a> UsageAnalyzer<'a> {
             && let Some(&sym_id) = self.type_cache.def_to_symbol.get(&def_id)
         {
             Self::add_symbol_usage(usages, sym_id, UsageKind::TYPE);
+
+            // Also add the parent enum symbol if this is an enum member
+            if let Some(symbol) = self.binder.symbols.get(sym_id) {
+                if symbol.parent.is_some() {
+                    Self::add_symbol_usage(usages, symbol.parent, UsageKind::TYPE);
+                }
+            }
         }
 
         if let Some(sym_ref) = visitor::type_query_symbol(self.type_interner, type_id) {
