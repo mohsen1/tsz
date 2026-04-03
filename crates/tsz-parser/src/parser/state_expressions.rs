@@ -1304,7 +1304,23 @@ impl ParserState {
                         _ => {}
                     }
                 }
-                let operand = self.parse_unary_expression();
+                // For prefix ++/-- (update operators), parse only a
+                // LeftHandSideExpression as the operand — matching tsc's
+                // parseUpdateExpression which calls
+                // parseLeftHandSideExpressionOrHigher, NOT
+                // parseUnaryExpressionOrHigher.  This prevents `--x--`
+                // from being parsed as `--(x--)`.  Instead, `--x` is one
+                // expression statement, and the trailing `--;` triggers
+                // TS1005 (';' expected) + TS1109 (Expression expected).
+                //
+                // For other prefix unary operators (+, -, ~, !, typeof,
+                // void, delete), the operand is still a full
+                // UnaryExpression.
+                let operand = if is_update_operator {
+                    self.parse_left_hand_side_expression()
+                } else {
+                    self.parse_unary_expression()
+                };
                 if operand.is_none() {
                     if is_update_operator {
                         // For `++`/`--` with no operand (e.g., `a++ ++;`), emit TS1109
