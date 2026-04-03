@@ -1579,7 +1579,11 @@ pub fn strip_directive_comments(content: &str) -> String {
                 && !trimmed.starts_with("///")
                 && trimmed.contains("@")
                 && trimmed.contains(":");
-            if is_directive { "" } else { line }
+            if is_directive {
+                ""
+            } else {
+                line
+            }
         })
         .collect::<Vec<_>>()
         .join("\n")
