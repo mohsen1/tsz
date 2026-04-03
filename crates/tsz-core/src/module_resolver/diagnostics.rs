@@ -51,6 +51,13 @@ pub const IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION: u32 = 2835;
 pub const IMPORT_PATH_TS_EXTENSION_NOT_ALLOWED: u32 = 5097;
 pub const MODULE_WAS_RESOLVED_TO_BUT_JSX_NOT_SET: u32 = 6142;
 
+/// TS6263: Module was resolved to a declaration file, but '--allowArbitraryExtensions' is not set.
+///
+/// Emitted when a module specifier with a non-JS/TS extension (e.g., `.html`, `.node`)
+/// resolves to a `.d.*.ts` declaration file but the `allowArbitraryExtensions` compiler
+/// option is not enabled.
+pub const MODULE_WAS_RESOLVED_TO_BUT_ALLOW_ARBITRARY_EXTENSIONS_IS_NOT_SET: u32 = 6263;
+
 /// TS7016: Could not find a declaration file for module.
 /// Emitted when resolution fails but a JS file exists for the specifier
 /// and `noImplicitAny` is enabled.

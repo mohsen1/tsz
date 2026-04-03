@@ -519,6 +519,46 @@ impl ModuleResolver {
                     "[DEBUG lookup] Primary resolution succeeded for '{}': {:?}",
                     specifier, resolved_module.resolved_path
                 );
+
+                // TS6263: Module resolved to a .d.*.ts arbitrary extension declaration
+                // file but --allowArbitraryExtensions is not set.
+                if !self.allow_arbitrary_extensions
+                    && is_arbitrary_extension_declaration(specifier, &resolved_module.resolved_path)
+                {
+                    // Compute the resolved name relative to the containing file's directory,
+                    // matching tsc's message format (e.g., "dir/native.d.node.ts").
+                    let resolved_name = containing_file
+                        .parent()
+                        .and_then(|dir| {
+                            resolved_module
+                                .resolved_path
+                                .strip_prefix(dir)
+                                .ok()
+                                .map(|rel| rel.to_string_lossy().to_string())
+                        })
+                        .unwrap_or_else(|| {
+                            resolved_module
+                                .resolved_path
+                                .file_name()
+                                .map(|f| f.to_string_lossy().to_string())
+                                .unwrap_or_default()
+                        });
+                    // Return a result with both the resolved path (so types work)
+                    // and the error diagnostic (TS6263).
+                    return ModuleLookupResult {
+                        resolved_path: Some(resolved_module.resolved_path),
+                        resolved_using_ts_extension: false,
+                        treat_as_resolved: false,
+                        error: Some(ModuleLookupError {
+                            code: MODULE_WAS_RESOLVED_TO_BUT_ALLOW_ARBITRARY_EXTENSIONS_IS_NOT_SET,
+                            message: format!(
+                                "Module '{}' was resolved to '{}', but '--allowArbitraryExtensions' is not set.",
+                                specifier, resolved_name
+                            ),
+                        }),
+                    };
+                }
+
                 // TS7016: If the resolved file is a JS file from node_modules
                 // (external package), noImplicitAny is enabled, and this is a
                 // CJS require() call, emit TS7016 alongside the successful resolution.
@@ -766,6 +806,35 @@ impl ModuleResolver {
         let diagnostic = failure.to_diagnostic();
         diagnostics.add(diagnostic);
     }
+}
+
+/// Check if a resolved path is an arbitrary extension declaration file
+/// (e.g., `component.d.html.ts`) that was resolved from a specifier with a
+/// non-standard extension (e.g., `./component.html`).
+///
+/// Returns `true` when the resolved path matches the pattern `<name>.d.<ext>.ts`
+/// where `<ext>` is the original specifier's extension.
+fn is_arbitrary_extension_declaration(specifier: &str, resolved_path: &std::path::Path) -> bool {
+    let spec_path = std::path::Path::new(specifier);
+    let spec_ext = match spec_path.extension().and_then(|e| e.to_str()) {
+        Some(ext) => ext,
+        None => return false,
+    };
+
+    // Standard TS/JS extensions are not arbitrary
+    let standard = ["ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs", "json"];
+    if standard.contains(&spec_ext) {
+        return false;
+    }
+
+    // Check if resolved path matches the .d.<ext>.ts pattern
+    let resolved_name = match resolved_path.file_name().and_then(|f| f.to_str()) {
+        Some(name) => name,
+        None => return false,
+    };
+
+    let expected_suffix = format!(".d.{spec_ext}.ts");
+    resolved_name.ends_with(&expected_suffix)
 }
 
 /// Parse a package specifier into package name and subpath

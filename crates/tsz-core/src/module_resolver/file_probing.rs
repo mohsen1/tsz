@@ -21,9 +21,9 @@ impl ModuleResolver {
         if let Some(extension) = path.extension().and_then(|ext| ext.to_str())
             && split_path_extension(path).is_none()
         {
-            if self.allow_arbitrary_extensions
-                && let Some(resolved) = try_arbitrary_extension_declaration(path, extension)
-            {
+            // Always probe for .d.*.ts declaration files regardless of allowArbitraryExtensions.
+            // When the flag is off, the caller (lookup) emits TS6263 for the resolved file.
+            if let Some(resolved) = try_arbitrary_extension_declaration(path, extension) {
                 return Some(resolved);
             }
             return None;
@@ -90,9 +90,9 @@ impl ModuleResolver {
         if let Some(extension) = path.extension().and_then(|ext| ext.to_str())
             && split_path_extension(path).is_none()
         {
-            if self.allow_arbitrary_extensions
-                && let Some(resolved) = try_arbitrary_extension_declaration(path, extension)
-            {
+            // Always probe for .d.*.ts declaration files regardless of allowArbitraryExtensions.
+            // When the flag is off, the caller (lookup) emits TS6263 for the resolved file.
+            if let Some(resolved) = try_arbitrary_extension_declaration(path, extension) {
                 return Some(resolved);
             }
             return None;
@@ -240,9 +240,9 @@ impl ModuleResolver {
                 }
                 return None;
             }
-            if self.allow_arbitrary_extensions
-                && let Some(resolved) = try_arbitrary_extension_declaration(path, extension)
-            {
+            // Always probe for .d.*.ts declaration files regardless of allowArbitraryExtensions.
+            // When the flag is off, the caller (lookup) emits TS6263 for the resolved file.
+            if let Some(resolved) = try_arbitrary_extension_declaration(path, extension) {
                 return Some(resolved);
             }
             return None;

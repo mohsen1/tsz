@@ -1007,6 +1007,8 @@ impl<'a> CheckerState<'a> {
             }
             if error_code
                 != crate::diagnostics::diagnostic_codes::MODULE_WAS_RESOLVED_TO_BUT_JSX_IS_NOT_SET
+                && error_code
+                    != crate::diagnostics::diagnostic_codes::MODULE_WAS_RESOLVED_TO_BUT_ALLOWARBITRARYEXTENSIONS_IS_NOT_SET
             {
                 self.ctx.import_resolution_stack.pop();
                 return;
