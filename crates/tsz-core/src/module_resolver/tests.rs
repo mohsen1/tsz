@@ -1500,6 +1500,36 @@ fn test_resolver_package_types_js_without_allow_js_is_ignored() {
 }
 
 #[test]
+fn test_resolver_package_without_package_json_uses_index_file() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_resolver_pkg_without_json");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules").join("whatever")).unwrap();
+
+    fs::write(
+        dir.join("index.ts"),
+        "import { x } from 'whatever';\nexport const y = x;",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules").join("whatever").join("index.d.ts"),
+        "export const x: number;",
+    )
+    .unwrap();
+
+    let mut resolver = ModuleResolver::node_resolver();
+    let result = resolver.resolve("whatever", &dir.join("index.ts"), Span::new(0, 10));
+
+    let resolved = result.expect("package without package.json should resolve via index");
+    assert_eq!(
+        resolved.resolved_path,
+        dir.join("node_modules").join("whatever").join("index.d.ts")
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_resolver_invalid_types_field_falls_back_to_main_declaration() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_test_resolver_invalid_types_field");
