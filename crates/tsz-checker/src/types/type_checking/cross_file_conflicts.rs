@@ -297,7 +297,8 @@ impl<'a> CheckerState<'a> {
                 // Skip function declarations - they can merge across module augmentation.
                 // For `export function x()`, decl_idx is the export declaration (kind 273),
                 // but the export_clause contains the actual function declaration.
-                let is_exported_function = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                let is_exported_function = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                {
                     let Some(export_decl) = self.ctx.arena.get_export_decl(stmt_node) else {
                         continue;
                     };
@@ -397,11 +398,12 @@ impl<'a> CheckerState<'a> {
 
                 // Skip function declarations - they can merge across module augmentation.
                 // Check if any of the conflict declarations for this export name are functions.
-                let conflict_decls = self
-                    .module_augmentation_conflict_declarations_for_current_file(&export_name);
-                let has_function_merge = conflict_decls.iter().any(|(_decl_idx, flags, _, _, _)| {
-                    (*flags & tsz_binder::symbol_flags::FUNCTION) != 0
-                });
+                let conflict_decls =
+                    self.module_augmentation_conflict_declarations_for_current_file(&export_name);
+                let has_function_merge =
+                    conflict_decls.iter().any(|(_decl_idx, flags, _, _, _)| {
+                        (*flags & tsz_binder::symbol_flags::FUNCTION) != 0
+                    });
                 if has_function_merge {
                     continue;
                 }
