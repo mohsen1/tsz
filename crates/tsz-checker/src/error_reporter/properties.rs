@@ -1010,7 +1010,12 @@ impl<'a> CheckerState<'a> {
 
                         if !prop_exists {
                             // Property doesn't exist - emit TS2339
-                            emit_ts2339_for_missing_prop(prop_name_str, object_type, expr_idx, self);
+                            emit_ts2339_for_missing_prop(
+                                prop_name_str,
+                                object_type,
+                                expr_idx,
+                                self,
+                            );
                             return;
                         }
                     }
