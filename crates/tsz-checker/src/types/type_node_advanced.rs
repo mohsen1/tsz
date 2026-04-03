@@ -261,7 +261,34 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     || object_type == TypeId::ERROR
                     || tsz_solver::is_error_type(self.ctx.types, object_type);
 
-                if !is_type_param && !is_error_or_any {
+                // Suppress TS2339 for generic application types (e.g., Options<State, Actions>)
+                // where the type arguments are type parameters. When the object type is generic,
+                // we can't determine if the property exists until the type is instantiated.
+                let is_generic_application =
+                    crate::query_boundaries::common::is_generic_application_with_type_params(
+                        self.ctx.types,
+                        resolved_object,
+                    );
+
+                // Suppress TS2339 when the index type itself contains type parameters.
+                // This handles cases like `Options<State, Actions>[Key]` where Key is a type parameter.
+                let index_has_type_params =
+                    crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        index_type,
+                    );
+
+                // Suppress TS2339 when the object type is a Lazy type that may resolve to a generic type.
+                // This handles cases where the interface reference needs to be resolved first.
+                let is_lazy_with_potential_generic =
+                    tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, resolved_object)
+                        .is_some()
+                        && crate::query_boundaries::common::contains_type_parameters(
+                            self.ctx.types,
+                            object_type,
+                        );
+
+                if !is_type_param && !is_error_or_any && !is_generic_application && !index_has_type_params && !is_lazy_with_potential_generic {
                     let prop_result =
                         crate::query_boundaries::property_access::resolve_property_access(
                             self.ctx.types,
