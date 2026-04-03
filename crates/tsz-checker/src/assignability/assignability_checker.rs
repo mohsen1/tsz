@@ -752,7 +752,8 @@ impl<'a> CheckerState<'a> {
                     // Check if any indexed access type contains error applications
                     let indexed_access_has_errors = members.iter().any(|&member| {
                         if crate::query_boundaries::common::is_index_access_type(
-                            self.ctx.types, member,
+                            self.ctx.types,
+                            member,
                         ) {
                             Self::type_contains_error_application(self.ctx.types, member)
                         } else {
