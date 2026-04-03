@@ -1601,7 +1601,44 @@ impl ParserState {
                     },
                 )
             } else {
-                self.parse_identifier()
+                // Check for reserved word as namespace name - emit TS2819 instead of TS1359
+                if self.is_reserved_word() {
+                    let word = self.current_keyword_text();
+                    let name_start = self.token_pos();
+                    let name_end = self.token_end();
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at(
+                        name_start,
+                        (name_end - name_start) as u32,
+                        &format!("Namespace name cannot be '{}'.", word),
+                        diagnostic_codes::NAMESPACE_NAME_CANNOT_BE,
+                    );
+                    self.next_token();
+                    // After a reserved word namespace name, emit TS1005 for ';' expected
+                    if self.is_token(SyntaxKind::OpenBraceToken) {
+                        let brace_pos = self.token_pos();
+                        self.parse_error_at(
+                            brace_pos,
+                            1,
+                            "';' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                    }
+                    // Create a missing identifier for recovery
+                    self.arena.add_identifier(
+                        SyntaxKind::Identifier as u16,
+                        name_start,
+                        name_end,
+                        IdentifierData {
+                            atom: Atom::NONE,
+                            escaped_text: String::new(),
+                            original_text: None,
+                            type_arguments: None,
+                        },
+                    )
+                } else {
+                    self.parse_identifier()
+                }
             }
         };
 
@@ -1732,7 +1769,44 @@ impl ParserState {
                     },
                 )
             } else {
-                self.parse_identifier()
+                // Check for reserved word as namespace name - emit TS2819 instead of TS1359
+                if self.is_reserved_word() {
+                    let word = self.current_keyword_text();
+                    let name_start = self.token_pos();
+                    let name_end = self.token_end();
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at(
+                        name_start,
+                        (name_end - name_start) as u32,
+                        &format!("Namespace name cannot be '{}'.", word),
+                        diagnostic_codes::NAMESPACE_NAME_CANNOT_BE,
+                    );
+                    self.next_token();
+                    // After a reserved word namespace name, emit TS1005 for ';' expected
+                    if self.is_token(SyntaxKind::OpenBraceToken) {
+                        let brace_pos = self.token_pos();
+                        self.parse_error_at(
+                            brace_pos,
+                            1,
+                            "';' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                    }
+                    // Create a missing identifier for recovery
+                    self.arena.add_identifier(
+                        SyntaxKind::Identifier as u16,
+                        name_start,
+                        name_end,
+                        IdentifierData {
+                            atom: Atom::NONE,
+                            escaped_text: String::new(),
+                            original_text: None,
+                            type_arguments: None,
+                        },
+                    )
+                } else {
+                    self.parse_identifier()
+                }
             }
         };
 
