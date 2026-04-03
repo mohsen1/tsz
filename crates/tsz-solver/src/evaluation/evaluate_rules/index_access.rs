@@ -571,6 +571,12 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         // (A & B)[K] = A[K] & B[K] — index access distributes over intersections.
         // Members that don't have the property (returning UNDEFINED) are excluded.
         //
+        // CRITICAL: Deferred IndexAccess types (from type parameters without constraints)
+        // must be preserved even if the property access returns UNDEFINED. For example,
+        // (S & State<T>)["a"] where S is unconstrained should produce S["a"] & (T | undefined),
+        // not just T | undefined. The deferred S["a"] provides a constraint that must be
+        // checked for correct assignability.
+        //
         // Both concrete and deferred IndexAccess results are included in the intersection.
         // Deferred types (e.g., S["a"] where S is an unconstrained type parameter) represent
         // unknown constraints that must be preserved for correct assignability checking.
@@ -584,6 +590,20 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                 return Some(TypeId::ERROR);
             }
             if result == TypeId::UNDEFINED {
+                // Check if the member is a type parameter without a constraint.
+                // If so, create a deferred IndexAccess to preserve the constraint.
+                if let Some(TypeData::TypeParameter(param_info)) =
+                    self.evaluator.interner().lookup(member)
+                {
+                    if param_info.constraint.is_none() {
+                        // Create a deferred IndexAccess for the unconstrained type parameter
+                        let deferred = self
+                            .evaluator
+                            .interner()
+                            .index_access(member, self.index_type);
+                        results.push(deferred);
+                    }
+                }
                 continue;
             }
             results.push(result);
