@@ -230,6 +230,13 @@ impl<'a> CheckerState<'a> {
             if let Some(contextual) = contextual_type {
                 let resolved = self.resolve_type_for_property_access(contextual);
                 let resolved = self.resolve_lazy_type(resolved);
+                // Strip null/undefined from union contextual types before extracting
+                // array/tuple structure. For example, when the contextual type is
+                // `number[] | undefined` (from `results ||= []` where results: number[] | undefined),
+                // we need to extract `number` as the element type from `number[]`.
+                // Without this, get_array_element_type fails on the union and we fall
+                // through to never[], causing false TS2345 on subsequent .push() calls.
+                let resolved = tsz_solver::remove_nullish(self.ctx.types, resolved);
                 if tsz_solver::type_queries::is_tuple_type(self.ctx.types, resolved) {
                     return factory.tuple(vec![]);
                 } else if let Some(t_elem) =
