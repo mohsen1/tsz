@@ -1566,10 +1566,11 @@ impl<'a> CheckerState<'a> {
                         let component_has_type_params = component_type.is_some_and(|comp| {
                             self.is_generic_jsx_component(comp)
                                 || tsz_solver::contains_type_parameters(self.ctx.types, comp)
-                        }) || special_attr_component_type.is_some_and(|comp| {
-                            self.is_generic_jsx_component(comp)
-                                || tsz_solver::contains_type_parameters(self.ctx.types, comp)
-                        });
+                        }) || special_attr_component_type
+                            .is_some_and(|comp| {
+                                self.is_generic_jsx_component(comp)
+                                    || tsz_solver::contains_type_parameters(self.ctx.types, comp)
+                            });
 
                         if !has_string_index // excess property check
                             && !props_has_type_params

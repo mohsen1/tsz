@@ -293,7 +293,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             object_type,
                         );
 
-                if !is_type_param && !is_error_or_any && !is_generic_application && !index_has_type_params && !is_lazy_with_potential_generic {
+                if !is_type_param
+                    && !is_error_or_any
+                    && !is_generic_application
+                    && !index_has_type_params
+                    && !is_lazy_with_potential_generic
+                {
                     let prop_result =
                         crate::query_boundaries::property_access::resolve_property_access(
                             self.ctx.types,
