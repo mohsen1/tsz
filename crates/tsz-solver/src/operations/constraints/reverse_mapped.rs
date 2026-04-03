@@ -99,7 +99,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// intersection-typed placeholders. When `target_placeholder` is an
     /// intersection (e.g. `T & {}` from `LowInfer<T>`), `candidate` matches
     /// if it equals the intersection OR any of its members.
-    pub(super) fn is_placeholder_match(&self, candidate: TypeId, target_placeholder: TypeId) -> bool {
+    pub(super) fn is_placeholder_match(
+        &self,
+        candidate: TypeId,
+        target_placeholder: TypeId,
+    ) -> bool {
         if candidate == target_placeholder {
             return true;
         }
@@ -801,7 +805,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ///
     /// Used to prefer structural matches over naked type params when constraining
     /// against union targets with multiple placeholder members.
-    pub(super) fn types_share_outer_structure_for_constraint(&self, source: TypeId, target: TypeId) -> bool {
+    pub(super) fn types_share_outer_structure_for_constraint(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
         // Unwrap ReadonlyType on both sides — it's a modifier, not a distinct
         // structural kind. This ensures `Array<number>` matches `ReadonlyType(Array<U>)`
         // when constraining against union targets like `U | ReadonlyArray<U>`.
@@ -904,5 +912,4 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             filtered
         }
     }
-
 }
