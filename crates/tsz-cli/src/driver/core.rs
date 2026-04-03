@@ -1389,10 +1389,15 @@ fn compile_inner(
                         != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
             });
         } else {
-            // TS5107 takes priority (fatal) - suppress all file-level diagnostics.
-            // Preserve only global-level TS2318 ("Cannot find global type") identified
-            // by empty file name and position 0, which tsc emits alongside deprecation warnings.
-            diagnostics.retain(|d| d.code == 2318 && d.file.is_empty() && d.start == 0);
+            // TS5107 takes priority (fatal) - suppress most file-level diagnostics.
+            // Preserve:
+            // - Global-level TS2318 ("Cannot find global type") identified by empty file name and position 0
+            // - Module resolution errors (TS2792, TS2882, etc.) that the checker emitted
+            diagnostics.retain(|d| {
+                (d.code == 2318 && d.file.is_empty() && d.start == 0)
+                    || d.code == 2792 // Classic resolution error (TS2792)
+                    || d.code == 2882 // Side-effect import error (TS2882)
+            });
         }
     }
 
