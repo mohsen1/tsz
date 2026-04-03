@@ -360,7 +360,17 @@ impl<'a> CheckerState<'a> {
         });
 
         let tuple_context = applicable_contextual_type.and_then(|applicable| {
-            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, applicable)
+            let elems = tsz_solver::type_queries::get_tuple_elements(self.ctx.types, applicable)?;
+            // When all tuple elements are rest (e.g., `[...any[]]` from a
+            // destructuring pattern like `[...rest]`), the contextual type is
+            // effectively an array, not a fixed-length tuple.  Don't force
+            // tuple inference in that case — the array literal should be typed
+            // as an array (e.g., `(string | number)[]`), not a tuple.
+            if elems.iter().all(|e| e.rest) {
+                None
+            } else {
+                Some(elems)
+            }
         });
 
         // When the contextual type is a homomorphic mapped type (e.g., { [K in keyof T]: ... }),
@@ -700,6 +710,7 @@ impl<'a> CheckerState<'a> {
             self.resolve_array_element_type_from_union_members(contextual)
         });
         if let Some(context_element_type) = context_element_type
+            && context_element_type != TypeId::ANY
             && context_element_type != TypeId::UNKNOWN
             && context_element_type != TypeId::NEVER
             && !self.ctx.preserve_literal_types
