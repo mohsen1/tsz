@@ -1050,61 +1050,13 @@ impl<'a> CheckerState<'a> {
                 let has_typed_export_surface = self
                     .resolve_effective_module_exports_with_mode(module_name, resolution_mode)
                     .is_some();
-                // If the module resolved to a target file but has no typed export surface,
-                // the module is effectively not found. Emit TS2307 for this case.
-                // This handles cases like symlinked workspace dependencies where the
-                // package exists but doesn't have valid exports.
-                if !has_typed_export_surface {
-                    let arena = self.ctx.get_arena_for_file(target_idx as u32);
-                    if let Some(source_file) = arena.source_files.first() {
-                        let file_name = source_file.file_name.as_str();
-                        let is_js_like = file_name.ends_with(".js")
-                            || file_name.ends_with(".jsx")
-                            || file_name.ends_with(".mjs")
-                            || file_name.ends_with(".cjs");
-                        let is_json_module = file_name.ends_with(".json")
-                            && self.ctx.compiler_options.resolve_json_module;
-                        // Check if this is a .d.ts file with only `export=` (no named exports).
-                        // Such files should NOT emit TS2307 here because they have a valid
-                        // export surface via the export assignment.
-                        let is_dts_with_only_export_assignment = if file_name.ends_with(".d.ts") {
-                            if let Some(binder) = self.ctx.get_binder_for_file(target_idx) {
-                                if let Some(exports) = binder.module_exports.get(file_name) {
-                                    exports.has("export=") && exports.len() == 1
-                                } else {
-                                    false
-                                }
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        };
-                        // Check if the file contains module augmentation (e.g., `declare module "X" { ... }`).
-                        // Files with module augmentations serve a valid purpose (extending module types)
-                        // and should not trigger TS2307 even if they have no regular exports.
-                        let has_module_augmentation =
-                            self.source_file_has_module_augmentation(arena, source_file);
-                        // For non-JS, non-JSON files without export surface, emit TS2307
-                        // BUT skip if it's a .d.ts file with only export= (no named exports)
-                        // OR if it's a file with module augmentation
-                        if !is_js_like
-                            && !is_json_module
-                            && !is_dts_with_only_export_assignment
-                            && !has_module_augmentation
-                        {
-                            let (message, code) = self.module_not_found_diagnostic(module_name);
-                            if !self.ctx.modules_with_ts2307_emitted.contains(module_name) {
-                                self.ctx
-                                    .modules_with_ts2307_emitted
-                                    .insert(module_name.to_string());
-                                self.error_at_position(spec_start, spec_length, &message, code);
-                            }
-                            self.ctx.import_resolution_stack.pop();
-                            return;
-                        }
-                    }
-                }
+                // When a module was successfully resolved to a target file, do NOT
+                // emit TS2307 regardless of its export surface. TS2307 means the
+                // module file cannot be found at all. A file with no exports (e.g.,
+                // `export {}`, `declare global`, or only side-effect imports) is
+                // still a valid module — tsc never emits TS2307 for it. Specific
+                // import errors (TS2305, TS2459) will be caught later during
+                // member validation.
                 let mut skip_export_checks = false;
                 // Extract data we need before any mutable borrows
                 let (_target_is_declaration_file, file_info) = {
