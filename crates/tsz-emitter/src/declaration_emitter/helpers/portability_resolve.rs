@@ -244,14 +244,18 @@ impl<'a> DeclarationEmitter<'a> {
         visited_names: &mut rustc_hash::FxHashSet<String>,
     ) -> bool {
         let Some(decl_idx) = self.current_file_top_level_declaration_named(ident) else {
+            // Declaration not found in current file - no guard needed from this file's perspective
             return false;
         };
         let Some(decl_node) = self.arena.get(decl_idx) else {
             return false;
         };
 
-        let declaration_is_emitted = self.declaration_is_publicly_emittable(decl_node);
-
+        // For declarations in the current file, we don't need a serialization guard
+        // when referencing them from the same file. The declaration will be emitted
+        // in the .d.ts output (even if not exported), so it's visible to other
+        // declarations in the same file.
+        // Only type aliases that reference non-emittable types need guards.
         if let Some(alias) = self.arena.get_type_alias(decl_node)
             && let Some(alias_type_text) = self.emit_type_node_text(alias.type_node)
             && self.type_text_uses_non_emittable_local_alias_root(&alias_type_text, visited_names)
@@ -259,7 +263,7 @@ impl<'a> DeclarationEmitter<'a> {
             return true;
         }
 
-        !declaration_is_emitted
+        false
     }
 
     pub(in crate::declaration_emitter) fn current_file_top_level_declaration_named(&self, ident: &str) -> Option<NodeIndex> {
@@ -292,6 +296,7 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    #[allow(dead_code)]
     pub(in crate::declaration_emitter) fn declaration_name_idx_from_source_arena(
         &self,
         source_arena: &NodeArena,
@@ -324,6 +329,7 @@ impl<'a> DeclarationEmitter<'a> {
             .filter(|name_idx| name_idx.is_some())
     }
 
+    #[allow(dead_code)]
     pub(in crate::declaration_emitter) fn declaration_is_publicly_emittable(
         &self,
         decl_node: &tsz_parser::parser::node::Node,
