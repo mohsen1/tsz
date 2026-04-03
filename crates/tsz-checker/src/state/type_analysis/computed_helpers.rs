@@ -836,7 +836,7 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::symbol_flags;
 
         // Collect type alias symbols from the current file's node_symbols.
-        let type_alias_syms: Vec<SymbolId> = self
+        let mut type_alias_syms: Vec<SymbolId> = self
             .ctx
             .binder
             .node_symbols
@@ -851,6 +851,9 @@ impl<'a> CheckerState<'a> {
             .collect::<FxHashSet<_>>()
             .into_iter()
             .collect();
+        type_alias_syms.sort_unstable();
+
+        let mut circular_ids: Vec<SymbolId> = Vec::new();
 
         for sym_id in type_alias_syms {
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
@@ -968,20 +971,19 @@ impl<'a> CheckerState<'a> {
                                     &message,
                                     diagnostic_codes::TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF,
                                 );
-                                // Mark as circular so we don't re-emit.
-                                self.ctx.circular_type_aliases.insert(sym_id);
-
-                                // Update the symbol's type to `any` (same as inline
-                                // circular detection).
-                                self.ctx
-                                    .symbol_types
-                                    .insert(sym_id, tsz_solver::TypeId::ANY);
+                                circular_ids.push(sym_id);
                                 break;
                             }
                         }
                     }
                 }
             }
+        }
+
+        // Apply side effects after scanning all aliases so diagnostics are not
+        // order-dependent.
+        for sym_id in circular_ids {
+            self.ctx.circular_type_aliases.insert(sym_id);
         }
     }
 

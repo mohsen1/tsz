@@ -1573,11 +1573,13 @@ fn create_symlink_path(target: &Path, link: &Path) -> std::io::Result<()> {
 pub fn strip_directive_comments(content: &str) -> String {
     content
         .lines()
-        .filter(|line| {
+        .map(|line| {
             let trimmed = line.trim().trim_start_matches('\u{feff}');
-            // Keep lines that are not @ directives
-            // Directives start with // @key: value
-            !(trimmed.starts_with("//") && trimmed.contains("@") && trimmed.contains(":"))
+            let is_directive = trimmed.starts_with("//")
+                && !trimmed.starts_with("///")
+                && trimmed.contains("@")
+                && trimmed.contains(":");
+            if is_directive { "" } else { line }
         })
         .collect::<Vec<_>>()
         .join("\n")
