@@ -1138,9 +1138,31 @@ impl<'a> CheckerState<'a> {
                     );
                     type_stack.push(left_type);
                 } else {
+                    // tsc uses UnionReduction.Subtype for ?? result types,
+                    // which removes structural subtypes (e.g., never[] from
+                    // number[] | never[] → number[]). This matters when the
+                    // RHS is an empty array literal [] (always never[] in strict mode).
                     let result = match non_nullish {
                         None => right_type,
-                        Some(non_nullish) => factory.union2(non_nullish, right_type),
+                        Some(non_nullish) => {
+                            if non_nullish == right_type {
+                                non_nullish
+                            } else if tsz_solver::is_subtype_of(
+                                self.ctx.types.as_type_database(),
+                                right_type,
+                                non_nullish,
+                            ) {
+                                non_nullish
+                            } else if tsz_solver::is_subtype_of(
+                                self.ctx.types.as_type_database(),
+                                non_nullish,
+                                right_type,
+                            ) {
+                                right_type
+                            } else {
+                                factory.union2(non_nullish, right_type)
+                            }
+                        }
                     };
                     type_stack.push(result);
                 }
