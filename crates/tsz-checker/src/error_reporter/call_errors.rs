@@ -2140,7 +2140,12 @@ impl<'a> CheckerState<'a> {
                         };
                     let source_prop_type_for_diagnostic =
                         self.widen_function_like_call_source(source_prop_type_for_diagnostic);
-                    self.error_type_not_assignable_at_with_anchor(
+                    // TSC's elaborateElementwise reports TS2322 at the property
+                    // name for property-value type mismatches, not TS2741/TS2739.
+                    // Use full failure analysis for accurate message formatting
+                    // (e.g., union best-match), but downgrade TS2741 to TS2322
+                    // since this is a nested elaboration context.
+                    self.error_type_not_assignable_at_with_anchor_elaboration(
                         source_prop_type_for_diagnostic,
                         target_prop_type_for_diagnostic,
                         prop_name_idx,

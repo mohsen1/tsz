@@ -335,6 +335,54 @@ impl<'a> CheckerState<'a> {
             self.resolve_diagnostic_anchor_node(anchor_idx, DiagnosticAnchorKind::Exact);
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
     }
+
+    /// Like `error_type_not_assignable_at_with_anchor`, but for object literal
+    /// property-value elaboration contexts. TSC's `elaborateElementwise` reports
+    /// TS2322 at the property name for property-value type mismatches, not
+    /// TS2741/TS2739/TS2740 (missing property codes). This variant uses full
+    /// failure analysis for accurate message formatting (e.g., union best-match),
+    /// then downgrades any "missing property" code to TS2322.
+    pub fn error_type_not_assignable_at_with_anchor_elaboration(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+    ) {
+        use crate::diagnostics::diagnostic_codes;
+
+        let anchor_idx =
+            self.resolve_diagnostic_anchor_node(anchor_idx, DiagnosticAnchorKind::Exact);
+        let diag_count_before = self.ctx.diagnostics.len();
+        self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
+        // Downgrade TS2741/TS2739/TS2740 to TS2322 for elaboration contexts.
+        let needs_downgrade = self.ctx.diagnostics[diag_count_before..].iter().any(|d| {
+            d.code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                || d.code == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                || d.code
+                    == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+        });
+        if needs_downgrade {
+            let src_str = self.format_type_diagnostic(source);
+            let tgt_str = self.format_type_diagnostic(target);
+            let message = crate::diagnostics::format_message(
+                crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&src_str, &tgt_str],
+            );
+            for diag in &mut self.ctx.diagnostics[diag_count_before..] {
+                if diag.code
+                    == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                    || diag.code
+                        == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                    || diag.code
+                        == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+                {
+                    diag.code = diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE;
+                    diag.message_text = message.clone();
+                }
+            }
+        }
+    }
+
     pub fn error_type_does_not_satisfy_the_expected_type(
         &mut self,
         source: TypeId,
