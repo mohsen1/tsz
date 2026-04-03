@@ -943,3 +943,62 @@ pub(crate) fn is_valid_mapped_type_key_type(
     let evaluator = tsz_solver::BinaryOpEvaluator::new(db);
     evaluator.is_valid_mapped_type_key_type(type_id)
 }
+
+/// Information about an indexed access type (e.g., `T[K]`).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct IndexedAccessTypeInfo {
+    pub object_type: TypeId,
+    pub index_type: TypeId,
+}
+
+/// Get the indexed access type info for a type if it represents an indexed access.
+/// Returns `Some(IndexedAccessTypeInfo)` if the type is an index access type like `T[K]`.
+pub(crate) fn get_indexed_access_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<IndexedAccessTypeInfo> {
+    tsz_solver::type_queries::get_index_access_types(db, type_id).map(
+        |(object_type, index_type)| IndexedAccessTypeInfo {
+            object_type,
+            index_type,
+        },
+    )
+}
+
+/// Check if a type is the result of a conditional type with unresolved inference.
+/// This is used to suppress false-positive TS2339 errors when accessing properties
+/// on types that depend on unresolved conditional type inference.
+///
+/// For example, in `FirstParameter<typeof h>['foo']` where `h` is a generic function,
+/// the conditional type `FirstParameter<T>` may not be resolved yet during inference,
+/// and we should suppress the property-not-found error.
+pub(crate) fn type_is_conditional_type_result_with_unresolved_inference(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    // If this is directly a conditional type, check if it's unresolved
+    if let Some(conditional) = tsz_solver::type_queries::get_conditional_type(db, type_id) {
+        // Check if the check type contains type parameters (unresolved)
+        if tsz_solver::type_queries::contains_type_parameters_db(db, conditional.check_type)
+            || tsz_solver::type_queries::contains_type_parameters_db(db, conditional.extends_type)
+        {
+            return true;
+        }
+        // Check if either branch contains type parameters
+        if tsz_solver::type_queries::contains_type_parameters_db(db, conditional.true_type)
+            || tsz_solver::type_queries::contains_type_parameters_db(db, conditional.false_type)
+        {
+            return true;
+        }
+    }
+
+    // Check if this type contains conditional types that are unresolved
+    if contains_conditional_type(db, type_id) {
+        // Check if the type also contains type parameters
+        if contains_type_parameters(db, type_id) {
+            return true;
+        }
+    }
+
+    false
+}

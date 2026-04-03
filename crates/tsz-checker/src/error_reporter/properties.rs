@@ -486,6 +486,98 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Suppress TS2339 for indexed access types on unresolved generic conditional types.
+        // For example, `FirstParameter<typeof h>['foo']` where `FirstParameter<T>` is
+        // `T extends (x: infer P) => unknown ? P : unknown`. When the conditional type
+        // argument is generic and cannot be resolved (e.g., during inference),
+        // tsc defers the check rather than emitting a false TS2339.
+        // This covers cases where the base type is an indexed access type whose
+        // object type is an unresolved conditional type.
+        if let Some(indexed_info) =
+            crate::query_boundaries::common::get_indexed_access_type(self.ctx.types, type_id)
+        {
+            if crate::query_boundaries::common::contains_conditional_type(
+                self.ctx.types,
+                indexed_info.object_type,
+            ) || crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                indexed_info.object_type,
+            )
+            {
+                return;
+            }
+        }
+
+        // Suppress TS2339 for types that are the result of inference-based conditional
+        // types that haven't been resolved yet. This commonly occurs with patterns like
+        // `type X = FirstParameter<typeof h>['foo']` where `h` is a generic function
+        // and the conditional type cannot be resolved until inference completes.
+        if crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
+            self.ctx.types,
+            type_id,
+        )
+        {
+            return;
+        }
+
+        // Suppress TS2339 for type parameters constrained to generic functions.
+        // For example, in `const h = f(g)` where `f` and `g` are generic,
+        // the inferred type of `h` may contain unresolved type parameters from
+        // the conditional type inference that cannot be checked for property access.
+        if crate::query_boundaries::state::checking::is_type_parameter_like(self.ctx.types, type_id)
+        {
+            let constraint =
+                crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, type_id);
+            if let Some(constraint_type) = constraint {
+                // Only suppress if the constraint is unknown (unresolved) or contains
+                // conditional types or type parameters.
+                if constraint_type == TypeId::UNKNOWN
+                    || crate::query_boundaries::common::contains_conditional_type(
+                        self.ctx.types,
+                        constraint_type,
+                    )
+                    || crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        constraint_type,
+                    )
+                {
+                    return;
+                }
+            }
+            // Note: We do NOT suppress for unconstrained type parameters with no constraint.
+            // These should still report TS2339 for property access failures as tsc does.
+        }
+
+        // Suppress TS2339 for generic mapped types that may contain the property.
+        // For example, `T extends { [K in keyof U]: V }` may have properties
+        // that we can't determine until the mapped type is instantiated.
+        if crate::query_boundaries::common::is_generic_mapped_type(self.ctx.types, type_id)
+        {
+            return;
+        }
+
+        // Suppress TS2339 for types that are intersections involving generic conditional types.
+        // For example, `{ foo: T } & (T extends string ? { bar: string } : { baz: number })`
+        // where the conditional type part may or may not have the property being accessed.
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
+        {
+            let has_conditional_or_type_param = members.iter().any(|&member| {
+                crate::query_boundaries::common::contains_conditional_type(self.ctx.types, member)
+                    || crate::query_boundaries::state::checking::is_type_parameter_like(
+                        self.ctx.types,
+                        member,
+                    )
+                    || crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        member,
+                    )
+            });
+            if has_conditional_or_type_param {
+                return;
+            }
+        }
+
         if self
             .resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::PropertyToken)
             .is_some()
