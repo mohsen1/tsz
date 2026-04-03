@@ -10,70 +10,71 @@ impl<'a> Printer<'a> {
     // =========================================================================
 
     pub(in crate::emitter) fn emit_identifier(&mut self, node: &Node) {
-        if let Some(ident) = self.arena.get_identifier(node) {
-            let original_text = &ident.escaped_text;
+        let Some(ident) = self.arena.get_identifier(node) else {
+            return;
+        };
+        let original_text = &ident.escaped_text;
 
-            // In async function lowering (ES2015+), `arguments` inside the
-            // generator body must be rewritten to `arguments_1` because the
-            // outer wrapper captures it: `var arguments_1 = arguments;`
-            if self.ctx.rewrite_arguments_to_arguments_1 && original_text == "arguments" {
-                self.write("arguments_1");
-                return;
-            }
+        // In async function lowering (ES2015+), `arguments` inside the
+        // generator body must be rewritten to `arguments_1` because the
+        // outer wrapper captures it: `var arguments_1 = arguments;`
+        if self.ctx.rewrite_arguments_to_arguments_1 && original_text == "arguments" {
+            self.write("arguments_1");
+            return;
+        }
 
-            // tsc preserves unicode escape sequences in identifiers verbatim.
-            // When the parser detects unicode escapes (e.g., \u0041 for 'A'),
-            // it stores the original source text in `original_text`. Use it
-            // for emission to match tsc output.
-            let emit_text = ident.original_text.as_deref().unwrap_or(original_text);
+        // tsc preserves unicode escape sequences in identifiers verbatim.
+        // When the parser detects unicode escapes (e.g., \u0041 for 'A'),
+        // it stores the original source text in `original_text`. Use it
+        // for emission to match tsc output.
+        let emit_text = ident.original_text.as_deref().unwrap_or(original_text);
 
-            // Check if this variable has been renamed for block scoping (ES5 for-of shadowing)
-            if let Some(renamed) = self.ctx.block_scope_state.get_emitted_name(original_text) {
-                // Use write_identifier so source map name recording still works.
-                // When renamed differs from original, the source map records the original
-                // name so debuggers can map back to the source.
-                if renamed != *original_text {
-                    if let Some(source_pos) = self.take_pending_source_pos() {
-                        self.writer
-                            .write_node_with_name(&renamed, source_pos, original_text);
-                    } else {
-                        self.writer.write(&renamed);
-                    }
+        // Check if this variable has been renamed for block scoping (ES5 for-of shadowing)
+        if let Some(renamed) = self.ctx.block_scope_state.get_emitted_name(original_text) {
+            // Use write_identifier so source map name recording still works.
+            // When renamed differs from original, the source map records the original
+            // name so debuggers can map back to the source.
+            if renamed != *original_text {
+                if let Some(source_pos) = self.take_pending_source_pos() {
+                    self.writer
+                        .write_node_with_name(&renamed, source_pos, original_text);
                 } else {
-                    self.write_identifier(emit_text);
+                    self.writer.write(&renamed);
                 }
-            } else if self.in_namespace_iife
-                && !self.suppress_ns_qualification
-                && self
-                    .namespace_exported_names
-                    .contains(original_text.as_str())
-                && let Some(ref ns_name) = self.current_namespace_name
-            {
-                // Inside namespace IIFE, qualify exported variable references:
-                // `foo` → `ns.foo`
-                let ns_name = ns_name.clone();
-                self.write(&ns_name);
-                self.write(".");
-                self.write_identifier(emit_text);
-            } else if !self.suppress_ns_qualification
-                && self
-                    .commonjs_exported_var_names
-                    .contains(original_text.as_str())
-            {
-                // In CJS modules, inline-exported variable references (let/const/var)
-                // are rewritten to `exports.X` for both reads and writes.
-                // Note: we check the set directly (not is_commonjs()) because the module
-                // kind is temporarily set to None inside export statement bodies.
-                self.write("exports.");
-                self.write_identifier(emit_text);
-            } else if !self.suppress_commonjs_named_import_substitution
-                && let Some(subst) = self.commonjs_named_import_substitutions.get(original_text)
-            {
-                let subst = subst.clone();
-                self.write(&subst);
             } else {
                 self.write_identifier(emit_text);
             }
+        } else if self.in_namespace_iife
+            && !self.suppress_ns_qualification
+            && self
+                .namespace_exported_names
+                .contains(original_text.as_str())
+            && let Some(ref ns_name) = self.current_namespace_name
+        {
+            // Inside namespace IIFE, qualify exported variable references:
+            // `foo` → `ns.foo`
+            let ns_name = ns_name.clone();
+            self.write(&ns_name);
+            self.write(".");
+            self.write_identifier(emit_text);
+        } else if !self.suppress_ns_qualification
+            && self
+                .commonjs_exported_var_names
+                .contains(original_text.as_str())
+        {
+            // In CJS modules, inline-exported variable references (let/const/var)
+            // are rewritten to `exports.X` for both reads and writes.
+            // Note: we check the set directly (not is_commonjs()) because the module
+            // kind is temporarily set to None inside export statement bodies.
+            self.write("exports.");
+            self.write_identifier(emit_text);
+        } else if !self.suppress_commonjs_named_import_substitution
+            && let Some(subst) = self.commonjs_named_import_substitutions.get(original_text)
+        {
+            let subst = subst.clone();
+            self.write(&subst);
+        } else {
+            self.write_identifier(emit_text);
         }
     }
 

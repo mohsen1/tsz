@@ -38,305 +38,306 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        if let Some(sf) = self.ctx.arena.get_source_file(node) {
-            self.resolve_compiler_options_from_source(&sf.text);
-            if self.has_ts_nocheck_pragma(&sf.text) {
-                return;
-            }
+        let Some(sf) = self.ctx.arena.get_source_file(node) else {
+            return;
+        };
+        self.resolve_compiler_options_from_source(&sf.text);
+        if self.has_ts_nocheck_pragma(&sf.text) {
+            return;
+        }
 
-            // `type_env` is rebuilt per file, so drop per-file symbol-resolution memoization.
-            self.ctx.application_symbols_resolved.clear();
-            self.ctx.application_symbols_resolution_set.clear();
-            // Reset global resolution fuel for the new file.
-            crate::state_domain::type_environment::lazy::reset_global_resolution_fuel();
+        // `type_env` is rebuilt per file, so drop per-file symbol-resolution memoization.
+        self.ctx.application_symbols_resolved.clear();
+        self.ctx.application_symbols_resolution_set.clear();
+        // Reset global resolution fuel for the new file.
+        crate::state_domain::type_environment::lazy::reset_global_resolution_fuel();
 
-            // Register Function DefIds in the interner BEFORE building the environment.
-            // This ensures `T extends Function` constraint checks during type alias
-            // processing can identify the Function interface by DefId.
-            if self.needs_boxed_type_registration() {
-                self.register_function_def_ids_early();
-            }
+        // Register Function DefIds in the interner BEFORE building the environment.
+        // This ensures `T extends Function` constraint checks during type alias
+        // processing can identify the Function interface by DefId.
+        if self.needs_boxed_type_registration() {
+            self.register_function_def_ids_early();
+        }
 
-            // Phase 1 DefId-first: warm local caches with stable DefIds.
-            //
-            // When the checker received a pre-populated shared DefinitionStore
-            // from the merge pipeline, we warm local caches in one pass from
-            // the store's authoritative symbol→DefId index. This is faster than
-            // iterating each binder's semantic_defs and re-converting
-            // SemanticDefEntry → DefinitionInfo.
-            //
-            // When no shared store exists (single-file mode), fall back to the
-            // per-binder pre-population path.
-            if self.ctx.has_shared_store() {
-                self.ctx.warm_local_caches_from_shared_store();
-            } else {
-                self.ctx.pre_populate_def_ids_from_binder();
-                self.ctx.pre_populate_def_ids_from_lib_binders();
-            }
+        // Phase 1 DefId-first: warm local caches with stable DefIds.
+        //
+        // When the checker received a pre-populated shared DefinitionStore
+        // from the merge pipeline, we warm local caches in one pass from
+        // the store's authoritative symbol→DefId index. This is faster than
+        // iterating each binder's semantic_defs and re-converting
+        // SemanticDefEntry → DefinitionInfo.
+        //
+        // When no shared store exists (single-file mode), fall back to the
+        // per-binder pre-population path.
+        if self.ctx.has_shared_store() {
+            self.ctx.warm_local_caches_from_shared_store();
+        } else {
+            self.ctx.pre_populate_def_ids_from_binder();
+            self.ctx.pre_populate_def_ids_from_lib_binders();
+        }
 
-            // Phase 1c: resolve cross-batch heritage. Now that all DefIds from both
-            // the primary binder and lib binders are registered, resolve heritage_names
-            // (e.g., `class MyError extends Error`) to DefId-level extends/implements.
-            // Skip when the DefinitionStore was fully populated at merge time
-            // (heritage already resolved in from_semantic_defs).
-            if !self.ctx.definition_store.is_fully_populated() {
-                self.ctx.resolve_cross_batch_heritage();
-            }
+        // Phase 1c: resolve cross-batch heritage. Now that all DefIds from both
+        // the primary binder and lib binders are registered, resolve heritage_names
+        // (e.g., `class MyError extends Error`) to DefId-level extends/implements.
+        // Skip when the DefinitionStore was fully populated at merge time
+        // (heritage already resolved in from_semantic_defs).
+        if !self.ctx.definition_store.is_fully_populated() {
+            self.ctx.resolve_cross_batch_heritage();
+        }
 
-            // Build TypeEnvironment with all type-defining symbols.
-            // This populates both ctx.type_env and ctx.type_environment in-place
-            // via get_type_of_symbol -> compute_type_of_symbol -> register_def_in_envs.
-            self.build_type_environment();
+        // Build TypeEnvironment with all type-defining symbols.
+        // This populates both ctx.type_env and ctx.type_environment in-place
+        // via get_type_of_symbol -> compute_type_of_symbol -> register_def_in_envs.
+        self.build_type_environment();
 
-            // Wire up DefinitionStore so TypeEnvironment::get_def_kind can fall
-            // back to it when the local def_kinds map is incomplete.
-            self.ctx.ensure_type_env_has_definition_store();
+        // Wire up DefinitionStore so TypeEnvironment::get_def_kind can fall
+        // back to it when the local def_kinds map is incomplete.
+        self.ctx.ensure_type_env_has_definition_store();
 
-            // Sync type_environment from type_env to ensure FlowAnalyzer has the
-            // complete environment (including the DefinitionStore wired above).
-            // register_def_in_envs writes to both envs, but some paths may fail
-            // try_borrow_mut on type_environment during recursive resolution.
-            // A single clone here ensures consistency.
+        // Sync type_environment from type_env to ensure FlowAnalyzer has the
+        // complete environment (including the DefinitionStore wired above).
+        // register_def_in_envs writes to both envs, but some paths may fail
+        // try_borrow_mut on type_environment during recursive resolution.
+        // A single clone here ensures consistency.
+        {
+            let env_snapshot = self.ctx.type_env.borrow().clone();
+            *self.ctx.type_environment.borrow_mut() = env_snapshot;
+        }
+
+        // Register boxed types (String, Number, Boolean, etc.) from lib.d.ts
+        // This enables primitive property access to use lib definitions instead of hardcoded lists
+        // IMPORTANT: Must run AFTER build_type_environment() because it replaces the
+        // TypeEnvironment, which would erase the boxed/array type registrations.
+        if self.needs_boxed_type_registration() {
+            self.register_boxed_types();
+        }
+
+        // Type check each top-level statement
+        // Mark that we're now in the checking phase. During build_type_environment,
+        // closures may be type-checked without contextual types, which would cause
+        // premature TS7006 errors. The checking phase ensures contextual types are available.
+        self.ctx.is_checking_statements = true;
+
+        // In .d.ts files, emit TS1036 for non-declaration top-level statements.
+        // The entire file is an ambient context, so statements like break, continue,
+        // return, debugger, if, while, for, etc. are not allowed.
+        let is_dts = self.ctx.is_declaration_file();
+        if is_dts {
+            self.ctx.is_in_ambient_declaration_file = true;
+        }
+
+        // TS2563: In tsc, this is emitted when flow analysis recursion depth
+        // exceeds 2000 during getTypeAtFlowNode, NOT as a pre-check on total
+        // binder flow node count. tsz creates more flow nodes per expression
+        // (optional chains create multiple branch/join nodes). The old threshold
+        // of 2000 caused false TS2563 on files that tsc compiles fine.
+        //
+        // Heuristic: check both total flow nodes AND top-level statement count.
+        // Files with many top-level sequential statements (like
+        // largeControlFlowGraph.ts: 10,003 assignments) have deep antecedent
+        // chains that overwhelm flow analysis. Files with many functions but
+        // few top-level statements (like deep50.ts: 50 functions, 37,502 total
+        // flow nodes) have flow nodes distributed across independent graphs.
+        // The long-term fix: implement tsc's runtime depth check in narrowing.
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            const MAX_TOP_LEVEL_STATEMENTS: usize = 5_000;
+            let top_level_stmt_count = sf.statements.nodes.len();
+            if top_level_stmt_count > MAX_TOP_LEVEL_STATEMENTS
+                && let Some(&first_stmt) = sf.statements.nodes.first()
+                && let Some(first_node) = self.ctx.arena.get(first_stmt)
             {
-                let env_snapshot = self.ctx.type_env.borrow().clone();
-                *self.ctx.type_environment.borrow_mut() = env_snapshot;
+                self.ctx.error(
+                    first_node.pos,
+                    0,
+                    diagnostic_messages::THE_CONTAINING_FUNCTION_OR_MODULE_BODY_IS_TOO_LARGE_FOR_CONTROL_FLOW_ANALYSIS.to_string(),
+                    diagnostic_codes::THE_CONTAINING_FUNCTION_OR_MODULE_BODY_IS_TOO_LARGE_FOR_CONTROL_FLOW_ANALYSIS,
+                );
             }
+        }
 
-            // Register boxed types (String, Number, Boolean, etc.) from lib.d.ts
-            // This enables primitive property access to use lib definitions instead of hardcoded lists
-            // IMPORTANT: Must run AFTER build_type_environment() because it replaces the
-            // TypeEnvironment, which would erase the boxed/array type registrations.
-            if self.needs_boxed_type_registration() {
-                self.register_boxed_types();
-            }
+        let prev_unreachable = self.ctx.is_unreachable;
+        let prev_reported = self.ctx.has_reported_unreachable;
+        let suppress_grammar = self.has_syntax_parse_errors();
 
-            // Type check each top-level statement
-            // Mark that we're now in the checking phase. During build_type_environment,
-            // closures may be type-checked without contextual types, which would cause
-            // premature TS7006 errors. The checking phase ensures contextual types are available.
-            self.ctx.is_checking_statements = true;
+        // TS1046: In .d.ts files, top-level value declarations must start
+        // with 'declare' or 'export'. Report the first violation only.
+        if is_dts && !suppress_grammar {
+            self.check_dts_top_level_declare_or_export(&sf.statements.nodes);
+        }
 
-            // In .d.ts files, emit TS1036 for non-declaration top-level statements.
-            // The entire file is an ambient context, so statements like break, continue,
-            // return, debugger, if, while, for, etc. are not allowed.
-            let is_dts = self.ctx.is_declaration_file();
-            if is_dts {
-                self.ctx.is_in_ambient_declaration_file = true;
-            }
-
-            // TS2563: In tsc, this is emitted when flow analysis recursion depth
-            // exceeds 2000 during getTypeAtFlowNode, NOT as a pre-check on total
-            // binder flow node count. tsz creates more flow nodes per expression
-            // (optional chains create multiple branch/join nodes). The old threshold
-            // of 2000 caused false TS2563 on files that tsc compiles fine.
-            //
-            // Heuristic: check both total flow nodes AND top-level statement count.
-            // Files with many top-level sequential statements (like
-            // largeControlFlowGraph.ts: 10,003 assignments) have deep antecedent
-            // chains that overwhelm flow analysis. Files with many functions but
-            // few top-level statements (like deep50.ts: 50 functions, 37,502 total
-            // flow nodes) have flow nodes distributed across independent graphs.
-            // The long-term fix: implement tsc's runtime depth check in narrowing.
-            {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                const MAX_TOP_LEVEL_STATEMENTS: usize = 5_000;
-                let top_level_stmt_count = sf.statements.nodes.len();
-                if top_level_stmt_count > MAX_TOP_LEVEL_STATEMENTS
-                    && let Some(&first_stmt) = sf.statements.nodes.first()
-                    && let Some(first_node) = self.ctx.arena.get(first_stmt)
-                {
-                    self.ctx.error(
-                        first_node.pos,
-                        0,
-                        diagnostic_messages::THE_CONTAINING_FUNCTION_OR_MODULE_BODY_IS_TOO_LARGE_FOR_CONTROL_FLOW_ANALYSIS.to_string(),
-                        diagnostic_codes::THE_CONTAINING_FUNCTION_OR_MODULE_BODY_IS_TOO_LARGE_FOR_CONTROL_FLOW_ANALYSIS,
-                    );
-                }
-            }
-
-            let prev_unreachable = self.ctx.is_unreachable;
-            let prev_reported = self.ctx.has_reported_unreachable;
-            let suppress_grammar = self.has_syntax_parse_errors();
-
-            // TS1046: In .d.ts files, top-level value declarations must start
-            // with 'declare' or 'export'. Report the first violation only.
+        for &stmt_idx in &sf.statements.nodes {
             if is_dts && !suppress_grammar {
-                self.check_dts_top_level_declare_or_export(&sf.statements.nodes);
+                self.check_dts_statement_in_ambient_context(stmt_idx);
             }
-
-            for &stmt_idx in &sf.statements.nodes {
-                if is_dts && !suppress_grammar {
-                    self.check_dts_statement_in_ambient_context(stmt_idx);
-                }
-                self.check_statement(stmt_idx);
-                if !self.statement_falls_through(stmt_idx) {
-                    self.ctx.is_unreachable = true;
-                }
+            self.check_statement(stmt_idx);
+            if !self.statement_falls_through(stmt_idx) {
+                self.ctx.is_unreachable = true;
             }
-            self.ctx.is_unreachable = prev_unreachable;
-            self.ctx.has_reported_unreachable = prev_reported;
+        }
+        self.ctx.is_unreachable = prev_unreachable;
+        self.ctx.has_reported_unreachable = prev_reported;
 
-            // Re-check closures that deferred TS7006 during type env building.
-            // These closures had skip_implicit_any=true because is_checking_statements
-            // was false. Now that all statements have been checked (giving closures a
-            // chance to be re-processed with contextual types), any remaining unchecked
-            // closures truly have no contextual type and need TS7006 emitted.
-            self.recheck_deferred_implicit_any_closures();
+        // Re-check closures that deferred TS7006 during type env building.
+        // These closures had skip_implicit_any=true because is_checking_statements
+        // was false. Now that all statements have been checked (giving closures a
+        // chance to be re-processed with contextual types), any remaining unchecked
+        // closures truly have no contextual type and need TS7006 emitted.
+        self.recheck_deferred_implicit_any_closures();
 
-            self.check_isolated_declarations(&sf.statements.nodes);
-            self.check_isolated_decl_class_expressions(&sf.statements.nodes);
-            self.check_isolated_decl_augmentations(&sf.statements.nodes);
-            self.check_reserved_await_identifier_in_module(root_idx);
-            // Check for function overload implementations (2389, 2391)
-            self.check_function_implementations(&sf.statements.nodes);
+        self.check_isolated_declarations(&sf.statements.nodes);
+        self.check_isolated_decl_class_expressions(&sf.statements.nodes);
+        self.check_isolated_decl_augmentations(&sf.statements.nodes);
+        self.check_reserved_await_identifier_in_module(root_idx);
+        // Check for function overload implementations (2389, 2391)
+        self.check_function_implementations(&sf.statements.nodes);
 
-            // Check for export assignment with other exports (2309)
-            self.check_export_assignment(&sf.statements.nodes);
+        // Check for export assignment with other exports (2309)
+        self.check_export_assignment(&sf.statements.nodes);
 
-            // Check for wildcard re-export collisions (2308)
-            self.check_wildcard_reexport_collisions(&sf.statements.nodes);
+        // Check for wildcard re-export collisions (2308)
+        self.check_wildcard_reexport_collisions(&sf.statements.nodes);
 
-            // Check for circular import aliases (2303)
-            self.check_circular_import_aliases();
+        // Check for circular import aliases (2303)
+        self.check_circular_import_aliases();
 
-            // Check for circular CommonJS export aliases (2303)
-            // e.g., `exports.blah = exports.someProp` in JS files
-            if self.ctx.is_js_file() {
-                self.check_commonjs_circular_aliases(&sf.statements.nodes);
-            }
+        // Check for circular CommonJS export aliases (2303)
+        // e.g., `exports.blah = exports.someProp` in JS files
+        if self.ctx.is_js_file() {
+            self.check_commonjs_circular_aliases(&sf.statements.nodes);
+        }
 
-            // Check for cross-file circular type aliases (TS2456).
-            // This runs AFTER all statements have been checked so that
-            // cross-file symbol delegations have populated the DefinitionStore
-            // with type alias bodies.  The inline TS2456 check in
-            // compute_type_of_symbol handles same-file cycles, but cross-file
-            // cycles can only be detected post-hoc because the DefinitionStore
-            // bodies aren't available during the initial build_type_environment pass.
-            self.check_cross_file_circular_type_aliases();
-            self.recheck_static_member_class_type_param_refs_in_source_file(&sf.statements.nodes);
+        // Check for cross-file circular type aliases (TS2456).
+        // This runs AFTER all statements have been checked so that
+        // cross-file symbol delegations have populated the DefinitionStore
+        // with type alias bodies.  The inline TS2456 check in
+        // compute_type_of_symbol handles same-file cycles, but cross-file
+        // cycles can only be detected post-hoc because the DefinitionStore
+        // bodies aren't available during the initial build_type_environment pass.
+        self.check_cross_file_circular_type_aliases();
+        self.recheck_static_member_class_type_param_refs_in_source_file(&sf.statements.nodes);
 
-            // Check for TS1148: module none errors
-            if matches!(
-                self.ctx.compiler_options.module,
-                tsz_common::common::ModuleKind::None
-            ) && !is_dts
-                && !self.ctx.compiler_options.target.supports_es2015()
-            {
-                self.check_module_none_statements(&sf.statements.nodes);
-            }
+        // Check for TS1148: module none errors
+        if matches!(
+            self.ctx.compiler_options.module,
+            tsz_common::common::ModuleKind::None
+        ) && !is_dts
+            && !self.ctx.compiler_options.target.supports_es2015()
+        {
+            self.check_module_none_statements(&sf.statements.nodes);
+        }
 
-            // Check for duplicate identifiers (2300)
-            self.check_duplicate_identifiers();
-            self.check_commonjs_export_property_redeclarations();
+        // Check for duplicate identifiers (2300)
+        self.check_duplicate_identifiers();
+        self.check_commonjs_export_property_redeclarations();
 
-            // Check for constructor parameter property vs explicit property conflicts (2300/2687)
-            self.check_constructor_parameter_property_conflicts();
+        // Check for constructor parameter property vs explicit property conflicts (2300/2687)
+        self.check_constructor_parameter_property_conflicts();
 
-            // Check for built-in global identifier conflicts (2397)
-            self.check_built_in_global_identifier_conflicts();
+        // Check for built-in global identifier conflicts (2397)
+        self.check_built_in_global_identifier_conflicts();
 
-            // Check for missing global types (2318)
-            // Emits errors at file start for essential types when libs are not loaded
-            self.check_missing_global_types();
+        // Check for missing global types (2318)
+        // Emits errors at file start for essential types when libs are not loaded
+        self.check_missing_global_types();
 
-            // Check triple-slash reference directives (TS6053).
-            // tsc suppresses TS6053 when the file has syntax errors (TS1011),
-            // so only check when there are no parse errors.
-            if !self.ctx.compiler_options.no_resolve && !self.ctx.has_parse_errors {
-                self.check_triple_slash_references(&sf.file_name, &sf.text);
-            }
+        // Check triple-slash reference directives (TS6053).
+        // tsc suppresses TS6053 when the file has syntax errors (TS1011),
+        // so only check when there are no parse errors.
+        if !self.ctx.compiler_options.no_resolve && !self.ctx.has_parse_errors {
+            self.check_triple_slash_references(&sf.file_name, &sf.text);
+        }
 
-            // Check for duplicate AMD module name assignments (TS2458)
-            self.check_amd_module_names(&sf.text);
+        // Check for duplicate AMD module name assignments (TS2458)
+        self.check_amd_module_names(&sf.text);
 
-            // Check for unused declarations (TS6133/TS6196)
-            if self.ctx.no_unused_locals() || self.ctx.no_unused_parameters() {
-                self.check_unused_declarations();
-            }
-            // JS grammar checks: emit TS8xxx errors for TypeScript-only syntax in JS files
-            if self.is_js_file() {
-                self.check_js_grammar_statements(&sf.statements.nodes);
+        // Check for unused declarations (TS6133/TS6196)
+        if self.ctx.no_unused_locals() || self.ctx.no_unused_parameters() {
+            self.check_unused_declarations();
+        }
+        // JS grammar checks: emit TS8xxx errors for TypeScript-only syntax in JS files
+        if self.is_js_file() {
+            self.check_js_grammar_statements(&sf.statements.nodes);
 
-                // TS8022: Check for orphaned @extends/@augments tags not attached to a class
-                self.check_orphaned_extends_tags(&sf.statements.nodes);
+            // TS8022: Check for orphaned @extends/@augments tags not attached to a class
+            self.check_orphaned_extends_tags(&sf.statements.nodes);
 
-                // TS8033: Check for @typedef comments with multiple @type tags
-                self.check_typedef_duplicate_type_tags();
+            // TS8033: Check for @typedef comments with multiple @type tags
+            self.check_typedef_duplicate_type_tags();
 
-                // TS2300: Check JSDoc typedefs against class-like value/export declarations
-                self.check_jsdoc_typedef_name_conflicts();
+            // TS2300: Check JSDoc typedefs against class-like value/export declarations
+            self.check_jsdoc_typedef_name_conflicts();
 
-                // TS2300: Check for duplicate @import names across JSDoc comments
-                self.check_jsdoc_duplicate_imports();
+            // TS2300: Check for duplicate @import names across JSDoc comments
+            self.check_jsdoc_duplicate_imports();
 
-                // TS1003: Check @param tags for malformed `*` names
-                self.check_jsdoc_param_invalid_names();
+            // TS1003: Check @param tags for malformed `*` names
+            self.check_jsdoc_param_invalid_names();
 
-                // TS1003: Check @property/@member tags for private-name syntax
-                self.check_jsdoc_property_private_names();
+            // TS1003: Check @property/@member tags for private-name syntax
+            self.check_jsdoc_property_private_names();
 
-                // TS7014/TS1110/TS2304: malformed JSDoc function parameter types
-                self.check_malformed_jsdoc_function_type_params();
+            // TS7014/TS1110/TS2304: malformed JSDoc function parameter types
+            self.check_malformed_jsdoc_function_type_params();
 
-                // TS1110: unsupported multiline @typedef wrappers without leading `*`
-                self.check_jsdoc_unwrapped_multiline_typedefs();
+            // TS1110: unsupported multiline @typedef wrappers without leading `*`
+            self.check_jsdoc_unwrapped_multiline_typedefs();
 
-                // TS8021: Check for @typedef without type or @property tags
-                self.check_typedef_missing_type();
+            // TS8021: Check for @typedef without type or @property tags
+            self.check_typedef_missing_type();
 
-                // TS8039: Check for @template tags after @typedef/@callback/@overload
-                self.check_template_after_typedef_callback();
+            // TS8039: Check for @template tags after @typedef/@callback/@overload
+            self.check_template_after_typedef_callback();
 
-                // TS2304: Check for @typedef base types that can't be resolved
-                self.check_jsdoc_typedef_base_types();
-            }
+            // TS2304: Check for @typedef base types that can't be resolved
+            self.check_jsdoc_typedef_base_types();
+        }
 
-            // Emit deferred TS2875 (JSX import source not found) if set.
-            // This is deferred because the check runs inside JSX element type
-            // resolution which may be inside a speculative call-checker context.
-            if let Some((node_idx, runtime_path)) = self.ctx.deferred_jsx_import_source_error.take()
-            {
-                use crate::diagnostics::diagnostic_codes;
-                self.error_at_node_msg(
-                    node_idx,
-                    diagnostic_codes::THIS_JSX_TAG_REQUIRES_THE_MODULE_PATH_TO_EXIST_BUT_NONE_COULD_BE_FOUND_MAKE_SURE,
-                    &[&runtime_path],
-                );
-            }
+        // Emit deferred TS2875 (JSX import source not found) if set.
+        // This is deferred because the check runs inside JSX element type
+        // resolution which may be inside a speculative call-checker context.
+        if let Some((node_idx, runtime_path)) = self.ctx.deferred_jsx_import_source_error.take()
+        {
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node_msg(
+                node_idx,
+                diagnostic_codes::THIS_JSX_TAG_REQUIRES_THE_MODULE_PATH_TO_EXIST_BUT_NONE_COULD_BE_FOUND_MAKE_SURE,
+                &[&runtime_path],
+            );
+        }
 
-            // Re-emit TS2454 diagnostics that were lost to speculative rollback.
-            // check_flow_usage runs during type computation, which can happen
-            // inside speculative call-checker contexts that truncate diagnostics
-            // on rollback. The deferred buffer survives rollback. We only re-emit
-            // if the diagnostic is not already present (dedup by error_at_node).
-            let deferred_ts2454 = std::mem::take(&mut self.ctx.deferred_ts2454_errors);
-            for (node_idx, sym_id) in deferred_ts2454 {
-                let name = self
-                    .ctx
-                    .binder
-                    .get_symbol(sym_id)
-                    .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
-                // error_at_node -> error() has built-in dedup by (start, code).
-                // If the diagnostic survived speculation, this is a no-op.
-                // If it was lost, this re-emits it.
-                self.error_at_node(
-                    node_idx,
-                    &format!("Variable '{name}' is used before being assigned."),
-                    2454,
-                );
-            }
+        // Re-emit TS2454 diagnostics that were lost to speculative rollback.
+        // check_flow_usage runs during type computation, which can happen
+        // inside speculative call-checker contexts that truncate diagnostics
+        // on rollback. The deferred buffer survives rollback. We only re-emit
+        // if the diagnostic is not already present (dedup by error_at_node).
+        let deferred_ts2454 = std::mem::take(&mut self.ctx.deferred_ts2454_errors);
+        for (node_idx, sym_id) in deferred_ts2454 {
+            let name = self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
+            // error_at_node -> error() has built-in dedup by (start, code).
+            // If the diagnostic survived speculation, this is a no-op.
+            // If it was lost, this re-emits it.
+            self.error_at_node(
+                node_idx,
+                &format!("Variable '{name}' is used before being assigned."),
+                2454,
+            );
+        }
 
-            // Flush deferred TS2872/TS2873 truthiness diagnostics.
-            // These are purely syntactic facts emitted during binary expression
-            // evaluation but lost when call-resolution speculation rolls back
-            // the main diagnostics vector. The deferred buffer survives rollback.
-            // error() has built-in dedup by (start, code): if the diagnostic
-            // survived speculation, this is a no-op.
-            let deferred_truthiness = std::mem::take(&mut self.ctx.deferred_truthiness_diagnostics);
-            for diag in deferred_truthiness {
-                self.ctx
-                    .error(diag.start, diag.length, diag.message_text, diag.code);
-            }
+        // Flush deferred TS2872/TS2873 truthiness diagnostics.
+        // These are purely syntactic facts emitted during binary expression
+        // evaluation but lost when call-resolution speculation rolls back
+        // the main diagnostics vector. The deferred buffer survives rollback.
+        // error() has built-in dedup by (start, code): if the diagnostic
+        // survived speculation, this is a no-op.
+        let deferred_truthiness = std::mem::take(&mut self.ctx.deferred_truthiness_diagnostics);
+        for diag in deferred_truthiness {
+            self.ctx
+                .error(diag.start, diag.length, diag.message_text, diag.code);
         }
     }
 
