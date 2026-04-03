@@ -521,9 +521,9 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                     if let Some(TypeData::TypeParameter(param_info)) =
                         self.evaluator.interner().lookup(member)
                     {
-                        let has_meaningful_constraint = param_info.constraint.is_some_and(|c| {
-                            c != TypeId::UNKNOWN && c != TypeId::ANY
-                        });
+                        let has_meaningful_constraint = param_info
+                            .constraint
+                            .is_some_and(|c| c != TypeId::UNKNOWN && c != TypeId::ANY);
                         if !has_meaningful_constraint {
                             // Create a deferred IndexAccess for the type parameter
                             // without a meaningful constraint
@@ -630,9 +630,9 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                 if let Some(TypeData::TypeParameter(param_info)) =
                     self.evaluator.interner().lookup(member)
                 {
-                    let has_meaningful_constraint = param_info.constraint.is_some_and(|c| {
-                        c != TypeId::UNKNOWN && c != TypeId::ANY
-                    });
+                    let has_meaningful_constraint = param_info
+                        .constraint
+                        .is_some_and(|c| c != TypeId::UNKNOWN && c != TypeId::ANY);
                     if !has_meaningful_constraint {
                         // Create a deferred IndexAccess for the type parameter
                         // without a meaningful constraint
