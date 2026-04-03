@@ -130,12 +130,27 @@ impl<'a> CheckerState<'a> {
                         .filter(|_| !type_params.is_empty())
                         .unwrap_or_else(|| self.count_required_reference_type_params(sym_id, name));
                     if required_count > 0
-                        // Skip TS2314 for self-references within the same type alias.
-                        // TSC handles circular self-references (e.g. `type T1<X> = T1`)
-                        // through its circularity detection path instead of emitting
-                        // "Generic type requires N type argument(s)".
-                        && !self.ctx.symbol_resolution_set.contains(&sym_id)
                     {
+                        // Check if this is a class/interface symbol currently being resolved
+                        // AND we're inside a type parameter declaration (constraint context).
+                        // For class/interface constraints like `class A<T extends A> {}`,
+                        // we emit TS2314 even for self-references because the constraint
+                        // reference to `A` is missing required type arguments.
+                        // For type aliases (e.g. `type T1<X> = T1`) and other cases, we skip
+                        // TS2314 when in resolution set as TSC handles these through
+                        // circularity detection.
+                        let is_class_or_interface = self
+                            .ctx
+                            .binder
+                            .get_symbol(sym_id)
+                            .map(|s| s.flags & (symbol_flags::CLASS | symbol_flags::INTERFACE) != 0)
+                            .unwrap_or(false);
+                        let in_constraint_context =
+                            self.is_inside_type_parameter_declaration(type_name_idx);
+                        let should_emit_ts2314 = !self.ctx.symbol_resolution_set.contains(&sym_id)
+                            || (is_class_or_interface && in_constraint_context);
+                        if should_emit_ts2314
+                        {
                         // tsc uses the original declaration name, not the local alias.
                         // e.g., `export type { A as B }` → `let d: B` reports 'A<T>', not 'B<T>'.
                         // Resolve through aliases to get the target symbol's name.
@@ -173,6 +188,7 @@ impl<'a> CheckerState<'a> {
                         // required type arguments. This prevents cascading errors
                         // like TS2454 on variables with erroneous type annotations.
                         return TypeId::ERROR;
+                        }
                     }
                     // Apply default type arguments if no explicit args were provided
                     if type_ref
