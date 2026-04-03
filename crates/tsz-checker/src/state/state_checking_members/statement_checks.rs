@@ -133,38 +133,44 @@ impl<'a> CheckerState<'a> {
                 // var_stmt.declarations.nodes contains VariableDeclarationList nodes
                 // We need to get each list and then iterate its declarations
                 for &list_idx in &var_stmt.declarations.nodes {
-                    if let Some(list_node) = self.ctx.arena.get(list_idx)
-                        && let Some(decl_list) = self.ctx.arena.get_variable(list_node)
-                    {
-                        use tsz_parser::parser::node_flags;
-                        let is_const = (list_node.flags & node_flags::CONST as u16) != 0;
+                    let Some(list_node) = self.ctx.arena.get(list_idx) else {
+                        continue;
+                    };
+                    let Some(decl_list) = self.ctx.arena.get_variable(list_node) else {
+                        continue;
+                    };
+                    use tsz_parser::parser::node_flags;
+                    let is_const = (list_node.flags & node_flags::CONST as u16) != 0;
 
-                        for &decl_idx in &decl_list.declarations.nodes {
-                            if let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                                && let Some(var_decl) =
-                                    self.ctx.arena.get_variable_declaration(decl_node)
-                                && var_decl.initializer.is_some()
-                            {
-                                if is_const && var_decl.type_annotation.is_none() {
-                                    // const without type annotation: only string/numeric literals allowed
-                                    // TS1254 if initializer is not a valid literal
-                                    if !self.is_valid_const_initializer(var_decl.initializer) {
-                                        self.error_at_node(
-                                                var_decl.initializer,
-                                                diagnostic_messages::A_CONST_INITIALIZER_IN_AN_AMBIENT_CONTEXT_MUST_BE_A_STRING_OR_NUMERIC_LITERAL_OR,
-                                                diagnostic_codes::A_CONST_INITIALIZER_IN_AN_AMBIENT_CONTEXT_MUST_BE_A_STRING_OR_NUMERIC_LITERAL_OR,
-                                            );
-                                    }
-                                    // else: valid literal initializer, no error
-                                } else {
-                                    // Non-const or const with type annotation: TS1039
-                                    self.error_at_node(
-                                            var_decl.initializer,
-                                            diagnostic_messages::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
-                                            diagnostic_codes::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
-                                        );
-                                }
+                    for &decl_idx in &decl_list.declarations.nodes {
+                        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                            continue;
+                        };
+                        let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+                        else {
+                            continue;
+                        };
+                        if var_decl.initializer.is_none() {
+                            continue;
+                        }
+                        if is_const && var_decl.type_annotation.is_none() {
+                            // const without type annotation: only string/numeric literals allowed
+                            // TS1254 if initializer is not a valid literal
+                            if !self.is_valid_const_initializer(var_decl.initializer) {
+                                self.error_at_node(
+                                    var_decl.initializer,
+                                    diagnostic_messages::A_CONST_INITIALIZER_IN_AN_AMBIENT_CONTEXT_MUST_BE_A_STRING_OR_NUMERIC_LITERAL_OR,
+                                    diagnostic_codes::A_CONST_INITIALIZER_IN_AN_AMBIENT_CONTEXT_MUST_BE_A_STRING_OR_NUMERIC_LITERAL_OR,
+                                );
                             }
+                            // else: valid literal initializer, no error
+                        } else {
+                            // Non-const or const with type annotation: TS1039
+                            self.error_at_node(
+                                var_decl.initializer,
+                                diagnostic_messages::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                                diagnostic_codes::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                            );
                         }
                     }
                 }

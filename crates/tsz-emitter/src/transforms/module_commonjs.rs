@@ -698,13 +698,14 @@ pub fn collect_export_names_with_options(
                         if export_decl.module_specifier.is_some() {
                             if let Some(named_exports) = arena.get_named_imports(clause_node) {
                                 for &spec_idx in &named_exports.elements.nodes {
-                                    if let Some(spec) = arena.get_specifier_at(spec_idx) {
-                                        if spec.is_type_only {
-                                            continue;
-                                        }
-                                        if let Some(name) = specifier_name_text(arena, spec.name) {
-                                            exports.push(name);
-                                        }
+                                    let Some(spec) = arena.get_specifier_at(spec_idx) else {
+                                        continue;
+                                    };
+                                    if spec.is_type_only {
+                                        continue;
+                                    }
+                                    if let Some(name) = specifier_name_text(arena, spec.name) {
+                                        exports.push(name);
                                     }
                                 }
                             }
@@ -735,31 +736,32 @@ pub fn collect_export_names_with_options(
                                 )
                             });
                             for &spec_idx in &named_exports.elements.nodes {
-                                if let Some(spec) = arena.get_specifier_at(spec_idx) {
-                                    if spec.is_type_only {
-                                        continue;
-                                    }
-                                    // The local name is property_name if present, otherwise name
-                                    let local_name = if spec.property_name.is_some() {
-                                        get_identifier_text(arena, spec.property_name)
-                                    } else {
-                                        get_identifier_text(arena, spec.name)
-                                    };
-                                    // Skip specifiers that refer to confirmed type-only
-                                    // declarations (interface / type alias) in the current
-                                    // file with NO value binding.  Cross-file references
-                                    // (not in either set) get void 0 by default.
-                                    if let Some(ref local) = local_name
-                                        && ton.contains(local)
-                                        && !vn.contains(local)
-                                    {
-                                        continue;
-                                    }
-                                    // Use the exported name (name), not the local name (property_name)
-                                    // The exported name can be a string literal (e.g., export { x as "<X>" })
-                                    if let Some(name) = specifier_name_text(arena, spec.name) {
-                                        exports.push(name);
-                                    }
+                                let Some(spec) = arena.get_specifier_at(spec_idx) else {
+                                    continue;
+                                };
+                                if spec.is_type_only {
+                                    continue;
+                                }
+                                // The local name is property_name if present, otherwise name
+                                let local_name = if spec.property_name.is_some() {
+                                    get_identifier_text(arena, spec.property_name)
+                                } else {
+                                    get_identifier_text(arena, spec.name)
+                                };
+                                // Skip specifiers that refer to confirmed type-only
+                                // declarations (interface / type alias) in the current
+                                // file with NO value binding.  Cross-file references
+                                // (not in either set) get void 0 by default.
+                                if let Some(ref local) = local_name
+                                    && ton.contains(local)
+                                    && !vn.contains(local)
+                                {
+                                    continue;
+                                }
+                                // Use the exported name (name), not the local name (property_name)
+                                // The exported name can be a string literal (e.g., export { x as "<X>" })
+                                if let Some(name) = specifier_name_text(arena, spec.name) {
+                                    exports.push(name);
                                 }
                             }
                         } else {
