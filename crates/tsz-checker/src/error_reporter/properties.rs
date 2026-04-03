@@ -361,6 +361,15 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         idx: NodeIndex,
     ) {
+        // Suppress TS2339 when the type is an internal inference placeholder (__infer_*).
+        // These placeholders are created during generic call inference when a type parameter
+        // cannot be resolved to a concrete type. Reporting errors on these placeholders
+        // produces confusing diagnostics. The actual inference/assignability issue should be
+        // reported elsewhere.
+        if tsz_solver::type_queries::is_bare_infer_placeholder_db(self.ctx.types, type_id) {
+            return;
+        }
+
         // Suppress error if type is ERROR/ANY or an Error type wrapper.
         // This prevents cascading errors when accessing properties on error types.
         // NOTE: We do NOT suppress for UNKNOWN — accessing properties on unknown should error (TS2339).
