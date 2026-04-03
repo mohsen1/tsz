@@ -1888,24 +1888,12 @@ impl ParserState {
             self.missing_semicolon_after_expression_text(expression)
         else {
             // For non-identifier expressions (postfix, literals, etc.),
-            // emit a plain TS1005 "';' expected" via parse_error_at which
+            // emit a plain TS1005 ";' expected" via parse_error_at which
             // deduplicates by exact start position (matching tsc's
-            // parseErrorAtCurrentToken). Skip if an error already exists
-            // within the expression's range (the expression itself had errors).
-            let expr_had_error = if let Some(node) = self.arena.get(expression) {
-                self.last_error_pos > 0
-                    && self.last_error_pos >= node.pos
-                    && self.last_error_pos <= node.end
-            } else {
-                false
-            };
-            if !expr_had_error
-                || self.is_token(SyntaxKind::ColonToken)
-                || self.is_token(SyntaxKind::CloseParenToken)
-                || self.is_token(SyntaxKind::OpenBraceToken)
-            {
-                self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
-            }
+            // parseErrorAtCurrentToken). We emit TS1005 even when the expression
+            // had prior errors (like TS1121 for octal literals), matching tsc
+            // behavior for cases like `00.5;` where both errors should be reported.
+            self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
             return;
         };
 
