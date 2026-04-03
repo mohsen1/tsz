@@ -997,6 +997,15 @@ impl<'a> CheckerState<'a> {
 
         match prop_name {
             None => {
+                // When there is no JSX namespace at all (e.g., `@jsx: preserve`
+                // without any JSX factory or React import), tsc does not perform
+                // attribute type checking for class-based JSX elements. Only fall
+                // back to the `props` property when a JSX namespace exists but
+                // doesn't define `ElementAttributesProperty`.
+                if self.get_jsx_namespace_type().is_none() {
+                    return None;
+                }
+
                 // In React-style JSX setups, class components frequently expose
                 // their props through an inherited instance `props` member even
                 // when ElementAttributesProperty is absent. Fall back to that
