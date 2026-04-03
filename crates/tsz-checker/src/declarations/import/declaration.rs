@@ -1033,43 +1033,6 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-                // Also emit TS2307 for .d.ts files that have `export =` (CommonJS-style export)
-                // when the import is not a type-only import. This matches tsc behavior for
-                // cases like jsDeclarationsTypeReassignmentFromDeclaration.ts.
-                if !is_type_only_import {
-                    let arena = self.ctx.get_arena_for_file(target_idx as u32);
-                    if let Some(source_file) = arena.source_files.first() {
-                        if source_file.file_name.ends_with(".d.ts") {
-                            if let Some(binder) = self.ctx.get_binder_for_file(target_idx) {
-                                let file_name = &source_file.file_name;
-                                if let Some(exports) = binder.module_exports.get(file_name) {
-                                    if exports.has("export=") && exports.len() == 1 {
-                                        // Only has export=, no named exports - emit TS2307
-                                        let (message, code) =
-                                            self.module_not_found_diagnostic(module_name);
-                                        if !self
-                                            .ctx
-                                            .modules_with_ts2307_emitted
-                                            .contains(module_name)
-                                        {
-                                            self.ctx
-                                                .modules_with_ts2307_emitted
-                                                .insert(module_name.to_string());
-                                            self.error_at_position(
-                                                spec_start,
-                                                spec_length,
-                                                &message,
-                                                code,
-                                            );
-                                        }
-                                        self.ctx.import_resolution_stack.pop();
-                                        return;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
                 let mut skip_export_checks = false;
                 // Extract data we need before any mutable borrows
                 let (_target_is_declaration_file, file_info) = {
