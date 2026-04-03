@@ -129,8 +129,7 @@ impl<'a> CheckerState<'a> {
                         .count_required_type_params_from_ast(sym_id)
                         .filter(|_| !type_params.is_empty())
                         .unwrap_or_else(|| self.count_required_reference_type_params(sym_id, name));
-                    if required_count > 0
-                    {
+                    if required_count > 0 {
                         // Check if this is a class/interface symbol currently being resolved
                         // AND we're inside a type parameter declaration (constraint context).
                         // For class/interface constraints like `class A<T extends A> {}`,
@@ -149,45 +148,44 @@ impl<'a> CheckerState<'a> {
                             self.is_inside_type_parameter_declaration(type_name_idx);
                         let should_emit_ts2314 = !self.ctx.symbol_resolution_set.contains(&sym_id)
                             || (is_class_or_interface && in_constraint_context);
-                        if should_emit_ts2314
-                        {
-                        // tsc uses the original declaration name, not the local alias.
-                        // e.g., `export type { A as B }` → `let d: B` reports 'A<T>', not 'B<T>'.
-                        // Resolve through aliases to get the target symbol's name.
-                        let resolved_name = {
-                            let mut visited_aliases = Vec::new();
-                            self.resolve_alias_symbol(sym_id, &mut visited_aliases)
-                                .and_then(|target| {
-                                    self.get_symbol_globally(target)
-                                        .map(|s| s.escaped_name.clone())
-                                })
-                                .unwrap_or_else(|| name.to_string())
-                        };
-                        let display_name = Self::format_generic_display_name_with_interner(
-                            &resolved_name,
-                            &type_params,
-                            self.ctx.types,
-                        );
-                        if required_count < type_params.len() {
-                            // TS2707: Generic type 'X<T, U, V>' requires between N and M type arguments.
-                            let min_str = required_count.to_string();
-                            let max_str = type_params.len().to_string();
-                            self.error_at_node_msg(
+                        if should_emit_ts2314 {
+                            // tsc uses the original declaration name, not the local alias.
+                            // e.g., `export type { A as B }` → `let d: B` reports 'A<T>', not 'B<T>'.
+                            // Resolve through aliases to get the target symbol's name.
+                            let resolved_name = {
+                                let mut visited_aliases = Vec::new();
+                                self.resolve_alias_symbol(sym_id, &mut visited_aliases)
+                                    .and_then(|target| {
+                                        self.get_symbol_globally(target)
+                                            .map(|s| s.escaped_name.clone())
+                                    })
+                                    .unwrap_or_else(|| name.to_string())
+                            };
+                            let display_name = Self::format_generic_display_name_with_interner(
+                                &resolved_name,
+                                &type_params,
+                                self.ctx.types,
+                            );
+                            if required_count < type_params.len() {
+                                // TS2707: Generic type 'X<T, U, V>' requires between N and M type arguments.
+                                let min_str = required_count.to_string();
+                                let max_str = type_params.len().to_string();
+                                self.error_at_node_msg(
                                 idx,
                                 crate::diagnostics::diagnostic_codes::GENERIC_TYPE_REQUIRES_BETWEEN_AND_TYPE_ARGUMENTS,
                                 &[&display_name, &min_str, &max_str],
                             );
-                        } else {
-                            self.error_generic_type_requires_type_arguments_at(
-                                &display_name,
-                                required_count,
-                                idx,
-                            );
-                        }
-                        // tsc returns errorType when a generic type is used without
-                        // required type arguments. This prevents cascading errors
-                        // like TS2454 on variables with erroneous type annotations.
-                        return TypeId::ERROR;
+                            } else {
+                                self.error_generic_type_requires_type_arguments_at(
+                                    &display_name,
+                                    required_count,
+                                    idx,
+                                );
+                            }
+                            // tsc returns errorType when a generic type is used without
+                            // required type arguments. This prevents cascading errors
+                            // like TS2454 on variables with erroneous type annotations.
+                            return TypeId::ERROR;
                         }
                     }
                     // Apply default type arguments if no explicit args were provided
