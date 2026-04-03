@@ -1596,6 +1596,17 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        // Skip elaboration when the expected return type contains unresolved
+        // type parameters or inference placeholders. During generic call
+        // inference, the expected callback return type may still reference
+        // uninstantiated type parameters (e.g., `B` from `compose<A, B, C>`).
+        // Checking the body expression type against such placeholders would
+        // produce false TS2322 errors since concrete types like `T[]` are
+        // not assignable to an unresolved type parameter `B`.
+        if self.type_has_unresolved_inference_holes(expected_return_type) {
+            return false;
+        }
+
         let Some(body_node) = self.ctx.arena.get(func.body) else {
             return false;
         };
