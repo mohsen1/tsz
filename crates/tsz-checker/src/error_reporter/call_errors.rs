@@ -401,7 +401,7 @@ impl<'a> CheckerState<'a> {
 
         let candidates: Vec<TypeId> = [target_type, resolved_target, evaluated_target]
             .into_iter()
-            .chain(constraint_target.into_iter())
+            .chain(constraint_target)
             .chain(constraint_target.map(|c| self.resolve_type_for_property_access(c)))
             .chain(constraint_target.map(|c| self.judge_evaluate(c)))
             .collect();
@@ -2201,20 +2201,14 @@ impl<'a> CheckerState<'a> {
         // as "missing" - index signatures accept any property name.
         let has_index_signature = [original_target_type, target_type]
             .into_iter()
-            .chain(
-                crate::query_boundaries::common::type_parameter_constraint(
-                    self.ctx.types,
-                    original_target_type,
-                )
-                .into_iter(),
-            )
-            .chain(
-                crate::query_boundaries::common::type_parameter_constraint(
-                    self.ctx.types,
-                    target_type,
-                )
-                .into_iter(),
-            )
+            .chain(crate::query_boundaries::common::type_parameter_constraint(
+                self.ctx.types,
+                original_target_type,
+            ))
+            .chain(crate::query_boundaries::common::type_parameter_constraint(
+                self.ctx.types,
+                target_type,
+            ))
             .filter_map(|candidate| {
                 tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
             })
