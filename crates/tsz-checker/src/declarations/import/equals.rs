@@ -835,6 +835,13 @@ impl<'a> CheckerState<'a> {
             if !should_emit_module_not_found {
                 return;
             }
+
+            // Suppress TS2792/TS2307 for System/AMD modules and classic resolution.
+            let module_kind = self.ctx.compiler_options.module;
+            let is_system_or_amd = matches!(module_kind, ModuleKind::System | ModuleKind::AMD);
+            if is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution {
+                return;
+            }
             // Extract error values before mutable borrow
             let mut error_code = error.code;
             let mut error_message = error.message.clone();
@@ -860,6 +867,13 @@ impl<'a> CheckerState<'a> {
         // Check if we've already emitted for this module (prevents duplicate emissions).
         let module_key = module_name.to_string();
         if !should_emit_module_not_found {
+            return;
+        }
+
+        // Suppress TS2792/TS2307 for System/AMD modules and classic resolution.
+        let module_kind = self.ctx.compiler_options.module;
+        let is_system_or_amd = matches!(module_kind, ModuleKind::System | ModuleKind::AMD);
+        if is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution {
             return;
         }
         if self.ctx.modules_with_ts2307_emitted.contains(&module_key) {

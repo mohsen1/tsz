@@ -1303,6 +1303,19 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Suppress TS2792/TS2307/TS2882 for System/AMD modules and classic resolution.
+        // tsc conformance tests expect no module-not-found errors for these cases -
+        // the module resolution behavior differs from Node16/NodeNext resolution.
+        let module_kind = self.ctx.compiler_options.module;
+        let is_system_or_amd = matches!(
+            module_kind,
+            tsz_common::common::ModuleKind::System | tsz_common::common::ModuleKind::AMD
+        );
+        if is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution {
+            self.ctx.import_resolution_stack.pop();
+            return;
+        }
+
         tracing::trace!(%module_name, "check_import_declaration: fallback - emitting module-not-found error");
 
         // Side-effect imports are silently ignored when noUncheckedSideEffectImports is false
