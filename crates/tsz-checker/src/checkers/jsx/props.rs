@@ -866,6 +866,15 @@ impl<'a> CheckerState<'a> {
             // Build target: IntrinsicAttributes & spread_type
             let target = self.ctx.types.factory().intersection2(ia_type, spread_type);
 
+            // Skip the assignability check for generic spread types - they may not
+            // be assignable to the intersection due to type parameter constraints,
+            // but this is a false positive for generic SFCs.
+            let spread_has_type_params =
+                tsz_solver::contains_type_parameters(self.ctx.types, spread_type);
+            if spread_has_type_params {
+                continue;
+            }
+
             if !self.is_assignable_to(spread_type, target) {
                 let spread_name = self.format_type(spread_type);
                 let target_name = format!("IntrinsicAttributes & {spread_name}");
@@ -2561,7 +2570,10 @@ impl<'a> CheckerState<'a> {
             // the gap (e.g., `<B1 {...obj} x="hi" />`). When other attributes
             // are provided alongside the spread, skip TS2322 for the spread
             // since the whole-object check handles combined coverage.
-            if spread_has_type_params && !overridden_names.is_empty() {
+            // Also skip when the props type has type parameters (generic component).
+            let props_has_type_params =
+                tsz_solver::contains_type_parameters(self.ctx.types, props_type);
+            if (spread_has_type_params && !overridden_names.is_empty()) || props_has_type_params {
                 return false;
             }
             // Check assignability before emitting TS2322.
