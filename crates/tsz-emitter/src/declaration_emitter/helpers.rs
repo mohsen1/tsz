@@ -11285,6 +11285,15 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
 
+        // Skip truncation check for property access expressions (e.g., Foo.m1).
+        // These are not truncation candidates - their types are typically short
+        // function type references like () => void, not complex literal types.
+        if let Some(node) = self.arena.get(expr_idx) {
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                return false;
+            }
+        }
+
         const NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH: usize = 1_000_000;
 
         if let Some(estimated_length) = self.estimated_truncation_candidate_length(expr_idx) {
