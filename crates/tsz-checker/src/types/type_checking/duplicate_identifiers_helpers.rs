@@ -1052,6 +1052,39 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
+
+    /// Check if a declaration node is an export specifier inside a re-export
+    /// (`export { X } from "module"`). Re-export specifiers in tsc create
+    /// symbols in the file's exports table rather than in file locals, so
+    /// they should not conflict with import specifiers that share the same
+    /// name.
+    pub(super) fn is_reexport_specifier(&self, decl_idx: NodeIndex) -> bool {
+        let node = match self.ctx.arena.get(decl_idx) {
+            Some(n) => n,
+            None => return false,
+        };
+        if node.kind != syntax_kind_ext::EXPORT_SPECIFIER {
+            return false;
+        }
+        // Walk up: ExportSpecifier -> NamedExports -> ExportDeclaration
+        let named_exports_idx = match self.ctx.arena.get_extended(decl_idx) {
+            Some(ext) if ext.parent.is_some() => ext.parent,
+            _ => return false,
+        };
+        let export_decl_idx = match self.ctx.arena.get_extended(named_exports_idx) {
+            Some(ext) if ext.parent.is_some() => ext.parent,
+            _ => return false,
+        };
+        let export_decl_node = match self.ctx.arena.get(export_decl_idx) {
+            Some(n) => n,
+            None => return false,
+        };
+        // Check if the ExportDeclaration has a module specifier (i.e., `from "mod"`)
+        self.ctx
+            .arena
+            .get_export_decl(export_decl_node)
+            .is_some_and(|data| data.module_specifier.is_some())
+    }
 }
 
 #[cfg(test)]
