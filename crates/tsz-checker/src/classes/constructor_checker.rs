@@ -104,7 +104,20 @@ impl<'a> CheckerState<'a> {
         let factory = self.ctx.types.factory();
         let mut refined_return = factory.intersection2(return_type, base_arg_type);
 
-        if let Some(base_instance_type) = self.instance_type_from_constructor_type(base_arg_type) {
+        // For mixin patterns, the intersection normalizer merges construct
+        // signatures from different constructor types into a single Callable.
+        // The instance type should be the INTERSECTION of all construct return
+        // types (since they came from an intersection of constructors), not a
+        // union. Compute the full intersected instance type and unify all
+        // construct signatures to return it.
+        let mixin_instance_type = self.compute_mixin_intersected_instance_type(refined_return);
+
+        if let Some(intersected_instance) = mixin_instance_type {
+            refined_return =
+                self.set_all_construct_return_types(refined_return, intersected_instance);
+        } else if let Some(base_instance_type) =
+            self.instance_type_from_constructor_type(base_arg_type)
+        {
             refined_return = self
                 .merge_base_instance_into_constructor_return(refined_return, base_instance_type);
         }
@@ -118,6 +131,46 @@ impl<'a> CheckerState<'a> {
         }
 
         refined_return
+    }
+
+    /// Compute the intersected instance type from all construct signatures
+    /// in a merged callable. Returns Some if the callable has multiple construct
+    /// signatures with different return types (indicating they came from an
+    /// intersection of constructor types in a mixin pattern).
+    fn compute_mixin_intersected_instance_type(&self, ctor_type: TypeId) -> Option<TypeId> {
+        let shape_id = tsz_solver::visitor::callable_shape_id(self.ctx.types, ctor_type)?;
+        let shape = self.ctx.types.callable_shape(shape_id);
+        if shape.construct_signatures.len() <= 1 {
+            return None;
+        }
+        let returns: Vec<TypeId> = shape
+            .construct_signatures
+            .iter()
+            .map(|sig| sig.return_type)
+            .collect();
+        // If all return types are the same (true overloads, not merged
+        // intersection), no special handling needed.
+        if returns.windows(2).all(|w| w[0] == w[1]) {
+            return None;
+        }
+        Some(tsz_solver::utils::intersection_or_single(
+            self.ctx.types,
+            returns,
+        ))
+    }
+
+    /// Set all construct signature return types to the given type.
+    fn set_all_construct_return_types(&self, ctor_type: TypeId, instance_type: TypeId) -> TypeId {
+        let Some(shape_id) = tsz_solver::visitor::callable_shape_id(self.ctx.types, ctor_type)
+        else {
+            return ctor_type;
+        };
+        let shape = self.ctx.types.callable_shape(shape_id);
+        let mut new_shape = (*shape).clone();
+        for sig in &mut new_shape.construct_signatures {
+            sig.return_type = instance_type;
+        }
+        self.ctx.types.factory().callable(new_shape)
     }
 
     fn mixin_base_param_index(
