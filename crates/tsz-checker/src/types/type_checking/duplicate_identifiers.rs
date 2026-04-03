@@ -585,107 +585,121 @@ impl<'a> CheckerState<'a> {
 
             // TS2395
             let mut has_ts2395 = false;
-            {
-                const SPACE_TYPE: u32 = 1;
-                const SPACE_VALUE: u32 = 2;
-                const SPACE_NAMESPACE: u32 = 4;
 
-                let mut error_nodes: Vec<NodeIndex> = Vec::new();
+            // Skip TS2395 when all local declarations are in an ambient context
+            // (e.g., inside a `declare namespace`). In ambient contexts, the
+            // distinction between exported and non-exported declarations is
+            // irrelevant because ambient declarations don't produce runtime code.
+            // tsc also skips this check for ambient declarations.
+            let all_ambient = declarations
+                .iter()
+                .filter(|(_, _, is_local, _, _)| *is_local)
+                .all(|(decl_idx, _, _, _, _)| self.ctx.arena.is_in_ambient_context(*decl_idx));
 
+            if !all_ambient {
                 {
-                    let decl_info: Vec<(NodeIndex, u32, u32, bool, NodeIndex)> = declarations
-                        .iter()
-                        .filter(|&(_, _, is_local, _, _)| *is_local)
-                        .map(|&(decl_idx, flags, _, exported, _)| {
-                            let space = if (flags & symbol_flags::INTERFACE) != 0
-                                || (flags & symbol_flags::TYPE_ALIAS) != 0
-                            {
-                                SPACE_TYPE
-                            } else if (flags
-                                & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
-                                != 0
-                            {
-                                if self.is_namespace_declaration_instantiated(decl_idx) {
-                                    SPACE_NAMESPACE | SPACE_VALUE
-                                } else {
-                                    SPACE_NAMESPACE
-                                }
-                            } else if (flags & symbol_flags::CLASS) != 0
-                                || (flags & (symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM))
-                                    != 0
-                            {
-                                SPACE_TYPE | SPACE_VALUE
-                            } else if (flags & symbol_flags::VARIABLE) != 0
-                                || (flags & symbol_flags::FUNCTION) != 0
-                            {
-                                SPACE_VALUE
-                            } else {
-                                0
-                            };
-                            let scope = self.get_enclosing_namespace(decl_idx);
-                            (decl_idx, flags, space, exported, scope)
-                        })
-                        .collect();
+                    const SPACE_TYPE: u32 = 1;
+                    const SPACE_VALUE: u32 = 2;
+                    const SPACE_NAMESPACE: u32 = 4;
 
-                    type ScopeGroupEntry = (NodeIndex, u32, u32, bool);
-                    let mut scope_groups: FxHashMap<NodeIndex, Vec<ScopeGroupEntry>> =
-                        FxHashMap::default();
-                    for &(decl_idx, flags, space, exported, scope) in &decl_info {
-                        scope_groups
-                            .entry(scope)
-                            .or_default()
-                            .push((decl_idx, flags, space, exported));
-                    }
+                    let mut error_nodes: Vec<NodeIndex> = Vec::new();
 
-                    for group in scope_groups.values() {
-                        if group.len() <= 1 {
-                            continue;
-                        }
-                        let all_functions = group
+                    {
+                        let decl_info: Vec<(NodeIndex, u32, u32, bool, NodeIndex)> = declarations
                             .iter()
-                            .all(|&(_, flags, _, _)| (flags & symbol_flags::FUNCTION) != 0);
-                        if all_functions {
-                            continue;
+                            .filter(|&(_, _, is_local, _, _)| *is_local)
+                            .map(|&(decl_idx, flags, _, exported, _)| {
+                                let space = if (flags & symbol_flags::INTERFACE) != 0
+                                    || (flags & symbol_flags::TYPE_ALIAS) != 0
+                                {
+                                    SPACE_TYPE
+                                } else if (flags
+                                    & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+                                    != 0
+                                {
+                                    if self.is_namespace_declaration_instantiated(decl_idx) {
+                                        SPACE_NAMESPACE | SPACE_VALUE
+                                    } else {
+                                        SPACE_NAMESPACE
+                                    }
+                                } else if (flags & symbol_flags::CLASS) != 0
+                                    || (flags
+                                        & (symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM))
+                                        != 0
+                                {
+                                    SPACE_TYPE | SPACE_VALUE
+                                } else if (flags & symbol_flags::VARIABLE) != 0
+                                    || (flags & symbol_flags::FUNCTION) != 0
+                                {
+                                    SPACE_VALUE
+                                } else {
+                                    0
+                                };
+                                let scope = self.get_enclosing_namespace(decl_idx);
+                                (decl_idx, flags, space, exported, scope)
+                            })
+                            .collect();
+
+                        type ScopeGroupEntry = (NodeIndex, u32, u32, bool);
+                        let mut scope_groups: FxHashMap<NodeIndex, Vec<ScopeGroupEntry>> =
+                            FxHashMap::default();
+                        for &(decl_idx, flags, space, exported, scope) in &decl_info {
+                            scope_groups
+                                .entry(scope)
+                                .or_default()
+                                .push((decl_idx, flags, space, exported));
                         }
-                        let mut exported_spaces: u32 = 0;
-                        let mut non_exported_spaces: u32 = 0;
-                        for &(_, _, space, exported) in group {
-                            if exported {
-                                exported_spaces |= space;
-                            } else {
-                                non_exported_spaces |= space;
+
+                        for group in scope_groups.values() {
+                            if group.len() <= 1 {
+                                continue;
                             }
-                        }
-                        let common_spaces = exported_spaces & non_exported_spaces;
-                        if common_spaces != 0 {
-                            has_ts2395 = true;
-                            for &(decl_idx, _, space, _) in group {
-                                if (space & common_spaces) != 0 {
-                                    let error_node = self
-                                        .get_declaration_name_node(decl_idx)
-                                        .unwrap_or(decl_idx);
-                                    error_nodes.push(error_node);
+                            let all_functions = group
+                                .iter()
+                                .all(|&(_, flags, _, _)| (flags & symbol_flags::FUNCTION) != 0);
+                            if all_functions {
+                                continue;
+                            }
+                            let mut exported_spaces: u32 = 0;
+                            let mut non_exported_spaces: u32 = 0;
+                            for &(_, _, space, exported) in group {
+                                if exported {
+                                    exported_spaces |= space;
+                                } else {
+                                    non_exported_spaces |= space;
+                                }
+                            }
+                            let common_spaces = exported_spaces & non_exported_spaces;
+                            if common_spaces != 0 {
+                                has_ts2395 = true;
+                                for &(decl_idx, _, space, _) in group {
+                                    if (space & common_spaces) != 0 {
+                                        let error_node = self
+                                            .get_declaration_name_node(decl_idx)
+                                            .unwrap_or(decl_idx);
+                                        error_nodes.push(error_node);
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                if has_ts2395 {
-                    let name = symbol.escaped_name.clone();
-                    let message = format_message(
+                    if has_ts2395 {
+                        let name = symbol.escaped_name.clone();
+                        let message = format_message(
                         diagnostic_messages::INDIVIDUAL_DECLARATIONS_IN_MERGED_DECLARATION_MUST_BE_ALL_EXPORTED_OR_ALL_LOCAL,
                         &[&name],
                     );
-                    for error_node in error_nodes {
-                        self.error_at_node(
+                        for error_node in error_nodes {
+                            self.error_at_node(
                             error_node,
                             &message,
                             diagnostic_codes::INDIVIDUAL_DECLARATIONS_IN_MERGED_DECLARATION_MUST_BE_ALL_EXPORTED_OR_ALL_LOCAL,
                         );
+                        }
                     }
                 }
-            }
+            } // end if !all_ambient
 
             // TS2428 only applies to merged interface declarations. Mixed
             // class+interface merges are handled separately by

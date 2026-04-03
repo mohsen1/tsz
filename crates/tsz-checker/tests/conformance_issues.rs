@@ -23812,3 +23812,50 @@ let y2: { __typename?: 'TypeOne' } & string = x2;
         "Expected 2 TS2322 errors (one for each incompatible intersection assignment), got {ts2322_count}.\nDiagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_ts2395_still_fires_for_non_ambient_mixed_export_declarations() {
+    // TS2395 should still fire when non-ambient declarations mix exported and non-exported
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+export namespace Foo {
+    export function bar(): void;
+}
+namespace Foo {
+    export function bar(): void;
+}
+"#,
+    );
+    let ts2395 = diagnostics.iter().filter(|(c, _)| *c == 2395).count();
+    assert!(
+        ts2395 > 0,
+        "Expected TS2395 for mixed export declarations in non-ambient context. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2395_suppressed_in_declare_namespace_mixed_export_merge() {
+    // complexRecursiveCollections.ts pattern: inside `declare namespace`, a merged symbol
+    // may have both exported and non-exported declarations (e.g., namespace + function + interface).
+    // tsc does NOT emit TS2395 for ambient declarations.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+declare namespace Immutable {
+    export namespace List {
+        function isList(maybeList: any): boolean;
+        function of<T>(...values: Array<T>): List<T>;
+    }
+    export function List(): List<any>;
+    export function List<T>(): List<T>;
+    export interface List<T> {
+        set(index: number, value: T): List<T>;
+    }
+}
+"#,
+    );
+    let ts2395 = diagnostics.iter().filter(|(c, _)| *c == 2395).count();
+    assert_eq!(
+        ts2395, 0,
+        "Should not emit TS2395 in declare namespace context. Got: {diagnostics:#?}"
+    );
+}
