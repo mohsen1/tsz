@@ -33,6 +33,10 @@ pub(crate) struct ClassMemberInfo {
     /// a direct string/number literal. tsc uses this (`isComputedNonLiteralName`)
     /// to skip `noImplicitOverride` checks for computed names like `[someVar]`.
     pub(crate) has_computed_non_literal_name: bool,
+    /// True when the member comes from a merged interface declaration (not a class
+    /// property declaration). Used to skip TS2610/TS2611 accessor/property mismatch
+    /// checks, since interface-sourced members can be freely overridden by accessors.
+    pub(crate) from_interface: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -805,6 +809,7 @@ impl<'a> CheckerState<'a> {
                         && self.has_jsdoc_override_tag(member_idx),
                     has_dynamic_name: self.is_computed_name_dynamic(prop.name),
                     has_computed_non_literal_name: self.is_computed_non_literal_name(prop.name),
+                    from_interface: false,
                 })
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
@@ -839,6 +844,7 @@ impl<'a> CheckerState<'a> {
                                         && self.has_jsdoc_override_tag(member_idx),
                                     has_dynamic_name: true,
                                     has_computed_non_literal_name: true,
+                                    from_interface: false,
                                 });
                             }
                             return None;
@@ -884,6 +890,7 @@ impl<'a> CheckerState<'a> {
                         && self.has_jsdoc_override_tag(member_idx),
                     has_dynamic_name: self.is_computed_name_dynamic(method.name),
                     has_computed_non_literal_name: self.is_computed_non_literal_name(method.name),
+                    from_interface: false,
                 })
             }
             k if k == syntax_kind_ext::GET_ACCESSOR => {
@@ -927,6 +934,7 @@ impl<'a> CheckerState<'a> {
                         && self.has_jsdoc_override_tag(member_idx),
                     has_dynamic_name: self.is_computed_name_dynamic(accessor.name),
                     has_computed_non_literal_name: self.is_computed_non_literal_name(accessor.name),
+                    from_interface: false,
                 })
             }
             k if k == syntax_kind_ext::SET_ACCESSOR => {
@@ -977,6 +985,7 @@ impl<'a> CheckerState<'a> {
                         && self.has_jsdoc_override_tag(member_idx),
                     has_dynamic_name: self.is_computed_name_dynamic(accessor.name),
                     has_computed_non_literal_name: self.is_computed_non_literal_name(accessor.name),
+                    from_interface: false,
                 })
             }
             _ => None,
@@ -1623,10 +1632,13 @@ impl<'a> CheckerState<'a> {
             // TS2610/TS2611: Check accessor/property kind mismatch
             // Only applies to non-method, non-static members. Fires regardless of types (even ANY).
             // Static members are allowed to override accessors with properties and vice versa.
+            // Members from merged interface declarations are not subject to this check — only
+            // actual class property declarations trigger the accessor/property mismatch.
             if !is_method
                 && !is_static
                 && !base_info.is_method
                 && !base_info.is_abstract
+                && !base_info.from_interface
                 && !accessor_mismatch_reported.contains(&member_name)
             {
                 if !is_accessor && base_info.is_accessor {
