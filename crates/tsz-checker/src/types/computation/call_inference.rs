@@ -1607,7 +1607,7 @@ impl<'a> CheckerState<'a> {
                     || common::contains_infer_types(self.ctx.types, ty)
                     || should_preserve_contextual_application_shape(self.ctx.types, ty)
             });
-        let concrete_callback_context = expected_context_type.is_some_and(|ty| {
+        let _concrete_callback_context = expected_context_type.is_some_and(|ty| {
             ty != TypeId::ANY
                 && ty != TypeId::UNKNOWN
                 && ty != TypeId::ERROR
@@ -1888,11 +1888,7 @@ impl<'a> CheckerState<'a> {
                     && !is_nullish_callback_body_diag
                     && !is_direct_callback_body_assignability
                 {
-                    if diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
-                        && concrete_callback_context
-                    {
-                        return true;
-                    }
+                    // Don't filter out TS2339 errors - they should always be reported
                     return false;
                 }
                 // Keep implicit-any diagnostics (TS7006/TS7019/TS7031) from inside object

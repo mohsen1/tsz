@@ -719,8 +719,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                         result
                     } else {
-                        // Can't determine the actual type - return ANY to avoid false positives
-                        PropertyAccessResult::simple(TypeId::ANY)
+                        // Can't determine the actual type - return PropertyNotFound
+                        // so the checker can emit TS2339 if appropriate
+                        PropertyAccessResult::PropertyNotFound {
+                            type_id: obj_type,
+                            property_name: prop_atom,
+                        }
                     }
                 }
             }
@@ -740,8 +744,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                         result
                     } else {
-                        // Can't resolve type query - return ANY to avoid false positives
-                        PropertyAccessResult::simple(TypeId::ANY)
+                        // Can't resolve type query - return PropertyNotFound
+                        // so the checker can emit TS2339 if appropriate
+                        PropertyAccessResult::PropertyNotFound {
+                            type_id: obj_type,
+                            property_name: prop_atom,
+                        }
                     }
                 }
             }
@@ -772,8 +780,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                         result
                     } else {
-                        // Can't evaluate - return ANY to avoid false positives
-                        PropertyAccessResult::simple(TypeId::ANY)
+                        // Can't evaluate - return PropertyNotFound
+                        // so the checker can emit TS2339 if appropriate
+                        PropertyAccessResult::PropertyNotFound {
+                            type_id: obj_type,
+                            property_name: prop_atom,
+                        }
                     }
                 }
             }
@@ -831,8 +843,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                         result
                     } else {
-                        // Can't evaluate - return ANY to avoid false positives
-                        PropertyAccessResult::simple(TypeId::ANY)
+                        // Can't evaluate - return PropertyNotFound
+                        // so the checker can emit TS2339 if appropriate
+                        PropertyAccessResult::PropertyNotFound {
+                            type_id: obj_type,
+                            property_name: prop_atom,
+                        }
                     }
                 }
             }
@@ -895,8 +911,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                         result
                     } else {
-                        // Can't evaluate - return ANY to avoid false positives
-                        PropertyAccessResult::simple(TypeId::ANY)
+                        // Can't evaluate - return PropertyNotFound
+                        // so the checker can emit TS2339 if appropriate
+                        PropertyAccessResult::PropertyNotFound {
+                            type_id: obj_type,
+                            property_name: prop_atom,
+                        }
                     }
                 }
             }
