@@ -1536,7 +1536,14 @@ impl<'a> CheckerState<'a> {
                                     import_name,
                                 );
 
-                            if !found_via_type {
+                            // When esModuleInterop or allowSyntheticDefaultImports is
+                            // enabled and the module uses `export =`, tsc allows named
+                            // imports without emitting TS2614.
+                            let suppress_for_interop = exports_table.has("export=")
+                                && (self.ctx.compiler_options.es_module_interop
+                                    || self.ctx.compiler_options.allow_synthetic_default_imports);
+
+                            if !found_via_type && !suppress_for_interop {
                                 // TS2614: Symbol doesn't exist but a default export does
                                 let message = format_message(
                                     diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
