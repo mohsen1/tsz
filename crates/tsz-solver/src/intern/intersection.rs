@@ -223,10 +223,20 @@ impl TypeInterner {
         //
         // Preserve these intersections as-is so the checker's resolver/evaluator can
         // expand them with full symbol information later.
+        // IndexAccess types (e.g., S["a"] where S is a type parameter) are deferred
+        // types that the interner cannot reason about structurally. Without this,
+        // intersections like `S["a"] & (T | undefined)` get distributed into
+        // `(S["a"] & T) | (S["a"] & undefined)`, losing the deferred constraint
+        // and making `T` incorrectly assignable to `(S & State<T>)["a"]`.
         let has_unresolved = flat.iter().any(|&id| {
             matches!(
                 self.lookup(id),
-                Some(TypeData::Lazy(_) | TypeData::Application(_) | TypeData::Mapped(_))
+                Some(
+                    TypeData::Lazy(_)
+                        | TypeData::Application(_)
+                        | TypeData::Mapped(_)
+                        | TypeData::IndexAccess(_, _)
+                )
             )
         });
         if has_unresolved {

@@ -401,24 +401,41 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // (with optionality handled by the modifier, not by the type itself).
             // For non-optional properties in identity homomorphic types, the
             // evaluated T[K] equals the declared type, so we can also skip.
-            let property_type =
-                if is_identity_homomorphic && let Some(&(_, _, declared_type)) = source_info {
-                    declared_type
-                } else {
-                    subst.clear();
-                    subst.insert(mapped.type_param.name, key_literal);
+            //
+            // EXCEPTION: When the source is an intersection containing type parameters
+            // (e.g., `S & State<T>`), collect_properties cannot capture the deferred
+            // index access constraints from those type parameters. For example,
+            // `Pick<S & State<T>, "a">` should produce property type `(S & State<T>)["a"]`
+            // which includes `S["a"]` as a constraint, but collect_properties only sees
+            // the concrete `State<T>` member and returns `T`, losing the `S["a"]` part.
+            // In such cases, fall through to normal evaluation which correctly handles
+            // index access distribution over intersections.
+            let source_has_type_params = resolved_source_id.is_some_and(|src| {
+                crate::type_queries::is_type_parameter_or_intersection_with_type_parameter(
+                    self.interner(),
+                    src,
+                )
+            });
+            let property_type = if is_identity_homomorphic
+                && !source_has_type_params
+                && let Some(&(_, _, declared_type)) = source_info
+            {
+                declared_type
+            } else {
+                subst.clear();
+                subst.insert(mapped.type_param.name, key_literal);
 
-                    // Substitute into the template
-                    let instantiated_template =
-                        instantiate_type(self.interner(), mapped.template, &subst);
-                    let evaluated = self.evaluate(instantiated_template);
+                // Substitute into the template
+                let instantiated_template =
+                    instantiate_type(self.interner(), mapped.template, &subst);
+                let evaluated = self.evaluate(instantiated_template);
 
-                    // Check if evaluation hit depth limit
-                    if evaluated == TypeId::ERROR && self.is_depth_exceeded() {
-                        return TypeId::ERROR;
-                    }
-                    evaluated
-                };
+                // Check if evaluation hit depth limit
+                if evaluated == TypeId::ERROR && self.is_depth_exceeded() {
+                    return TypeId::ERROR;
+                }
+                evaluated
+            };
 
             for remapped_name in remapped_names {
                 properties.push(PropertyInfo {
