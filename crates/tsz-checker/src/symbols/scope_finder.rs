@@ -2166,11 +2166,10 @@ impl<'a> CheckerState<'a> {
         let Some(fn_node) = self.ctx.arena.get(func_idx) else {
             return false;
         };
-        let body_idx = if let Some(func) = self.ctx.arena.get_function(fn_node) {
-            func.body
-        } else {
+        let Some(func) = self.ctx.arena.get_function(fn_node) else {
             return false;
         };
+        let body_idx = func.body;
         let Some(body_node) = self.ctx.arena.get(body_idx) else {
             return false;
         };

@@ -816,11 +816,10 @@ impl<'a> FlowAnalyzer<'a> {
 
         // The type annotation is a TypeReference node; find its identifier
         let type_ref_node = self.arena.get(var_decl.type_annotation)?;
-        let type_name_idx = if let Some(type_ref) = self.arena.get_type_ref(type_ref_node) {
-            type_ref.type_name
-        } else {
+        let Some(type_ref) = self.arena.get_type_ref(type_ref_node) else {
             return None;
         };
+        let type_name_idx = type_ref.type_name;
 
         // Resolve the type name identifier to a symbol
         let type_sym_id = self.binder.resolve_identifier(self.arena, type_name_idx)?;

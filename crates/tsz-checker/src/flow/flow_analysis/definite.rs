@@ -839,9 +839,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // Get the sibling's initial type (from the union source)
-            let sib_initial = if let Some(&cached) = self.ctx.symbol_types.get(sib_sym) {
-                cached
-            } else {
+            let Some(&sib_initial) = self.ctx.symbol_types.get(sib_sym) else {
                 continue;
             };
 

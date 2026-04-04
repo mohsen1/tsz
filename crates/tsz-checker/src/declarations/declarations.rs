@@ -112,11 +112,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
         // TS1155: Check if const declarations must be initialized
         // Get the parent node (VARIABLE_DECLARATION_LIST) via extended info
-        let parent_idx = if let Some(ext) = self.ctx.arena.get_extended(decl_idx) {
-            ext.parent
-        } else {
+        let Some(ext) = self.ctx.arena.get_extended(decl_idx) else {
             return;
         };
+        let parent_idx = ext.parent;
 
         let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
             return;
