@@ -869,7 +869,7 @@ fn test_debug_if_statement_positions() {
                     assert!(kw_start <= then_node.pos as usize);
                     assert!(then_node.pos < then_node.end);
                 }
-                if !if_data.else_statement.is_none()
+                if if_data.else_statement.is_some()
                     && let Some(else_node) = arena.get(if_data.else_statement)
                 {
                     assert!(else_node.pos < else_node.end);

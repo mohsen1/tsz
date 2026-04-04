@@ -650,7 +650,7 @@ fn test_signature_help_method_overload_jsdoc_this_rest() {
         let Some(method) = arena.get_method_decl_at(member) else {
             return false;
         };
-        if !method.body.is_none() {
+        if method.body.is_some() {
             return false;
         }
         let doc = jsdoc_for_node(arena, root, member, source);

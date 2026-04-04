@@ -23,9 +23,9 @@ mod flow_node_id {
 
     #[test]
     fn is_none_returns_false_for_valid_id() {
-        assert!(!FlowNodeId(0).is_none());
-        assert!(!FlowNodeId(1).is_none());
-        assert!(!FlowNodeId(1000).is_none());
+        assert!(FlowNodeId(0).is_some());
+        assert!(FlowNodeId(1).is_some());
+        assert!(FlowNodeId(1000).is_some());
     }
 
     #[test]

@@ -2040,7 +2040,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             };
 
             // Remap parent
-            if !lib_sym.parent.is_none()
+            if lib_sym.parent.is_some()
                 && let Some(&new_parent) = lib_symbol_remap.get(&(lib_binder_ptr, lib_sym.parent))
                 && let Some(sym) = global_symbols.get_mut(global_id)
             {
@@ -2746,7 +2746,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                         append_unique_declarations(&mut new_sym.declarations, &filtered_decls);
                     }
                     // Update value_declaration if the old one was NONE
-                    if new_sym.value_declaration.is_none() && !old_sym.value_declaration.is_none() {
+                    if new_sym.value_declaration.is_none() && old_sym.value_declaration.is_some() {
                         new_sym.value_declaration = old_sym.value_declaration;
                     }
                     // Merge exports (if both have exports)
@@ -2865,7 +2865,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     symbol_arenas.entry(existing_id).or_insert(arena);
                 }
                 append_unique_declarations(&mut dst.declarations, &src_decls);
-                if dst.value_declaration.is_none() && !src_val_decl.is_none() {
+                if dst.value_declaration.is_none() && src_val_decl.is_some() {
                     dst.value_declaration = src_val_decl;
                 }
                 if let Some(src_exp) = src_exports {
@@ -3216,7 +3216,7 @@ fn collect_functions_from_node(
             functions.push(node_idx);
             // Also collect nested functions in the body
             if let Some(func) = arena.get_function(node)
-                && !func.body.is_none()
+                && func.body.is_some()
             {
                 collect_functions_from_node(arena, func.body, functions);
             }
@@ -3225,7 +3225,7 @@ fn collect_functions_from_node(
             functions.push(node_idx);
             // Also collect nested functions in the body
             if let Some(method) = arena.get_method_decl(node)
-                && !method.body.is_none()
+                && method.body.is_some()
             {
                 collect_functions_from_node(arena, method.body, functions);
             }
@@ -3256,7 +3256,7 @@ fn collect_functions_from_node(
                             for &decl_idx in &decl_list.declarations.nodes {
                                 if let Some(decl_node) = arena.get(decl_idx)
                                     && let Some(decl) = arena.get_variable_declaration(decl_node)
-                                    && !decl.initializer.is_none()
+                                    && decl.initializer.is_some()
                                 {
                                     collect_functions_from_node(arena, decl.initializer, functions);
                                 }
@@ -3269,7 +3269,7 @@ fn collect_functions_from_node(
         k if k == syntax_kind_ext::EXPORT_DECLARATION => {
             // Export declarations may contain function/class declarations
             if let Some(export) = arena.get_export_decl(node)
-                && !export.export_clause.is_none()
+                && export.export_clause.is_some()
             {
                 collect_functions_from_node(arena, export.export_clause, functions);
             }

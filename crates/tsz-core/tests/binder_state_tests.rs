@@ -333,7 +333,7 @@ fn assert_bound_state_resolves_param_impl(
     }
 
     assert!(
-        !param_name_idx.is_none(),
+        param_name_idx.is_some(),
         "Expected to find parameter name for {function_name}"
     );
     assert!(
@@ -341,7 +341,7 @@ fn assert_bound_state_resolves_param_impl(
         "Expected parameter symbol for {function_name}"
     );
     assert!(
-        !function_body.is_none(),
+        function_body.is_some(),
         "Expected function body for {function_name}"
     );
 
@@ -376,7 +376,7 @@ fn assert_bound_state_resolves_param_impl(
     }
 
     assert!(
-        !usage_idx.is_none(),
+        usage_idx.is_some(),
         "Expected a '{param_name}' identifier inside the function body"
     );
 
@@ -469,11 +469,11 @@ fn find_function_param_and_usage(
     }
 
     assert!(
-        !param_name_idx.is_none(),
+        param_name_idx.is_some(),
         "Expected to find parameter '{param_name}' in function '{function_name}'"
     );
     assert!(
-        !function_body.is_none(),
+        function_body.is_some(),
         "Expected function body for '{function_name}'"
     );
 
@@ -496,7 +496,7 @@ fn find_function_param_and_usage(
     }
 
     assert!(
-        !usage_idx.is_none(),
+        usage_idx.is_some(),
         "Expected usage of parameter '{param_name}' in function body"
     );
 
@@ -701,7 +701,7 @@ export function getModuleInstanceStateForAliasTarget(
     }
 
     assert!(
-        !function_body.is_none(),
+        function_body.is_some(),
         "Expected function body for getModuleInstanceStateForAliasTarget"
     );
 
@@ -734,7 +734,7 @@ export function getModuleInstanceStateForAliasTarget(
     }
 
     assert!(
-        !decl_name_idx.is_none(),
+        decl_name_idx.is_some(),
         "Expected declaration for statements"
     );
     assert!(
@@ -767,7 +767,7 @@ export function getModuleInstanceStateForAliasTarget(
     }
 
     assert!(
-        !usage_idx.is_none(),
+        usage_idx.is_some(),
         "Expected for-of expression to reference statements"
     );
 
@@ -1986,7 +1986,7 @@ function outer() {
             found_inner_scope = true;
             // Verify this scope has a parent
             assert!(
-                !scope.parent.is_none(),
+                scope.parent.is_some(),
                 "innermost scope should have a parent"
             );
             break;
