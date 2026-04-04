@@ -1581,7 +1581,7 @@ fn checker_files_stay_under_loc_limit() {
     // Removed after dropping below 2000 LOC:
     //   complex.rs (926), variable_checking/core.rs (1606),
     //   symbol_types.rs (892), error_reporter/core.rs (1576),
-    //   types/computation/call.rs (1805), checkers/call_checker.rs (1396),
+    //   types/computation/call.rs (1805→split), checkers/call_checker.rs (1396),
     //   checkers/jsx/props/mod.rs, checkers/jsx/props/resolution.rs, checkers/jsx/props/validation.rs (1469)
     let grandfathered: &[(&str, usize)] = &[
         ("types/function_type.rs", 1940),
@@ -1589,7 +1589,6 @@ fn checker_files_stay_under_loc_limit() {
         ("checkers/jsx/props/resolution.rs", 1600),
         ("checkers/jsx/orchestration", 2397),
         ("checkers/call_checker.rs", 2201),
-        ("types/computation/call.rs", 2176),
         ("types/property_access_helpers.rs", 2104),
         ("types/property_access_type/resolve.rs", 2311),
         ("declarations/import/core.rs", 2562),
@@ -3994,7 +3993,7 @@ fn test_checker_file_size_ceiling() {
     //   checkers/jsx/props/mod.rs, checkers/jsx/props/resolution.rs, checkers/jsx/props/validation.rs, checkers/jsx/orchestration.rs,
     //   types/type_checking/duplicate_identifiers.rs, types/function_type.rs,
     //   types/queries/lib.rs, types/utilities/core.rs, types/computation/binary.rs,
-    //   types/computation/identifier.rs, types/computation/call.rs,
+    //   types/computation/identifier.rs, types/computation/call/inner.rs,
     //   types/computation/object_literal.rs, types/property_access_helpers.rs,
     //   types/property_access_type.rs, types/class_type/core.rs,
     //   types/class_type/constructor.rs,
