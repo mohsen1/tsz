@@ -12959,3 +12959,87 @@ fn take_diagnostics_drops_swapped_ts2883_when_canonical_exists() {
         "The inferred type of 'foo' cannot be named without a reference to 'SomeType' from '../node_modules/some-dep/dist/inner'. This is likely not portable. A type annotation is necessary."
     );
 }
+
+// ── Private class namespace emission ────────────────────────────────
+
+#[test]
+fn test_private_class_not_emitted_in_module_namespace() {
+    // Non-exported class inside a namespace should NOT appear in .d.ts
+    // when no exported member references it.
+    let result = emit_dts_with_usage_analysis(
+        r#"
+export namespace Ns {
+    class privateClass { }
+    export class publicClass { }
+
+    // Not exported, not referenced by any export
+    class privateClassWithPrivateModulePropertyTypes {
+        myProperty: string;
+    }
+
+    export class publicClassWithPrivateModulePropertyTypes {
+        myPublicProperty: string;
+    }
+}
+"#,
+    );
+    assert!(
+        !result.contains("privateClassWithPrivateModulePropertyTypes"),
+        "private unreferenced class should not be emitted, got:\n{result}"
+    );
+    assert!(
+        result.contains("publicClass"),
+        "exported class should be emitted"
+    );
+    assert!(
+        result.contains("publicClassWithPrivateModulePropertyTypes"),
+        "exported class should be emitted"
+    );
+}
+
+#[test]
+fn test_private_class_emitted_when_referenced_by_export() {
+    // Non-exported class inside a namespace SHOULD appear in .d.ts when
+    // an exported member references it by name.
+    let result = emit_dts_with_usage_analysis(
+        r#"
+export namespace Ns {
+    class privateClass { }
+    export class publicClass { }
+
+    export interface publicInterfaceWithPrivatePropertyTypes {
+        myProperty: privateClass;
+    }
+}
+"#,
+    );
+    assert!(
+        result.contains("class privateClass"),
+        "referenced private class should be emitted, got:\n{result}"
+    );
+}
+
+#[test]
+fn test_private_class_not_emitted_at_module_top_level() {
+    // Non-exported, non-referenced classes at the top level of a module
+    // file must not leak into .d.ts.
+    let result = emit_dts_with_usage_analysis(
+        r#"
+export class publicClass { }
+
+class privateClassWithWithPublicPropertyTypes {
+    myPublicProperty: publicClass;
+}
+
+export var publicVar: publicClass;
+"#,
+    );
+    assert!(
+        !result.contains("privateClassWithWithPublicPropertyTypes"),
+        "unreferenced private top-level class should not be emitted, got:\n{result}"
+    );
+    assert!(
+        result.contains("publicClass"),
+        "exported class should be emitted"
+    );
+}

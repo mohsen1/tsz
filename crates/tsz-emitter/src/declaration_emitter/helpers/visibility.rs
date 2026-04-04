@@ -162,21 +162,28 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(binder) = self.binder else {
             return false;
         };
-        // Direct node-to-symbol lookup (works when decl_idx is the declaration node)
+        // Direct node-to-symbol lookup
         if let Some(&sym_id) = binder.node_symbols.get(&decl_idx.0) {
             if used.contains_key(&sym_id) {
                 return true;
             }
         }
-        // Fallback: resolve by identifier text via scope tables.
-        // For import-equals declarations, extract the name from the import clause
-        // since the declaration node itself is not an identifier.
-        let Some(name_node) = self.arena.get(decl_idx) else {
+        // The binder maps declaration NAME nodes (not the declaration
+        // node itself) into node_symbols.  For class / function /
+        // interface / type-alias / enum, extract the name and retry.
+        let Some(decl_node) = self.arena.get(decl_idx) else {
             return false;
         };
-        let import_clause_idx = if let Some(import_eq) = self.arena.get_import_decl(name_node) {
-            // Also check the import clause's node_symbols (the name identifier
-            // may have a different SymbolId than the declaration node).
+        if let Some(name_ni) = self.get_declaration_name_idx(decl_node) {
+            if let Some(&sym_id) = binder.node_symbols.get(&name_ni.0) {
+                if used.contains_key(&sym_id) {
+                    return true;
+                }
+            }
+        }
+        // For import-equals declarations extract the name from the
+        // import clause since the declaration node is not an identifier.
+        let import_clause_idx = if let Some(import_eq) = self.arena.get_import_decl(decl_node) {
             if let Some(&clause_sym) = binder.node_symbols.get(&import_eq.import_clause.0) {
                 if used.contains_key(&clause_sym) {
                     return true;
@@ -186,7 +193,13 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             None
         };
-        let name_text = if let Some(ident) = self.arena.get_identifier(name_node) {
+        // Resolve identifier text for scope-table fallback.
+        let name_text = if let Some(ni) = self.get_declaration_name_idx(decl_node) {
+            self.arena
+                .get(ni)
+                .and_then(|n| self.arena.get_identifier(n))
+                .map(|ident| ident.escaped_text.clone())
+        } else if let Some(ident) = self.arena.get_identifier(decl_node) {
             Some(ident.escaped_text.clone())
         } else if let Some(clause_idx) = import_clause_idx {
             self.arena
@@ -210,6 +223,61 @@ impl<'a> DeclarationEmitter<'a> {
         }
         if let Some(sym_id) = binder.file_locals.get(&name) {
             return used.contains_key(&sym_id);
+        }
+        false
+    }
+
+    /// Extract the name `NodeIndex` from a declaration node.
+    fn get_declaration_name_idx(&self, node: &Node) -> Option<NodeIndex> {
+        let k = node.kind;
+        if k == syntax_kind_ext::CLASS_DECLARATION {
+            self.arena
+                .get_class(node)
+                .and_then(|c| if c.name.is_some() { Some(c.name) } else { None })
+        } else if k == syntax_kind_ext::FUNCTION_DECLARATION {
+            self.arena
+                .get_function(node)
+                .and_then(|f| if f.name.is_some() { Some(f.name) } else { None })
+        } else if k == syntax_kind_ext::INTERFACE_DECLARATION {
+            self.arena.get_interface(node).map(|i| i.name)
+        } else if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+            self.arena.get_type_alias(node).map(|t| t.name)
+        } else if k == syntax_kind_ext::ENUM_DECLARATION {
+            self.arena.get_enum(node).map(|e| e.name)
+        } else {
+            None
+        }
+    }
+
+    /// Strict variant of `should_emit_public_api_dependency` that returns
+    /// `false` when usage analysis is unavailable, preventing non-exported
+    /// class declarations from leaking into .d.ts output.
+    pub(crate) fn is_confirmed_public_api_dependency(&self, name_idx: NodeIndex) -> bool {
+        if !self.public_api_filter_enabled() {
+            return true;
+        }
+        let Some(used) = &self.used_symbols else {
+            return false;
+        };
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        if let Some(&sym_id) = binder.node_symbols.get(&name_idx.0) {
+            return used.contains_key(&sym_id);
+        }
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        let Some(name_ident) = self.arena.get_identifier(name_node) else {
+            return false;
+        };
+        if let Some(sym_id) = binder.file_locals.get(&name_ident.escaped_text) {
+            return used.contains_key(&sym_id);
+        }
+        if let Some(root_scope) = binder.scopes.first() {
+            if let Some(scope_sym_id) = root_scope.table.get(&name_ident.escaped_text) {
+                return used.contains_key(&scope_sym_id);
+            }
         }
         false
     }
