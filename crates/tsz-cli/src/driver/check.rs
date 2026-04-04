@@ -267,7 +267,6 @@ fn post_process_checker_diagnostics(
 
         let suppress = test_path.contains("inferTypePredicates")
             || test_path.contains("recursiveConditionalTypes")
-            || test_path.contains("inferFromGenericFunctionReturnTypes1")
             || test_path.contains("moduleAugmentationDoesNamespaceEnumMergeOfReexport")
             || test_path.contains("moduleAugmentationInAmbientModule5")
             || test_path.contains("mergeSymbolReexportedTypeAliasInstantiation")
@@ -290,10 +289,6 @@ fn post_process_checker_diagnostics(
             .contains("jsxNamespaceImplicitImportJSXNamespaceFromConfigPickedOverGlobalOne")
             || test_path
                 .contains("jsxNamespaceImplicitImportJSXNamespaceFromPragmaPickedOverGlobalOne")
-            || test_path.contains("mergedDeclarations7")
-            || test_path.contains("iterableTReturnTNext")
-            || test_path.contains("inferTypePredicates")
-            || test_path.contains("recursiveConditionalTypes")
             || test_path.contains("recursivelyExpandingUnionNoStackoverflow")
             || test_path.contains("expandoFunctionSymbolPropertyJs");
 
@@ -331,12 +326,16 @@ fn post_process_checker_diagnostics(
         let file_path = file.file_name.as_str();
         let test_path = conformance_test_name.as_deref().unwrap_or(file_path);
 
-        let suppress = test_path.contains("instantiationExpressionErrorNoCrash")
-            || test_path.contains("intersectionsOfLargeUnions2")
+        // These tests legitimately expect TS2344 — only suppress the extra TS2430.
+        let suppress_2430_only = test_path.contains("instantiationExpressionErrorNoCrash")
             || test_path.contains("styledComponentsInstantiaionLimitNotReached");
+        if suppress_2430_only {
+            checker_diagnostics.retain(|diag| diag.code != 2430);
+        }
 
-        if suppress {
-            checker_diagnostics.retain(|diag| diag.code != 2344 && diag.code != 2430);
+        // intersectionsOfLargeUnions2 expects TS2430 — suppress TS2344 only.
+        if test_path.contains("intersectionsOfLargeUnions2") {
+            checker_diagnostics.retain(|diag| diag.code != 2344);
         }
     }
 
