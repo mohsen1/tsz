@@ -1196,19 +1196,21 @@ impl<'a> CheckerState<'a> {
 
                     // Type-level assignability check (TS2420/TS2720).
                     //
-                    // When implementing a class (is_class), tsc always prefers the
-                    // whole-type TS2720 diagnostic over member-level TS2416. So we
-                    // check assignability unconditionally for classes and, if TS2720
-                    // fires, suppress the member-level incompatible_members.
+                    // When the class extends the same base it implements with different
+                    // type args (e.g., `class D extends C<string> implements C<number>`),
+                    // tsc prefers TS2720 over member-level TS2416. When implementing a
+                    // class that is NOT the extends base, member-by-member TS2416 applies.
                     //
                     // For interfaces, the type-level check is only done when
                     // member-by-member found no issues (catches index signature
                     // incompatibilities that member-by-member misses).
-                    if is_class
-                        || (interface_has_index_signature
+                    let extends_same_base =
+                        is_class && self.class_extends_same_base(class_data, &interface_name);
+                    let check_whole_type = extends_same_base
+                        || ((is_class || interface_has_index_signature)
                             && missing_members.is_empty()
-                            && incompatible_members.is_empty())
-                    {
+                            && incompatible_members.is_empty());
+                    if check_whole_type {
                         let class_instance_type =
                             self.get_class_instance_type(class_idx, class_data);
                         if !self.is_assignable_to(class_instance_type, interface_type) {
@@ -1227,8 +1229,9 @@ impl<'a> CheckerState<'a> {
                                 diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE
                             };
                             self.error_at_node(class_error_idx, &message, diagnostic_code);
-                            if is_class {
+                            if extends_same_base {
                                 // tsc suppresses member-level TS2416 when TS2720 is emitted
+                                // for extends+implements same base patterns
                                 incompatible_members.clear();
                             }
                         }
