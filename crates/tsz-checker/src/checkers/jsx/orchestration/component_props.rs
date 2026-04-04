@@ -11,7 +11,10 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    pub(in crate::checkers_domain::jsx) fn normalize_jsx_contextual_callable_member(&mut self, type_id: TypeId) -> TypeId {
+    pub(in crate::checkers_domain::jsx) fn normalize_jsx_contextual_callable_member(
+        &mut self,
+        type_id: TypeId,
+    ) -> TypeId {
         let type_id =
             crate::query_boundaries::common::unwrap_readonly_or_noinfer(self.ctx.types, type_id)
                 .unwrap_or(type_id);
@@ -199,7 +202,9 @@ impl<'a> CheckerState<'a> {
         self.refine_jsx_callable_contextual_type(single_children_type)
     }
 
-    pub(in crate::checkers_domain::jsx) fn file_has_same_line_adjacent_jsx_recovery_pattern(&self) -> bool {
+    pub(in crate::checkers_domain::jsx) fn file_has_same_line_adjacent_jsx_recovery_pattern(
+        &self,
+    ) -> bool {
         // Previously this used text-based heuristics to detect adjacent JSX
         // recovery patterns (e.g., `/><` or `></`), but those patterns also
         // match normal JSX syntax (e.g., `</span><div>` or `</span>`).
@@ -661,7 +666,10 @@ impl<'a> CheckerState<'a> {
         Some(props)
     }
 
-    pub(in crate::checkers_domain::jsx) fn get_jsx_intrinsic_tag_name(&self, tag_name_idx: NodeIndex) -> Option<String> {
+    pub(in crate::checkers_domain::jsx) fn get_jsx_intrinsic_tag_name(
+        &self,
+        tag_name_idx: NodeIndex,
+    ) -> Option<String> {
         let tag_name_node = self.ctx.arena.get(tag_name_idx)?;
         if tag_name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
             return self
