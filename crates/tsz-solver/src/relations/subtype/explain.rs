@@ -803,7 +803,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         .is_true()
                     {
                         // Check if the failure is due to missing properties
-                        if let Some(reason) = self.explain_failure(s_string_idx.value_type, t_string_idx.value_type) {
+                        if let Some(reason) =
+                            self.explain_failure(s_string_idx.value_type, t_string_idx.value_type)
+                        {
                             if matches!(
                                 reason,
                                 SubtypeFailureReason::MissingProperty { .. }
@@ -841,7 +843,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             .is_true()
                         {
                             // Check if the failure is due to missing properties
-                            if let Some(reason) = self.explain_failure(prop_type, t_string_idx.value_type) {
+                            if let Some(reason) =
+                                self.explain_failure(prop_type, t_string_idx.value_type)
+                            {
                                 if matches!(
                                     reason,
                                     SubtypeFailureReason::MissingProperty { .. }
@@ -875,7 +879,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .is_true()
                 {
                     // Check if the failure is due to missing properties
-                    if let Some(reason) = self.explain_failure(s_number_idx.value_type, t_number_idx.value_type) {
+                    if let Some(reason) =
+                        self.explain_failure(s_number_idx.value_type, t_number_idx.value_type)
+                    {
                         if matches!(
                             reason,
                             SubtypeFailureReason::MissingProperty { .. }
@@ -902,7 +908,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .is_true()
                 {
                     // Check if the failure is due to missing properties
-                    if let Some(reason) = self.explain_failure(s_string_idx.value_type, t_number_idx.value_type) {
+                    if let Some(reason) =
+                        self.explain_failure(s_string_idx.value_type, t_number_idx.value_type)
+                    {
                         if matches!(
                             reason,
                             SubtypeFailureReason::MissingProperty { .. }
@@ -1124,7 +1132,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         .is_true()
                     {
                         // Check if the failure is due to missing properties
-                        if let Some(reason) = self.explain_failure(prop_type, number_idx.value_type) {
+                        if let Some(reason) = self.explain_failure(prop_type, number_idx.value_type)
+                        {
                             if matches!(
                                 reason,
                                 SubtypeFailureReason::MissingProperty { .. }

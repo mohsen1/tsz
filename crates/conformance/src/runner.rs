@@ -1204,7 +1204,7 @@ impl Runner {
                             .stdout(std::process::Stdio::piped())
                             .stderr(std::process::Stdio::piped())
                             .env("TSZ_CONFORMANCE_TEST", &key)
-                                    .kill_on_drop(true)
+                            .kill_on_drop(true)
                             .spawn()?;
 
                         let output = if timeout_secs > 0 {
@@ -1406,7 +1406,7 @@ impl Runner {
                             .stdout(std::process::Stdio::piped())
                             .stderr(std::process::Stdio::piped())
                             .env("TSZ_CONFORMANCE_TEST", &key)
-                                    .kill_on_drop(true)
+                            .kill_on_drop(true)
                             .spawn()?;
 
                         let output = if timeout_secs > 0 {

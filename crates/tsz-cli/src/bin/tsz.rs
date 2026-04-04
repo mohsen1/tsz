@@ -301,12 +301,14 @@ fn run_batch_mode() -> Result<()> {
             stdout.flush()?;
             continue;
         }
-        
+
         // Parse tab-separated project dir and optional test name
         let parts: Vec<&str> = trimmed.split('\t').collect();
         let project_dir = parts[0];
         if parts.len() > 1 {
-            unsafe { std::env::set_var("TSZ_CONFORMANCE_TEST", parts[1]); }
+            unsafe {
+                std::env::set_var("TSZ_CONFORMANCE_TEST", parts[1]);
+            }
         }
 
         // Clear all thread-local state between compilations.
