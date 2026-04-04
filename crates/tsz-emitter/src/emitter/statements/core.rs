@@ -15,6 +15,9 @@ impl<'a> Printer<'a> {
         let Some(block) = self.arena.get_block(node) else {
             return;
         };
+        if self.ctx.target_es5 {
+            self.write("/* DBG_BLOCK */");
+        }
         let is_function_body_block = self.emitting_function_body_block;
         // Reset the flag so nested blocks (for/if/while inside this function)
         // are not treated as function body blocks.
