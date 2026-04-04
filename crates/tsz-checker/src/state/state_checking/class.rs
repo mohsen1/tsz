@@ -830,6 +830,60 @@ impl<'a> CheckerState<'a> {
 
         for &member_idx in &class.members.nodes {
             self.check_class_member_with_request(member_idx, request);
+
+            // Check for abstract members in non-abstract class expressions (TS1253/TS1244)
+            if !is_abstract_class {
+                if let Some(member_node) = self.ctx.arena.get(member_idx) {
+                    use crate::diagnostics::diagnostic_codes;
+                    
+                    let member_has_abstract = match member_node.kind {
+                        syntax_kind_ext::PROPERTY_DECLARATION => {
+                            if let Some(prop) = self.ctx.arena.get_property_decl(member_node) {
+                                self.has_abstract_modifier(&prop.modifiers)
+                            } else {
+                                false
+                            }
+                        }
+                        syntax_kind_ext::METHOD_DECLARATION => {
+                            if let Some(method) = self.ctx.arena.get_method_decl(member_node) {
+                                self.has_abstract_modifier(&method.modifiers)
+                            } else {
+                                false
+                            }
+                        }
+                        syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
+                            if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
+                                self.has_abstract_modifier(&accessor.modifiers)
+                            } else {
+                                false
+                            }
+                        }
+                        _ => false,
+                    };
+
+                    if member_has_abstract {
+                        let is_method = matches!(
+                            member_node.kind,
+                            syntax_kind_ext::METHOD_DECLARATION
+                                | syntax_kind_ext::GET_ACCESSOR
+                                | syntax_kind_ext::SET_ACCESSOR
+                        );
+                        if is_method {
+                            self.error_at_node(
+                                member_idx,
+                                "Abstract methods can only appear within an abstract class.",
+                                diagnostic_codes::ABSTRACT_METHODS_CAN_ONLY_APPEAR_WITHIN_AN_ABSTRACT_CLASS,
+                            );
+                        } else {
+                            self.error_at_node(
+                                member_idx,
+                                "Abstract properties can only appear within an abstract class.",
+                                diagnostic_codes::ABSTRACT_PROPERTIES_CAN_ONLY_APPEAR_WITHIN_AN_ABSTRACT_CLASS,
+                            );
+                        }
+                    }
+                }
+            }
         }
 
         self.ctx.async_depth = saved_async_depth;
