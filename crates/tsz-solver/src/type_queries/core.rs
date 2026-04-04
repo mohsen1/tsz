@@ -231,6 +231,14 @@ pub fn is_readonly_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::ReadonlyType(_)))
 }
 
+/// Check if a type is an `infer` type parameter.
+///
+/// `Infer` represents type parameters introduced by `infer` declarations in conditional
+/// type branches (e.g., `type X<T> = T extends infer U ? U : never`).
+pub fn is_infer_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(db.lookup(type_id), Some(TypeData::Infer(_)))
+}
+
 /// Check if a type is the polymorphic `this` type.
 ///
 /// `ThisType` represents `this` in class methods and needs to be resolved

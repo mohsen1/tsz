@@ -879,6 +879,10 @@ pub(crate) fn is_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_this_type(db, type_id)
 }
 
+pub(crate) fn is_infer_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_infer_type(db, type_id)
+}
+
 // ── Conditional type query ──
 
 pub(crate) fn is_conditional_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
