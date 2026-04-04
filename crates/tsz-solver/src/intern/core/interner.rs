@@ -353,7 +353,7 @@ where
             dashmap::mapref::entry::Entry::Vacant(e) => {
                 e.insert(id);
                 {
-                    let mut vec = inner.items.write().unwrap();
+                    let mut vec = inner.items.write().expect("interner items lock poisoned");
                     while vec.len() < id as usize {
                         vec.push(Arc::clone(&temp_arc));
                     }
@@ -381,7 +381,7 @@ where
     #[inline]
     fn empty(&self) -> Arc<[T]> {
         let inner = self.get_inner();
-        let vec = inner.items.read().unwrap();
+        let vec = inner.items.read().expect("interner items lock poisoned");
         vec.first()
             .cloned()
             .unwrap_or_else(|| Arc::from(Vec::new()))
@@ -443,7 +443,7 @@ where
             Entry::Vacant(e) => {
                 e.insert(id);
                 {
-                    let mut vec = inner.items.write().unwrap();
+                    let mut vec = inner.items.write().expect("interner items lock poisoned");
                     while vec.len() < id as usize {
                         vec.push(Arc::clone(&value_arc));
                     }
@@ -995,8 +995,14 @@ impl TypeInterner {
                 // Record allocation order for deterministic union member sorting.
                 let order = self.alloc_counter.fetch_add(1, Ordering::Relaxed);
                 {
-                    let mut vec = inner.index_to_key.write().unwrap();
-                    let mut ord = inner.alloc_order.write().unwrap();
+                    let mut vec = inner
+                        .index_to_key
+                        .write()
+                        .expect("interner index_to_key lock poisoned");
+                    let mut ord = inner
+                        .alloc_order
+                        .write()
+                        .expect("interner alloc_order lock poisoned");
                     let target_len = local_index as usize + 1;
                     if vec.len() < target_len {
                         vec.resize(target_len, TypeData::Error);

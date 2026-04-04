@@ -520,7 +520,12 @@ impl<'a> TypeFormatter<'a> {
 
         // If a parent-level enum absorbed all literals, just show the enum name.
         if parent_enum_name.is_some() && enum_member_count > 1 && rendered.len() == 1 {
-            return Some(rendered.into_iter().next().unwrap());
+            return Some(
+                rendered
+                    .into_iter()
+                    .next()
+                    .expect("rendered has exactly one element"),
+            );
         }
 
         (saw_enum_member && enum_member_count > 1).then_some(rendered.join(" | "))

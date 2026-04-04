@@ -770,7 +770,8 @@ impl<'a> CheckerState<'a> {
                         // before mapping against the source type args. This prevents the
                         // contextual substitution from using unwidened literal types that
                         // would cause false TS2345 mismatches.
-                        let elem = common::array_element_type(self.ctx.types, target).unwrap();
+                        let elem = common::array_element_type(self.ctx.types, target)
+                            .expect("array target should have element type");
                         let widened_elem = tsz_solver::operations::widening::widen_literal_type(
                             self.ctx.types,
                             elem,
