@@ -160,6 +160,9 @@ pub enum TransformDirective {
         function_node: NodeIndex,
     },
 
+    /// ES5 Generator
+    ES5GeneratorFunction { function_node: NodeIndex },
+
     /// ES5 For-Of: Transform to iterator loop with __values helper
     ES5ForOf {
         /// Original for-of statement node

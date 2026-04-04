@@ -40,6 +40,9 @@ enum EmitDirective {
     ES5AsyncFunction {
         function_node: NodeIndex,
     },
+    ES5GeneratorFunction {
+        function_node: NodeIndex,
+    },
     ES5ForOf {
         for_of_node: NodeIndex,
     },
@@ -131,6 +134,11 @@ impl<'a> Printer<'a> {
             },
             TransformDirective::ES5AsyncFunction { function_node } => {
                 EmitDirective::ES5AsyncFunction {
+                    function_node: *function_node,
+                }
+            }
+            TransformDirective::ES5GeneratorFunction { function_node } => {
+                EmitDirective::ES5GeneratorFunction {
                     function_node: *function_node,
                 }
             }
@@ -686,6 +694,10 @@ impl<'a> Printer<'a> {
                 }
 
                 self.emit_node_default(node, idx);
+            }
+
+            EmitDirective::ES5GeneratorFunction { function_node } => {
+                self.emit_generator_function_es5(function_node);
             }
 
             EmitDirective::ES5ForOf { for_of_node } => {
@@ -1457,6 +1469,10 @@ impl<'a> Printer<'a> {
 
                 self.emit_chained_previous(node, idx, directives, index);
             }
+            EmitDirective::ES5GeneratorFunction { function_node } => {
+                self.emit_generator_function_es5(*function_node);
+            }
+
             EmitDirective::ES5ForOf { for_of_node } => {
                 if let Some(for_of_node_ref) = self.arena.get(*for_of_node)
                     && let Some(for_in_of) = self.arena.get_for_in_of(for_of_node_ref)
