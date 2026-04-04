@@ -382,6 +382,13 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Suppress TS2339 when the file has syntax parse errors.
+        // This prevents cascading errors when the parser has already reported syntax issues
+        // (e.g., malformed import.defer() without parentheses → TS1005 already emitted).
+        if self.has_syntax_parse_errors() {
+            return;
+        }
+
         // Suppress TS2339 when the property access is on an expression rooted in an
         // unresolved import (TS2307 was already emitted for the missing module).
         // This prevents cascading errors when a namespace import fails to resolve.
