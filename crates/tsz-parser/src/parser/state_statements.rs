@@ -1313,19 +1313,18 @@ impl ParserState {
 
         // Check if 'await' is used as a label in a context where it's reserved
         // (static block or async context). Emit TS1003 (Identifier expected).
-        if let Some(ident) = self.arena.get_identifier_at(label) {
-            if ident.escaped_text == "await"
-                && (self.in_static_block_context() || self.in_async_context())
-            {
-                use tsz_common::diagnostics::diagnostic_codes;
-                if let Some(label_node) = self.arena.get(label) {
-                    self.parse_error_at(
-                        label_node.pos,
-                        label_node.end - label_node.pos,
-                        "Identifier expected.",
-                        diagnostic_codes::IDENTIFIER_EXPECTED,
-                    );
-                }
+        if let Some(ident) = self.arena.get_identifier_at(label)
+            && ident.escaped_text == "await"
+            && (self.in_static_block_context() || self.in_async_context())
+        {
+            use tsz_common::diagnostics::diagnostic_codes;
+            if let Some(label_node) = self.arena.get(label) {
+                self.parse_error_at(
+                    label_node.pos,
+                    label_node.end - label_node.pos,
+                    "Identifier expected.",
+                    diagnostic_codes::IDENTIFIER_EXPECTED,
+                );
             }
         }
 

@@ -462,7 +462,16 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 // TS1042: async modifier cannot be used on module/namespace declarations
                 self.check_async_modifier_on_declaration(&module.modifiers);
 
+                // Determine if this module has its own `declare` modifier (vs. one
+                // inherited from a dotted-namespace parent like `declare namespace A.B {}`).
+                // For a nested segment, the `declare` keyword position will be before the
+                // module's own start position because the modifier was cloned from the parent.
                 let is_ambient = self.has_declare_modifier(&module.modifiers);
+                let is_own_declare = is_ambient
+                    && self
+                        .get_declare_modifier(&module.modifiers)
+                        .and_then(|mod_idx| self.ctx.arena.get(mod_idx))
+                        .is_none_or(|mod_node| mod_node.pos >= node.pos);
                 if module.body.is_some() {
                     self.check_module_body(module.body);
                 }
@@ -470,7 +479,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 // TS1038: Check for 'declare' modifiers inside ambient module/namespace
                 // TS1039: Check for initializers in ambient contexts
                 // Even if we don't fully check the body, we still need to emit these errors
-                if is_ambient && module.body.is_some() {
+                // Only check if the `declare` is own (not inherited from dotted parent).
+                if is_own_declare && module.body.is_some() {
                     self.check_declare_modifiers_in_ambient_body(module.body);
                     self.check_initializers_in_ambient_body(module.body);
 
