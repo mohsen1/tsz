@@ -441,6 +441,18 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        // For generator function callbacks, the callable return type is
+        // Generator<Y, R, N> or AsyncGenerator<Y, R, N>, but the body's
+        // `return` statements produce TReturn (R), not the full Generator type.
+        // Elaborating return statements against the full Generator type produces
+        // false TS2322 errors (e.g., "Type 'number' is not assignable to type
+        // 'Generator<0, 0, 1>'"). Skip callback return elaboration for
+        // generators — the body's return type checking is already handled
+        // correctly in check_return_statement with the unwrapped TReturn type.
+        if func.asterisk_token {
+            return false;
+        }
+
         // Skip elaboration when the expected return type contains unresolved
         // type parameters or inference placeholders. During generic call
         // inference, the expected callback return type may still reference
