@@ -852,6 +852,17 @@ impl<'a> CheckerState<'a> {
             false
         };
 
+        // Check if target is an index signature type (e.g., { [s: string]: A })
+        // These should prefer TS2741 for missing properties over TS2322 suppression
+        let target_is_index_signature = || -> bool {
+            if let Some(shape) =
+                tsz_solver::type_queries::get_object_shape(self.ctx.types, target)
+            {
+                return shape.string_index.is_some() || shape.number_index.is_some();
+            }
+            false
+        };
+
         if is_generic_application_with_type_params(source)
             || is_generic_application_with_type_params(target)
         {
@@ -906,7 +917,8 @@ impl<'a> CheckerState<'a> {
                     && !contains_type_parameters(target))
                 && !(!has_own_signature_type_params(source)
                     && contains_type_parameters(source)
-                    && !contains_type_parameters(target)))
+                    && !contains_type_parameters(target))
+                && !target_is_index_signature())
     }
 
     /// Targeted suppression for member type compatibility checks (TS2416/TS2430).
