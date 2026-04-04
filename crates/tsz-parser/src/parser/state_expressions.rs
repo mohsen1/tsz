@@ -1474,7 +1474,7 @@ impl ParserState {
                     // In this context, 'await' is used as an identifier and CloseBracketToken is expected
                     let is_computed_property_context = next_token == SyntaxKind::CloseBracketToken;
                     // Special case: Don't emit TS1109 for 'await' when followed by colon (labeled statement)
-                    // The labeled statement parser will emit TS1003 (Identifier expected) in static blocks
+                    // The labeled statement parser will emit TS1109 (Expression expected) in static blocks
                     let is_label_context = next_token == SyntaxKind::ColonToken;
 
                     if !has_following_expression

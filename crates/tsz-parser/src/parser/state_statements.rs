@@ -598,12 +598,13 @@ impl ParserState {
                 {
                     // 'await' as a label (e.g., "await: statement")
                     // In static blocks, 'await' is reserved and cannot be used as a label.
-                    // tsc emits TS1003 "Identifier expected." in this context.
+                    // tsc treats `await` as a keyword, tries to parse an await expression,
+                    // and emits TS1109 "Expression expected." at the colon position.
                     if self.in_static_block_context() {
                         use tsz_common::diagnostics::diagnostic_codes;
                         self.parse_error_at_current_token(
-                            "Identifier expected.",
-                            diagnostic_codes::IDENTIFIER_EXPECTED,
+                            "Expression expected.",
+                            diagnostic_codes::EXPRESSION_EXPECTED,
                         );
                     }
                     self.parse_labeled_statement()
@@ -1354,7 +1355,7 @@ impl ParserState {
         // Note: tsc does NOT emit TS1003 for `await` used as a label in static
         // blocks or async contexts. Instead, it treats `await` as a keyword and
         // parses it as an expression, emitting TS1109 when `:<statement>` follows.
-        // We parse it as a labeled statement but skip the TS1003 error to match tsc.
+        // The TS1109 error is emitted in parse_statement() before calling this function.
 
         // Check for duplicate labels (TS1114) and record this label
         let label_name = if let Some(label_node) = self.arena.get(label) {
