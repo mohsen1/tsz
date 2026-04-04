@@ -1091,29 +1091,44 @@ pub fn collect_inline_exported_var_names(
         let Some(node) = arena.get(stmt_idx) else {
             continue;
         };
-        // Direct: export let/const/var x = ...
+        // Direct: export let/const/var x = ... (including `export declare const`)
+        // In CJS, all exported names become `exports.X` properties — even `declare`
+        // exports that have no runtime initializer. tsc qualifies reads of these
+        // names as `exports.X` and wraps calls as `(0, exports.X)()`.
         if node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
             if let Some(var_stmt) = arena.get_variable(node)
                 && arena.has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
-                && !arena.has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
             {
                 for &decl_idx in &var_stmt.declarations.nodes {
                     collect_declaration_names(arena, decl_idx, &mut names);
                 }
             }
         }
-        // Wrapped: ExportDeclaration { clause: VariableStatement }
+        // Wrapped: ExportDeclaration { clause: ... }
         else if node.kind == syntax_kind_ext::EXPORT_DECLARATION
             && let Some(export_decl) = arena.get_export_decl(node)
             && !export_decl.is_type_only
             && export_decl.module_specifier.is_none()
             && let Some(clause_node) = arena.get(export_decl.export_clause)
-            && clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-            && let Some(var_stmt) = arena.get_variable(clause_node)
-            && !arena.has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
         {
-            for &decl_idx in &var_stmt.declarations.nodes {
-                collect_declaration_names(arena, decl_idx, &mut names);
+            if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                && let Some(var_stmt) = arena.get_variable(clause_node)
+            {
+                for &decl_idx in &var_stmt.declarations.nodes {
+                    collect_declaration_names(arena, decl_idx, &mut names);
+                }
+            }
+            // ExportDeclaration { clause: ImportEqualsDeclaration }
+            // `export import b = a.foo` — the alias name becomes `exports.b`
+            else if clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                && let Some(import_decl) = arena.get_import_decl(clause_node)
+            {
+                if let Some(name_node) = arena.get(import_decl.import_clause)
+                    && name_node.kind == SyntaxKind::Identifier as u16
+                    && let Some(ident) = arena.get_identifier(name_node)
+                {
+                    names.push(ident.escaped_text.clone());
+                }
             }
         }
     }

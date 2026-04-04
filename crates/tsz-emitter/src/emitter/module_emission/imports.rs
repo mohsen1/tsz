@@ -726,15 +726,33 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // `import X = require("module")` uses const/var based on target.
-        // `import X = Y` (entity name) always uses `var` per TSC behavior.
-        if is_external {
+        // Check if this import alias is a CJS exported name.
+        // In that case, tsc emits `exports.b = a.foo;` directly (no `var`).
+        let alias_name = self
+            .arena
+            .get(import.import_clause)
+            .and_then(|n| self.arena.get_identifier(n))
+            .map(|id| id.escaped_text.clone());
+        let is_exported_var = alias_name
+            .as_ref()
+            .is_some_and(|name| self.commonjs_exported_var_names.contains(name.as_str()));
+
+        if is_exported_var {
+            // Emit directly as `exports.b = ...;` — the identifier substitution
+            // in emit() will produce `exports.b`.
+            self.emit(import.import_clause);
+            self.write(" = ");
+        } else if is_external {
+            // `import X = require("module")` uses const/var based on target.
             self.write_var_or_const();
+            self.emit(import.import_clause);
+            self.write(" = ");
         } else {
+            // `import X = Y` (entity name) always uses `var` per TSC behavior.
             self.write("var ");
+            self.emit(import.import_clause);
+            self.write(" = ");
         }
-        self.emit(import.import_clause);
-        self.write(" = ");
 
         if module_node.kind == SyntaxKind::StringLiteral as u16 {
             if let Some(lit) = self.arena.get_literal(module_node) {
