@@ -118,6 +118,8 @@ pub struct AsyncES5Transformer<'a> {
     source_text: Option<&'a str>,
     pub(crate) state: AsyncTransformState,
     helpers_needed: HelpersNeeded,
+    /// When true, looks for yield instead of await.
+    pub(crate) generator_mode: bool,
 }
 
 impl<'a> AsyncES5Transformer<'a> {
@@ -128,6 +130,7 @@ impl<'a> AsyncES5Transformer<'a> {
             source_text: None,
             state: AsyncTransformState::new(),
             helpers_needed: HelpersNeeded::default(),
+            generator_mode: false,
         }
     }
 
@@ -136,6 +139,20 @@ impl<'a> AsyncES5Transformer<'a> {
     }
 
     /// Get the helpers needed after transformation
+    pub(crate) fn suspension_kind(&self) -> u16 {
+        if self.generator_mode {
+            syntax_kind_ext::YIELD_EXPRESSION
+        } else {
+            syntax_kind_ext::AWAIT_EXPRESSION
+        }
+    }
+
+    pub(crate) fn is_suspension_expression(&self, idx: NodeIndex) -> bool {
+        self.arena
+            .get(idx)
+            .is_some_and(|n| n.kind == self.suspension_kind())
+    }
+
     pub const fn get_helpers_needed(&self) -> &HelpersNeeded {
         &self.helpers_needed
     }
@@ -327,6 +344,76 @@ impl<'a> AsyncES5Transformer<'a> {
         }
     }
 
+    pub fn transform_generator_function(&mut self, func_idx: NodeIndex) -> IRNode {
+        self.state.reset();
+        self.generator_mode = true;
+        self.helpers_needed.generator = true;
+        let Some(node) = self.arena.get(func_idx) else {
+            self.generator_mode = false;
+            return IRNode::Undefined;
+        };
+        let (name, params, body_idx) = if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            if let Some(func) = self.arena.get_function(node) {
+                let name = if func.name.is_none() {
+                    None
+                } else {
+                    Some(crate::transforms::emit_utils::identifier_text_or_empty(
+                        self.arena, func.name,
+                    ))
+                };
+                let params = self.collect_parameters(&func.parameters);
+                (name, params, func.body)
+            } else {
+                self.generator_mode = false;
+                return IRNode::Undefined;
+            }
+        } else {
+            self.generator_mode = false;
+            return IRNode::Undefined;
+        };
+        let has_yield = self.body_contains_await(body_idx);
+        self.state.has_await = has_yield;
+        self.state.captures_arguments =
+            tsz_parser::syntax::transform_utils::contains_arguments_reference(self.arena, body_idx);
+        let mut generator_body = self.build_generator_body(body_idx, has_yield, &[]);
+        let hoisted_vars = Self::extract_and_remove_var_decls(&mut generator_body);
+        let ir_params: Vec<IRParam> = params.iter().map(|p| IRParam::new(p.clone())).collect();
+        let mut body = Vec::new();
+        for var_name in &hoisted_vars {
+            body.push(IRNode::VarDecl {
+                name: var_name.clone().into(),
+                initializer: None,
+            });
+        }
+        if self.state.captures_arguments {
+            body.push(IRNode::VarDecl {
+                name: "arguments_1".to_string().into(),
+                initializer: Some(Box::new(IRNode::Raw("arguments".to_string().into()))),
+            });
+        }
+        body.push(generator_body);
+        self.generator_mode = false;
+        if let Some(func_name) = name {
+            IRNode::FunctionDecl {
+                name: func_name.into(),
+                parameters: ir_params,
+                body,
+                body_source_range: None,
+                leading_comment: None,
+            }
+        } else {
+            IRNode::FunctionExpr {
+                name: None,
+                parameters: ir_params,
+                body,
+                is_expression_body: false,
+                body_source_range: None,
+            }
+        }
+    }
+
     /// Extract a custom promise constructor expression from a function's return type annotation.
     fn extract_promise_constructor(&self, type_annotation: NodeIndex) -> Option<String> {
         let type_node = self.arena.get(type_annotation)?;
@@ -477,8 +564,8 @@ impl<'a> AsyncES5Transformer<'a> {
         // Handle concise arrow body (expression)
         // For concise arrow functions like `async () => await foo()`, the body is an expression
         // not a statement. We treat this as an implicit return of the expression.
-        if node.kind == syntax_kind_ext::AWAIT_EXPRESSION {
-            // return await expr -> yield, then return _a.sent()
+        if node.kind == self.suspension_kind() {
+            // return await/yield expr -> yield, then return _a.sent()
             self.process_await_expression(idx, cases, current_statements, current_label);
             current_statements.push(IRNode::ReturnStatement(Some(Box::new(
                 IRNode::GeneratorOp {
@@ -533,8 +620,8 @@ impl<'a> AsyncES5Transformer<'a> {
                                 comment: Some("return".to_string().into()),
                             },
                         ))));
-                    } else if super::emit_utils::is_await_expression(self.arena, ret.expression) {
-                        // return await expr; -> yield, then return _a.sent()
+                    } else if self.is_suspension_expression(ret.expression) {
+                        // return await/yield expr; -> yield, then return _a.sent()
                         self.process_await_expression(
                             ret.expression,
                             cases,
@@ -604,8 +691,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 if let Some(throw_data) = self.arena.get_return_statement(node) {
                     if self.contains_await_recursive(throw_data.expression) {
                         // throw await expr; -> yield expr, then throw _a.sent()
-                        if super::emit_utils::is_await_expression(self.arena, throw_data.expression)
-                        {
+                        if self.is_suspension_expression(throw_data.expression) {
                             self.process_await_expression(
                                 throw_data.expression,
                                 cases,
@@ -649,7 +735,7 @@ impl<'a> AsyncES5Transformer<'a> {
         };
 
         // Check for await expression
-        if node.kind == syntax_kind_ext::AWAIT_EXPRESSION {
+        if node.kind == self.suspension_kind() {
             self.process_await_expression(idx, cases, current_statements, current_label);
             // Add _a.sent() to consume the result
             current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::GeneratorSent)));
@@ -712,9 +798,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 crate::transforms::emit_utils::identifier_text_or_empty(self.arena, decl.name);
 
             // Check if initializer contains await
-            if decl.initializer.is_some()
-                && super::emit_utils::is_await_expression(self.arena, decl.initializer)
-            {
+            if decl.initializer.is_some() && self.is_suspension_expression(decl.initializer) {
                 // var x = await foo(); -> first declare var x, then yield foo(), then x = _a.sent()
                 // We need to declare the variable first to avoid ReferenceError in strict mode
                 current_statements.push(IRNode::VarDecl {
@@ -1109,7 +1193,7 @@ impl<'a> AsyncES5Transformer<'a> {
         };
 
         // Check if this is an await expression
-        if node.kind == syntax_kind_ext::AWAIT_EXPRESSION {
+        if node.kind == self.suspension_kind() {
             return true;
         }
 

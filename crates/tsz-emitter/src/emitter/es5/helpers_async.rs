@@ -519,6 +519,26 @@ impl<'a> Printer<'a> {
         self.write("}");
     }
 
+    pub(in crate::emitter) fn emit_generator_function_es5(&mut self, function_node: NodeIndex) {
+        use crate::transforms::async_es5_ir::AsyncES5Transformer;
+        use crate::transforms::ir_printer::IRPrinter;
+        let mut transformer = AsyncES5Transformer::new(self.arena);
+        if let Some(text) = self.source_text {
+            transformer.set_source_text(text);
+        }
+        let ir = transformer.transform_generator_function(function_node);
+        let mut printer = IRPrinter::with_arena(self.arena);
+        if let Some(text) = self.source_text {
+            printer.set_source_text(text);
+        }
+        printer.set_indent_level(self.writer.indent_level());
+        if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
+            printer.set_tslib_prefix(true);
+        }
+        printer.emit(&ir);
+        self.write(&printer.take_output());
+    }
+
     fn block_has_only_function_decls(&self, body: NodeIndex) -> bool {
         let Some(body_node) = self.arena.get(body) else {
             return false;
@@ -778,6 +798,7 @@ impl<'a> Printer<'a> {
             | TransformDirective::ES5Enum { .. }
             | TransformDirective::ES5ArrowFunction { .. }
             | TransformDirective::ES5AsyncFunction { .. }
+            | TransformDirective::ES5GeneratorFunction { .. }
             | TransformDirective::ES5ForOf { .. }
             | TransformDirective::ES5ObjectLiteral { .. }
             | TransformDirective::ES5VariableDeclarationList { .. }
