@@ -962,7 +962,7 @@ impl<'a> CheckerState<'a> {
                 } else if method.name.is_some() {
                     method.name
                 } else {
-                    method.body
+                    member_idx
                 };
                 self.error_at_node(
                     error_node,
@@ -1786,7 +1786,7 @@ impl<'a> CheckerState<'a> {
                     } else if accessor.name.is_some() {
                         accessor.name
                     } else {
-                        accessor.body
+                        member_idx
                     };
                     self.error_at_node(
                         error_node,

@@ -126,8 +126,9 @@ impl<'a> CheckerState<'a> {
                         // For experimental decorators, the decorator is called as
                         // decoratorExpr(classConstructor). If no call signature exists
                         // or call resolution fails, emit TS1238.
+                        // tsc anchors TS1238 at the decorator node (including @), not just the expression.
                         self.check_class_decorator_call_signature(
-                            decorator.expression,
+                            mod_idx,
                             decorator_type,
                             stmt_idx,
                             class,
@@ -136,7 +137,8 @@ impl<'a> CheckerState<'a> {
                         // For ES decorators, decorators are called as
                         // decoratorExpr(value, context). If the decorator function
                         // requires more than 2 parameters, emit TS1238.
-                        self.check_es_class_decorator_arity(decorator.expression, decorator_type);
+                        // tsc anchors TS1238 at the decorator node (including @), not just the expression.
+                        self.check_es_class_decorator_arity(mod_idx, decorator_type);
                     }
                 }
             }
@@ -342,18 +344,35 @@ impl<'a> CheckerState<'a> {
 
                     if let Some(modifiers) = member_modifiers {
                         // TS18010: An accessibility modifier cannot be used with a private identifier.
-                        let has_ast_accessibility = self.has_private_modifier(modifiers)
-                            || self.has_protected_modifier(modifiers)
-                            || self.has_modifier_kind(
-                                modifiers,
-                                tsz_scanner::SyntaxKind::PublicKeyword,
-                            );
+                        // tsc points the error at the modifier node, not the member.
+                        let accessibility_modifier = self
+                            .ctx
+                            .arena
+                            .find_modifier(modifiers, tsz_scanner::SyntaxKind::PublicKeyword)
+                            .or_else(|| {
+                                self.ctx.arena.find_modifier(
+                                    modifiers,
+                                    tsz_scanner::SyntaxKind::PrivateKeyword,
+                                )
+                            })
+                            .or_else(|| {
+                                self.ctx.arena.find_modifier(
+                                    modifiers,
+                                    tsz_scanner::SyntaxKind::ProtectedKeyword,
+                                )
+                            });
                         // In JS files, accessibility modifiers come from JSDoc tags
                         // (@public, @private, @protected) rather than AST modifiers.
-                        let has_jsdoc_accessibility = !has_ast_accessibility
+                        let has_jsdoc_accessibility = accessibility_modifier.is_none()
                             && self.is_js_file()
                             && self.has_jsdoc_accessibility_modifier(member_idx);
-                        if has_ast_accessibility || has_jsdoc_accessibility {
+                        if let Some(mod_idx) = accessibility_modifier {
+                            self.error_at_node(
+                                mod_idx,
+                                diagnostic_messages::AN_ACCESSIBILITY_MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
+                                diagnostic_codes::AN_ACCESSIBILITY_MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
+                            );
+                        } else if has_jsdoc_accessibility {
                             self.error_at_node(
                                 member_idx,
                                 diagnostic_messages::AN_ACCESSIBILITY_MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
@@ -362,20 +381,26 @@ impl<'a> CheckerState<'a> {
                         }
 
                         // TS18019: 'declare'/'abstract' modifier cannot be used with a private identifier.
-                        // Only applies to property declarations. For methods and accessors,
-                        // tsc emits TS1031 ("'declare' modifier cannot appear on class elements
-                        // of this kind") instead, which is handled by the parser/modifier checker.
+                        // Only applies to property declarations. tsc points at the modifier node.
                         if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-                            if self.has_declare_modifier(modifiers) {
+                            if let Some(mod_idx) = self
+                                .ctx
+                                .arena
+                                .find_modifier(modifiers, tsz_scanner::SyntaxKind::DeclareKeyword)
+                            {
                                 self.error_at_node_msg(
-                                    member_idx,
+                                    mod_idx,
                                     diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
                                     &["declare"],
                                 );
                             }
-                            if self.has_abstract_modifier(modifiers) {
+                            if let Some(mod_idx) = self
+                                .ctx
+                                .arena
+                                .find_modifier(modifiers, tsz_scanner::SyntaxKind::AbstractKeyword)
+                            {
                                 self.error_at_node_msg(
-                                    member_idx,
+                                    mod_idx,
                                     diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
                                     &["abstract"],
                                 );

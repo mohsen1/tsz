@@ -235,8 +235,11 @@ impl ParserState {
 
     // Parse async arrow function: async (x) => ... or async x => ...
     pub(crate) fn parse_async_arrow_function_expression(&mut self) -> NodeIndex {
+        // Capture position of 'async' keyword before consuming it, so the arrow
+        // function node span starts at 'async' (matching tsc's node.pos).
+        let async_pos = self.token_pos();
         self.parse_expected(SyntaxKind::AsyncKeyword);
-        self.parse_arrow_function_expression_with_async(true)
+        self.parse_arrow_function_expression_with_async_at(true, async_pos)
     }
 
     // Check if we're at the start of an arrow function
@@ -658,8 +661,14 @@ impl ParserState {
         &mut self,
         is_async: bool,
     ) -> NodeIndex {
-        let start_pos = self.token_pos();
+        self.parse_arrow_function_expression_with_async_at(is_async, self.token_pos())
+    }
 
+    fn parse_arrow_function_expression_with_async_at(
+        &mut self,
+        is_async: bool,
+        start_pos: u32,
+    ) -> NodeIndex {
         // Set async context BEFORE parsing parameters
         // This is important for correctly handling 'await' in parameter defaults:
         // - `async (a = await) => {}` should emit TS1109 (Expression expected)

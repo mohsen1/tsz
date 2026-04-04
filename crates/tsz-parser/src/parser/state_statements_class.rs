@@ -430,6 +430,9 @@ impl ParserState {
     /// Parse a single parameter
     pub(crate) fn parse_parameter(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
+        // Capture full start (including leading trivia) for diagnostics like TS1433,
+        // matching tsc's use of node.pos for error ranges.
+        let full_start_pos = self.token_full_start();
 
         // Parse parameter decorators and parameter modifiers (public/private/readonly).
         // We store decorators in the same `modifiers` list used elsewhere in the Thin AST.
@@ -480,12 +483,12 @@ impl ParserState {
         }
 
         // TS1433: Neither decorators nor modifiers may be applied to 'this' parameters.
-        // Error points at the decorator/modifier position (start_pos), not the 'this' keyword.
+        // Error uses full_start_pos (with leading trivia) to match tsc's node.pos range.
         if self.is_token(SyntaxKind::ThisKeyword) && modifiers.is_some() {
             let this_end = self.token_end();
             self.parse_error_at(
-                start_pos,
-                this_end - start_pos,
+                full_start_pos,
+                this_end - full_start_pos,
                 "Neither decorators nor modifiers may be applied to 'this' parameters.",
                 diagnostic_codes::NEITHER_DECORATORS_NOR_MODIFIERS_MAY_BE_APPLIED_TO_THIS_PARAMETERS,
             );
