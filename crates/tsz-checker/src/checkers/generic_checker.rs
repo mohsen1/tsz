@@ -11,6 +11,28 @@ use tsz_solver::TypeId;
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    /// Check if a type node is an `infer` type, looking through parentheses.
+    /// Returns true for `infer T`, `(infer T)`, `((infer T))`, etc.
+    fn is_infer_type_node_through_parens(&self, mut node_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        for _ in 0..10 {
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::INFER_TYPE {
+                return true;
+            }
+            if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
+                if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
+                    node_idx = wrapped.type_node;
+                    continue;
+                }
+            }
+            return false;
+        }
+        false
+    }
+
     fn type_nodes_structurally_equal(&self, left: NodeIndex, right: NodeIndex) -> bool {
         if let (Some(left_text), Some(right_text)) = (self.node_text(left), self.node_text(right))
             && left_text == right_text
@@ -912,9 +934,9 @@ impl<'a> CheckerState<'a> {
                 // types (e.g., `R extends Reducer<any, infer A>`). TSC does not emit
                 // TS2344 for infer positions — constraints on inferred type params
                 // are checked during conditional type evaluation, not here.
+                // Also look through parenthesized types: `IsNumber<(infer N)>`.
                 if let Some(&arg_idx) = type_args_list.nodes.get(i)
-                    && let Some(arg_node) = self.ctx.arena.get(arg_idx)
-                    && arg_node.kind == tsz_parser::parser::syntax_kind_ext::INFER_TYPE
+                    && self.is_infer_type_node_through_parens(arg_idx)
                 {
                     continue;
                 }
