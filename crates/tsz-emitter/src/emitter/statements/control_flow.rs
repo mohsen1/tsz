@@ -224,7 +224,11 @@ impl<'a> Printer<'a> {
         };
 
         self.write("for (");
-        self.emit(loop_stmt.initializer);
+        if self.in_system_execute_body {
+            self.emit_for_initializer_strip_var(loop_stmt.initializer);
+        } else {
+            self.emit(loop_stmt.initializer);
+        }
         // Map first `;` in for-header
         self.pending_source_pos = semi1_src;
         self.write(";");
@@ -256,7 +260,13 @@ impl<'a> Printer<'a> {
         };
 
         self.write("for (");
-        self.emit(for_in_of.initializer);
+        // In System modules, `var` declarations are hoisted to the module scope,
+        // so `for (var key in ...)` becomes `for (key in ...)`.
+        if self.in_system_execute_body {
+            self.emit_for_initializer_strip_var(for_in_of.initializer);
+        } else {
+            self.emit(for_in_of.initializer);
+        }
         self.write(" in ");
         self.emit(for_in_of.expression);
         // Map closing `)` — scan backward from body start
@@ -295,7 +305,11 @@ impl<'a> Printer<'a> {
             self.write("await ");
         }
         self.write("(");
-        self.emit(for_in_of.initializer);
+        if self.in_system_execute_body {
+            self.emit_for_initializer_strip_var(for_in_of.initializer);
+        } else {
+            self.emit(for_in_of.initializer);
+        }
         self.write(" of ");
         self.emit(for_in_of.expression);
         // Map closing `)` — scan backward from body start
@@ -388,6 +402,44 @@ impl<'a> Printer<'a> {
 
     /// Emit a loop body statement. If the body is a block, emit it inline.
     /// If it's a single statement, put it on a new indented line (matching tsc behavior).
+    /// Emit a for/for-in/for-of initializer, stripping `var` if the
+    /// initializer is a `var` declaration list (because the var is hoisted
+    /// in System modules). `let`/`const` are emitted normally.
+    fn emit_for_initializer_strip_var(&mut self, initializer: NodeIndex) {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return;
+        };
+        if init_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            self.emit(initializer);
+            return;
+        }
+        // Only strip `var`, not `let`/`const`
+        let is_var = (init_node.flags as u32
+            & (node_flags::LET | node_flags::CONST))
+            == 0;
+        if !is_var {
+            self.emit(initializer);
+            return;
+        }
+        // Emit just the variable names (without `var` keyword)
+        let Some(decl_list) = self.arena.get_variable(init_node) else {
+            self.emit(initializer);
+            return;
+        };
+        for (i, &decl_idx) in decl_list.declarations.nodes.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            self.emit(decl.name);
+        }
+    }
+
     fn emit_loop_body(&mut self, body: NodeIndex) {
         let is_block = self
             .arena
