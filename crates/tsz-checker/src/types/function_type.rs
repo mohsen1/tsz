@@ -481,6 +481,25 @@ impl<'a> CheckerState<'a> {
         // or non-callable type that provides no parameter types.
         let mut _any_param_contextually_typed = false;
 
+        // Count non-`this` parameters for contextual arity checks.
+        // The contextual FunctionShape stores `this` in `this_type`, not in `params`,
+        // so the arity passed to contextual extractors must exclude `this` parameters.
+        let non_this_param_count = parameters
+            .nodes
+            .iter()
+            .filter(|&&idx| {
+                self.ctx
+                    .arena
+                    .get(idx)
+                    .and_then(|node| self.ctx.arena.get_parameter(node))
+                    .and_then(|p| self.ctx.arena.get(p.name))
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .is_none_or(|ident| {
+                        self.ctx.types.intern_string(&ident.escaped_text) != this_atom
+                    })
+            })
+            .count();
+
         let mut contextual_index = 0;
         for &param_idx in &parameters.nodes {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
@@ -514,7 +533,7 @@ impl<'a> CheckerState<'a> {
                             self.contextual_parameter_type_for_call_with_env_from_expected(
                                 expected,
                                 contextual_index,
-                                parameters.nodes.len(),
+                                non_this_param_count,
                             )
                             .or_else(|| {
                                 self.contextual_parameter_type_with_env_from_expected(
