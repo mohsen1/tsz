@@ -855,8 +855,7 @@ impl<'a> CheckerState<'a> {
         // Check if target is an index signature type (e.g., { [s: string]: A })
         // These should prefer TS2741 for missing properties over TS2322 suppression
         let target_is_index_signature = || -> bool {
-            if let Some(shape) =
-                tsz_solver::type_queries::get_object_shape(self.ctx.types, target)
+            if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, target)
             {
                 return shape.string_index.is_some() || shape.number_index.is_some();
             }
