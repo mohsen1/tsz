@@ -667,9 +667,14 @@ impl ParserState {
             SyntaxKind::ForKeyword => self.parse_for_statement(),
             SyntaxKind::SemicolonToken => self.parse_empty_statement(),
             SyntaxKind::ExportKeyword => {
-                // Note: TS1184 for `export` in block context is NOT emitted by the parser.
-                // The checker emits the specific grammar errors (TS1231, TS1233, TS1258)
-                // and only emits TS1184 for `export` on class/function declarations.
+                // TS1184: 'export' modifier cannot appear inside a block statement.
+                if self.in_block_context() {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "Modifiers cannot appear here.",
+                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                    );
+                }
                 self.parse_export_declaration()
             }
             SyntaxKind::ImportKeyword => self.parse_statement_import_keyword(),

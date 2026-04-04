@@ -4101,7 +4101,6 @@ fn test_reserved_word_emits_ts1359() {
 }
 
 #[test]
-#[ignore = "parser does not yet emit TS1184 for export keyword inside block scope"]
 fn test_parser_export_in_block_emits_ts1184() {
     // export inside a block should emit TS1184 "Modifiers cannot appear here."
     let source = "{ export var x = 1; }";
