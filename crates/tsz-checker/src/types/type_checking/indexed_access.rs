@@ -1224,25 +1224,44 @@ impl<'a> CheckerState<'a> {
                     &property_name,
                     object_type_for_check,
                 ) {
-                    let object_type_str = self
-                        .node_text(data.object_type)
-                        .map(|text| {
-                            let trimmed = text.trim();
-                            let trimmed = trimmed.strip_prefix('(').unwrap_or(trimmed);
-                            let trimmed = trimmed.strip_suffix(')').unwrap_or(trimmed);
-                            trimmed.trim().to_string()
-                        })
-                        .filter(|text| !text.is_empty())
-                        .unwrap_or_else(|| self.format_type(object_type));
-                    let message = format_message(
-                        diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                        &[property_name.as_str(), &object_type_str],
-                    );
-                    self.error_at_node(
-                        concrete_error_anchor,
-                        &message,
-                        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                    );
+                    // Suppress TS2339 for types containing type parameters,
+                    // index access types, or deferred types that cannot be resolved.
+                    // Check both the resolved type and the original type.
+                    let type_str_for_check = self.format_type(object_type_for_check);
+                    let should_suppress = crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        object_type_for_check,
+                    ) || tsz_solver::is_index_access_type(self.ctx.types, object_type_for_check)
+                        || tsz_solver::is_conditional_type(self.ctx.types, object_type_for_check)
+                        || object_type_for_check == TypeId::UNKNOWN
+                        || object_type_for_check == TypeId::ERROR
+                        || tsz_solver::is_index_access_type(self.ctx.types, object_type)
+                        || crate::query_boundaries::common::contains_type_parameters(
+                            self.ctx.types,
+                            object_type,
+                        )
+                        || type_str_for_check.contains('[');  // Index access type like T[K]
+                    if !should_suppress {
+                        let object_type_str = self
+                            .node_text(data.object_type)
+                            .map(|text| {
+                                let trimmed = text.trim();
+                                let trimmed = trimmed.strip_prefix('(').unwrap_or(trimmed);
+                                let trimmed = trimmed.strip_suffix(')').unwrap_or(trimmed);
+                                trimmed.trim().to_string()
+                            })
+                            .filter(|text| !text.is_empty())
+                            .unwrap_or_else(|| self.format_type(object_type));
+                        let message = format_message(
+                            diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                            &[property_name.as_str(), &object_type_str],
+                        );
+                        self.error_at_node(
+                            concrete_error_anchor,
+                            &message,
+                            diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                        );
+                    }
                     return;
                 }
                 // Don't trust property access results on deferred types (indexed
@@ -1561,16 +1580,28 @@ impl<'a> CheckerState<'a> {
             if self
                 .union_restricted_literal_property_is_missing(&property_name, concrete_object_type)
             {
-                let object_type_str = self.format_type(object_type);
-                let message = format_message(
-                    diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                    &[property_name.as_str(), &object_type_str],
-                );
-                self.error_at_node(
-                    error_anchor,
-                    &message,
-                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                );
+                // Suppress TS2339 for types containing type parameters or deferred types.
+                let type_str_for_check = self.format_type(concrete_object_type);
+                let should_suppress = crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    concrete_object_type,
+                ) || tsz_solver::is_index_access_type(self.ctx.types, concrete_object_type)
+                    || tsz_solver::is_conditional_type(self.ctx.types, concrete_object_type)
+                    || concrete_object_type == TypeId::UNKNOWN
+                    || concrete_object_type == TypeId::ERROR
+                    || type_str_for_check.contains('[');  // Index access type like T[K]
+                if !should_suppress {
+                    let object_type_str = self.format_type(object_type);
+                    let message = format_message(
+                        diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                        &[property_name.as_str(), &object_type_str],
+                    );
+                    self.error_at_node(
+                        error_anchor,
+                        &message,
+                        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    );
+                }
                 return true;
             }
             if self.get_numeric_index_from_string(&property_name).is_some()

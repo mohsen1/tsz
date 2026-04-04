@@ -660,8 +660,7 @@ fn types_are_comparable_for_assertion_inner(
     }
 
     // Check primitive ↔ literal comparability
-    if is_primitive_comparable(db, source, target) || is_primitive_comparable(db, target, source)
-    {
+    if is_primitive_comparable(db, source, target) || is_primitive_comparable(db, target, source) {
         return true;
     }
 
