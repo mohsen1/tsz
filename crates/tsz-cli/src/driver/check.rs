@@ -219,7 +219,7 @@ fn post_process_checker_diagnostics(
     // These are known false positives from conformance test analysis.
     if checker_diagnostics.iter().any(|d| d.code == 2345) {
         let file_path = file.file_name.as_str();
-        
+
         // Check if this file belongs to any of the known false-positive test patterns.
         // The conformance runner places tests in temp directories, so we check if
         // the original test name appears anywhere in the file path.
