@@ -97,30 +97,6 @@ impl<'a> CheckerState<'a> {
         {
             return param_type;
         }
-        // TS2304: Check for forward reference - typeof expression cannot reference
-        // a variable declared after it. This typically happens in return type annotations
-        // referencing function body locals (e.g., `function f(): typeof b { var b = 1; }`)
-        if is_identifier && let Some(ref name) = name_text {
-            if let Some(expr_node) = self.ctx.arena.get(type_query.expr_name) {
-                // Try to resolve the symbol to check for forward reference
-                if let Some(sym_id) = self.resolve_value_symbol_for_lowering(type_query.expr_name) {
-                    if let Some(symbol) = self.ctx.binder.get_symbol(tsz_binder::SymbolId(sym_id)) {
-                        if let Some((decl_start, _)) = symbol.value_declaration_span {
-                            // If the declaration is after the typeof expression, it's a forward reference
-                            if decl_start > expr_node.pos {
-                                self.report_not_found_at_boundary(
-                                    name.as_str(),
-                                    type_query.expr_name,
-                                    crate::query_boundaries::name_resolution::NameLookupKind::Value,
-                                );
-                                return TypeId::ERROR;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
 
         if let Some(sym_id) = self
             .resolve_value_symbol_for_lowering(type_query.expr_name)
