@@ -1348,7 +1348,10 @@ impl ParserState {
                 // declare abstract class
                 self.parse_declare_abstract_class(start_pos, declare_modifier)
             }
-            SyntaxKind::InterfaceKeyword => self.parse_interface_declaration(),
+            SyntaxKind::InterfaceKeyword => {
+                let modifiers = Some(self.make_node_list(vec![declare_modifier]));
+                self.parse_interface_declaration_with_modifiers(start_pos, modifiers)
+            }
             SyntaxKind::TypeKeyword => {
                 let modifiers = Some(self.make_node_list(vec![declare_modifier]));
                 self.parse_type_alias_declaration_with_modifiers(start_pos, modifiers)
