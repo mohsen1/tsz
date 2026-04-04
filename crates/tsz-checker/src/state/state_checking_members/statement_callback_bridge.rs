@@ -477,11 +477,16 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 }
 
                 // TS1038: Check for 'declare' modifiers inside ambient module/namespace
-                // TS1039: Check for initializers in ambient contexts
-                // Even if we don't fully check the body, we still need to emit these errors
                 // Only check if the `declare` is own (not inherited from dotted parent).
                 if is_own_declare && module.body.is_some() {
                     self.check_declare_modifiers_in_ambient_body(module.body);
+                }
+
+                // TS1039: Check for initializers in ambient contexts
+                // Even if we don't fully check the body, we still need to emit these errors
+                // Use is_ambient (not is_own_declare) since dotted namespace bodies
+                // are still ambient contexts.
+                if is_ambient && module.body.is_some() {
                     self.check_initializers_in_ambient_body(module.body);
 
                     // TS2300/TS2309: Check for duplicate export assignments even in ambient modules
