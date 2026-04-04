@@ -863,7 +863,9 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    pub(in crate::checkers_domain::jsx) fn should_suppress_ts7026_for_import_source(&mut self) -> bool {
+    pub(in crate::checkers_domain::jsx) fn should_suppress_ts7026_for_import_source(
+        &mut self,
+    ) -> bool {
         use tsz_common::checker_options::JsxMode;
 
         let jsx_mode = self.ctx.compiler_options.jsx_mode;
@@ -882,7 +884,10 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    pub(in crate::checkers_domain::jsx) fn get_cross_file_script_global_symbol_id(&self, name: &str) -> Option<SymbolId> {
+    pub(in crate::checkers_domain::jsx) fn get_cross_file_script_global_symbol_id(
+        &self,
+        name: &str,
+    ) -> Option<SymbolId> {
         let all_binders = self.ctx.all_binders.as_ref()?;
 
         if let Some(entries) = self
@@ -916,7 +921,10 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    pub(in crate::checkers_domain::jsx) fn get_cross_file_global_augmentation_symbol_id(&self, name: &str) -> Option<SymbolId> {
+    pub(in crate::checkers_domain::jsx) fn get_cross_file_global_augmentation_symbol_id(
+        &self,
+        name: &str,
+    ) -> Option<SymbolId> {
         let all_binders = self.ctx.all_binders.as_ref()?;
 
         if let Some(entries) = self
@@ -950,7 +958,10 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    pub(in crate::checkers_domain::jsx) fn get_jsx_namespace_export_symbol_id(&mut self, export_name: &str) -> Option<SymbolId> {
+    pub(in crate::checkers_domain::jsx) fn get_jsx_namespace_export_symbol_id(
+        &mut self,
+        export_name: &str,
+    ) -> Option<SymbolId> {
         let jsx_sym_id = self.get_jsx_namespace_type()?;
         let jsx_sym_id = self.resolve_jsx_namespace_target_symbol_id(jsx_sym_id)?;
         let file_idx = self.ctx.resolve_symbol_file_index(jsx_sym_id);
@@ -971,7 +982,10 @@ impl<'a> CheckerState<'a> {
         Some(export_sym_id)
     }
 
-    pub(in crate::checkers_domain::jsx) fn resolve_jsx_namespace_target_symbol_id(&mut self, sym_id: SymbolId) -> Option<SymbolId> {
+    pub(in crate::checkers_domain::jsx) fn resolve_jsx_namespace_target_symbol_id(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> Option<SymbolId> {
         self.resolve_symbol_id_from_origin(sym_id, &mut Vec::new())
     }
 
@@ -1103,7 +1117,10 @@ impl<'a> CheckerState<'a> {
         Some(current_sym)
     }
 
-    pub(in crate::checkers_domain::jsx) fn entity_name_text_in_arena(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+    pub(in crate::checkers_domain::jsx) fn entity_name_text_in_arena(
+        arena: &NodeArena,
+        idx: NodeIndex,
+    ) -> Option<String> {
         let node = arena.get(idx)?;
         if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
             return arena
@@ -1125,7 +1142,9 @@ impl<'a> CheckerState<'a> {
 
     // JSX Intrinsic Elements Type
 
-    pub(in crate::checkers_domain::jsx) fn get_intrinsic_elements_symbol_id(&mut self) -> Option<SymbolId> {
+    pub(in crate::checkers_domain::jsx) fn get_intrinsic_elements_symbol_id(
+        &mut self,
+    ) -> Option<SymbolId> {
         self.get_jsx_namespace_export_symbol_id("IntrinsicElements")
     }
 
@@ -1136,7 +1155,9 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get the JSX.IntrinsicAttributes type (e.g. `{ key?: string }` in React).
-    pub(in crate::checkers_domain::jsx) fn get_intrinsic_attributes_type(&mut self) -> Option<TypeId> {
+    pub(in crate::checkers_domain::jsx) fn get_intrinsic_attributes_type(
+        &mut self,
+    ) -> Option<TypeId> {
         let ia_sym_id = self.get_jsx_namespace_export_symbol_id("IntrinsicAttributes")?;
         let ty = self.type_reference_symbol_type(ia_sym_id);
         let evaluated = self.evaluate_type_with_env(ty);
