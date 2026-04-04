@@ -242,7 +242,10 @@ impl<'a> CheckerState<'a> {
         ))
     }
 
-    pub(in crate::error_reporter::call_errors) fn widen_function_like_call_source(&mut self, type_id: TypeId) -> TypeId {
+    pub(in crate::error_reporter::call_errors) fn widen_function_like_call_source(
+        &mut self,
+        type_id: TypeId,
+    ) -> TypeId {
         let type_id = self.evaluate_type_with_env(type_id);
         let type_id = self.resolve_type_for_property_access(type_id);
         let type_id = self.resolve_lazy_type(type_id);
@@ -293,7 +296,10 @@ impl<'a> CheckerState<'a> {
         current_has_type_params && !candidate_has_type_params
     }
 
-    pub(in crate::error_reporter) fn elaboration_source_expression_type(&mut self, expr_idx: NodeIndex) -> TypeId {
+    pub(in crate::error_reporter) fn elaboration_source_expression_type(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> TypeId {
         let snap = self.ctx.snapshot_diagnostics();
 
         let ty = self.compute_type_of_node_with_request(expr_idx, &TypingRequest::NONE);
@@ -509,7 +515,10 @@ impl<'a> CheckerState<'a> {
         self.get_property_name(prop_name_idx)
     }
 
-    pub(in crate::error_reporter::call_errors) fn literal_call_argument_display(&self, arg_idx: NodeIndex) -> Option<String> {
+    pub(in crate::error_reporter::call_errors) fn literal_call_argument_display(
+        &self,
+        arg_idx: NodeIndex,
+    ) -> Option<String> {
         self.literal_expression_display(arg_idx)
     }
 
