@@ -249,6 +249,24 @@ pub(crate) fn is_generic_application_with_type_params(
     false
 }
 
+/// Check if a type contains type parameters that require instantiation,
+/// but correctly handles mapped types by only checking their constraint and
+/// name_type (not the template, which always contains the iteration variable).
+///
+/// Use this instead of raw `contains_type_parameters` when deciding whether
+/// to suppress TS2339 — a fully-instantiated mapped type like
+/// `{ [P in "a" | "b"]: Foo[P] }` does NOT need suppression even though its
+/// template technically contains `P`.
+pub(crate) fn has_unresolved_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if let Some(_mapped) = tsz_solver::type_queries::get_mapped_type(db, type_id) {
+        // For mapped types, only check constraint and name_type.
+        // The template always contains the iteration variable which is not "unresolved".
+        is_generic_mapped_type(db, type_id)
+    } else {
+        tsz_solver::type_queries::contains_type_parameters_db(db, type_id)
+    }
+}
+
 /// Check if a type is a *generic* mapped type — one whose key constraint still
 /// contains type parameters (e.g., `{ [K in keyof T]: ... }` where T is unresolved).
 /// Mapped types with concrete key types (like `Partial<ConcreteType>`) return false
