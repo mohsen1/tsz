@@ -654,10 +654,17 @@ impl<'a> CheckerState<'a> {
         // is preferred over specific missing property errors.
         use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
         let resolver = IndexSignatureResolver::new(self.ctx.types);
-        let source_has_index = resolver.has_index_signature(source, IndexKind::String)
-            || resolver.has_index_signature(source, IndexKind::Number);
-        let target_has_index = resolver.has_index_signature(target, IndexKind::String)
-            || resolver.has_index_signature(target, IndexKind::Number);
+        // Check both original and evaluated types (needed for generic class instances)
+        let source_evaluated = self.evaluate_type_with_env(source);
+        let target_evaluated = self.evaluate_type_with_env(target);
+        let source_has_index = [source, source_evaluated].iter().any(|t| {
+            resolver.has_index_signature(*t, IndexKind::String)
+                || resolver.has_index_signature(*t, IndexKind::Number)
+        });
+        let target_has_index = [target, target_evaluated].iter().any(|t| {
+            resolver.has_index_signature(*t, IndexKind::String)
+                || resolver.has_index_signature(*t, IndexKind::Number)
+        });
         if source_has_index && target_has_index {
             let src_str = self.format_type_diagnostic(source);
             let tgt_str = self.format_type_diagnostic(target);
@@ -1065,10 +1072,17 @@ impl<'a> CheckerState<'a> {
         // TSC emits TS2322 instead of TS2739/TS2740 when both source and target have index signatures.
         use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
         let resolver = IndexSignatureResolver::new(self.ctx.types);
-        let source_has_index = resolver.has_index_signature(source, IndexKind::String)
-            || resolver.has_index_signature(source, IndexKind::Number);
-        let target_has_index = resolver.has_index_signature(target, IndexKind::String)
-            || resolver.has_index_signature(target, IndexKind::Number);
+        // Check both original and evaluated types (needed for generic class instances)
+        let source_evaluated = self.evaluate_type_with_env(source);
+        let target_evaluated = self.evaluate_type_with_env(target);
+        let source_has_index = [source, source_evaluated].iter().any(|t| {
+            resolver.has_index_signature(*t, IndexKind::String)
+                || resolver.has_index_signature(*t, IndexKind::Number)
+        });
+        let target_has_index = [target, target_evaluated].iter().any(|t| {
+            resolver.has_index_signature(*t, IndexKind::String)
+                || resolver.has_index_signature(*t, IndexKind::Number)
+        });
         if source_has_index && target_has_index {
             let src_str = self.format_type_diagnostic(source);
             let tgt_str = self.format_type_diagnostic(target);
