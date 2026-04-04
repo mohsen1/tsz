@@ -39,6 +39,14 @@ pub(super) fn is_primitive_type_name(name: &str) -> bool {
     )
 }
 
+/// Returns true if the display string looks like a function/callable type.
+/// Used as a fallback when TypeId-level detection fails due to TypeQuery/Lazy wrapping.
+/// Function types display as `(params) => ReturnType`.
+pub(super) fn is_function_type_display(name: &str) -> bool {
+    // A function type display always starts with `(` and contains `) => `.
+    name.starts_with('(') && name.contains(") => ")
+}
+
 /// Returns true if the property name is a standard Object.prototype method.
 /// These are implicitly available on all interfaces/objects through the Object
 /// prototype chain. When such a property appears as "missing" in a subtype check,

@@ -3256,3 +3256,56 @@ fn test_generic_callable_return_type_mismatch_emits_ts2322() {
         "Expected TS2322 for incompatible generic callable assignment. Got: {diagnostics:?}"
     );
 }
+
+// ============================================================================
+// TS2741 → TS2322 downgrade guards
+// ============================================================================
+
+/// When a function type is assigned to a class with private members, TSC emits TS2322
+/// (generic assignability), not TS2741 (missing property). Private brands should be
+/// handled as nominal class mismatches.
+#[test]
+fn test_function_to_class_with_private_emits_ts2322_not_ts2741() {
+    let source = r#"
+        class C { private x = 1; }
+        class D extends C { }
+        function foo(x: "hi", items: string[]): typeof foo;
+        function foo(x: string, items: string[]): typeof foo { return null as any; }
+        var a: D = foo("hi", []);
+    "#;
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2741 = diagnostics.iter().any(|(code, _)| *code == 2741);
+    assert!(
+        !has_ts2741,
+        "Should not emit TS2741 for function→class assignment with private members. Got: {diagnostics:?}"
+    );
+    let has_ts2322 = diagnostics.iter().any(|(code, _)| *code == 2322);
+    assert!(
+        has_ts2322,
+        "Expected TS2322 for function→class assignment. Got: {diagnostics:?}"
+    );
+}
+
+/// When assigning to a type with an index signature, and the "missing" property comes
+/// from the index signature value type (not a direct named property), TSC emits TS2322.
+#[test]
+fn test_index_signature_target_missing_prop_emits_ts2322_not_ts2741() {
+    let source = r#"
+        type A = { a: string };
+        type B = { b: string };
+        declare let sb1: { x: A } & { y: B };
+        declare let tb1: { [key: string]: A };
+        tb1 = sb1;
+    "#;
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2741 = diagnostics.iter().any(|(code, _)| *code == 2741);
+    assert!(
+        !has_ts2741,
+        "Should not emit TS2741 for index signature target mismatch. Got: {diagnostics:?}"
+    );
+    let has_ts2322 = diagnostics.iter().any(|(code, _)| *code == 2322);
+    assert!(
+        has_ts2322,
+        "Expected TS2322 for index signature target mismatch. Got: {diagnostics:?}"
+    );
+}
