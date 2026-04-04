@@ -36,6 +36,20 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Suppress TS2345 when either type contains unresolved inference placeholders
+        // (`__infer_*`). These arise when generic call inference didn't fully resolve
+        // type parameters. tsc would have resolved them or used their constraints;
+        // comparing against raw placeholders produces false mismatches.
+        if tsz_solver::type_queries::contains_infer_placeholder_db(
+            self.ctx.types.as_type_database(),
+            arg_type,
+        ) || tsz_solver::type_queries::contains_infer_placeholder_db(
+            self.ctx.types.as_type_database(),
+            param_type,
+        ) {
+            return;
+        }
+
         // Suppress cascading TS2345 when TS2353 (excess property) already covers this span.
         if let Some(anchor) = self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact) {
             let arg_end = anchor.start.saturating_add(anchor.length);
