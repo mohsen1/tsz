@@ -892,20 +892,30 @@ impl ScannerState {
 
                 // Hash (private identifier)
                 CharacterCodes::HASH => {
-                    // Simplified: just treat as hash token
-                    // Full implementation would check for private identifier
                     self.pos += 1;
                     if self.pos < self.end
                         && is_identifier_start(self.char_code_unchecked(self.pos))
                     {
                         self.pos += self.char_len_at(self.pos); // Handle multi-byte UTF-8
-                        while self.pos < self.end
-                            && is_identifier_part(self.char_code_unchecked(self.pos))
-                        {
-                            self.pos += self.char_len_at(self.pos); // Handle multi-byte UTF-8
+                        // Check for unicode escapes in the continuation
+                        let has_escapes = self.scan_private_identifier_rest();
+                        if has_escapes {
+                            // token_value was set by scan_private_identifier_rest
+                        } else {
+                            self.token_value = self.substring(self.token_start, self.pos);
                         }
-                        self.token_value = self.substring(self.token_start, self.pos);
                         self.token = SyntaxKind::PrivateIdentifier;
+                    } else if self.pos < self.end
+                        && self.char_code_unchecked(self.pos) == CharacterCodes::BACKSLASH
+                    {
+                        // Private identifier starting with unicode escape: #\u0078
+                        if let Some(code_point) = self.peek_unicode_escape()
+                            && is_identifier_start(code_point)
+                        {
+                            self.scan_private_identifier_with_escapes();
+                        } else {
+                            self.token = SyntaxKind::HashToken;
+                        }
                     } else {
                         self.token = SyntaxKind::HashToken;
                     }
@@ -1659,6 +1669,106 @@ impl ScannerState {
         self.token_flags |= TokenFlags::UnicodeEscape as u32;
     }
 
+    /// Scan continuation of a private identifier that starts with a regular char.
+    /// Handles unicode escapes in the continuation (e.g., `#x\u0078`).
+    /// Returns true if any unicode escapes were found and token_value was set.
+    fn scan_private_identifier_rest(&mut self) -> bool {
+        // First, scan regular identifier parts
+        while self.pos < self.end {
+            let ch = self.char_code_unchecked(self.pos);
+            if ch == CharacterCodes::BACKSLASH {
+                // Found a unicode escape in the continuation
+                if let Some(code_point) = self.peek_unicode_escape()
+                    && is_identifier_part(code_point)
+                {
+                    // Build the decoded value from the start
+                    let prefix = self.substring(self.token_start, self.pos);
+                    let mut result = prefix;
+                    // Consume the escape
+                    if let Some(cp) = self.scan_unicode_escape_value()
+                        && let Some(c) = char::from_u32(cp)
+                    {
+                        result.push(c);
+                    }
+                    // Continue scanning the rest
+                    while self.pos < self.end {
+                        let ch2 = self.char_code_unchecked(self.pos);
+                        if ch2 == CharacterCodes::BACKSLASH {
+                            if let Some(cp2) = self.peek_unicode_escape()
+                                && is_identifier_part(cp2)
+                            {
+                                if let Some(cp2) = self.scan_unicode_escape_value()
+                                    && let Some(c) = char::from_u32(cp2)
+                                {
+                                    result.push(c);
+                                }
+                                continue;
+                            }
+                            break;
+                        }
+                        if !is_identifier_part(ch2) {
+                            break;
+                        }
+                        if let Some(c) = char::from_u32(ch2) {
+                            result.push(c);
+                        }
+                        self.pos += self.char_len_at(self.pos);
+                    }
+                    self.token_value = result;
+                    self.token_flags |= TokenFlags::UnicodeEscape as u32;
+                    return true;
+                }
+                break;
+            }
+            if !is_identifier_part(ch) {
+                break;
+            }
+            self.pos += self.char_len_at(self.pos);
+        }
+        false
+    }
+
+    /// Scan a private identifier that starts with a unicode escape: `#\u0078`.
+    fn scan_private_identifier_with_escapes(&mut self) {
+        let mut result = String::from("#");
+
+        // Process initial unicode escape
+        if let Some(ch) = self.scan_unicode_escape_value()
+            && let Some(c) = char::from_u32(ch)
+        {
+            result.push(c);
+        }
+
+        // Continue scanning identifier parts
+        while self.pos < self.end {
+            let ch = self.char_code_unchecked(self.pos);
+            if ch == CharacterCodes::BACKSLASH {
+                // Another unicode escape in identifier
+                if let Some(code_point) = self.peek_unicode_escape()
+                    && is_identifier_part(code_point)
+                {
+                    if let Some(c) = char::from_u32(self.scan_unicode_escape_value().unwrap_or(0)) {
+                        result.push(c);
+                    }
+                    continue;
+                }
+                break;
+            }
+            if !is_identifier_part(ch) {
+                break;
+            }
+            if let Some(c) = char::from_u32(ch) {
+                result.push(c);
+            }
+            self.pos += self.char_len_at(self.pos);
+        }
+
+        self.token = SyntaxKind::PrivateIdentifier;
+        self.token_atom = self.interner.intern(&result);
+        self.token_value = result;
+        self.token_flags |= TokenFlags::UnicodeEscape as u32;
+    }
+
     /// Consume a unicode escape sequence and return its code point.
     /// Advances self.pos past the escape.
     fn scan_unicode_escape_value(&mut self) -> Option<u32> {
@@ -2356,17 +2466,24 @@ impl ScannerState {
     /// Re-scan the current `#` token as a hash token or private identifier.
     #[wasm_bindgen(js_name = reScanHashToken)]
     pub fn re_scan_hash_token(&mut self) -> SyntaxKind {
-        if self.token == SyntaxKind::HashToken
-            && self.pos < self.end
-            && is_identifier_start(self.char_code_unchecked(self.pos))
-        {
-            // Properly handle multi-byte UTF-8 characters in private identifiers
-            self.pos += self.char_len_at(self.pos);
-            while self.pos < self.end && is_identifier_part(self.char_code_unchecked(self.pos)) {
+        if self.token == SyntaxKind::HashToken && self.pos < self.end {
+            let ch = self.char_code_unchecked(self.pos);
+            if is_identifier_start(ch) {
+                // Properly handle multi-byte UTF-8 characters in private identifiers
                 self.pos += self.char_len_at(self.pos);
+                let has_escapes = self.scan_private_identifier_rest();
+                if !has_escapes {
+                    self.token_value = self.substring(self.token_start, self.pos);
+                }
+                self.token = SyntaxKind::PrivateIdentifier;
+            } else if ch == CharacterCodes::BACKSLASH {
+                // Unicode escape starting a private identifier: #\u0078
+                if let Some(code_point) = self.peek_unicode_escape()
+                    && is_identifier_start(code_point)
+                {
+                    self.scan_private_identifier_with_escapes();
+                }
             }
-            self.token_value = self.substring(self.token_start, self.pos);
-            self.token = SyntaxKind::PrivateIdentifier;
         }
         self.token
     }
