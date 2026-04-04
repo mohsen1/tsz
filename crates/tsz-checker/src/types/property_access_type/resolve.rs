@@ -2076,15 +2076,42 @@ impl<'a> CheckerState<'a> {
                             // Suppress TS2339 for types containing type parameters,
                             // for index access types (like T[keyof T]), or for
                             // unknown/error types that result from unresolved generics.
-                            let should_suppress =
-                                crate::query_boundaries::common::contains_type_parameters(
+                            // However, for mapped types with resolved constraints (no type
+                            // parameters), we should still emit TS2339. This handles cases
+                            // like `Omit<Foo, "c">` where the constraint is "a" | "b".
+                            let mut should_suppress = tsz_solver::is_index_access_type(
+                                self.ctx.types,
+                                display_object_type,
+                            ) || display_object_type == TypeId::UNKNOWN
+                                || display_object_type == TypeId::ERROR;
+
+                            if !should_suppress {
+                                if crate::query_boundaries::common::contains_type_parameters(
                                     self.ctx.types,
                                     display_object_type,
-                                ) || tsz_solver::is_index_access_type(
-                                    self.ctx.types,
-                                    display_object_type,
-                                ) || display_object_type == TypeId::UNKNOWN
-                                    || display_object_type == TypeId::ERROR;
+                                ) {
+                                    // Check if this is a mapped type with a resolved constraint
+                                    // If the constraint doesn't have type parameters, we should
+                                    // emit TS2339 for missing properties.
+                                    if let Some(mapped) = tsz_solver::type_queries::get_mapped_type(
+                                        self.ctx.types,
+                                        display_object_type,
+                                    ) {
+                                        if tsz_solver::type_queries::contains_type_parameters_db(
+                                            self.ctx.types,
+                                            mapped.constraint,
+                                        ) {
+                                            // Constraint has type parameters - suppress
+                                            should_suppress = true;
+                                        }
+                                        // If constraint is resolved, don't suppress
+                                    } else {
+                                        // Not a mapped type but contains type parameters - suppress
+                                        should_suppress = true;
+                                    }
+                                }
+                            }
+
                             if !should_suppress {
                                 self.error_property_not_exist_at(
                                     property_name,
