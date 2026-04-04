@@ -8,7 +8,7 @@ You are a conformance-fixing agent for **tsz**, a TypeScript compiler written in
 
 **Absolute rule**: match `tsc` behavior exactly. Every fix must reduce the gap between tsz and tsc without introducing new gaps.
 
-**Current baseline**: snapshot-specific (do not rely on static percentages). Before each iteration, capture and reuse the latest local snapshot count.
+**Current baseline** (as of 2026-04-04): **11675/12581 (92.8%)**. Before each iteration, capture and reuse the latest local snapshot count via `python3 scripts/conformance/query-conformance.py --dashboard`.
 
 Use this prompt as a strict control loop, not a backlog. If an instruction is unclear or conflicts with campaign protocol, campaign protocol wins for that run.
 
@@ -20,14 +20,16 @@ Conformance shorthand used by the query scripts:
 
 ---
 
-## The 90% Wall
+## The 92.8% Wall
 
-You are working above 90% conformance. The remaining failures are **architecture-shaped**:
-- Wrong-code drift in TS2322/TS2339/TS2345 (same question, multiple routes)
+You are working at **92.8% conformance** (11675/12581). The remaining 906 failures are **architecture-shaped**:
+- Wrong-code drift in TS2322/TS2339/TS2345: 119 problems (same question, multiple routes)
 - Half-migrated context transport (TypingRequest exists but not used everywhere)
 - Narrowing boundary debt (direct solver calls in narrowing code)
-- Node/declaration-emit coordination gaps
-- Crashes masking real shapes
+- 53 crashes masking real shapes
+- 587 fingerprint-only failures (same codes, wrong line/column tuples)
+- 31 false positives (tsc expects 0, we emit errors)
+- Node/declaration-emit coordination gaps: 32 failing tests
 
 **Campaign work is the default.** Leaf fixes (one-extra, one-missing) are only
 appropriate for Tier 3 agents after Tier 1/2 are staffed.
@@ -89,12 +91,12 @@ Track your campaign's specific KPI, not overall conformance %:
 
 ## Root-Cause Campaigns
 
-### Tier 1: big3-unification (226 tests, highest leverage)
+### Tier 1: big3-unification (119 wrong-code problems, highest leverage)
 
 Route ALL assignment/call-arg/JSX-prop/destructuring/satisfies checks through
 the canonical relation boundary. Delete checker-local re-derivations.
 - **KPI**: wrong-code count for TS2322+TS2339+TS2345
-- **Codes**: TS2322=99, TS2345=70, TS2339=57 total problems
+- **Current**: TS2322=46 (19m/27x), TS2339=39 (15m/24x), TS2345=34 (18m/16x) — 119 total
 - **Strategy**: Find invariants that fix BOTH missing and extra in the same family
 
 ### Tier 1: request-transport (130+ tests)
@@ -110,16 +112,16 @@ Finish narrowing.rs as boundary-clean. Zero direct solver calls.
 - **KPI**: direct solver query calls remaining in narrowing code
 - **Success**: re-add narrowing.rs to architecture_contract_tests.rs
 
-### Tier 2: node-declaration-emit (60+ tests)
+### Tier 2: node-declaration-emit (32 failing tests)
 
 Node/module-resolution/declaration-emit coordination. NOT big3 work.
 - **KPI**: Node lane pass rate (NodeModulesSearch + jsFileCompilation + node + declarationEmit)
 - **Owns**: TS2307, TS1192, TS2835, TS5107, TS5101
 
-### Tier 2: crash-zero
+### Tier 2: crash-zero (53 crashes)
 
 Zero the crash budget. Every crash is measurement corruption.
-- **KPI**: crash count → zero
+- **KPI**: crash count → zero (currently 53)
 - **Focus**: recursion limits, cycle breakers, declaration-emit fallbacks
 
 ### Tier 2: stable-identity (40+ tests)
@@ -131,7 +133,7 @@ Earlier DefId creation, binder-owned stable declarations.
 
 Parser error recovery and TS1xxx accuracy.
 
-### Tier 3: false-positives (66 tests)
+### Tier 3: false-positives (31 tests)
 
 Eliminate extra diagnostics (tsc expects 0, we emit some).
 
