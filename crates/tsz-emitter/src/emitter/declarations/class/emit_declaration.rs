@@ -2,7 +2,7 @@ use super::super::super::{Printer, ScriptTarget};
 use super::class_has_self_references;
 use super::is_ident_char;
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
-use tsz_parser::parser::node::{Node, NodeAccess};
+use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;

@@ -1,7 +1,7 @@
 use super::super::super::Printer;
 use super::AutoAccessorInfo;
 use crate::transforms::private_fields_es5::get_private_field_name;
-use tsz_parser::parser::node::{Node, NodeAccess};
+use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;

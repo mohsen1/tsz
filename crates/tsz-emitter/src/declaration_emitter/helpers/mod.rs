@@ -51,7 +51,7 @@ type JsCommonjsNamedExports = (
 );
 
 #[derive(Clone, Copy)]
-enum JsCommonjsExpandoDeclKind {
+pub(in crate::declaration_emitter) enum JsCommonjsExpandoDeclKind {
     Function,
     Value,
     PrototypeMethod,
@@ -99,18 +99,18 @@ type JsStaticMethodAugmentationEntry = (
     Vec<(NodeIndex, NodeIndex)>,
 );
 
-struct JsdocTypeAliasDecl {
-    name: String,
-    type_params: Vec<String>,
-    type_text: String,
-    description_lines: Vec<String>,
-    render_verbatim: bool,
+pub(in crate::declaration_emitter) struct JsdocTypeAliasDecl {
+    pub(in crate::declaration_emitter) name: String,
+    pub(in crate::declaration_emitter) type_params: Vec<String>,
+    pub(in crate::declaration_emitter) type_text: String,
+    pub(in crate::declaration_emitter) description_lines: Vec<String>,
+    pub(in crate::declaration_emitter) render_verbatim: bool,
 }
 
-struct JsDefinedPropertyDecl {
-    name: String,
-    type_text: String,
-    readonly: bool,
+pub(in crate::declaration_emitter) struct JsDefinedPropertyDecl {
+    pub(in crate::declaration_emitter) name: String,
+    pub(in crate::declaration_emitter) type_text: String,
+    pub(in crate::declaration_emitter) readonly: bool,
 }
 
 #[derive(Clone)]
