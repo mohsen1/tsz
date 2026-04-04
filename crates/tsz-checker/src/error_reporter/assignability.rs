@@ -366,60 +366,14 @@ impl<'a> CheckerState<'a> {
         let diag_count_before = self.ctx.diagnostics.len();
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
         
-        // Check if we generated any missing property diagnostics (TS2741/TS2739/TS2740)
-        let has_missing_property_diag = self.ctx.diagnostics[diag_count_before..].iter().any(|d| {
-            d.code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
-                || d.code == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
-                || d.code
-                    == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
-        });
-        
-        // Check if the source type has any properties (is not an empty object literal)
-        // For empty object literals, we should keep TS2741 because the issue is missing
-        // properties, not property-value type mismatch.
-        let source_has_properties = tsz_solver::type_queries::get_object_shape(self.ctx.types, source)
-            .map(|shape| !shape.properties.is_empty())
-            .unwrap_or(false);
-        
-        // Only downgrade TS2741/TS2739/TS2740 to TS2322 when:
-        // 1. There's a missing property diagnostic AND
-        // 2. The source has properties (i.e., it's a property-value mismatch, not empty object)
-        // OR
-        // 1. There's no missing property diagnostic (i.e., it's a type mismatch on existing properties)
-        let needs_downgrade = if has_missing_property_diag && !source_has_properties {
-            // Empty object literal missing properties - keep TS2741, don't downgrade
-            false
-        } else {
-            // Either no missing property diagnostic, or source has properties
-            // (meaning we have property-value mismatches that should be TS2322)
-            self.ctx.diagnostics[diag_count_before..].iter().any(|d| {
-                d.code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
-                    || d.code == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
-                    || d.code
-                        == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
-            })
-        };
-        
-        if needs_downgrade {
-            let src_str = self.format_type_diagnostic(source);
-            let tgt_str = self.format_type_diagnostic(target);
-            let message = crate::diagnostics::format_message(
-                crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                &[&src_str, &tgt_str],
-            );
-            for diag in &mut self.ctx.diagnostics[diag_count_before..] {
-                if diag.code
-                    == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
-                    || diag.code
-                        == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
-                    || diag.code
-                        == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
-                {
-                    diag.code = diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE;
-                    diag.message_text = message.clone();
-                }
-            }
-        }
+        // The diagnose_assignment_failure_with_anchor call above has already generated
+        // the appropriate diagnostic. For missing property errors, it generates TS2741;
+        // for type mismatches, it generates TS2322. We should NOT downgrade TS2741 to TS2322
+        // because TS2741 provides more specific information about what's wrong.
+        //
+        // Previously this function had logic to "downgrade" TS2741 to TS2322 for
+        // "elaboration contexts", but that was incorrect - missing property errors
+        // should always be reported as TS2741/TS2739/TS2740, never downgraded to TS2322.
     }
     pub fn error_type_does_not_satisfy_the_expected_type(
         &mut self,
