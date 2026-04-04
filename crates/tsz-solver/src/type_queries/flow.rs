@@ -724,48 +724,31 @@ fn types_have_common_properties_relaxed(
         (db.lookup(source), db.lookup(target))
     {
         let tuple_elements = db.tuple_list(tuple_id);
-        return tuple_elements.iter().any(|elem| {
-            types_are_comparable_for_assertion_inner(db, arr_elem, elem.type_id, depth + 1)
-        });
+        return tuple_elements
+            .iter()
+            .any(|elem| types_are_comparable_for_assertion_inner(db, arr_elem, elem.type_id, depth + 1));
     }
     if let (Some(TypeData::Tuple(tuple_id)), Some(TypeData::Array(arr_elem))) =
         (db.lookup(source), db.lookup(target))
     {
         let tuple_elements = db.tuple_list(tuple_id);
-        return tuple_elements.iter().any(|elem| {
-            types_are_comparable_for_assertion_inner(db, elem.type_id, arr_elem, depth + 1)
-        });
+        return tuple_elements
+            .iter()
+            .any(|elem| types_are_comparable_for_assertion_inner(db, elem.type_id, arr_elem, depth + 1));
     }
 
-    // Handle tuple↔tuple comparability: check element types pairwise at matching positions.
-    // tsc's comparable relation for tuples requires pairwise element comparability
-    // and treats different-length tuples as not sufficiently overlapping (TS2352).
+    // Handle tuple↔tuple comparability: check element types pairwise
     if let (Some(TypeData::Tuple(src_tuple)), Some(TypeData::Tuple(tgt_tuple))) =
         (db.lookup(source), db.lookup(target))
     {
         let src_elements = db.tuple_list(src_tuple);
         let tgt_elements = db.tuple_list(tgt_tuple);
-        let src_len = src_elements.len();
-        let tgt_len = tgt_elements.len();
-        // Different-length fixed tuples are not comparable (tsc emits TS2352).
-        if src_len != tgt_len {
-            return false;
-        }
-        // Same length: all corresponding elements must be comparable.
-        if src_len == 0 {
-            return true;
-        }
-        return src_elements
-            .iter()
-            .zip(tgt_elements.iter())
-            .all(|(src_elem, tgt_elem)| {
-                types_are_comparable_for_assertion_inner(
-                    db,
-                    src_elem.type_id,
-                    tgt_elem.type_id,
-                    depth + 1,
-                )
-            });
+        // Check if any element from source is comparable to any from target
+        return src_elements.iter().any(|src_elem| {
+            tgt_elements.iter().any(|tgt_elem| {
+                types_are_comparable_for_assertion_inner(db, src_elem.type_id, tgt_elem.type_id, depth + 1)
+            })
+        });
     }
 
     let source_props = get_properties(db, source);
@@ -776,13 +759,6 @@ fn types_have_common_properties_relaxed(
         return false;
     }
 
-    // Check if either type is a class type (has nominal identity via symbol).
-    // For class types, we need stricter checking: all target properties must exist
-    // in the source (nominal typing), not just shared properties.
-    let source_is_class = is_class_type(db, source);
-    let target_is_class = is_class_type(db, target);
-    let strict_class_check = source_is_class || target_is_class;
-
     use rustc_hash::FxHashMap;
     let mut source_by_name: FxHashMap<Atom, Vec<(TypeId, bool)>> = FxHashMap::default();
     for (name, ty, optional) in &source_props {
@@ -792,8 +768,8 @@ fn types_have_common_properties_relaxed(
             .push((*ty, *optional));
     }
 
-    // For TS2352: check that shared properties are comparable.
-    // For class types (nominal), require ALL target properties to exist.
+    // For TS2352: only check that shared properties are comparable.
+    // Missing target properties are allowed.
     let mut found_common = false;
     for (target_name, target_ty, target_optional) in &target_props {
         if let Some(source_entries) = source_by_name.get(target_name) {
@@ -809,24 +785,10 @@ fn types_have_common_properties_relaxed(
             if !any_comparable {
                 return false;
             }
-        } else if strict_class_check && !target_optional {
-            // For class types, missing required target property means not comparable
-            return false;
         }
-        // For non-class types, missing target properties are allowed
+        // Intentionally NOT returning false for missing target properties
     }
     found_common
-}
-
-/// Check if a type is a class type (has nominal identity via symbol in its shape).
-fn is_class_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    match db.lookup(type_id) {
-        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-            let shape = db.object_shape(shape_id);
-            shape.symbol.is_some()
-        }
-        _ => false,
-    }
 }
 
 fn types_are_comparable_inner(
@@ -1181,48 +1143,31 @@ fn types_have_common_properties(
         (db.lookup(source), db.lookup(target))
     {
         let tuple_elements = db.tuple_list(tuple_id);
-        return tuple_elements.iter().any(|elem| {
-            types_are_comparable_for_assertion_inner(db, arr_elem, elem.type_id, depth + 1)
-        });
+        return tuple_elements
+            .iter()
+            .any(|elem| types_are_comparable_for_assertion_inner(db, arr_elem, elem.type_id, depth + 1));
     }
     if let (Some(TypeData::Tuple(tuple_id)), Some(TypeData::Array(arr_elem))) =
         (db.lookup(source), db.lookup(target))
     {
         let tuple_elements = db.tuple_list(tuple_id);
-        return tuple_elements.iter().any(|elem| {
-            types_are_comparable_for_assertion_inner(db, elem.type_id, arr_elem, depth + 1)
-        });
+        return tuple_elements
+            .iter()
+            .any(|elem| types_are_comparable_for_assertion_inner(db, elem.type_id, arr_elem, depth + 1));
     }
 
-    // Handle tuple↔tuple comparability: check element types pairwise at matching positions.
-    // tsc's comparable relation for tuples requires pairwise element comparability
-    // and treats different-length tuples as not sufficiently overlapping (TS2352).
+    // Handle tuple↔tuple comparability: check element types pairwise
     if let (Some(TypeData::Tuple(src_tuple)), Some(TypeData::Tuple(tgt_tuple))) =
         (db.lookup(source), db.lookup(target))
     {
         let src_elements = db.tuple_list(src_tuple);
         let tgt_elements = db.tuple_list(tgt_tuple);
-        let src_len = src_elements.len();
-        let tgt_len = tgt_elements.len();
-        // Different-length fixed tuples are not comparable (tsc emits TS2352).
-        if src_len != tgt_len {
-            return false;
-        }
-        // Same length: all corresponding elements must be comparable.
-        if src_len == 0 {
-            return true;
-        }
-        return src_elements
-            .iter()
-            .zip(tgt_elements.iter())
-            .all(|(src_elem, tgt_elem)| {
-                types_are_comparable_for_assertion_inner(
-                    db,
-                    src_elem.type_id,
-                    tgt_elem.type_id,
-                    depth + 1,
-                )
-            });
+        // Check if any element from source is comparable to any from target
+        return src_elements.iter().any(|src_elem| {
+            tgt_elements.iter().any(|tgt_elem| {
+                types_are_comparable_for_assertion_inner(db, src_elem.type_id, tgt_elem.type_id, depth + 1)
+            })
+        });
     }
 
     let source_props = get_properties(db, source);
