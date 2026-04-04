@@ -35,6 +35,13 @@ impl<'a> DeclarationEmitter<'a> {
         if is_exported && self.should_emit_export_keyword() {
             self.write("export ");
         }
+        // Preserve the `declare` modifier from the source when present
+        let has_declare = self
+            .arena
+            .has_modifier(&iface.modifiers, SyntaxKind::DeclareKeyword);
+        if has_declare {
+            self.write("declare ");
+        }
         self.write("interface ");
 
         // Name

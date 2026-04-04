@@ -813,6 +813,7 @@ impl ParserState {
             self.current_token = saved_token;
         }
 
+        let start_pos = self.token_pos();
         self.next_token();
         // Re-enable conditional types inside parentheses, even if they were disabled
         // for an outer `infer T extends X` disambiguation. Matches tsc's
@@ -822,7 +823,13 @@ impl ParserState {
         let inner = self.parse_type();
         self.context_flags = saved_flags;
         self.parse_expected(SyntaxKind::CloseParenToken);
-        inner
+        let end_pos = self.token_end();
+        self.arena.add_wrapped_type(
+            syntax_kind_ext::PARENTHESIZED_TYPE,
+            start_pos,
+            end_pos,
+            crate::parser::node::WrappedTypeData { type_node: inner },
+        )
     }
 
     fn parse_type_identifier_or_keyword(&mut self) -> NodeIndex {

@@ -565,13 +565,17 @@ impl<'a> TypePrinter<'a> {
             // Rest parameter prefix
             if elem.rest {
                 part.push_str("...");
+                // For unlabeled rest+optional elements, tsc places ? before the type: [...?T]
+                if elem.name.is_none() && elem.optional {
+                    part.push('?');
+                }
             }
 
             // Type annotation
             part.push_str(&self.print_type(elem.type_id));
 
-            // Optional marker for unlabeled tuples (comes after type)
-            if elem.name.is_none() && elem.optional {
+            // Optional marker for unlabeled non-rest tuples (comes after type): [T?]
+            if elem.name.is_none() && elem.optional && !elem.rest {
                 part.push('?');
             }
 
