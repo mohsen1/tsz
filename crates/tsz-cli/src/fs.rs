@@ -130,6 +130,11 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
         }
     }
 
+    // tsc excludes `.d.ts` files from the program when a corresponding `.ts`
+    // (or `.tsx`) source file exists in the same directory.  This prevents the
+    // declaration file from shadowing the source file's exports.
+    let files = exclude_shadowed_declaration_files(files);
+
     let mut list: Vec<PathBuf> = files.into_iter().collect();
     list.sort_by(|a, b| a.to_string_lossy().cmp(&b.to_string_lossy()));
     Ok(list)
@@ -396,6 +401,86 @@ fn is_config_json(path: &Path) -> bool {
         .is_some_and(|name| {
             name.eq_ignore_ascii_case("tsconfig.json") || name.eq_ignore_ascii_case("jsconfig.json")
         })
+}
+
+/// When both a `.d.ts` declaration file and a `.ts`/`.tsx` source file exist
+/// with the same stem, tsc excludes the declaration file from the program.
+/// This replicates that behavior: for each `.d.ts`/`.d.mts`/`.d.cts` file in
+/// the set, drop it if the corresponding source extension is also present.
+fn exclude_shadowed_declaration_files(files: BTreeSet<PathBuf>) -> BTreeSet<PathBuf> {
+    // Quick exit when the set is small enough that no shadowing is possible.
+    if files.len() <= 1 {
+        return files;
+    }
+
+    // Build a set of all non-declaration stems for O(1) lookup.
+    let mut source_stems: BTreeSet<PathBuf> = BTreeSet::new();
+    for path in &files {
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+        // Skip declaration files.
+        if name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts") {
+            continue;
+        }
+        // Strip the source extension to get the stem path (dir + stem).
+        if let Some(stem) = strip_source_extension(path, name) {
+            source_stems.insert(stem);
+        }
+    }
+
+    files
+        .into_iter()
+        .filter(|path| {
+            let name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n,
+                None => return true,
+            };
+            if let Some(decl_stem) = strip_declaration_extension(path, name) {
+                // Keep the declaration file only if no source file shares its stem.
+                !source_stems.contains(&decl_stem)
+            } else {
+                true
+            }
+        })
+        .collect()
+}
+
+/// Strip a source extension (.ts, .tsx, .mts, .cts) from a path and return the
+/// parent-joined stem.  Returns `None` for non-source extensions.
+fn strip_source_extension(path: &Path, name: &str) -> Option<PathBuf> {
+    let stem = if let Some(s) = name.strip_suffix(".tsx") {
+        s
+    } else if let Some(s) = name.strip_suffix(".mts") {
+        s
+    } else if let Some(s) = name.strip_suffix(".cts") {
+        s
+    } else if let Some(s) = name.strip_suffix(".ts") {
+        // Don't match `.d.ts` — that's a declaration extension.
+        if s.ends_with(".d") {
+            return None;
+        }
+        s
+    } else {
+        return None;
+    };
+    Some(path.with_file_name(stem))
+}
+
+/// Strip a declaration extension (.d.ts, .d.mts, .d.cts) and return the
+/// parent-joined stem.
+fn strip_declaration_extension(path: &Path, name: &str) -> Option<PathBuf> {
+    let stem = if let Some(s) = name.strip_suffix(".d.ts") {
+        s
+    } else if let Some(s) = name.strip_suffix(".d.mts") {
+        s
+    } else if let Some(s) = name.strip_suffix(".d.cts") {
+        s
+    } else {
+        return None;
+    };
+    Some(path.with_file_name(stem))
 }
 
 fn path_to_pattern(base_dir: &Path, path: &Path) -> Option<String> {
