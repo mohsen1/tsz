@@ -1190,4 +1190,3 @@ fn exact_probe_number_index_signature() {
         "Missing index sig: {output}"
     );
 }
-

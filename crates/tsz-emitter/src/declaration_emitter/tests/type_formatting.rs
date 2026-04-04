@@ -460,4 +460,3 @@ fn test_typeof_type() {
         "Expected typeof type: {output}"
     );
 }
-

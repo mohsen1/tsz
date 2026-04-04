@@ -262,4 +262,3 @@ fn test_enum_auto_increment() {
         "Expected C = 12 (auto-increment): {output}"
     );
 }
-

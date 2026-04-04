@@ -370,4 +370,3 @@ fn test_private_identifier_emits_private_marker() {
         "#secret should not appear in .d.ts: {output}"
     );
 }
-

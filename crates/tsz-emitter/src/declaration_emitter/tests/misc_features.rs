@@ -992,4 +992,3 @@ class BitOps {
         "Expected bitwise and to return number: {output}"
     );
 }
-

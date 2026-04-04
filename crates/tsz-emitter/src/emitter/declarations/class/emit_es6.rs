@@ -920,8 +920,7 @@ impl<'a> Printer<'a> {
                     if !private_fields.is_empty() && is_private_identifier(self.arena, prop.name) {
                         continue;
                     }
-                    if !needs_private_field_lowering
-                        && is_private_identifier(self.arena, prop.name)
+                    if !needs_private_field_lowering && is_private_identifier(self.arena, prop.name)
                     {
                         continue;
                     }

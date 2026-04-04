@@ -1020,4 +1020,3 @@ fn test_accessor_keyword_preserved_on_class_field() {
         "static accessor keyword should be preserved: {output}"
     );
 }
-

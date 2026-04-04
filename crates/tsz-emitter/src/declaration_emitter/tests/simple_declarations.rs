@@ -2112,4 +2112,3 @@ fn test_export_default_identifier() {
         "Expected export default identifier: {output}"
     );
 }
-

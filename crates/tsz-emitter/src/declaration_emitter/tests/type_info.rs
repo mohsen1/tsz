@@ -954,4 +954,3 @@ var d = {
         "Did not expect enum member literal to leak into anonymous object type: {output}"
     );
 }
-

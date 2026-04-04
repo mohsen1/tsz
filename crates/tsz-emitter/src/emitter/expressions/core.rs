@@ -203,25 +203,25 @@ impl<'a> Printer<'a> {
     }
 
     pub(crate) fn emit_private_receiver(&mut self, expression: NodeIndex, clean_name: &str) {
-        let alias_replacement = self
-            .private_static_class_alias
-            .as_ref()
-            .and_then(|(cls_name, alias)| {
-                let info = self.private_member_info.get(clean_name)?;
-                if !info.is_static {
-                    return None;
-                }
-                let expr_node = self.arena.get(expression)?;
-                if expr_node.kind != SyntaxKind::Identifier as u16 {
-                    return None;
-                }
-                let ident = self.arena.get_identifier(expr_node)?;
-                if ident.escaped_text == *cls_name {
-                    Some(alias.clone())
-                } else {
-                    None
-                }
-            });
+        let alias_replacement =
+            self.private_static_class_alias
+                .as_ref()
+                .and_then(|(cls_name, alias)| {
+                    let info = self.private_member_info.get(clean_name)?;
+                    if !info.is_static {
+                        return None;
+                    }
+                    let expr_node = self.arena.get(expression)?;
+                    if expr_node.kind != SyntaxKind::Identifier as u16 {
+                        return None;
+                    }
+                    let ident = self.arena.get_identifier(expr_node)?;
+                    if ident.escaped_text == *cls_name {
+                        Some(alias.clone())
+                    } else {
+                        None
+                    }
+                });
         if let Some(alias) = alias_replacement {
             self.write(&alias);
         } else {

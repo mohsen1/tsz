@@ -414,9 +414,7 @@ impl<'a> Printer<'a> {
             return;
         }
         // Only strip `var`, not `let`/`const`
-        let is_var = (init_node.flags as u32
-            & (node_flags::LET | node_flags::CONST))
-            == 0;
+        let is_var = (init_node.flags as u32 & (node_flags::LET | node_flags::CONST)) == 0;
         if !is_var {
             self.emit(initializer);
             return;
