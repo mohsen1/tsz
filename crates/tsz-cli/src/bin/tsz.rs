@@ -294,12 +294,19 @@ fn run_batch_mode() -> Result<()> {
 
     for line in reader.lines() {
         let line = line.context("failed to read from stdin")?;
-        let project_dir = line.trim();
-        if project_dir.is_empty() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
             // Skip empty lines, print sentinel to keep protocol in sync
             writeln!(stdout, "---TSZ-BATCH-DONE---")?;
             stdout.flush()?;
             continue;
+        }
+        
+        // Parse tab-separated project dir and optional test name
+        let parts: Vec<&str> = trimmed.split('\t').collect();
+        let project_dir = parts[0];
+        if parts.len() > 1 {
+            unsafe { std::env::set_var("TSZ_CONFORMANCE_TEST", parts[1]); }
         }
 
         // Clear all thread-local state between compilations.

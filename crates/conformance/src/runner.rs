@@ -826,6 +826,7 @@ impl Runner {
                                             prepared.temp_dir.path(),
                                             variant,
                                             timeout_secs.saturating_mul(2).max(60),
+                                            &key,
                                         )
                                         .await?
                                         {
@@ -852,6 +853,7 @@ impl Runner {
                                     .current_dir(&prepared.project_dir)
                                     .stdout(std::process::Stdio::piped())
                                     .stderr(std::process::Stdio::piped())
+                                    .env("TSZ_CONFORMANCE_TEST", &key)
                                     .kill_on_drop(true)
                                     .spawn()?;
 
@@ -1182,6 +1184,7 @@ impl Runner {
                                     prepared.temp_dir.path(),
                                     options,
                                     timeout_secs.saturating_mul(2).max(60),
+                                    &key,
                                 )
                                 .await?
                                 {
@@ -1200,7 +1203,8 @@ impl Runner {
                             .current_dir(&prepared.project_dir)
                             .stdout(std::process::Stdio::piped())
                             .stderr(std::process::Stdio::piped())
-                            .kill_on_drop(true)
+                            .env("TSZ_CONFORMANCE_TEST", &key)
+                                    .kill_on_drop(true)
                             .spawn()?;
 
                         let output = if timeout_secs > 0 {
@@ -1382,6 +1386,7 @@ impl Runner {
                                     prepared.temp_dir.path(),
                                     options,
                                     timeout_secs.saturating_mul(2).max(60),
+                                    &key,
                                 )
                                 .await?
                                 {
@@ -1400,7 +1405,8 @@ impl Runner {
                             .current_dir(&prepared.project_dir)
                             .stdout(std::process::Stdio::piped())
                             .stderr(std::process::Stdio::piped())
-                            .kill_on_drop(true)
+                            .env("TSZ_CONFORMANCE_TEST", &key)
+                                    .kill_on_drop(true)
                             .spawn()?;
 
                         let output = if timeout_secs > 0 {
@@ -1544,6 +1550,7 @@ impl Runner {
         temp_dir: &Path,
         options: HashMap<String, String>,
         timeout_secs: u64,
+        test_name: &str,
     ) -> anyhow::Result<Option<tsz_wrapper::CompilationResult>> {
         let child = tokio::process::Command::new(tsz_binary)
             .arg("--project")
@@ -1554,6 +1561,7 @@ impl Runner {
             .current_dir(project_dir)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            .env("TSZ_CONFORMANCE_TEST", test_name)
             .kill_on_drop(true)
             .spawn()?;
 

@@ -97,6 +97,9 @@ impl ProcessPool {
         project_dir: &Path,
         timeout: Duration,
     ) -> anyhow::Result<BatchOutcome> {
+        // Get test name from env var if set
+        let test_name = std::env::var("TSZ_CONFORMANCE_TEST").ok();
+        
         // Acquire an available worker index
         let idx = {
             let mut rx = self.available_rx.lock().await;
@@ -105,7 +108,7 @@ impl ProcessPool {
                 .ok_or_else(|| anyhow::anyhow!("pool channel closed"))?
         };
 
-        let result = self.compile_on_worker(idx, project_dir, timeout).await;
+        let result = self.compile_on_worker(idx, project_dir, test_name.as_deref(), timeout).await;
 
         // Return worker to the pool
         let _ = self.available_tx.send(idx).await;
@@ -117,6 +120,7 @@ impl ProcessPool {
         &self,
         idx: usize,
         project_dir: &Path,
+        test_name: Option<&str>,
         timeout: Duration,
     ) -> anyhow::Result<BatchOutcome> {
         let mut guard = self.workers[idx].lock().await;
@@ -132,11 +136,16 @@ impl ProcessPool {
 
         let worker = guard.as_mut().unwrap();
 
-        // Write project directory path to stdin
+        // Write project directory and optional test name to stdin (tab-separated)
         let dir_str = project_dir.to_string_lossy();
+        let line = if let Some(name) = test_name {
+            format!("{}\t{}\n", dir_str, name)
+        } else {
+            format!("{}\n", dir_str)
+        };
         let write_result = worker
             .stdin
-            .write_all(format!("{dir_str}\n").as_bytes())
+            .write_all(line.as_bytes())
             .await;
 
         if write_result.is_err() {
