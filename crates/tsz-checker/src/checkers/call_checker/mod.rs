@@ -330,6 +330,11 @@ impl<'a> CheckerState<'a> {
                 )
                 && !crate::query_boundaries::common::contains_infer_types(self.ctx.types, expected);
             let snap = self.ctx.snapshot_full();
+            // Save the node_types entry — rollback_full does not restore
+            // node_types, so speculative recomputation below would otherwise
+            // overwrite a contextually-typed cached value with an
+            // uncontextualized one.
+            let saved_node_type = self.ctx.node_types.get(&arg_idx.0).copied();
             self.invalidate_expression_for_contextual_retry(arg_idx);
             self.ctx.daa_error_nodes.remove(&arg_idx.0);
             self.ctx.flow_narrowed_nodes.remove(&arg_idx.0);
@@ -353,6 +358,13 @@ impl<'a> CheckerState<'a> {
                             .any(|diag| diag.start >= start && diag.start < end)
                     });
             self.ctx.rollback_full(&snap);
+            // Restore the node_types entry so the contextually-typed result
+            // is preserved for subsequent lookups.
+            if let Some(saved) = saved_node_type {
+                self.ctx.node_types.insert(arg_idx.0, saved);
+            } else {
+                self.ctx.node_types.remove(&arg_idx.0);
+            }
             let is_generator_callback = func.asterisk_token;
             let (has_return_type_mismatch, has_generator_component_mismatch) =
                 stable_call_recovery_return_type(self.ctx.types, refined_actual)
