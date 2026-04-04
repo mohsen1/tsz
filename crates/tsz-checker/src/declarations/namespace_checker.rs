@@ -738,6 +738,18 @@ impl<'a> CheckerState<'a> {
             }
 
             let mut type_id = self.get_type_of_symbol(*member_id);
+            // For enum exports, use the enum namespace type (typeof Color)
+            // which represents the enum object value with member properties,
+            // not the enum instance type (Color = union of member values).
+            // This ensures `m3.Color` resolves to `typeof Color` when
+            // `m3: typeof M3` and M3 is a namespace exporting enum Color.
+            if member_symbol.flags & symbol_flags::ENUM != 0
+                && (member_symbol.flags & symbol_flags::ENUM_MEMBER) == 0
+            {
+                if let Some(&ns_type) = self.ctx.enum_namespace_types.get(member_id) {
+                    type_id = ns_type;
+                }
+            }
             if member_symbol.flags & symbol_flags::INTERFACE != 0 {
                 let mut candidate = self.type_of_value_declaration_for_symbol(
                     *member_id,
