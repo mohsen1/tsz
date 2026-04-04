@@ -644,10 +644,51 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::MAPPED_TYPE => {
                 self.check_mapped_type_constraint(node_idx);
-                // Do NOT recurse into mapped type template (mapped.type_node).
-                // The mapped type parameter (e.g. P in [P in keyof T]) is only
-                // in scope within the mapped type and cannot be resolved by name
-                // resolution during check_type_node, causing false TS2304 errors.
+                // Recurse into mapped type template to validate nested types.
+                // Push the mapped type parameter into scope so references like `K`
+                // in `{ [K in keyof T]: { src: K } }` resolve correctly and don't
+                // produce false TS2304 errors.
+                if let Some(mapped) = self.ctx.arena.get_mapped_type(node) {
+                    let mut pushed_name: Option<(String, Option<TypeId>)> = None;
+                    if let Some(tp_node) = self.ctx.arena.get(mapped.type_parameter)
+                        && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
+                        && let Some(name_node) = self.ctx.arena.get(tp_data.name)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        let name = ident.escaped_text.clone();
+                        let atom = self.ctx.types.intern_string(&name);
+                        let provisional =
+                            self.ctx
+                                .types
+                                .factory()
+                                .type_param(tsz_solver::TypeParamInfo {
+                                    name: atom,
+                                    constraint: None,
+                                    default: None,
+                                    is_const: false,
+                                });
+                        let previous = self
+                            .ctx
+                            .type_parameter_scope
+                            .insert(name.clone(), provisional);
+                        pushed_name = Some((name, previous));
+                    }
+                    if mapped.type_node != NodeIndex::NONE {
+                        self.check_type_node(mapped.type_node);
+                    }
+                    // Also recurse into the name_type (the `as` clause) which may
+                    // reference the mapped type parameter.
+                    if mapped.name_type != NodeIndex::NONE {
+                        self.check_type_node(mapped.name_type);
+                    }
+                    if let Some((name, previous)) = pushed_name {
+                        if let Some(prev_type) = previous {
+                            self.ctx.type_parameter_scope.insert(name, prev_type);
+                        } else {
+                            self.ctx.type_parameter_scope.remove(&name);
+                        }
+                    }
+                }
             }
             k if k == syntax_kind_ext::TUPLE_TYPE => {
                 // Force tuple element validation (TS1257, TS1265, TS1266)

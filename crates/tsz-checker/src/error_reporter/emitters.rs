@@ -171,6 +171,21 @@ impl<'a> CheckerState<'a> {
         ));
     }
 
+    /// Report TS6205: All type parameters are unused.
+    ///
+    /// Used when an entire `@template` tag's type parameters are unused.
+    /// Routes through `push_diagnostic` for consistent dedup.
+    pub(crate) fn error_all_type_parameters_unused(&mut self, start: u32, length: u32) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        self.ctx.push_diagnostic(Diagnostic::error(
+            self.ctx.file_name.clone(),
+            start,
+            length,
+            diagnostic_messages::ALL_TYPE_PARAMETERS_ARE_UNUSED.to_string(),
+            diagnostic_codes::ALL_TYPE_PARAMETERS_ARE_UNUSED,
+        ));
+    }
+
     /// Report TS6138: "Property '{name}' is declared but its value is never read."
     ///
     /// Used for unused constructor parameter properties (parameters with

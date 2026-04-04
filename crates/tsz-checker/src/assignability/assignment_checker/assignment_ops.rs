@@ -1,7 +1,6 @@
 //! Assignment operator utilities, validation, JS/CommonJS helpers,
 //! polymorphic this checking, tuple/array destructuring bounds, and arithmetic checks.
 
-use crate::context::TypingRequest;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
