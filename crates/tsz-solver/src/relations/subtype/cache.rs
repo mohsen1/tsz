@@ -596,14 +596,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Without this, the source Application gets evaluated to an Object before
         // the union is unwrapped, losing the generic identity.
         //
-        // GUARD: Skip this fast path when we're already inside a recursive type
-        // expansion (def_guard has entries). In that case, variance rejection may
-        // be incorrect because the types participate in a recursive structure where
-        // coinductive cycle detection should determine the result instead.
+        // Variance analysis runs even inside recursive type expansions
+        // (when def_guard has entries). For same-base Application types like
+        // Constraint<Num> vs Constraint<Runtype<any>>, variance correctly
+        // detects invariance and rejects, whereas structural comparison with
+        // coinductive cycle detection would incorrectly accept because the
+        // cycle assumption (True) masks the invariance created by
+        // contravariant positions (e.g., function parameter types).
         // =========================================================================
-        let outer_def_count =
-            self.def_guard.visiting_count() - if def_entered.is_some() { 1 } else { 0 };
-        if !self.bypass_evaluation && outer_def_count == 0 {
+        if !self.bypass_evaluation {
             let variance_result = if let (Some(s_app_id), Some(t_app_id)) = (s_app_id, t_app_id) {
                 self.try_variance_fast_path(s_app_id, t_app_id)
             } else if let Some(s_app_id) = s_app_id {

@@ -143,12 +143,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: &ObjectShape,
         target_receiver: Option<TypeId>,
     ) -> SubtypeResult {
-        let source_receiver = self
-            .receiver_type_from_shape_symbol(source)
-            .or(source_receiver);
-        let target_receiver = self
-            .receiver_type_from_shape_symbol(target)
-            .or(target_receiver);
+        // Prefer the caller-provided receiver (which preserves type arguments,
+        // e.g., Runtype<any>) over the shape-derived DefId reference (which loses
+        // them, e.g., bare Runtype). This ensures `this` type substitution in
+        // properties like `constraint: Constraint<this>` produces the correct
+        // parameterized type (e.g., Constraint<Runtype<any>>).
+        let source_receiver =
+            source_receiver.or_else(|| self.receiver_type_from_shape_symbol(source));
+        let target_receiver =
+            target_receiver.or_else(|| self.receiver_type_from_shape_symbol(target));
         // Private brand checking for nominal typing of classes with private fields
         if !self.check_private_brand_compatibility(&source.properties, &target.properties) {
             return SubtypeResult::False;
@@ -836,12 +839,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: &ObjectShape,
         target_receiver: Option<TypeId>,
     ) -> SubtypeResult {
-        let source_receiver = self
-            .receiver_type_from_shape_symbol(source)
-            .or(source_receiver);
-        let target_receiver = self
-            .receiver_type_from_shape_symbol(target)
-            .or(target_receiver);
+        // Prefer the caller-provided receiver (which preserves type arguments,
+        // e.g., Runtype<any>) over the shape-derived DefId reference (which loses
+        // them, e.g., bare Runtype). This ensures `this` type substitution in
+        // properties like `constraint: Constraint<this>` produces the correct
+        // parameterized type (e.g., Constraint<Runtype<any>>).
+        let source_receiver =
+            source_receiver.or_else(|| self.receiver_type_from_shape_symbol(source));
+        let target_receiver =
+            target_receiver.or_else(|| self.receiver_type_from_shape_symbol(target));
         // First check named properties (nominal + structural)
         // Note: We pass the full shapes to enable nominal inheritance check
         if !self
@@ -923,9 +929,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: &[PropertyInfo],
         target_receiver: Option<TypeId>,
     ) -> SubtypeResult {
-        let source_receiver = self
-            .receiver_type_from_shape_symbol(source)
-            .or(source_receiver);
+        let source_receiver =
+            source_receiver.or_else(|| self.receiver_type_from_shape_symbol(source));
         for t_prop in target {
             if let Some(sp) =
                 self.lookup_property(&source.properties, Some(source_shape_id), t_prop.name)
