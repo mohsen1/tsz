@@ -709,7 +709,16 @@ impl<'a> DeclarationEmitter<'a> {
                         self.function_body_preferred_return_type_text(func_body)
                 {
                     self.write(": ");
-                    self.write(&type_text);
+                    if let Some(ref tp) = func.type_parameters
+                        && !tp.nodes.is_empty()
+                    {
+                        let outer_names = self.collect_type_param_names(tp);
+                        self.write(
+                            &Self::rename_shadowed_type_params_in_text(&type_text, &outer_names),
+                        );
+                    } else {
+                        self.write(&type_text);
+                    }
                 } else if effective_return_type_id == tsz_solver::types::TypeId::ANY
                     && func_body.is_some()
                     && self
@@ -720,7 +729,15 @@ impl<'a> DeclarationEmitter<'a> {
                     self.emit_node(func.name);
                 } else {
                     self.write(": ");
-                    self.write(&self.print_type_id(effective_return_type_id));
+                    if let Some(ref tp) = func.type_parameters
+                        && !tp.nodes.is_empty()
+                    {
+                        self.write(
+                            &self.print_type_id_with_outer_type_params(effective_return_type_id, tp),
+                        );
+                    } else {
+                        self.write(&self.print_type_id(effective_return_type_id));
+                    }
                 }
             } else if func_body.is_some() {
                 if self.body_returns_void(func_body) {

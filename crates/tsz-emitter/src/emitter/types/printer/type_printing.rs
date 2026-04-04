@@ -430,13 +430,14 @@ impl<'a> TypePrinter<'a> {
             result.push('?');
         }
 
+        let scoped = self.with_type_param_scope(type_params);
         if !type_params.is_empty() {
-            let params: Vec<String> = type_params
+            let tps: Vec<String> = type_params
                 .iter()
-                .map(|tp| self.print_type_parameter_decl(tp))
+                .map(|tp| scoped.print_type_parameter_decl(tp))
                 .collect();
             result.push('<');
-            result.push_str(&params.join(", "));
+            result.push_str(&tps.join(", "));
             result.push('>');
         }
 
@@ -452,21 +453,21 @@ impl<'a> TypePrinter<'a> {
                 result.push_str("...");
             }
             if let Some(name) = param.name {
-                result.push_str(&self.resolve_atom(name));
+                result.push_str(&scoped.resolve_atom(name));
                 if param.optional {
                     result.push('?');
                 }
                 result.push_str(": ");
             }
-            result.push_str(&self.print_type(param.type_id));
+            result.push_str(&scoped.print_type(param.type_id));
         }
         result.push(')');
 
         result.push_str(": ");
         if let Some(pred) = type_predicate {
-            result.push_str(&self.print_type_predicate(pred));
+            result.push_str(&scoped.print_type_predicate(pred));
         } else {
-            result.push_str(&self.print_type(return_type));
+            result.push_str(&scoped.print_type(return_type));
         }
 
         result
@@ -590,13 +591,12 @@ impl<'a> TypePrinter<'a> {
         func_id: tsz_solver::types::FunctionShapeId,
     ) -> String {
         let func_shape = self.interner.function_shape(func_id);
-
-        // Type parameters
+        let scoped = self.with_type_param_scope(&func_shape.type_params);
         let type_params_str = if !func_shape.type_params.is_empty() {
             let params: Vec<String> = func_shape
                 .type_params
                 .iter()
-                .map(|tp| self.print_type_parameter_decl(tp))
+                .map(|tp| scoped.print_type_parameter_decl(tp))
                 .collect();
             format!("<{}>", params.join(", "))
         } else {
@@ -615,24 +615,22 @@ impl<'a> TypePrinter<'a> {
 
             // Parameter name (optional in function types)
             if let Some(name) = param.name {
-                param_str.push_str(&self.resolve_atom(name));
+                param_str.push_str(&scoped.resolve_atom(name));
                 if param.optional {
                     param_str.push('?');
                 }
                 param_str.push_str(": ");
             }
 
-            // Parameter type
-            param_str.push_str(&self.print_type(param.type_id));
+            param_str.push_str(&scoped.print_type(param.type_id));
 
             params.push(param_str);
         }
 
-        // Return type (with type predicate if present)
         let return_str = if let Some(ref pred) = func_shape.type_predicate {
-            self.print_type_predicate(pred)
+            scoped.print_type_predicate(pred)
         } else {
-            self.print_type(func_shape.return_type)
+            scoped.print_type(func_shape.return_type)
         };
 
         format!(
@@ -811,11 +809,12 @@ impl<'a> TypePrinter<'a> {
             ""
         };
 
+        let scoped = self.with_type_param_scope(&sig.type_params);
         let type_params_str = if !sig.type_params.is_empty() {
             let params: Vec<String> = sig
                 .type_params
                 .iter()
-                .map(|tp| self.print_type_parameter_decl(tp))
+                .map(|tp| scoped.print_type_parameter_decl(tp))
                 .collect();
             format!("<{}>", params.join(", "))
         } else {
@@ -829,19 +828,17 @@ impl<'a> TypePrinter<'a> {
                 param_str.push_str("...");
             }
             if let Some(name) = param.name {
-                param_str.push_str(&self.resolve_atom(name));
+                param_str.push_str(&scoped.resolve_atom(name));
                 if param.optional {
                     param_str.push('?');
                 }
                 param_str.push_str(": ");
             }
-            param_str.push_str(&self.print_type(param.type_id));
+            param_str.push_str(&scoped.print_type(param.type_id));
             params.push(param_str);
         }
 
-        // Use incremented indent for the return type so nested objects/callables
-        // are properly indented relative to the signature line.
-        let mut nested = self.clone();
+        let mut nested = scoped.clone();
         if let Some(indent) = nested.indent_level {
             nested.indent_level = Some(indent + 1);
         }
@@ -864,11 +861,12 @@ impl<'a> TypePrinter<'a> {
         &self,
         sig: &tsz_solver::types::CallSignature,
     ) -> String {
+        let scoped = self.with_type_param_scope(&sig.type_params);
         let type_params_str = if !sig.type_params.is_empty() {
             let params: Vec<String> = sig
                 .type_params
                 .iter()
-                .map(|tp| self.print_type_parameter_decl(tp))
+                .map(|tp| scoped.print_type_parameter_decl(tp))
                 .collect();
             format!("<{}>", params.join(", "))
         } else {
@@ -882,17 +880,17 @@ impl<'a> TypePrinter<'a> {
                 param_str.push_str("...");
             }
             if let Some(name) = param.name {
-                param_str.push_str(&self.resolve_atom(name));
+                param_str.push_str(&scoped.resolve_atom(name));
                 if param.optional {
                     param_str.push('?');
                 }
                 param_str.push_str(": ");
             }
-            param_str.push_str(&self.print_type(param.type_id));
+            param_str.push_str(&scoped.print_type(param.type_id));
             params.push(param_str);
         }
 
-        let mut nested = self.clone();
+        let mut nested = scoped.clone();
         if let Some(indent) = nested.indent_level {
             nested.indent_level = Some(indent + 1);
         }
@@ -914,11 +912,12 @@ impl<'a> TypePrinter<'a> {
         sig: &tsz_solver::types::CallSignature,
         is_abstract: bool,
     ) -> String {
+        let scoped = self.with_type_param_scope(&sig.type_params);
         let type_params_str = if !sig.type_params.is_empty() {
             let params: Vec<String> = sig
                 .type_params
                 .iter()
-                .map(|tp| self.print_type_parameter_decl(tp))
+                .map(|tp| scoped.print_type_parameter_decl(tp))
                 .collect();
             format!("<{}>", params.join(", "))
         } else {
@@ -932,17 +931,17 @@ impl<'a> TypePrinter<'a> {
                 param_str.push_str("...");
             }
             if let Some(name) = param.name {
-                param_str.push_str(&self.resolve_atom(name));
+                param_str.push_str(&scoped.resolve_atom(name));
                 if param.optional {
                     param_str.push('?');
                 }
                 param_str.push_str(": ");
             }
-            param_str.push_str(&self.print_type(param.type_id));
+            param_str.push_str(&scoped.print_type(param.type_id));
             params.push(param_str);
         }
 
-        let mut nested = self.clone();
+        let mut nested = scoped.clone();
         if let Some(indent) = nested.indent_level {
             nested.indent_level = Some(indent.saturating_sub(2));
         }
@@ -1046,7 +1045,7 @@ impl<'a> TypePrinter<'a> {
         &self,
         param_info: &tsz_solver::types::TypeParamInfo,
     ) -> String {
-        self.resolve_atom(param_info.name)
+        self.resolve_type_param_name(param_info.name)
     }
 
     /// Print a type parameter declaration with constraint and default.
@@ -1061,7 +1060,7 @@ impl<'a> TypePrinter<'a> {
             result.push_str("const ");
         }
 
-        result.push_str(&self.resolve_atom(param_info.name));
+        result.push_str(&self.resolve_type_param_name(param_info.name));
 
         if let Some(constraint) = param_info.constraint {
             result.push_str(" extends ");
