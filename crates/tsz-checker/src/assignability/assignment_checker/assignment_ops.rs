@@ -499,9 +499,30 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // Also check for `exports.X` patterns using is_exports_rooted_access
-            // This handles cases like `exports.apply = undefined` which are CJS export assignments
-            return self.is_exports_rooted_access(target_idx);
+            // Also check for `module.exports.X` patterns (not bare `exports.X`).
+            // Bare `exports.X = ...` is a named export, NOT a module-level export
+            // replacement — it goes through is_js_container_export_declaration instead.
+            // Only `module.exports.X` should be treated as a module export assignment.
+            if let Some(access) = self.ctx.arena.get_access_expr(target_node)
+                && let Some(expr_node) = self.ctx.arena.get(access.expression)
+                && expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(inner_access) = self.ctx.arena.get_access_expr(expr_node)
+            {
+                let is_module = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(inner_access.expression)
+                    .is_some_and(|ident| ident.escaped_text == "module");
+                let is_exports = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(inner_access.name_or_argument)
+                    .is_some_and(|ident| ident.escaped_text == "exports");
+                if is_module && is_exports {
+                    return true;
+                }
+            }
+            return false;
         }
 
         false
