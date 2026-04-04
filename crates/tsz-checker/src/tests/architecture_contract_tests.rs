@@ -433,8 +433,8 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         .expect("failed to read src/state/type_analysis/mod.rs for architecture guard");
     // Include split-off modules that are part of the state_type_analysis logical module
     state_type_analysis_src.push_str(
-        &fs::read_to_string("src/state/type_analysis/computed.rs")
-            .expect("failed to read src/state/type_analysis/computed.rs for architecture guard"),
+        &fs::read_to_string("src/state/type_analysis/computed/mod.rs")
+            .expect("failed to read src/state/type_analysis/computed/mod.rs for architecture guard"),
     );
     state_type_analysis_src.push_str(
         &fs::read_to_string("src/state/type_analysis/computed_helpers.rs").expect(
@@ -4174,7 +4174,7 @@ fn test_no_inline_type_queries_in_cleaned_modules() {
         "state/type_analysis/computed_helpers.rs",
         "state/type_analysis/computed_helpers_private.rs",
         "state/type_analysis/computed_helpers_binding.rs",
-        // "state/type_analysis/computed.rs", // TODO: re-add after migrating is_object_like_type call to query_boundaries
+        // "state/type_analysis/computed/type_alias_variable_alias.rs", // TODO: re-add after migrating is_object_like_type call to query_boundaries
         "state/type_analysis/core.rs",
         "state/type_analysis/core_type_query.rs",
         "state/type_analysis/symbol_type_helpers.rs",
