@@ -615,11 +615,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             && jsdoc_type != TypeId::UNKNOWN
                             && expr_type != TypeId::NEVER
                             && jsdoc_type != TypeId::NEVER
-                            && !generic_query::contains_type_parameters(
+                            && !generic_query::contains_generic_type_parameters(
                                 self.checker.ctx.types,
                                 expr_type,
                             )
-                            && !generic_query::contains_type_parameters(
+                            && !generic_query::contains_generic_type_parameters(
                                 self.checker.ctx.types,
                                 jsdoc_type,
                             );
@@ -848,8 +848,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 && asserted_type != TypeId::UNKNOWN
                                 && expr_type != TypeId::NEVER
                                 && asserted_type != TypeId::NEVER
-                                // Skip TS2352 when expr_type contains type parameters.
-                                && !generic_query::contains_type_parameters(
+                                // Skip TS2352 when expr_type contains generic type
+                                // parameters (TypeParameter/Infer/BoundParameter).
+                                // Note: ThisType is NOT skipped — tsc checks type
+                                // assertion overlap for `this` types.
+                                && !generic_query::contains_generic_type_parameters(
                                     self.checker.ctx.types,
                                     expr_type,
                                 )

@@ -1,6 +1,8 @@
 use tsz_solver::{TypeDatabase, TypeId};
 
-pub(crate) use super::super::common::{callable_shape_for_type, contains_type_parameters};
+pub(crate) use super::super::common::{
+    callable_shape_for_type, contains_generic_type_parameters, contains_type_parameters,
+};
 
 /// Check if a type is a bare type parameter (`TypeParameter` or `Infer`).
 pub(crate) fn is_bare_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

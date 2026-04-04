@@ -89,6 +89,10 @@ pub(crate) fn contains_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -
     tsz_solver::type_queries::contains_type_parameters_db(db, type_id)
 }
 
+pub(crate) fn contains_generic_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::contains_generic_type_parameters_db(db, type_id)
+}
+
 pub(crate) fn contains_lazy_or_recursive(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::contains_lazy_or_recursive_db(db, type_id)
 }
