@@ -212,7 +212,15 @@ impl<'a> CheckerState<'a> {
         let target_shape =
             tsz_solver::type_queries::get_object_shape(self.ctx.types, target_with_shape)?;
 
-        if target_shape.string_index.is_some() || target_shape.number_index.is_some() {
+        // Check if target has index signature using the resolver (more reliable than shape check)
+        let target_has_index = [target, target_env_evaluated, target_evaluated]
+            .into_iter()
+            .any(|candidate| {
+                resolver.has_index_signature(candidate, IndexKind::String)
+                    || resolver.has_index_signature(candidate, IndexKind::Number)
+            });
+
+        if target_has_index || target_shape.string_index.is_some() || target_shape.number_index.is_some() {
             return None;
         }
 
