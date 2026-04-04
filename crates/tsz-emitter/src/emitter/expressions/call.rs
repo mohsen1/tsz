@@ -222,9 +222,16 @@ impl<'a> Printer<'a> {
                 .get(&ident.escaped_text)
         {
             let subst = subst.clone();
-            self.write("(0, ");
-            self.write(&subst);
-            self.write(")");
+            // In System modules, import substitutions are already property accesses
+            // on module-scoped variables (e.g. `repeat_1.default`), so no `(0, ...)`
+            // indirection is needed — `this` binding is not a concern.
+            if self.in_system_execute_body {
+                self.write(&subst);
+            } else {
+                self.write("(0, ");
+                self.write(&subst);
+                self.write(")");
+            }
             self.emit_call_arguments(node, call.arguments.as_ref());
             return;
         }
@@ -282,14 +289,17 @@ impl<'a> Printer<'a> {
                 self.write("(require(");
                 // Only emit the first argument (module specifier); drop any extra args
                 if let Some(first) = first_arg {
-                    self.emit(first);
+                    self.emit_maybe_rewritten_module_specifier_arg(first);
                 }
                 self.write(")))");
             } else {
-                // Expression specifier:
-                //   Promise.resolve(`${expr}`).then(s => __importStar(require(s)))
+                // Expression specifier with rewrite helper wrapping
                 self.write("Promise.resolve(`${");
-                if let Some(first) = first_arg {
+                if self.ctx.options.rewrite_relative_import_extensions {
+                    if let Some(first) = first_arg {
+                        self.emit_rewrite_helper_call(first);
+                    }
+                } else if let Some(first) = first_arg {
                     self.emit(first);
                 }
                 self.write("}`).then(s => ");
@@ -297,6 +307,77 @@ impl<'a> Printer<'a> {
                 self.write("(require(s)))");
             }
             return;
+        }
+
+        // rewriteRelativeImportExtensions: handle ESM import() and require() calls.
+        // For string literal specifiers, rewrite the extension inline.
+        // For non-literal specifiers, wrap with __rewriteRelativeImportExtension(expr).
+        if self.ctx.options.rewrite_relative_import_extensions
+            && let Some(expr_node) = self.arena.get(call.expression)
+        {
+            let is_import_keyword = expr_node.kind == SyntaxKind::ImportKeyword as u16;
+            let is_require_ident = !is_import_keyword
+                && expr_node.kind == SyntaxKind::Identifier as u16
+                && self
+                    .arena
+                    .get_identifier(expr_node)
+                    .is_some_and(|id| id.escaped_text == "require");
+
+            if is_import_keyword || is_require_ident {
+                let first_arg = call
+                    .arguments
+                    .as_ref()
+                    .and_then(|args| args.nodes.iter().copied().find(|n| n.is_some()));
+                let first_arg_node = first_arg.and_then(|idx| self.arena.get(idx));
+                let is_string_literal = first_arg_node.is_some_and(|n| {
+                    n.kind == SyntaxKind::StringLiteral as u16
+                        || n.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                });
+
+                if is_string_literal {
+                    // Rewrite inline: import("./foo.ts") -> import("./foo.js")
+                    if is_import_keyword {
+                        self.write("import");
+                    } else {
+                        self.write("require");
+                    }
+                    self.write("(");
+                    if let Some(first) = first_arg {
+                        self.emit_maybe_rewritten_module_specifier_arg(first);
+                    }
+                    if let Some(ref args) = call.arguments {
+                        let valid_args: Vec<_> =
+                            args.nodes.iter().copied().filter(|n| n.is_some()).collect();
+                        for &arg_idx in valid_args.iter().skip(1) {
+                            self.write(", ");
+                            self.emit(arg_idx);
+                        }
+                    }
+                    self.write(")");
+                    return;
+                } else if first_arg.is_some() {
+                    // Non-literal: wrap with __rewriteRelativeImportExtension
+                    if is_import_keyword {
+                        self.write("import");
+                    } else {
+                        self.write("require");
+                    }
+                    self.write("(");
+                    if let Some(first) = first_arg {
+                        self.emit_rewrite_helper_call(first);
+                    }
+                    if let Some(ref args) = call.arguments {
+                        let valid_args: Vec<_> =
+                            args.nodes.iter().copied().filter(|n| n.is_some()).collect();
+                        for &arg_idx in valid_args.iter().skip(1) {
+                            self.write(", ");
+                            self.emit(arg_idx);
+                        }
+                    }
+                    self.write(")");
+                    return;
+                }
+            }
         }
 
         // Signal access position so `(new a)()` keeps parens (vs `new a()`).

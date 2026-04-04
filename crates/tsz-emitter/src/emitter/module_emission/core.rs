@@ -1,4 +1,4 @@
-use super::super::{ModuleKind, Printer, ScriptTarget};
+use super::super::{JsxEmit, ModuleKind, Printer, ScriptTarget};
 use crate::context::transform::IdentifierId;
 use crate::transforms::emit_utils;
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
@@ -68,6 +68,64 @@ impl<'a> Printer<'a> {
             return format!("{base}.cjs");
         }
         spec.to_string()
+    }
+
+    /// Emit a call expression argument that may be a module specifier string literal.
+    /// If rewriteRelativeImportExtensions is set and the arg is a string literal,
+    /// rewrite the extension inline. Otherwise, emit as-is.
+    pub(in crate::emitter) fn emit_maybe_rewritten_module_specifier_arg(
+        &mut self,
+        arg_idx: NodeIndex,
+    ) {
+        use tsz_scanner::SyntaxKind;
+        if !self.ctx.options.rewrite_relative_import_extensions {
+            self.emit(arg_idx);
+            return;
+        }
+        let Some(node) = self.arena.get(arg_idx) else {
+            self.emit(arg_idx);
+            return;
+        };
+        if node.kind != SyntaxKind::StringLiteral as u16
+            && node.kind != SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        {
+            self.emit(arg_idx);
+            return;
+        }
+        let text = if let Some(lit) = self.arena.get_literal(node) {
+            &lit.text
+        } else {
+            self.emit(arg_idx);
+            return;
+        };
+        let rewritten = self.rewrite_module_spec(text);
+        if rewritten == *text {
+            self.emit(arg_idx);
+            return;
+        }
+        let quote = if let Some(src) = self.source_text_for_map() {
+            let pos = node.pos as usize;
+            if pos < src.len() && src.as_bytes()[pos] == b'\'' {
+                '\''
+            } else {
+                '"'
+            }
+        } else {
+            '"'
+        };
+        self.write(&format!("{quote}{rewritten}{quote}"));
+    }
+
+    /// Emit `__rewriteRelativeImportExtension(expr)` or
+    /// `__rewriteRelativeImportExtension(expr, true)` when jsx=preserve.
+    pub(in crate::emitter) fn emit_rewrite_helper_call(&mut self, arg_idx: NodeIndex) {
+        self.write_helper("__rewriteRelativeImportExtension");
+        self.write("(");
+        self.emit(arg_idx);
+        if self.ctx.options.jsx == JsxEmit::Preserve {
+            self.write(", true");
+        }
+        self.write(")");
     }
 
     pub(in crate::emitter) fn next_commonjs_module_var(&mut self, module_spec: &str) -> String {
