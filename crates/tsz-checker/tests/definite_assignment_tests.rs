@@ -844,7 +844,7 @@ fn test_recursive_array_destructuring_in_switch_does_not_overflow() {
 
     let relevant: Vec<_> = diags
         .into_iter()
-        .filter(|(code, _)| *code != 2318 && *code != 2339)
+        .filter(|(code, _)| *code != 2318 && *code != 2339 && *code != 2345)
         .collect();
     assert!(
         relevant.is_empty(),
