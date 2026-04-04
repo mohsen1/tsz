@@ -222,6 +222,12 @@ pub enum TransformDirective {
         call_expr: NodeIndex,
     },
 
+    /// ES5 New Expression with Spread
+    ES5NewSpread {
+        /// Original new expression node
+        new_expr: NodeIndex,
+    },
+
     /// ES5 Variable Declaration List: Transform destructuring declarations to assignments.
     ES5VariableDeclarationList {
         /// Original variable declaration list node
