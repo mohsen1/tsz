@@ -8,7 +8,7 @@ use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{PropertyInfo, TypeId, Visibility};
+use tsz_solver::{TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
     /// Continuation of `compute_type_of_symbol` for type alias, class property,
