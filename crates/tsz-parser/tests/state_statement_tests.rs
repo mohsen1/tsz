@@ -633,9 +633,7 @@ fn stray_at_before_enum_prefers_ts1109_over_decorator_recovery() {
 }
 
 /// Test that 'await' as a label in a static block emits TS1003 (Identifier expected).
-// TODO: Implement await-as-reserved-in-static-blocks detection in the parser.
 #[test]
-#[ignore]
 fn test_await_label_in_static_block_emits_ts1003() {
     let source = r#"class C {
     static {

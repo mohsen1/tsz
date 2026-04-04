@@ -597,7 +597,15 @@ impl ParserState {
                 } else if self.is_identifier_or_keyword() && self.look_ahead_is_labeled_statement()
                 {
                     // 'await' as a label (e.g., "await: statement")
-                    // In static blocks or async contexts, this will emit TS1003
+                    // In static blocks, 'await' is reserved and cannot be used as a label.
+                    // tsc emits TS1003 "Identifier expected." in this context.
+                    if self.in_static_block_context() {
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "Identifier expected.",
+                            diagnostic_codes::IDENTIFIER_EXPECTED,
+                        );
+                    }
                     self.parse_labeled_statement()
                 } else {
                     self.parse_expression_statement()
