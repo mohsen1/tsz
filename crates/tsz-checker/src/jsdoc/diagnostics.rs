@@ -1555,7 +1555,9 @@ impl<'a> CheckerState<'a> {
         // instead of plain TS2304, matching tsc behavior.
         if self.ctx.spelling_suggestions_emitted.get() < 10 {
             if let Some(suggestion) = self.find_jsdoc_type_spelling_suggestion(name) {
-                self.ctx.spelling_suggestions_emitted.set(self.ctx.spelling_suggestions_emitted.get() + 1);
+                self.ctx
+                    .spelling_suggestions_emitted
+                    .set(self.ctx.spelling_suggestions_emitted.get() + 1);
                 let message = format!("Cannot find name '{name}'. Did you mean '{suggestion}'?");
                 self.error_at_position(
                     start,
