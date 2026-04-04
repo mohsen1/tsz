@@ -645,7 +645,7 @@ pub struct CheckerContext<'a> {
 
     /// Count of name resolution attempts (TS2304/TS2552) to limit spelling suggestions.
     /// tsc caps at 10, counting every resolution failure (not just successful suggestions).
-    pub spelling_suggestions_emitted: u32,
+    pub spelling_suggestions_emitted: std::cell::Cell<u32>,
 
     /// Node indices for which a name resolution failure (TS2304/TS2552) has already
     /// been reported. Used to deduplicate the `spelling_suggestions_emitted` counter
