@@ -385,14 +385,17 @@ impl<'a> CheckerState<'a> {
 
         if has_no_body {
             if let Some(node) = self.ctx.arena.get(node_idx) {
+                // tsc points at the node itself (its start position).
+                // For function declarations, use the name position.
+                // For constructors/methods, use node.pos (the node start).
                 let start = match node.kind {
                     syntax_kind_ext::FUNCTION_DECLARATION => self
                         .ctx
                         .arena
                         .get_function(node)
                         .and_then(|func| self.ctx.arena.get(func.name))
-                        .map_or(node.end.saturating_sub(1), |name| name.pos),
-                    _ => node.end.saturating_sub(1),
+                        .map_or(node.pos, |name| name.pos),
+                    _ => node.pos,
                 };
                 self.error_at_position(
                     start,
