@@ -21748,7 +21748,7 @@ repro({
 }
 
 #[test]
-fn test_jsdoc_constructor_overload_tags_do_not_emit_stale_ts2394() {
+fn test_jsdoc_constructor_overload_tags_emit_ts2394_for_incompatible_overload() {
     let diagnostics = compile_and_get_diagnostics_named(
         "overloadTag2.js",
         r#"
@@ -21795,9 +21795,11 @@ var d = new Foo('str', 2)
         CheckerOptions::default(),
     );
 
+    // tsc correctly emits TS2394 here because the first @overload (string, number)
+    // is not compatible with the implementation signature (number | string, b).
     assert!(
-        !has_error(&diagnostics, 2394),
-        "Expected no stale TS2394 for stacked JSDoc constructor overload tags. Actual diagnostics: {diagnostics:#?}"
+        has_error(&diagnostics, 2394),
+        "Expected TS2394 for incompatible JSDoc constructor overload. Actual diagnostics: {diagnostics:#?}"
     );
     assert_eq!(
         diagnostics.iter().filter(|(code, _)| *code == 2554).count(),
