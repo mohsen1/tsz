@@ -649,6 +649,31 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // TSC emits TS2322 instead of TS2741 when both source and target have index signatures.
+        // For index signature to index signature assignments, the more general assignability error
+        // is preferred over specific missing property errors.
+        use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
+        let resolver = IndexSignatureResolver::new(self.ctx.types);
+        let source_has_index = resolver.has_index_signature(source, IndexKind::String)
+            || resolver.has_index_signature(source, IndexKind::Number);
+        let target_has_index = resolver.has_index_signature(target, IndexKind::String)
+            || resolver.has_index_signature(target, IndexKind::Number);
+        if source_has_index && target_has_index {
+            let src_str = self.format_type_diagnostic(source);
+            let tgt_str = self.format_type_diagnostic(target);
+            let message = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&src_str, &tgt_str],
+            );
+            return Diagnostic::error(
+                file_name,
+                start,
+                length,
+                message,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+        }
+
         // Also emit TS2322 for wrapper-like built-ins (Boolean, Number, String, Object)
         let tgt_str = self.format_type_diagnostic(target_type);
         let original_tgt_str = self.format_type_diagnostic(target);
@@ -1022,6 +1047,29 @@ impl<'a> CheckerState<'a> {
         if tsz_solver::is_intersection_type(self.ctx.types, target_type)
             || tsz_solver::is_intersection_type(self.ctx.types, target)
         {
+            let src_str = self.format_type_diagnostic(source);
+            let tgt_str = self.format_type_diagnostic(target);
+            let message = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&src_str, &tgt_str],
+            );
+            return Diagnostic::error(
+                file_name,
+                start,
+                length,
+                message,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+        }
+
+        // TSC emits TS2322 instead of TS2739/TS2740 when both source and target have index signatures.
+        use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
+        let resolver = IndexSignatureResolver::new(self.ctx.types);
+        let source_has_index = resolver.has_index_signature(source, IndexKind::String)
+            || resolver.has_index_signature(source, IndexKind::Number);
+        let target_has_index = resolver.has_index_signature(target, IndexKind::String)
+            || resolver.has_index_signature(target, IndexKind::Number);
+        if source_has_index && target_has_index {
             let src_str = self.format_type_diagnostic(source);
             let tgt_str = self.format_type_diagnostic(target);
             let message = format_message(
