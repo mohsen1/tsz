@@ -344,6 +344,19 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         let constraint = mapped.constraint;
 
+        // When the constraint is `keyof T` and T is an unconstrained type parameter,
+        // the evaluated result `string | number | symbol` is the theoretical keyof
+        // range, NOT an actual string index signature on the type. Reject these so
+        // property access on mapped types with unconstrained keys correctly reports
+        // TS2339 (property does not exist).
+        if let Some(TypeData::KeyOf(operand)) = self.interner().lookup(constraint) {
+            if let Some(TypeData::TypeParameter(info)) = self.interner().lookup(operand) {
+                if info.constraint.is_none() {
+                    return false;
+                }
+            }
+        }
+
         // Evaluate keyof if needed
         let evaluated = if let Some(TypeData::KeyOf(operand)) = self.interner().lookup(constraint) {
             let keyof_type = self.interner().keyof(operand);
