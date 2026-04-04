@@ -500,34 +500,6 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// In JS files, `exports.X = value` and `module.exports.X = value` are
-    /// declaration-like assignments (tsc's `AssignmentDeclarationKind.ExportsProperty`).
-    /// The type of the export property is inferred from the union of all assigned
-    /// values, so individual assignments should not be checked for assignability
-    /// against the inferred type. Without this, `exports.apply = undefined` followed
-    /// by `exports.apply = function() {}` would emit false TS2322.
-    fn is_commonjs_exports_property_declaration(&self, target_idx: NodeIndex) -> bool {
-        if !self.is_js_file() {
-            return false;
-        }
-
-        let target_idx = self.ctx.arena.skip_parenthesized(target_idx);
-        let Some(target_node) = self.ctx.arena.get(target_idx) else {
-            return false;
-        };
-
-        if target_node.kind != tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            return false;
-        }
-
-        let Some(access) = self.ctx.arena.get_access_expr(target_node) else {
-            return false;
-        };
-
-        // Check if the base is `exports` or `module.exports` (depth-1 only)
-        self.is_exports_rooted_access(access.expression)
-    }
-
     /// In JS files, assignments like `exports.n = {}` or `module.exports.n = {}`
     /// where `n` is subsequently augmented with property assignments (e.g., `exports.n.K = ...`)
     /// are JS container declarations. The type of the container is built up from all
@@ -969,15 +941,6 @@ impl<'a> CheckerState<'a> {
             // false excess-property errors before assignability is even skipped.
             // However, when an explicit JSDoc `@type` provides the assignment target,
             // tsc does contextually type the RHS from that declared type.
-            if !has_explicit_jsdoc_left_type {
-                return self.get_type_of_node(right_idx);
-            }
-        }
-
-        if !is_const && self.is_commonjs_exports_property_declaration(left_idx) {
-            // In JS files, `exports.X = value` is a declaration, not an assignment.
-            // The type is inferred from the union of all assigned values, so individual
-            // assignments should not be checked against the inferred type.
             if !has_explicit_jsdoc_left_type {
                 return self.get_type_of_node(right_idx);
             }

@@ -591,6 +591,10 @@ impl<'a> Printer<'a> {
         let Some(var_stmt) = self.arena.get_variable(node) else {
             return;
         };
+        // TEMPORARY DEBUG: Verify this function is called for using declarations
+        if self.ctx.target_es5 {
+            self.write("/* DBG_VS */");
+        }
 
         let deferred_export_bindings = self.deferred_local_export_bindings.clone();
 
