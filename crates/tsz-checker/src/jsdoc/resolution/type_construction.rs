@@ -17,7 +17,6 @@ use crate::state::CheckerState;
 use std::sync::Arc;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{
     FunctionShape, IndexSignature, ObjectShape, ParamInfo, PropertyInfo, TupleElement, TypeId,
     TypePredicate, TypePredicateTarget, Visibility,

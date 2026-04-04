@@ -359,11 +359,9 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) {
-        use crate::diagnostics::diagnostic_codes;
-
         let anchor_idx =
             self.resolve_diagnostic_anchor_node(anchor_idx, DiagnosticAnchorKind::Exact);
-        let diag_count_before = self.ctx.diagnostics.len();
+        let _diag_count_before = self.ctx.diagnostics.len();
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
 
         // The diagnose_assignment_failure_with_anchor call above has already generated

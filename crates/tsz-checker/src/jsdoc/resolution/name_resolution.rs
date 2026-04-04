@@ -14,15 +14,11 @@
 
 use crate::context::{is_declaration_file_name, is_js_file_name};
 use crate::state::CheckerState;
-use std::sync::Arc;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{
-    FunctionShape, IndexSignature, ObjectShape, ParamInfo, PropertyInfo, TupleElement, TypeId,
-    TypePredicate, TypePredicateTarget, Visibility,
-};
+use tsz_solver::{IndexSignature, ObjectShape, TypeId, TypePredicate};
 impl<'a> CheckerState<'a> {
     pub(crate) fn enclosing_expression_statement(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = idx;

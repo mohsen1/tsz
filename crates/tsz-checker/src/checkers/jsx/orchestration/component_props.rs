@@ -2,11 +2,8 @@
 //! function-valued attributes, intrinsic props lookup, and component props
 //! recovery.
 
-use crate::context::TypingRequest;
 use crate::state::CheckerState;
-use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 

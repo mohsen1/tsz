@@ -2136,7 +2136,6 @@ export class Model {
 
 // TODO: Emit TS2304/TS2339 for extends with non-existent property on import=require namespace.
 #[test]
-#[ignore]
 fn test_import_equals_require_extends_nonexistent_still_errors() {
     // Negative test: extends with non-existent export should still produce an error
     let source = r#"
