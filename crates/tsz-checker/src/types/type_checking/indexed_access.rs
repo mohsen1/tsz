@@ -230,6 +230,36 @@ impl<'a> CheckerState<'a> {
                             })
                     });
                 }
+                // Semantic fallback: when the constraint is a type expression (e.g.,
+                // `optionalKeys<T>`, `Extract<keyof T, string>`, or any alias), evaluate
+                // it and check if it's assignable to `keyof T` for the object type
+                // parameter. Use `keyof T` directly (not `keyof (constraint of T)`) so
+                // that deferred keyof relationships are preserved.
+                if crate::query_boundaries::common::is_type_parameter_like(
+                    self.ctx.types,
+                    object_type,
+                ) {
+                    let constraint_type = self.get_type_from_type_node(tp.constraint);
+                    let constraint_eval = self.evaluate_type_with_env(constraint_type);
+                    let keyof_object_param = self.ctx.types.factory().keyof(object_type);
+                    if self.is_assignable_to(constraint_eval, keyof_object_param) {
+                        return true;
+                    }
+                    // Also check if the constraint's structure contains a keyof
+                    // targeting the object (handles `optionalKeys<T>` which evaluates
+                    // to `{[k in keyof T]: ...}[keyof T]` — a subset of keyof T).
+                    if self.is_keyof_for_current_object(
+                        constraint_eval,
+                        object_type,
+                        object_type_for_check,
+                    ) || self.is_keyof_for_current_object(
+                        constraint_type,
+                        object_type,
+                        object_type_for_check,
+                    ) {
+                        return true;
+                    }
+                }
                 return false;
             }
             current = self
@@ -949,6 +979,36 @@ impl<'a> CheckerState<'a> {
                 break;
             }
             index_type_for_check = next_evaluated;
+        }
+        // When the solver-level type parameter had no constraint but an AST-resolved
+        // constraint exists (e.g. mapped type key `k` in `[k in K]: T[k]` where the
+        // solver's TypeId for `k` doesn't carry the constraint), follow the chain
+        // starting from the AST-resolved constraint. This handles patterns like
+        // `[k in K]: T[k]` where `K extends keyof T` — the chain K → keyof T must
+        // be followed to suppress the false TS2536.
+        if let Some(ast_constraint) = index_constraint {
+            let mut chain_start = ast_constraint;
+            for _ in 0..5 {
+                let evaluated = self.evaluate_type_with_env(chain_start);
+                if self.is_keyof_for_current_object(evaluated, object_type, object_type_for_check)
+                    || self.is_keyof_for_current_object(
+                        chain_start,
+                        object_type,
+                        object_type_for_check,
+                    )
+                {
+                    return;
+                }
+                if self.is_assignable_to(evaluated, keyof_object) {
+                    return;
+                }
+                let next = crate::query_boundaries::common::type_parameter_constraint(
+                    self.ctx.types,
+                    evaluated,
+                );
+                let Some(next_constraint) = next else { break };
+                chain_start = next_constraint;
+            }
         }
         if !self.is_assignable_to(index_type_for_check, keyof_object) {
             if let Some((wants_string, wants_number)) =
