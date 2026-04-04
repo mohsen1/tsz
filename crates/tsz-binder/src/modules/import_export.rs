@@ -17,36 +17,68 @@ impl BinderState {
         node: &Node,
         _idx: NodeIndex,
     ) {
-        if let Some(import) = arena.get_import_decl(node) {
-            // Get module specifier for cross-file module resolution
-            let module_specifier = if import.module_specifier.is_none() {
-                None
-            } else {
-                arena
-                    .get(import.module_specifier)
-                    .and_then(|spec_node| arena.get_literal(spec_node))
-                    .map(|lit| lit.text.clone())
-            };
+        let Some(import) = arena.get_import_decl(node) else {
+            return;
+        };
+        // Get module specifier for cross-file module resolution
+        let module_specifier = if import.module_specifier.is_none() {
+            None
+        } else {
+            arena
+                .get(import.module_specifier)
+                .and_then(|spec_node| arena.get_literal(spec_node))
+                .map(|lit| lit.text.clone())
+        };
 
-            // Record the import source for dependency tracking
-            if let Some(ref spec) = module_specifier {
-                self.file_import_sources.push(spec.clone());
+        // Record the import source for dependency tracking
+        if let Some(ref spec) = module_specifier {
+            self.file_import_sources.push(spec.clone());
+        }
+
+        let Some(clause_node) = arena.get(import.import_clause) else {
+            return;
+        };
+        let Some(clause) = arena.get_import_clause(clause_node) else {
+            return;
+        };
+
+        let clause_type_only = clause.is_type_only;
+        // Default import
+        if clause.name.is_some()
+            && let Some(name) = Self::get_identifier_name(arena, clause.name)
+        {
+            // Use import_clause node as the declaration node
+            let sym_id = self.declare_symbol(
+                arena,
+                name,
+                symbol_flags::ALIAS,
+                import.import_clause,
+                false,
+            );
+            if let Some(sym) = self.symbols.get_mut(sym_id) {
+                sym.is_type_only = clause_type_only;
+                // Track module for cross-file resolution
+                if let Some(ref specifier) = module_specifier {
+                    sym.import_module = Some(specifier.clone());
+                    // Default imports (`import X from "mod"`) resolve the module's
+                    // **default** export, regardless of the local binding name.
+                    sym.import_name = Some("default".to_string());
+                }
             }
+            self.node_symbols.insert(clause.name.0, sym_id);
+        }
 
-            if let Some(clause_node) = arena.get(import.import_clause)
-                && let Some(clause) = arena.get_import_clause(clause_node)
-            {
-                let clause_type_only = clause.is_type_only;
-                // Default import
-                if clause.name.is_some()
-                    && let Some(name) = Self::get_identifier_name(arena, clause.name)
-                {
-                    // Use import_clause node as the declaration node
+        // Named imports
+        if clause.named_bindings.is_some()
+            && let Some(bindings_node) = arena.get(clause.named_bindings)
+        {
+            if bindings_node.kind == SyntaxKind::Identifier as u16 {
+                if let Some(name) = Self::get_identifier_name(arena, clause.named_bindings) {
                     let sym_id = self.declare_symbol(
                         arena,
                         name,
                         symbol_flags::ALIAS,
-                        import.import_clause,
+                        clause.named_bindings,
                         false,
                     );
                     if let Some(sym) = self.symbols.get_mut(sym_id) {
@@ -54,115 +86,82 @@ impl BinderState {
                         // Track module for cross-file resolution
                         if let Some(ref specifier) = module_specifier {
                             sym.import_module = Some(specifier.clone());
-                            // Default imports (`import X from "mod"`) resolve the module's
-                            // **default** export, regardless of the local binding name.
-                            sym.import_name = Some("default".to_string());
                         }
                     }
-                    self.node_symbols.insert(clause.name.0, sym_id);
+                    self.node_symbols.insert(clause.named_bindings.0, sym_id);
                 }
-
-                // Named imports
-                if clause.named_bindings.is_some()
-                    && let Some(bindings_node) = arena.get(clause.named_bindings)
+            } else if let Some(named) = arena.get_named_imports(bindings_node) {
+                // Handle namespace import: import * as ns from 'module'
+                if named.name.is_some()
+                    && let Some(name) = Self::get_identifier_name(arena, named.name)
                 {
-                    if bindings_node.kind == SyntaxKind::Identifier as u16 {
-                        if let Some(name) = Self::get_identifier_name(arena, clause.named_bindings)
-                        {
-                            let sym_id = self.declare_symbol(
-                                arena,
-                                name,
-                                symbol_flags::ALIAS,
-                                clause.named_bindings,
-                                false,
-                            );
-                            if let Some(sym) = self.symbols.get_mut(sym_id) {
-                                sym.is_type_only = clause_type_only;
-                                // Track module for cross-file resolution
-                                if let Some(ref specifier) = module_specifier {
-                                    sym.import_module = Some(specifier.clone());
-                                }
-                            }
-                            self.node_symbols.insert(clause.named_bindings.0, sym_id);
+                    // Use named_bindings (NamespaceImport) as the declaration node
+                    let sym_id = self.declare_symbol(
+                        arena,
+                        name,
+                        symbol_flags::ALIAS,
+                        clause.named_bindings,
+                        false,
+                    );
+                    if let Some(sym) = self.symbols.get_mut(sym_id) {
+                        sym.is_type_only = clause_type_only;
+                        // Track module for cross-file resolution
+                        if let Some(ref specifier) = module_specifier {
+                            sym.import_module = Some(specifier.clone());
+                            // Namespace import: mark as `*` so type display
+                            // renders `typeof import("mod")` instead of `typeof ns`.
+                            sym.import_name = Some("*".to_string());
                         }
-                    } else if let Some(named) = arena.get_named_imports(bindings_node) {
-                        // Handle namespace import: import * as ns from 'module'
-                        if named.name.is_some()
-                            && let Some(name) = Self::get_identifier_name(arena, named.name)
-                        {
-                            // Use named_bindings (NamespaceImport) as the declaration node
-                            let sym_id = self.declare_symbol(
-                                arena,
-                                name,
-                                symbol_flags::ALIAS,
-                                clause.named_bindings,
-                                false,
-                            );
-                            if let Some(sym) = self.symbols.get_mut(sym_id) {
-                                sym.is_type_only = clause_type_only;
-                                // Track module for cross-file resolution
-                                if let Some(ref specifier) = module_specifier {
-                                    sym.import_module = Some(specifier.clone());
-                                    // Namespace import: mark as `*` so type display
-                                    // renders `typeof import("mod")` instead of `typeof ns`.
-                                    sym.import_name = Some("*".to_string());
-                                }
-                            }
-                            self.node_symbols.insert(named.name.0, sym_id);
-                            self.node_symbols.insert(clause.named_bindings.0, sym_id);
-                        }
-                        // Handle named imports: import { foo, bar } from 'module'
-                        for &spec_idx in &named.elements.nodes {
-                            if let Some(spec_node) = arena.get(spec_idx)
-                                && let Some(spec) = arena.get_specifier(spec_node)
-                            {
-                                let spec_type_only = clause_type_only || spec.is_type_only;
-                                let local_ident = if spec.name.is_none() {
-                                    spec.property_name
-                                } else {
-                                    spec.name
-                                };
-                                let local_name = Self::get_identifier_name(arena, local_ident);
+                    }
+                    self.node_symbols.insert(named.name.0, sym_id);
+                    self.node_symbols.insert(clause.named_bindings.0, sym_id);
+                }
+                // Handle named imports: import { foo, bar } from 'module'
+                for &spec_idx in &named.elements.nodes {
+                    let Some(spec_node) = arena.get(spec_idx) else {
+                        continue;
+                    };
+                    let Some(spec) = arena.get_specifier(spec_node) else {
+                        continue;
+                    };
+                    let spec_type_only = clause_type_only || spec.is_type_only;
+                    let local_ident = if spec.name.is_none() {
+                        spec.property_name
+                    } else {
+                        spec.name
+                    };
+                    let Some(name) = Self::get_identifier_name(arena, local_ident) else {
+                        continue;
+                    };
 
-                                if let Some(name) = local_name {
-                                    let sym_id = self.declare_symbol(
-                                        arena,
-                                        name,
-                                        symbol_flags::ALIAS,
-                                        spec_idx,
-                                        false,
-                                    );
+                    let sym_id =
+                        self.declare_symbol(arena, name, symbol_flags::ALIAS, spec_idx, false);
 
-                                    // Get property name before mutable borrow to avoid borrow checker error
-                                    let prop_name =
-                                        if spec.name.is_some() && spec.property_name.is_some() {
-                                            Self::get_identifier_name(arena, spec.property_name)
-                                        } else {
-                                            None
-                                        };
+                    // Get property name before mutable borrow to avoid borrow checker error
+                    let prop_name = if spec.name.is_some() && spec.property_name.is_some() {
+                        Self::get_identifier_name(arena, spec.property_name)
+                    } else {
+                        None
+                    };
 
-                                    if let Some(sym) = self.symbols.get_mut(sym_id) {
-                                        sym.is_type_only = spec_type_only;
-                                        // Track module and original name for cross-file resolution
-                                        if let Some(ref specifier) = module_specifier {
-                                            sym.import_module = Some(specifier.clone());
-                                            // For renamed imports (import { foo as bar }), track original name
-                                            if let Some(prop_name) = prop_name {
-                                                sym.import_name = Some(prop_name.to_string());
-                                            } else {
-                                                // For non-renamed imports (import { foo }), still set
-                                                // import_name so the checker can distinguish named
-                                                // imports from namespace imports (import * as ns).
-                                                sym.import_name = Some(name.to_string());
-                                            }
-                                        }
-                                    }
-                                    self.node_symbols.insert(spec_idx.0, sym_id);
-                                    self.node_symbols.insert(local_ident.0, sym_id);
-                                }
+                    if let Some(sym) = self.symbols.get_mut(sym_id) {
+                        sym.is_type_only = spec_type_only;
+                        // Track module and original name for cross-file resolution
+                        if let Some(ref specifier) = module_specifier {
+                            sym.import_module = Some(specifier.clone());
+                            // For renamed imports (import { foo as bar }), track original name
+                            if let Some(prop_name) = prop_name {
+                                sym.import_name = Some(prop_name.to_string());
+                            } else {
+                                // For non-renamed imports (import { foo }), still set
+                                // import_name so the checker can distinguish named
+                                // imports from namespace imports (import * as ns).
+                                sym.import_name = Some(name.to_string());
                             }
                         }
                     }
+                    self.node_symbols.insert(spec_idx.0, sym_id);
+                    self.node_symbols.insert(local_ident.0, sym_id);
                 }
             }
         }
