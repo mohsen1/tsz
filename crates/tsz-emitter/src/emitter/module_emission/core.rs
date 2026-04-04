@@ -1,4 +1,4 @@
-use super::super::{JsxEmit, ModuleKind, Printer, ScriptTarget};
+use super::super::{ModuleKind, Printer, ScriptTarget};
 use crate::context::transform::IdentifierId;
 use crate::transforms::emit_utils;
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
@@ -122,7 +122,7 @@ impl<'a> Printer<'a> {
         self.write_helper("__rewriteRelativeImportExtension");
         self.write("(");
         self.emit(arg_idx);
-        if self.ctx.options.jsx == JsxEmit::Preserve {
+        if self.ctx.options.jsx_preserve_explicit {
             self.write(", true");
         }
         self.write(")");
