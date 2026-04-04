@@ -1893,7 +1893,10 @@ impl ParserState {
             // parseErrorAtCurrentToken). We emit TS1005 even when the expression
             // had prior errors (like TS1121 for octal literals), matching tsc
             // behavior for cases like `00.5;` where both errors should be reported.
-            self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            // Suppress cascading TS1005 when a recent error was emitted nearby.
+            if self.should_report_error() {
+                self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            }
             return;
         };
 
