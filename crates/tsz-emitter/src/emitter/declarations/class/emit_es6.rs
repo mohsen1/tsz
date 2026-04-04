@@ -303,6 +303,7 @@ impl<'a> Printer<'a> {
         let prev_pending_private_accessor_defs =
             std::mem::take(&mut self.pending_private_accessor_defs);
         let prev_private_members_to_skip = std::mem::take(&mut self.private_members_to_skip);
+        let prev_private_static_class_alias = self.private_static_class_alias.take();
 
         let has_any_private_lowering = !private_fields.is_empty()
             || !private_methods.is_empty()
@@ -458,6 +459,7 @@ impl<'a> Printer<'a> {
                 && !class_name.is_empty()
             {
                 self.pending_private_class_alias = Some((alias.clone(), class_name.clone()));
+                self.private_static_class_alias = Some((class_name.clone(), alias.clone()));
             }
 
             // Prepare private field constructor inits (WeakMap.set calls)
@@ -916,6 +918,11 @@ impl<'a> Printer<'a> {
                     // Skip private fields when they're being lowered to WeakMap pattern.
                     // They're handled separately via pending_private_field_constructor_inits.
                     if !private_fields.is_empty() && is_private_identifier(self.arena, prop.name) {
+                        continue;
+                    }
+                    if !needs_private_field_lowering
+                        && is_private_identifier(self.arena, prop.name)
+                    {
                         continue;
                     }
                     // If the property has a computed name with a hoisted temp, use the temp
@@ -2292,6 +2299,7 @@ impl<'a> Printer<'a> {
         self.pending_private_method_defs = prev_pending_private_method_defs;
         self.pending_private_accessor_defs = prev_pending_private_accessor_defs;
         self.private_members_to_skip = prev_private_members_to_skip;
+        self.private_static_class_alias = prev_private_static_class_alias;
 
         // Clear computed property temp map to avoid leaking to the next class.
         self.computed_prop_temp_map.clear();

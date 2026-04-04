@@ -81,7 +81,7 @@ impl<'a> Printer<'a> {
             if let Some(weakmap_name) = self.private_field_weakmaps.get(clean_name).cloned() {
                 self.write_helper("__classPrivateFieldGet");
                 self.write("(");
-                self.emit(access.expression);
+                self.emit_private_receiver(access.expression, clean_name);
                 self.write(", ");
                 // For methods/accessors/static fields, use the state_var instead of weakmap_name
                 if let Some(info) = self.private_member_info.get(clean_name).cloned() {

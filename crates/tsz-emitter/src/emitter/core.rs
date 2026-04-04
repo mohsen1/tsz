@@ -40,8 +40,7 @@ pub(crate) struct PrivateMemberInfo {
     /// For accessors: the setter variable name (e.g., `_C_prop_set`).
     pub setter_ref: Option<String>,
     /// Whether this is a static member.
-    /// Currently set but not read — reserved for future static private member emission.
-    #[allow(dead_code)]
+    /// Used to replace receiver class-name references with the class alias.
     pub is_static: bool,
     /// The WeakSet/class-alias variable used as the `state` argument.
     /// For instance methods/accessors: `_ClassName_instances`.
@@ -570,6 +569,8 @@ pub struct Printer<'a> {
     /// from the class body because they're extracted as standalone functions.
     pub(crate) private_members_to_skip: FxHashSet<String>,
 
+    pub(crate) private_static_class_alias: Option<(String, String)>,
+
     /// When true, class emitter defers static block IIFEs.
     pub(crate) defer_class_static_blocks: bool,
 
@@ -754,6 +755,7 @@ impl<'a> Printer<'a> {
             pending_private_method_defs: Vec::new(),
             pending_private_accessor_defs: Vec::new(),
             private_members_to_skip: FxHashSet::default(),
+            private_static_class_alias: None,
             defer_class_static_blocks: false,
             deferred_class_static_blocks: Vec::new(),
             jsx_dev_file_name: None,
