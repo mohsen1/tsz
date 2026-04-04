@@ -331,13 +331,22 @@ impl<'a> CheckerState<'a> {
         // For JS files without explicit type annotations, check for JSDoc @type
         // providing a function type. If found, extract its return type so that
         // return statements are checked against it (TS2322/TS2355).
+        // Also check for @returns/@return tag if no @type annotation is found.
         let jsdoc_return_type = if !has_type_annotation && !is_closure && self.is_js_file() {
+            // First try: @type annotation on the function (e.g., @type {() => T})
             self.jsdoc_type_annotation_for_node(func_idx)
                 .and_then(|jsdoc_func_type| {
                     crate::query_boundaries::assignability::get_function_return_type(
                         self.ctx.types,
                         jsdoc_func_type,
                     )
+                })
+                .or_else(|| {
+                    // Second try: @returns/@return tag (e.g., @returns {T})
+                    func_decl_jsdoc.as_ref().and_then(|jsdoc| {
+                        Self::jsdoc_returns_type_expression(jsdoc)
+                            .and_then(|expr| self.resolve_jsdoc_reference(&expr))
+                    })
                 })
         } else {
             None
