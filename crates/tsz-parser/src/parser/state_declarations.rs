@@ -1609,8 +1609,8 @@ impl ParserState {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at(
                         name_start,
-                        (name_end - name_start) as u32,
-                        &format!("Namespace name cannot be '{}'.", word),
+                        name_end - name_start,
+                        &format!("Namespace name cannot be '{word}'."),
                         diagnostic_codes::NAMESPACE_NAME_CANNOT_BE,
                     );
                     self.next_token();
@@ -1777,8 +1777,8 @@ impl ParserState {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at(
                         name_start,
-                        (name_end - name_start) as u32,
-                        &format!("Namespace name cannot be '{}'.", word),
+                        name_end - name_start,
+                        &format!("Namespace name cannot be '{word}'."),
                         diagnostic_codes::NAMESPACE_NAME_CANNOT_BE,
                     );
                     self.next_token();
