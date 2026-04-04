@@ -390,6 +390,23 @@ impl<'a> CheckerState<'a> {
         );
     }
 
+    /// Report TS2635: Type has no signatures for which the type argument list is applicable.
+    pub fn error_no_applicable_signatures_for_type_args(
+        &mut self,
+        expr_type: TypeId,
+        idx: NodeIndex,
+    ) {
+        if expr_type == TypeId::ERROR || expr_type == TypeId::ANY {
+            return;
+        }
+        let type_str = self.format_type_diagnostic(expr_type);
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::TYPE_HAS_NO_SIGNATURES_FOR_WHICH_THE_TYPE_ARGUMENT_LIST_IS_APPLICABLE,
+            &[&type_str],
+        );
+    }
+
     /// Report TS2559: Type has no properties in common with constraint.
     ///
     /// Emitted instead of TS2344 when the constraint is a "weak type" (all-optional
