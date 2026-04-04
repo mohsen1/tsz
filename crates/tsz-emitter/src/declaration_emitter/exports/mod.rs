@@ -3,8 +3,8 @@
 use super::DeclarationEmitter;
 use crate::enums::evaluator::{EnumEvaluator, EnumValue};
 use rustc_hash::FxHashSet;
-use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::type_queries;
 
