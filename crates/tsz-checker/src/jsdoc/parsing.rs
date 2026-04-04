@@ -553,6 +553,12 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let name = &names_str[start..cursor];
+
+                // Skip `const` modifier keyword (e.g., `@template const T`).
+                if name == "const" {
+                    continue;
+                }
+
                 let mut lookahead = cursor;
                 while lookahead < bytes.len() && (bytes[lookahead] as char).is_ascii_whitespace() {
                     lookahead += 1;
