@@ -229,7 +229,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
-    pub(super) fn function_type_from_signature(&self, sig: &CallSignature, is_constructor: bool) -> TypeId {
+    pub(super) fn function_type_from_signature(
+        &self,
+        sig: &CallSignature,
+        is_constructor: bool,
+    ) -> TypeId {
         self.interner.function(FunctionShape {
             type_params: Vec::new(),
             params: sig.params.clone(),
@@ -796,7 +800,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// Check if a source type matches any of the given fixed target members.
     /// Used for union subtraction during inference: source members matching
     /// fixed (non-placeholder) target members are filtered out.
-    pub(super) fn source_matches_any_fixed(&mut self, src: TypeId, fixed_targets: &[TypeId]) -> bool {
+    pub(super) fn source_matches_any_fixed(
+        &mut self,
+        src: TypeId,
+        fixed_targets: &[TypeId],
+    ) -> bool {
         for &fixed in fixed_targets {
             if fixed == src {
                 return true;
