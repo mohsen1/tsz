@@ -1,6 +1,7 @@
 //! Assignment operator utilities, validation, JS/CommonJS helpers,
 //! polymorphic this checking, tuple/array destructuring bounds, and arithmetic checks.
 
+use crate::context::TypingRequest;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
@@ -479,66 +480,31 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Check for property access expressions rooted at `exports` or `module.exports`
-        // This handles patterns like `exports.X = ...` and `module.exports.X = ...`
-        if target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            // First check if the entire expression is `module.exports`
-            if let Some(access) = self.ctx.arena.get_access_expr(target_node) {
-                let is_module = self
-                    .ctx
-                    .arena
-                    .get_identifier_at(access.expression)
-                    .is_some_and(|ident| ident.escaped_text == "module");
-                let is_exports = self
-                    .ctx
-                    .arena
-                    .get_identifier_at(access.name_or_argument)
-                    .is_some_and(|ident| ident.escaped_text == "exports");
-                if is_module && is_exports {
-                    return true;
-                }
-            }
-
-            // Also check for `module.exports.X` patterns (not bare `exports.X`).
-            // Bare `exports.X = ...` is a named export, NOT a module-level export
-            // replacement — it goes through is_js_container_export_declaration instead.
-            // Only `module.exports.X` should be treated as a module export assignment.
-            if let Some(access) = self.ctx.arena.get_access_expr(target_node)
-                && let Some(expr_node) = self.ctx.arena.get(access.expression)
-                && expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                && let Some(inner_access) = self.ctx.arena.get_access_expr(expr_node)
-            {
-                let is_module = self
-                    .ctx
-                    .arena
-                    .get_identifier_at(inner_access.expression)
-                    .is_some_and(|ident| ident.escaped_text == "module");
-                let is_exports = self
-                    .ctx
-                    .arena
-                    .get_identifier_at(inner_access.name_or_argument)
-                    .is_some_and(|ident| ident.escaped_text == "exports");
-                if is_module && is_exports {
-                    return true;
-                }
-            }
-            return false;
+        // Check for `module.exports` property access
+        if target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(target_node)
+        {
+            let is_module = self
+                .ctx
+                .arena
+                .get_identifier_at(access.expression)
+                .is_some_and(|ident| ident.escaped_text == "module");
+            let is_exports = self
+                .ctx
+                .arena
+                .get_identifier_at(access.name_or_argument)
+                .is_some_and(|ident| ident.escaped_text == "exports");
+            return is_module && is_exports;
         }
 
         false
     }
 
-    /// In JS files, assignments like `exports.n = {}` or `module.exports.b = function() {}`
-    /// where the target is subsequently augmented with property assignments (e.g., `exports.n.K = ...`)
+    /// In JS files, assignments like `exports.n = {}` or `module.exports.n = {}`
+    /// where `n` is subsequently augmented with property assignments (e.g., `exports.n.K = ...`)
     /// are JS container declarations. The type of the container is built up from all
     /// property assignments, so the initial value assignment should not be checked
     /// against the augmented type. tsc treats these as declarations, not assignments.
-    ///
-    /// tsc never checks the RHS of a CJS export property assignment against the
-    /// inferred export type when the export is augmented with sub-properties — the
-    /// export surface is built incrementally from all assignments in the file.
-    /// Checking `module.exports.b = function() {}` against the final merged type
-    /// `{ (): void; cat: string }` would emit false TS2741.
     fn is_js_container_export_declaration(&self, target_idx: NodeIndex) -> bool {
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::syntax_kind_ext;
@@ -552,7 +518,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        // Must be a property access expression (e.g., `exports.n` or `module.exports.b`)
+        // Must be a property access expression (e.g., `exports.n` or `module.exports.n`)
         if target_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             return false;
         }
@@ -609,22 +575,12 @@ impl<'a> CheckerState<'a> {
             .get_identifier_at(access.name_or_argument)
             .map(|ident| ident.escaped_text.as_str());
         if let Some(prop_name) = prop_name {
-            // Check the file's own export table
             if let Some(file_exports) = self.ctx.binder.module_exports.get(&*self.ctx.file_name) {
                 if let Some(export_sym_id) = file_exports.get(prop_name) {
                     if let Some(symbol) = self.ctx.binder.get_symbol(export_sym_id) {
                         if symbol_is_container(symbol) {
                             return true;
                         }
-                    }
-                }
-            }
-            // Also check file_locals (for `exports.n` patterns where the symbol
-            // might be stored in locals rather than module_exports)
-            if let Some(sym_id) = self.ctx.binder.file_locals.get(prop_name) {
-                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    if symbol_is_container(symbol) {
-                        return true;
                     }
                 }
             }
