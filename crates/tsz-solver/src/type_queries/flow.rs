@@ -926,21 +926,25 @@ fn types_have_common_properties(
         return false;
     }
 
-    // Build a lookup table for target properties by name.
+    // Build a lookup table for source properties by name.
     use rustc_hash::FxHashMap;
-    let mut target_by_name: FxHashMap<Atom, Vec<(TypeId, bool)>> = FxHashMap::default();
-    for (name, ty, optional) in target_props {
-        target_by_name.entry(name).or_default().push((ty, optional));
+    let mut source_by_name: FxHashMap<Atom, Vec<(TypeId, bool)>> = FxHashMap::default();
+    for (name, ty, optional) in &source_props {
+        source_by_name
+            .entry(*name)
+            .or_default()
+            .push((*ty, *optional));
     }
 
-    // Require ALL common properties to have comparable types.
-    // A single incompatible shared property means the types don't overlap.
-    // Properties that exist only on one side don't affect comparability.
+    // tsc's comparable relation requires ALL required target properties to
+    // exist in the source with comparable types. Just sharing some common
+    // property names is not enough — missing required target properties means
+    // the types are NOT comparable.
     let mut found_common = false;
-    for (source_name, source_ty, source_optional) in &source_props {
-        if let Some(target_entries) = target_by_name.get(source_name) {
+    for (target_name, target_ty, target_optional) in &target_props {
+        if let Some(source_entries) = source_by_name.get(target_name) {
             found_common = true;
-            let any_comparable = target_entries.iter().any(|(target_ty, target_optional)| {
+            let any_comparable = source_entries.iter().any(|(source_ty, source_optional)| {
                 // If either property is optional, `undefined` is part of the type.
                 // E.g., `a?: string` effectively has type `string | undefined`,
                 // so `undefined` is comparable to it.
@@ -954,6 +958,9 @@ fn types_have_common_properties(
             if !any_comparable {
                 return false;
             }
+        } else if !target_optional {
+            // Required target property is missing from source — not comparable.
+            return false;
         }
     }
     found_common
