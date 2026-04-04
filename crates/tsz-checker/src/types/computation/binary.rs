@@ -1145,13 +1145,13 @@ impl<'a> CheckerState<'a> {
                     let result = match non_nullish {
                         None => right_type,
                         Some(non_nullish) => {
-                            if non_nullish == right_type {
-                                non_nullish
-                            } else if tsz_solver::is_subtype_of(
-                                self.ctx.types.as_type_database(),
-                                right_type,
-                                non_nullish,
-                            ) {
+                            if non_nullish == right_type
+                                || tsz_solver::is_subtype_of(
+                                    self.ctx.types.as_type_database(),
+                                    right_type,
+                                    non_nullish,
+                                )
+                            {
                                 non_nullish
                             } else if tsz_solver::is_subtype_of(
                                 self.ctx.types.as_type_database(),
