@@ -737,22 +737,23 @@ fn types_have_common_properties_relaxed(
         });
     }
 
-    // Handle tuple↔tuple comparability: check element types pairwise
+    // Handle tuple↔tuple comparability: check element types pairwise.
+    // tsc's isTypeComparableTo checks tuples structurally: each element at
+    // position i must be comparable to the element at position i in the other
+    // tuple. Different-length tuples are not comparable (neither is assignable
+    // to the other), so TS2352 should fire.
     if let (Some(TypeData::Tuple(src_tuple)), Some(TypeData::Tuple(tgt_tuple))) =
         (db.lookup(source), db.lookup(target))
     {
         let src_elements = db.tuple_list(src_tuple);
         let tgt_elements = db.tuple_list(tgt_tuple);
-        // Check if any element from source is comparable to any from target
-        return src_elements.iter().any(|src_elem| {
-            tgt_elements.iter().any(|tgt_elem| {
-                types_are_comparable_for_assertion_inner(
-                    db,
-                    src_elem.type_id,
-                    tgt_elem.type_id,
-                    depth + 1,
-                )
-            })
+        // Different-length tuples are not comparable
+        if src_elements.len() != tgt_elements.len() {
+            return false;
+        }
+        // All corresponding elements must be comparable
+        return src_elements.iter().zip(tgt_elements.iter()).all(|(s, t)| {
+            types_are_comparable_for_assertion_inner(db, s.type_id, t.type_id, depth + 1)
         });
     }
 
@@ -1161,22 +1162,23 @@ fn types_have_common_properties(
         });
     }
 
-    // Handle tuple↔tuple comparability: check element types pairwise
+    // Handle tuple↔tuple comparability: check element types pairwise.
+    // tsc's isTypeComparableTo checks tuples structurally: each element at
+    // position i must be comparable to the element at position i in the other
+    // tuple. Different-length tuples are not comparable (neither is assignable
+    // to the other), so TS2352 should fire.
     if let (Some(TypeData::Tuple(src_tuple)), Some(TypeData::Tuple(tgt_tuple))) =
         (db.lookup(source), db.lookup(target))
     {
         let src_elements = db.tuple_list(src_tuple);
         let tgt_elements = db.tuple_list(tgt_tuple);
-        // Check if any element from source is comparable to any from target
-        return src_elements.iter().any(|src_elem| {
-            tgt_elements.iter().any(|tgt_elem| {
-                types_are_comparable_for_assertion_inner(
-                    db,
-                    src_elem.type_id,
-                    tgt_elem.type_id,
-                    depth + 1,
-                )
-            })
+        // Different-length tuples are not comparable
+        if src_elements.len() != tgt_elements.len() {
+            return false;
+        }
+        // All corresponding elements must be comparable
+        return src_elements.iter().zip(tgt_elements.iter()).all(|(s, t)| {
+            types_are_comparable_for_assertion_inner(db, s.type_id, t.type_id, depth + 1)
         });
     }
 
