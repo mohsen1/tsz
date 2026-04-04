@@ -685,6 +685,13 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     self.write(": ");
                     self.write(&jsdoc_param.type_text);
+                } else if let Some(ref jsdoc_param) = jsdoc_param
+                    && Self::jsdoc_type_needs_checker_resolution(&jsdoc_param.type_text)
+                    && let Some(converted) =
+                        Self::convert_jsdoc_function_type(&jsdoc_param.type_text)
+                {
+                    self.write(": ");
+                    self.write(&converted);
                 } else if let Some(type_id) = self.get_node_type_or_names(&[param_idx, param.name])
                 {
                     // Inferred type from type cache
