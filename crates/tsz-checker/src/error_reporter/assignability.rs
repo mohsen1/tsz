@@ -348,7 +348,7 @@ impl<'a> CheckerState<'a> {
     /// TS2741/TS2739/TS2740 (missing property codes). This variant uses full
     /// failure analysis for accurate message formatting (e.g., union best-match),
     /// then downgrades any "missing property" code to TS2322.
-    /// 
+    ///
     /// NOTE: For empty object literals `{}` that are missing required properties,
     /// we should NOT downgrade TS2741 to TS2322 - we should keep TS2741 because
     /// the issue is missing properties, not type mismatch. Only downgrade when
@@ -365,7 +365,7 @@ impl<'a> CheckerState<'a> {
             self.resolve_diagnostic_anchor_node(anchor_idx, DiagnosticAnchorKind::Exact);
         let diag_count_before = self.ctx.diagnostics.len();
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
-        
+
         // The diagnose_assignment_failure_with_anchor call above has already generated
         // the appropriate diagnostic. For missing property errors, it generates TS2741;
         // for type mismatches, it generates TS2322. We should NOT downgrade TS2741 to TS2322
