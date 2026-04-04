@@ -1311,6 +1311,19 @@ impl ParserState {
                         // for increment/decrement.
                         SyntaxKind::AwaitKeyword => {
                             self.error_expression_expected();
+                            // In async context, parse the full await expression
+                            // (including operand like `42`) so tokens are consumed
+                            // and no spurious TS1005 follows.
+                            if self.in_async_context() {
+                                let operand = self.parse_unary_expression();
+                                let end_pos = self.token_end();
+                                return self.arena.add_unary_expr(
+                                    syntax_kind_ext::PREFIX_UNARY_EXPRESSION,
+                                    start_pos,
+                                    end_pos,
+                                    UnaryExprData { operator, operand },
+                                );
+                            }
                         }
                         _ => {}
                     }
