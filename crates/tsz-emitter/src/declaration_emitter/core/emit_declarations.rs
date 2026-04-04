@@ -770,7 +770,7 @@ impl<'a> DeclarationEmitter<'a> {
             || self.is_js_named_exported_name(class.name);
         if !is_exported
             && !self.should_emit_public_api_member(&class.modifiers)
-            && !self.should_emit_public_api_dependency(class.name)
+            && !self.is_confirmed_public_api_dependency(class.name)
         {
             return;
         }
