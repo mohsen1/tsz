@@ -1125,7 +1125,7 @@ impl<'a> CheckerState<'a> {
             } else if func.name.is_some() {
                 func.name
             } else {
-                func.body
+                func_idx
             };
             self.error_at_node(
                 error_node,
