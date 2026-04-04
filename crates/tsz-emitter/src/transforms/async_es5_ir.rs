@@ -574,6 +574,16 @@ impl<'a> AsyncES5Transformer<'a> {
                     comment: Some("return".to_string().into()),
                 },
             ))));
+        } else if self.contains_await_recursive(idx) {
+            self.emit_nested_suspension(idx, cases, current_statements, current_label);
+            let value = self.expression_to_ir(idx);
+            current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+                IRNode::GeneratorOp {
+                    opcode: opcodes::RETURN,
+                    value: Some(Box::new(value)),
+                    comment: Some("return".to_string().into()),
+                },
+            ))));
         } else {
             // Non-await expression body: return the expression directly
             let value = self.expression_to_ir(idx);
@@ -634,6 +644,18 @@ impl<'a> AsyncES5Transformer<'a> {
                             IRNode::GeneratorOp {
                                 opcode: opcodes::RETURN,
                                 value: Some(Box::new(IRNode::GeneratorSent)),
+                                comment: Some("return".to_string().into()),
+                            },
+                        ))));
+                    } else if self.contains_await_recursive(ret.expression) {
+                        self.emit_nested_suspension(
+                            ret.expression, cases, current_statements, current_label,
+                        );
+                        let value = self.expression_to_ir(ret.expression);
+                        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+                            IRNode::GeneratorOp {
+                                opcode: opcodes::RETURN,
+                                value: Some(Box::new(value)),
                                 comment: Some("return".to_string().into()),
                             },
                         ))));
@@ -701,6 +723,9 @@ impl<'a> AsyncES5Transformer<'a> {
                             current_statements
                                 .push(IRNode::ThrowStatement(Box::new(IRNode::GeneratorSent)));
                         } else {
+                            self.emit_nested_suspension(
+                                throw_data.expression, cases, current_statements, current_label,
+                            );
                             let expr = self.expression_to_ir(throw_data.expression);
                             current_statements.push(IRNode::ThrowStatement(Box::new(expr)));
                         }
@@ -742,9 +767,99 @@ impl<'a> AsyncES5Transformer<'a> {
             return;
         }
 
+        // Check for nested await inside the expression
+        if self.contains_await_recursive(idx) {
+            self.emit_nested_suspension(idx, cases, current_statements, current_label);
+            let ir = self.expression_to_ir(idx);
+            current_statements.push(IRNode::ExpressionStatement(Box::new(ir)));
+            return;
+        }
+
         // For other expressions, convert to IR and add as expression statement
         let ir = self.expression_to_ir(idx);
         current_statements.push(IRNode::ExpressionStatement(Box::new(ir)));
+    }
+
+    fn emit_nested_suspension(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) {
+        if let Some(await_idx) = self.find_suspension_expression(idx) {
+            self.process_await_expression(await_idx, cases, current_statements, current_label);
+        }
+    }
+
+    fn find_suspension_expression(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.arena.get(idx)?;
+        if node.kind == self.suspension_kind() {
+            return Some(idx);
+        }
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || node.kind == syntax_kind_ext::ARROW_FUNCTION
+        {
+            return None;
+        }
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            if let Some(bin) = self.arena.get_binary_expr(node) {
+                if let Some(found) = self.find_suspension_expression(bin.left) {
+                    return Some(found);
+                }
+                return self.find_suspension_expression(bin.right);
+            }
+        }
+        if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+            if let Some(call) = self.arena.get_call_expr(node) {
+                if let Some(found) = self.find_suspension_expression(call.expression) {
+                    return Some(found);
+                }
+                if let Some(args) = &call.arguments {
+                    for &arg_idx in &args.nodes {
+                        if let Some(found) = self.find_suspension_expression(arg_idx) {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+        }
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if let Some(access) = self.arena.get_access_expr(node) {
+                return self.find_suspension_expression(access.expression);
+            }
+        }
+        if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            if let Some(access) = self.arena.get_access_expr(node) {
+                if let Some(found) = self.find_suspension_expression(access.expression) {
+                    return Some(found);
+                }
+                return self.find_suspension_expression(access.name_or_argument);
+            }
+        }
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            if let Some(paren) = self.arena.get_parenthesized(node) {
+                return self.find_suspension_expression(paren.expression);
+            }
+        }
+        if node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION {
+            if let Some(cond) = self.arena.get_conditional_expr(node) {
+                if let Some(found) = self.find_suspension_expression(cond.condition) {
+                    return Some(found);
+                }
+                if let Some(found) = self.find_suspension_expression(cond.when_true) {
+                    return Some(found);
+                }
+                return self.find_suspension_expression(cond.when_false);
+            }
+        }
+        if node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            if let Some(unary) = self.arena.get_unary_expr(node) {
+                return self.find_suspension_expression(unary.operand);
+            }
+        }
+        None
     }
 
     fn process_await_expression(
@@ -831,7 +946,10 @@ impl<'a> AsyncES5Transformer<'a> {
                     initializer: None,
                 });
 
-                // Process the expression which may have nested awaits
+                // Emit the yield for the nested await
+                self.emit_nested_suspension(
+                    decl.initializer, cases, current_statements, current_label,
+                );
                 let init = self.expression_to_ir(decl.initializer);
                 current_statements.push(IRNode::ExpressionStatement(Box::new(
                     IRNode::BinaryExpr {

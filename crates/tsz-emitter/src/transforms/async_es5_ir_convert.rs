@@ -136,14 +136,10 @@ impl<'a> AsyncES5Transformer<'a> {
                 }
             }
 
-            k if k == syntax_kind_ext::AWAIT_EXPRESSION => {
-                // In expression context, await needs special handling
-                // This shouldn't typically happen as awaits are processed separately
-                if let Some(await_expr) = self.arena.get_unary_expr_ex(node) {
-                    self.expression_to_ir(await_expr.expression)
-                } else {
-                    IRNode::Undefined
-                }
+            k if k == syntax_kind_ext::AWAIT_EXPRESSION
+                || k == syntax_kind_ext::YIELD_EXPRESSION =>
+            {
+                IRNode::GeneratorSent
             }
 
             // NEW_EXPRESSION: `new Foo(args)`
