@@ -1898,7 +1898,9 @@ impl ParserState {
                 }
                 // Tagged template literals: tag`template` or tag`head${expr}tail`
                 SyntaxKind::NoSubstitutionTemplateLiteral | SyntaxKind::TemplateHead => {
+                    self.in_tagged_template = true;
                     let template = self.parse_template_literal();
+                    self.in_tagged_template = false;
                     let end_pos = self.token_end();
 
                     expr = self.arena.add_tagged_template(
@@ -1946,7 +1948,9 @@ impl ParserState {
                         } else if self.is_token(SyntaxKind::NoSubstitutionTemplateLiteral)
                             || self.is_token(SyntaxKind::TemplateHead)
                         {
+                            self.in_tagged_template = true;
                             let template = self.parse_template_literal();
+                            self.in_tagged_template = false;
                             let end_pos = self.token_end();
 
                             expr = self.arena.add_tagged_template(
@@ -2018,7 +2022,9 @@ impl ParserState {
                             diagnostic_messages::TAGGED_TEMPLATE_EXPRESSIONS_ARE_NOT_PERMITTED_IN_AN_OPTIONAL_CHAIN,
                             diagnostic_codes::TAGGED_TEMPLATE_EXPRESSIONS_ARE_NOT_PERMITTED_IN_AN_OPTIONAL_CHAIN,
                         );
+                        self.in_tagged_template = true;
                         let template = self.parse_template_literal();
+                        self.in_tagged_template = false;
                         let end_pos = self.token_end();
                         expr = self.arena.add_tagged_template(
                             syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION,
@@ -2146,7 +2152,9 @@ impl ParserState {
                             || self.is_token(SyntaxKind::TemplateHead)
                         {
                             // Tagged template with type arguments: tag<T>`template`
+                            self.in_tagged_template = true;
                             let template = self.parse_template_literal();
+                            self.in_tagged_template = false;
                             let end_pos = self.token_end();
 
                             expr = self.arena.add_tagged_template(
