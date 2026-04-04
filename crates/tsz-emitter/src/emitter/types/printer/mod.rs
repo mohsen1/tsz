@@ -4,6 +4,7 @@
 //! representation into printable TypeScript syntax for declaration emit (.d.ts files).
 
 use tsz_binder::{SymbolArena, SymbolId};
+use tsz_common::interner::Atom;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::TypeInterner;
 
@@ -51,10 +52,12 @@ pub struct TypePrinter<'a> {
     /// When false, standalone `null` and `undefined` widen to `any` and are
     /// filtered from union members (matching tsc's DTS behaviour).
     strict_null_checks: bool,
+    outer_type_param_names: Vec<Atom>,
+    type_param_renames: Vec<(Atom, String)>,
 }
 
 impl<'a> TypePrinter<'a> {
-    pub const fn new(interner: &'a TypeInterner) -> Self {
+    pub fn new(interner: &'a TypeInterner) -> Self {
         Self {
             interner,
             symbol_arena: None,
@@ -69,23 +72,25 @@ impl<'a> TypePrinter<'a> {
             local_import_alias_name_resolver: None,
             has_local_import_alias_resolver: None,
             strict_null_checks: true,
+            outer_type_param_names: Vec::new(),
+            type_param_renames: Vec::new(),
         }
     }
 
     /// Set the symbol arena for visibility checking.
-    pub const fn with_symbols(mut self, symbol_arena: &'a SymbolArena) -> Self {
+    pub fn with_symbols(mut self, symbol_arena: &'a SymbolArena) -> Self {
         self.symbol_arena = Some(symbol_arena);
         self
     }
 
     /// Set the type cache for resolving Lazy(DefId) types.
-    pub const fn with_type_cache(mut self, type_cache: &'a TypeCacheView) -> Self {
+    pub fn with_type_cache(mut self, type_cache: &'a TypeCacheView) -> Self {
         self.type_cache = Some(type_cache);
         self
     }
 
     /// Set the maximum recursion depth for type inlining.
-    pub const fn with_max_depth(mut self, max_depth: u32) -> Self {
+    pub fn with_max_depth(mut self, max_depth: u32) -> Self {
         self.max_depth = max_depth;
         self
     }
@@ -93,7 +98,7 @@ impl<'a> TypePrinter<'a> {
     /// Enable multi-line type formatting at the given indentation level.
     /// Object types with members will be formatted across multiple lines
     /// using 4-space indentation. Without this, object types use flat format.
-    pub const fn with_indent_level(mut self, indent_level: u32) -> Self {
+    pub fn with_indent_level(mut self, indent_level: u32) -> Self {
         self.indent_level = Some(indent_level);
         self
     }
@@ -101,13 +106,13 @@ impl<'a> TypePrinter<'a> {
     /// Set the enclosing symbol (namespace/class) for context-relative name resolution.
     /// Qualified names that share a prefix with this symbol's path will have the
     /// shared prefix stripped (e.g., inside namespace `m1.m2`, type `m1.m2.c` becomes `c`).
-    pub const fn with_enclosing_symbol(mut self, sym_id: SymbolId) -> Self {
+    pub fn with_enclosing_symbol(mut self, sym_id: SymbolId) -> Self {
         self.enclosing_symbol = Some(sym_id);
         self
     }
 
     /// Set the AST arena for declaration-reachability checks.
-    pub const fn with_node_arena(mut self, node_arena: &'a NodeArena) -> Self {
+    pub fn with_node_arena(mut self, node_arena: &'a NodeArena) -> Self {
         self.node_arena = Some(node_arena);
         self
     }
@@ -150,10 +155,14 @@ impl<'a> TypePrinter<'a> {
 
     /// Configure strictNullChecks mode. When false, standalone `null` and
     /// `undefined` widen to `any` and are stripped from union members.
-    pub const fn with_strict_null_checks(mut self, strict: bool) -> Self {
+    pub fn with_strict_null_checks(mut self, strict: bool) -> Self {
         self.strict_null_checks = strict;
         self
     }
+
+    pub fn with_outer_type_params(mut self, names: Vec<Atom>) -> Self { self.outer_type_param_names = names; self }
+    pub(crate) fn resolve_type_param_name(&self, name: Atom) -> String { for (atom, renamed) in &self.type_param_renames { if *atom == name { return renamed.clone(); } } self.interner.resolve_atom(name) }
+    pub(crate) fn with_type_param_scope(&self, new_params: &[tsz_solver::types::TypeParamInfo]) -> Self { if new_params.is_empty() { return self.clone(); } let mut scoped = self.clone(); let mut all_in_scope: Vec<String> = scoped.outer_type_param_names.iter().map(|a| self.interner.resolve_atom(*a)).collect(); for (_atom, renamed) in &scoped.type_param_renames { if !all_in_scope.contains(renamed) { all_in_scope.push(renamed.clone()); } } scoped.type_param_renames.clear(); let mut new_names_in_scope: Vec<String> = Vec::new(); for tp in new_params { let original = self.interner.resolve_atom(tp.name); if all_in_scope.contains(&original) || new_names_in_scope.contains(&original) { let mut suffix = 1u32; loop { let candidate = format!("{}_{}", original, suffix); if !all_in_scope.contains(&candidate) && !new_names_in_scope.contains(&candidate) { scoped.type_param_renames.push((tp.name, candidate.clone())); new_names_in_scope.push(candidate); break; } suffix += 1; } } else { new_names_in_scope.push(original); } if !scoped.outer_type_param_names.contains(&tp.name) { scoped.outer_type_param_names.push(tp.name); } } for name_str in &new_names_in_scope { let atom = scoped.interner.intern_string(name_str); if !scoped.outer_type_param_names.contains(&atom) { scoped.outer_type_param_names.push(atom); } } scoped }
 }
 
 mod symbol_resolution;
