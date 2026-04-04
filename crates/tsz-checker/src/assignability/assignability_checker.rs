@@ -638,6 +638,23 @@ impl<'a> CheckerState<'a> {
         let contains_error_application =
             |type_id: TypeId| Self::type_contains_error_application(self.ctx.types, type_id);
 
+        // Suppress TS2322 for source types that are intersections containing indexed access
+        // types with unresolved type parameters (e.g., `Partial<T>[K] & ({} | null)`).
+        // These types may not be properly evaluated when assignability is checked, leading
+        // to false positives when the intersection should actually be assignable.
+        let source_is_intersection_with_indexed_access = || -> bool {
+            if let Some(members) =
+                crate::query_boundaries::common::intersection_members(self.ctx.types, source)
+            {
+                members.iter().any(|&member| {
+                    crate::query_boundaries::common::is_index_access_type(self.ctx.types, member)
+                        && tsz_solver::contains_type_parameters(self.ctx.types, member)
+                })
+            } else {
+                false
+            }
+        };
+
         // Suppress TS2322 for callable types with generic type parameters from outer
         // context. Skip the suppression when both sides have their own signature-level
         // type params — the solver handles generic-to-generic comparison correctly.
@@ -842,6 +859,7 @@ impl<'a> CheckerState<'a> {
         }
 
         matches!(source, TypeId::ERROR)
+            || source_is_intersection_with_indexed_access()
             || matches!(target, TypeId::ERROR | TypeId::ANY)
             || contains_error_application(target)
             // any is assignable to everything except never — tsc reports TS2322 for any→never

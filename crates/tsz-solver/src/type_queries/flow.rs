@@ -583,6 +583,171 @@ pub fn types_are_comparable(db: &dyn TypeDatabase, source: TypeId, target: TypeI
     types_are_comparable_inner(db, source, target, 0)
 }
 
+/// Check if two types are comparable for type assertion purposes (TS2352).
+///
+/// This is more permissive than the standard `types_are_comparable` - it only
+/// requires that the types share at least one common property with comparable
+/// types. It does NOT require all target properties to exist in the source.
+///
+/// This prevents false TS2352 errors on valid type assertions like:
+/// - `{ required1: "hello" } as Foo` where Foo has additional required properties
+/// - `{ payload: 'any-string' } as Action<'ACTION_A', string>`
+pub fn types_are_comparable_for_assertion(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    types_are_comparable_for_assertion_inner(db, source, target, 0)
+}
+
+fn types_are_comparable_for_assertion_inner(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+    depth: u32,
+) -> bool {
+    // Prevent infinite recursion
+    if depth > 5 {
+        return false;
+    }
+
+    // Same type is always comparable
+    if source == target {
+        return true;
+    }
+
+    // `never` is comparable to any type (it's the bottom type, subtype of all types).
+    // `any` and `unknown` are also comparable to everything.
+    if source == TypeId::NEVER
+        || target == TypeId::NEVER
+        || source == TypeId::ANY
+        || target == TypeId::ANY
+        || source == TypeId::UNKNOWN
+        || target == TypeId::UNKNOWN
+    {
+        return true;
+    }
+
+    // Lazy types at non-zero depth are assumed comparable
+    if depth > 0 {
+        if matches!(db.lookup(source), Some(TypeData::Lazy(_)))
+            || matches!(db.lookup(target), Some(TypeData::Lazy(_)))
+        {
+            return true;
+        }
+    }
+
+    // Unwrap ReadonlyType wrappers
+    if let Some(TypeData::ReadonlyType(inner)) = db.lookup(source) {
+        return types_are_comparable_for_assertion_inner(db, inner, target, depth + 1);
+    }
+    if let Some(TypeData::ReadonlyType(inner)) = db.lookup(target) {
+        return types_are_comparable_for_assertion_inner(db, source, inner, depth + 1);
+    }
+
+    // Check union types
+    if let Some(TypeData::Union(list_id)) = db.lookup(source) {
+        let members = db.type_list(list_id);
+        return members
+            .iter()
+            .any(|&m| types_are_comparable_for_assertion_inner(db, m, target, depth + 1));
+    }
+    if let Some(TypeData::Union(list_id)) = db.lookup(target) {
+        let members = db.type_list(list_id);
+        return members
+            .iter()
+            .any(|&m| types_are_comparable_for_assertion_inner(db, source, m, depth + 1));
+    }
+
+    // Check primitive ↔ literal comparability
+    if is_primitive_comparable(db, source, target) || is_primitive_comparable(db, target, source)
+    {
+        return true;
+    }
+
+    // For type assertions, only check that overlapping properties are comparable.
+    // Do NOT require all target properties to exist in the source.
+    types_have_common_properties_relaxed(db, source, target, depth)
+}
+
+/// Relaxed version of types_have_common_properties for TS2352.
+/// Only requires that shared properties have comparable types.
+/// Missing target properties in the source are allowed.
+fn types_have_common_properties_relaxed(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+    depth: u32,
+) -> bool {
+    fn get_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<(Atom, TypeId, bool)> {
+        match db.lookup(type_id) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = db.object_shape(shape_id);
+                shape
+                    .properties
+                    .iter()
+                    .map(|p| (p.name, p.type_id, p.optional))
+                    .collect()
+            }
+            Some(TypeData::Callable(callable_id)) => {
+                let shape = db.callable_shape(callable_id);
+                shape
+                    .properties
+                    .iter()
+                    .map(|p| (p.name, p.type_id, p.optional))
+                    .collect()
+            }
+            Some(TypeData::Intersection(list_id)) => {
+                let members = db.type_list(list_id);
+                let mut props = Vec::new();
+                for &member in members.iter() {
+                    props.extend(get_properties(db, member));
+                }
+                props
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    let source_props = get_properties(db, source);
+    let target_props = get_properties(db, target);
+
+    if source_props.is_empty() || target_props.is_empty() {
+        return false;
+    }
+
+    use rustc_hash::FxHashMap;
+    let mut source_by_name: FxHashMap<Atom, Vec<(TypeId, bool)>> = FxHashMap::default();
+    for (name, ty, optional) in &source_props {
+        source_by_name
+            .entry(*name)
+            .or_default()
+            .push((*ty, *optional));
+    }
+
+    // For TS2352: only check that shared properties are comparable.
+    // Missing target properties are allowed.
+    let mut found_common = false;
+    for (target_name, target_ty, target_optional) in &target_props {
+        if let Some(source_entries) = source_by_name.get(target_name) {
+            found_common = true;
+            let any_comparable = source_entries.iter().any(|(source_ty, source_optional)| {
+                if (*source_optional || *target_optional)
+                    && (*source_ty == TypeId::UNDEFINED || *target_ty == TypeId::UNDEFINED)
+                {
+                    return true;
+                }
+                types_are_comparable_for_assertion_inner(db, *source_ty, *target_ty, depth + 1)
+            });
+            if !any_comparable {
+                return false;
+            }
+        }
+        // Intentionally NOT returning false for missing target properties
+    }
+    found_common
+}
+
 fn types_are_comparable_inner(
     db: &dyn TypeDatabase,
     source: TypeId,
