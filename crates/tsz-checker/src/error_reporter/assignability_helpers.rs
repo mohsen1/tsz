@@ -99,6 +99,62 @@ impl<'a> CheckerState<'a> {
     /// For `y = a;` where `y: { a: string } & { b: string }`:
     ///   anchor (`ExpressionStatement`) → expression (`BinaryExpression`) → left (Identifier)
     ///   → symbol → `value_declaration` (`VariableDeclaration`) → `type_annotation` (`IntersectionType`)
+    /// Check if the SOURCE (RHS) of the assignment at the anchor has an intersection type
+    /// annotation on its declaration. This is needed because intersection types may be
+    /// flattened into Object types by the solver, losing the intersection structure.
+    pub(super) fn anchor_source_has_intersection_annotation(&self, anchor_idx: NodeIndex) -> bool {
+        self.anchor_source_intersection_check_inner(anchor_idx)
+            .unwrap_or(false)
+    }
+
+    fn anchor_source_intersection_check_inner(&self, anchor_idx: NodeIndex) -> Option<bool> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let anchor_node = self.ctx.arena.get(anchor_idx)?;
+
+        // Walk from anchor to the assignment source (RHS) expression
+        let source_expr_idx = if anchor_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
+            let expr_stmt = self.ctx.arena.get_expression_statement(anchor_node)?;
+            let expr_node = self.ctx.arena.get(expr_stmt.expression)?;
+            if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                let binary = self.ctx.arena.get_binary_expr(expr_node)?;
+                binary.right
+            } else {
+                return Some(false);
+            }
+        } else if anchor_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            // For `let x: T = source`, the source is the initializer
+            let var_decl = self.ctx.arena.get_variable_declaration(anchor_node)?;
+            var_decl.initializer
+        } else {
+            return Some(false);
+        };
+
+        // Check if the source is an identifier
+        let ident_node = self.ctx.arena.get(source_expr_idx)?;
+        if ident_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return Some(false);
+        }
+
+        // Resolve identifier to symbol
+        let sym_id = self.resolve_identifier_symbol(source_expr_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+
+        // Get value declaration
+        let decl_node = self.ctx.arena.get(symbol.value_declaration)?;
+
+        // Check if it's a variable declaration with an intersection type annotation
+        if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+            if var_decl.type_annotation.is_some() {
+                let type_node = self.ctx.arena.get(var_decl.type_annotation)?;
+                return Some(type_node.kind == syntax_kind_ext::INTERSECTION_TYPE);
+            }
+        }
+
+        Some(false)
+    }
+
     pub(super) fn anchor_target_has_intersection_annotation(&self, anchor_idx: NodeIndex) -> bool {
         self.anchor_target_intersection_check_inner(anchor_idx)
             .unwrap_or(false)
