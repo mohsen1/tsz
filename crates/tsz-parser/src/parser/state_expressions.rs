@@ -2351,7 +2351,8 @@ impl ParserState {
             | SyntaxKind::RequireKeyword
             | SyntaxKind::ModuleKeyword
             | SyntaxKind::AwaitKeyword
-            | SyntaxKind::YieldKeyword => self.parse_keyword_as_identifier(),
+            | SyntaxKind::YieldKeyword
+            | SyntaxKind::UsingKeyword => self.parse_keyword_as_identifier(),
             SyntaxKind::ThisKeyword => self.parse_this_expression(),
             SyntaxKind::SuperKeyword => self.parse_super_expression(),
             SyntaxKind::OpenParenToken => self.parse_parenthesized_expression(),
