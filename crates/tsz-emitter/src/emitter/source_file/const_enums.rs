@@ -1,6 +1,5 @@
 use super::super::Printer;
 use crate::enums::evaluator::EnumEvaluator;
-use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::NodeList;
 use tsz_parser::parser::node::Node;

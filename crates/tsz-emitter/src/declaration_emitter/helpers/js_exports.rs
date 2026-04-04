@@ -29,10 +29,9 @@ use tsz_scanner::SyntaxKind;
 
 use super::{
     JsClassLikePrototypeMembers, JsCommonjsExpandoDeclKind, JsCommonjsExpandoDeclarations,
-    JsCommonjsNamedExports, JsCommonjsSyntheticStatements, JsDefinedPropertyDecl,
-    JsFoldedNamedExports, JsNamespaceExportAliases, JsStaticMethodAugmentationEntry,
+    JsCommonjsNamedExports, JsNamespaceExportAliases, JsStaticMethodAugmentationEntry,
     JsStaticMethodAugmentationGroup, JsStaticMethodAugmentations, JsStaticMethodInfo,
-    JsStaticMethodKey, JsdocParamDecl,
+    JsStaticMethodKey,
 };
 
 impl<'a> DeclarationEmitter<'a> {

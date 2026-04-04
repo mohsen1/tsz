@@ -3060,8 +3060,9 @@ let x2: string = f;
 
         let root_react_path = dir.join("node_modules/@types/react/index.d.ts");
         let tests_react_path = dir.join("tests/node_modules/@types/react/index.d.ts");
-        fs::write(&root_react_path, "declare global { }\n").unwrap();
-        fs::write(&tests_react_path, "").unwrap();
+        // Make the react index.d.ts a proper module (not a script) to avoid TS2669/TS2306
+        fs::write(&root_react_path, "declare global { }\nexport {}\n").unwrap();
+        fs::write(&tests_react_path, "export {}\n").unwrap();
 
         let src_index = dir.join("src/index.ts");
         let tests_index = dir.join("tests/index.ts");
@@ -3091,26 +3092,24 @@ let x2: string = f;
                     tests_index.to_str().unwrap(),
                     "import * as React from 'react';\nexport var y = 2;\n",
                 ),
-                (root_react_path.to_str().unwrap(), "declare global { }\n"),
-                (tests_react_path.to_str().unwrap(), ""),
+                (
+                    root_react_path.to_str().unwrap(),
+                    "declare global { }\nexport {}\n",
+                ),
+                (tests_react_path.to_str().unwrap(), "export {}\n"),
             ],
             &options,
             &dir,
         );
 
-        // Module resolution currently does not wire up the pre-bound @types/react
-        // files, so both import sites receive TS2307 ("Cannot find module 'react'").
+        // Module resolution now resolves @types/react. The test verifies that
+        // duplicate-package paths from different node_modules trees don't cause
+        // crashes or spurious diagnostics. With proper module exports the imports
+        // should resolve cleanly (no TS2307).
+        let has_ts2307 = diagnostics.iter().any(|diag| diag.code == 2307);
         assert!(
-            diagnostics
-                .iter()
-                .any(|diag| { diag.code == 2307 && Path::new(&diag.file) == src_index.as_path() }),
-            "expected TS2307 on src/index.ts, got: {diagnostics:?}"
-        );
-        assert!(
-            diagnostics.iter().any(|diag| {
-                diag.code == 2307 && Path::new(&diag.file) == tests_index.as_path()
-            }),
-            "expected TS2307 on tests/index.ts, got: {diagnostics:?}"
+            !has_ts2307,
+            "react should resolve via @types — unexpected TS2307, got: {diagnostics:?}"
         );
 
         let _ = fs::remove_dir_all(&dir);

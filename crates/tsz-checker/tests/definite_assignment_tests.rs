@@ -842,6 +842,8 @@ fn test_recursive_array_destructuring_in_switch_does_not_overflow() {
         },
     );
 
+    // Filter out expected diagnostics: TS2318 (missing globals), TS2339 (property access),
+    // and TS2345 (recursive type arg mismatch in destructured switch branches).
     let relevant: Vec<_> = diags
         .into_iter()
         .filter(|(code, _)| *code != 2318 && *code != 2339 && *code != 2345)

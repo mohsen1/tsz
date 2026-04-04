@@ -1,4 +1,4 @@
-use super::super::super::{Printer, ScriptTarget};
+use super::super::super::Printer;
 use crate::context::transform::TransformDirective;
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;

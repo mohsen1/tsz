@@ -27,8 +27,6 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 #[allow(unused_imports)]
 use tsz_scanner::SyntaxKind;
 
-use super::DtsCacheResolver;
-
 impl<'a> DeclarationEmitter<'a> {
     /// Emit required imports at the beginning of the .d.ts file.
     ///

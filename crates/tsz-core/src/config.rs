@@ -1639,7 +1639,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         // When outFile is set with a non-amd/system module, emit at both the module and outFile keys.
         if let Some(serde_json::Value::String(out_file_value)) = compiler_opts.get("outFile")
             && !out_file_value.is_empty()
-            && !option_is_effectively_enabled(&compiler_opts, &ts5024_keys, "emitDeclarationOnly")
+            && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "emitDeclarationOnly")
             && let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module")
         {
             let mod_normalized =
@@ -1674,7 +1674,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         }
 
         // TS5105: Option 'verbatimModuleSyntax' cannot be used when 'module' is set to 'UMD', 'AMD', or 'System'.
-        if option_is_effectively_enabled(&compiler_opts, &ts5024_keys, "verbatimModuleSyntax") {
+        if option_is_effectively_enabled(compiler_opts, &ts5024_keys, "verbatimModuleSyntax") {
             let module_bad =
                 if let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module") {
                     let mod_normalized =
@@ -1705,9 +1705,9 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         ];
         for &opt in requires_decl_or_composite {
             let declaration_enabled =
-                option_is_effectively_enabled(&compiler_opts, &ts5024_keys, "declaration");
+                option_is_effectively_enabled(compiler_opts, &ts5024_keys, "declaration");
             let composite_enabled =
-                option_is_effectively_enabled(&compiler_opts, &ts5024_keys, "composite");
+                option_is_effectively_enabled(compiler_opts, &ts5024_keys, "composite");
             if option_is_truthy(compiler_opts.get(opt))
                 && !declaration_enabled
                 && !composite_enabled
@@ -1741,8 +1741,8 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
 
         // Group 2: mapRoot requires 'sourceMap' or 'declarationMap'
         if compiler_opts.contains_key("mapRoot")
-            && !option_is_effectively_enabled(&compiler_opts, &ts5024_keys, "sourceMap")
-            && !option_is_effectively_enabled(&compiler_opts, &ts5024_keys, "declarationMap")
+            && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "sourceMap")
+            && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "declarationMap")
         {
             let start = find_key_offset_in_source(&stripped, "mapRoot");
             let key_len = "mapRoot".len() as u32 + 2;
@@ -1767,7 +1767,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         ) {
             let enablers: &[&str] = &["isolatedModules", "isolatedDeclarations"];
             for enabler in enablers {
-                if option_is_effectively_enabled(&compiler_opts, &ts5024_keys, enabler) {
+                if option_is_effectively_enabled(compiler_opts, &ts5024_keys, enabler) {
                     let start = find_key_offset_in_source(&stripped, "preserveConstEnums");
                     let key_len = "preserveConstEnums".len() as u32 + 2;
                     let msg = format_message(
@@ -1797,7 +1797,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
 
         // TS6304: Composite projects may not disable declaration emit.
         // When composite: true, declaration must not be explicitly false.
-        if option_is_effectively_enabled(&compiler_opts, &ts5024_keys, "composite")
+        if option_is_effectively_enabled(compiler_opts, &ts5024_keys, "composite")
             && matches!(
                 compiler_opts.get("declaration"),
                 Some(serde_json::Value::Bool(false))
@@ -1817,7 +1817,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
 
         // TS6379: Composite projects may not disable incremental compilation.
         // When composite: true, incremental must not be explicitly false.
-        if option_is_effectively_enabled(&compiler_opts, &ts5024_keys, "composite")
+        if option_is_effectively_enabled(compiler_opts, &ts5024_keys, "composite")
             && matches!(
                 compiler_opts.get("incremental"),
                 Some(serde_json::Value::Bool(false))
@@ -1838,7 +1838,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         // TS5052: Option '{0}' cannot be specified without specifying option '{1}'.
         // `checkJs` requires `allowJs` to be explicitly enabled.
         if option_is_truthy(compiler_opts.get("checkJs"))
-            && !option_is_effectively_enabled(&compiler_opts, &ts5024_keys, "allowJs")
+            && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "allowJs")
         {
             let msg = format_message(
                 diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
@@ -1872,11 +1872,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
 
         // TS5052: emitDecoratorMetadata requires experimentalDecorators.
         if option_is_truthy(compiler_opts.get("emitDecoratorMetadata"))
-            && !option_is_effectively_enabled(
-                &compiler_opts,
-                &ts5024_keys,
-                "experimentalDecorators",
-            )
+            && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "experimentalDecorators")
         {
             let start = find_key_offset_in_source(&stripped, "emitDecoratorMetadata");
             let key_len = "emitDecoratorMetadata".len() as u32 + 2;

@@ -121,6 +121,7 @@ fn test_direct_typedata_construction_is_quarantined_to_intern() {
     for path in source_files {
         if path.ends_with("src/intern/mod.rs")
             || path.ends_with("src/intern/core.rs")
+            || path.ancestors().any(|a| a.ends_with("src/intern/core"))
             || path.ends_with("src/intern/intersection.rs")
             || path.ends_with("src/intern/normalize.rs")
             || path.ends_with("src/intern/template.rs")

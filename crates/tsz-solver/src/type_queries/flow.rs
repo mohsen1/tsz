@@ -629,12 +629,11 @@ fn types_are_comparable_for_assertion_inner(
     }
 
     // Lazy types at non-zero depth are assumed comparable
-    if depth > 0 {
-        if matches!(db.lookup(source), Some(TypeData::Lazy(_)))
-            || matches!(db.lookup(target), Some(TypeData::Lazy(_)))
-        {
-            return true;
-        }
+    if depth > 0
+        && (matches!(db.lookup(source), Some(TypeData::Lazy(_)))
+            || matches!(db.lookup(target), Some(TypeData::Lazy(_))))
+    {
+        return true;
     }
 
     // Unwrap ReadonlyType wrappers
@@ -707,7 +706,6 @@ fn types_have_common_properties_relaxed(
             // Arrays have no named properties for overlap checking - element types
             // are compared separately in types_are_comparable_for_assertion_inner.
             // Returning empty ensures we don't short-circuit array↔object comparisons.
-            Some(TypeData::Array(_)) => Vec::new(),
             _ => Vec::new(),
         }
     }
@@ -831,12 +829,11 @@ fn types_are_comparable_inner(
     // comparable — the prior assignability checks already rejected the strict
     // case. At depth 0 the caller should have evaluated/resolved top-level
     // types, so Lazy is unexpected; fall through to other checks.
-    if depth > 0 {
-        if matches!(db.lookup(source), Some(TypeData::Lazy(_)))
-            || matches!(db.lookup(target), Some(TypeData::Lazy(_)))
-        {
-            return true;
-        }
+    if depth > 0
+        && (matches!(db.lookup(source), Some(TypeData::Lazy(_)))
+            || matches!(db.lookup(target), Some(TypeData::Lazy(_))))
+    {
+        return true;
     }
 
     // Unwrap ReadonlyType wrappers — `readonly T[]` is comparable to `T[]`
@@ -1132,7 +1129,6 @@ fn types_have_common_properties(
             // Arrays have no named properties for overlap checking - element types
             // are compared separately in types_are_comparable_for_assertion_inner.
             // Returning empty ensures we don't short-circuit array↔object comparisons.
-            Some(TypeData::Array(_)) => Vec::new(),
             _ => Vec::new(),
         }
     }

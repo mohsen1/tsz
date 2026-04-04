@@ -276,6 +276,14 @@ pub fn prepare_test_dir(
                 {
                     return None;
                 }
+                // tsc's harness also excludes typings/ directories and package.json
+                // when noImplicitReferences is set — only user source files are roots.
+                if normalized.starts_with("typings/") || normalized.contains("/typings/") {
+                    return None;
+                }
+                if normalized.ends_with("/package.json") || normalized == "package.json" {
+                    return None;
+                }
                 Some(name.replace("..", "_").trim_start_matches('/').to_string())
             })
             .collect();

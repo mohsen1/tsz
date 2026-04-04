@@ -121,6 +121,23 @@ pub(crate) fn index_access_types(
     tsz_solver::type_queries::get_index_access_types(db, type_id)
 }
 
+/// Extract the [`MappedType`] shape from a type, if it is a mapped type.
+///
+/// Thin boundary wrapper around `tsz_solver::type_queries::get_mapped_type`.
+pub(crate) fn get_mapped_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<tsz_solver::types::MappedType>> {
+    tsz_solver::type_queries::get_mapped_type(db, type_id)
+}
+
+/// Check whether a type transitively contains any type parameters.
+///
+/// Thin boundary wrapper around `tsz_solver::type_queries::contains_type_parameters_db`.
+pub(crate) fn contains_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::contains_type_parameters_db(db, type_id)
+}
+
 #[cfg(test)]
 #[path = "../../tests/property_access_boundaries.rs"]
 mod tests;

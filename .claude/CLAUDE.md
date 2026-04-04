@@ -142,6 +142,13 @@ For each change ask:
 - Prefer dedicated files per major checker/solver concern.
 - Avoid growth of monolith modules; split before crossing maintainability threshold.
 
+## 19.5) Testing
+- **Use `cargo nextest run` instead of `cargo test`** for all unit/integration test runs.
+- `cargo nextest run` provides better parallelism, output, and failure reporting.
+- Wrap full-suite runs with `scripts/safe-run.sh`: `scripts/safe-run.sh cargo nextest run`
+- Filtered runs: `cargo nextest run -E 'test(pattern)'` or `cargo nextest run -- pattern`
+- Single crate: `cargo nextest run -p tsz_checker`
+
 ## 20) Skills (Operational)
 Available skills and triggers:
 - `architecture-guardrails`: detect forbidden architecture patterns.
@@ -364,19 +371,19 @@ with open('scripts/conformance/conformance-detail.json') as f:
 
 ## 20.75) Memory-Guarded Execution (`scripts/safe-run.sh`)
 - **All long-running or memory-intensive commands MUST be wrapped with `scripts/safe-run.sh`.**
-- This includes: full conformance runs, `cargo test` (full suite), `cargo build --release`, and any multi-worker test runner.
+- This includes: full conformance runs, `cargo nextest run` (full suite), `cargo build --release`, and any multi-worker test runner.
 - The wrapper monitors the process tree's total RSS and kills it if it exceeds the limit (default: 75% of system RAM).
 - Overhead is negligible — one `ps` call every 5 seconds.
 - Quick, filtered runs (`--filter`, `--max`) and `cargo check` generally don't need the wrapper.
 
 ```bash
 # Wrap any heavy command
-scripts/safe-run.sh cargo test
+scripts/safe-run.sh cargo nextest run
 scripts/safe-run.sh ./scripts/conformance/conformance.sh run
 scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot
 
 # Custom limit (absolute MB or percentage of RAM)
-scripts/safe-run.sh --limit 8192 -- cargo test --release
+scripts/safe-run.sh --limit 8192 -- cargo nextest run --cargo-profile release
 scripts/safe-run.sh --limit 50% -- ./scripts/conformance/conformance.sh run
 
 # Debug memory usage
