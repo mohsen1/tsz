@@ -55,6 +55,9 @@ enum EmitDirective {
     ES5CallSpread {
         call_expr: NodeIndex,
     },
+    ES5NewSpread {
+        new_expr: NodeIndex,
+    },
     ES5VariableDeclarationList {
         decl_list: NodeIndex,
     },
@@ -157,6 +160,9 @@ impl<'a> Printer<'a> {
             }
             TransformDirective::ES5CallSpread { call_expr } => EmitDirective::ES5CallSpread {
                 call_expr: *call_expr,
+            },
+            TransformDirective::ES5NewSpread { new_expr } => EmitDirective::ES5NewSpread {
+                new_expr: *new_expr,
             },
             TransformDirective::ES5VariableDeclarationList { decl_list } => {
                 EmitDirective::ES5VariableDeclarationList {
@@ -803,6 +809,14 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5CallSpread { call_expr } => {
                 if let Some(call_node) = self.arena.get(call_expr) {
                     self.emit_call_expression_es5_spread(call_node);
+                } else {
+                    self.emit_node_default(node, idx);
+                }
+            }
+
+            EmitDirective::ES5NewSpread { new_expr } => {
+                if let Some(new_node) = self.arena.get(new_expr) {
+                    self.emit_new_expression_es5_spread(new_node);
                 } else {
                     self.emit_node_default(node, idx);
                 }
@@ -1512,6 +1526,14 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5CallSpread { call_expr } => {
                 if let Some(call_node) = self.arena.get(*call_expr) {
                     self.emit_call_expression_es5_spread(call_node);
+                    return;
+                }
+
+                self.emit_chained_previous(node, idx, directives, index);
+            }
+            EmitDirective::ES5NewSpread { new_expr } => {
+                if let Some(new_node) = self.arena.get(*new_expr) {
+                    self.emit_new_expression_es5_spread(new_node);
                     return;
                 }
 

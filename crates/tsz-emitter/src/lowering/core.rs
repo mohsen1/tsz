@@ -169,7 +169,7 @@ impl<'a> LoweringPass<'a> {
             k if k == syntax_kind_ext::ARROW_FUNCTION => self.visit_arrow_function(node, idx),
             k if k == syntax_kind_ext::CONSTRUCTOR => self.visit_constructor(node, idx),
             k if k == syntax_kind_ext::CALL_EXPRESSION => self.visit_call_expression(node, idx),
-            k if k == syntax_kind_ext::NEW_EXPRESSION => self.visit_new_expression(node),
+            k if k == syntax_kind_ext::NEW_EXPRESSION => self.visit_new_expression(node, idx),
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 self.visit_variable_statement(node, idx);
             }
@@ -1598,10 +1598,29 @@ impl<'a> LoweringPass<'a> {
     }
 
     /// Visit a new expression and traverse callee + arguments for nested transforms.
-    fn visit_new_expression(&mut self, node: &Node) {
+    fn visit_new_expression(&mut self, node: &Node, idx: NodeIndex) {
         let Some(new_expr) = self.arena.get_call_expr(node) else {
             return;
         };
+
+        if self.ctx.target_es5 {
+            if let Some(ref args) = new_expr.arguments {
+                let has_spread = args
+                    .nodes
+                    .iter()
+                    .any(|&arg_idx| emit_utils::is_spread_element(self.arena, arg_idx));
+                if has_spread {
+                    self.transforms
+                        .insert(idx, TransformDirective::ES5NewSpread { new_expr: idx });
+                    // New expressions always need __spreadArray because we
+                    // prepend void 0 to the args array for bind().
+                    self.transforms.helpers_mut().spread_array = true;
+                    if self.ctx.options.downlevel_iteration {
+                        self.transforms.helpers_mut().read = true;
+                    }
+                }
+            }
+        }
 
         self.visit(new_expr.expression);
         if let Some(ref args) = new_expr.arguments {

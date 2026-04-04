@@ -1247,4 +1247,119 @@ impl<'a> Printer<'a> {
             }
         }
     }
+
+    /// Emit a new expression with spread arguments, lowered for ES5.
+    pub(in crate::emitter) fn emit_new_expression_es5_spread(&mut self, node: &Node) {
+        let Some(new_expr) = self.arena.get_call_expr(node) else {
+            return;
+        };
+
+        let Some(ref args) = new_expr.arguments else {
+            self.write("new ");
+            self.emit(new_expr.expression);
+            self.write("()");
+            return;
+        };
+
+        // Determine if the constructor expression needs a temp variable.
+        // Simple identifiers can be emitted twice; anything else (property access,
+        // element access, call expressions, parenthesized expressions) needs a temp
+        // to avoid double evaluation.
+        let callee_node = self.arena.get(new_expr.expression);
+        let needs_temp = callee_node.is_some_and(|n| n.kind != SyntaxKind::Identifier as u16);
+
+        self.write("new (");
+
+        if needs_temp {
+            let temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&temp);
+            self.write(" = ");
+            self.emit(new_expr.expression);
+            self.write(").bind.apply(");
+            self.write(&temp);
+        } else {
+            self.emit(new_expr.expression);
+            self.write(".bind.apply(");
+            self.emit(new_expr.expression);
+        }
+
+        self.write(", ");
+        self.emit_new_spread_args_array(&args.nodes);
+        self.write("))()");
+    }
+
+    fn emit_new_spread_args_array(&mut self, args: &[NodeIndex]) {
+        let mut segments: Vec<ArraySegment> = Vec::new();
+        let mut current_start = 0;
+
+        for (i, &arg_idx) in args.iter().enumerate() {
+            if emit_utils::is_spread_element(self.arena, arg_idx) {
+                if current_start < i {
+                    segments.push(ArraySegment::Elements(&args[current_start..i]));
+                }
+                segments.push(ArraySegment::Spread(arg_idx));
+                current_start = i + 1;
+            }
+        }
+
+        if current_start < args.len() {
+            segments.push(ArraySegment::Elements(&args[current_start..]));
+        }
+
+        if segments.is_empty() {
+            self.write("[void 0]");
+            return;
+        }
+
+        if segments.len() == 1 {
+            if let ArraySegment::Spread(spread_idx) = &segments[0] {
+                self.write_helper("__spreadArray");
+                self.write("([void 0], ");
+                if let Some(spread_node) = self.arena.get(*spread_idx) {
+                    self.emit_spread_expression(spread_node);
+                }
+                self.write(", false)");
+                return;
+            }
+        }
+
+        for _ in 0..segments.len() - 1 {
+            self.write_helper("__spreadArray");
+            self.write("(");
+        }
+
+        match &segments[0] {
+            ArraySegment::Elements(elems) => {
+                self.write("[void 0, ");
+                self.emit_comma_separated(elems);
+                self.write("]");
+            }
+            ArraySegment::Spread(spread_idx) => {
+                self.write_helper("__spreadArray");
+                self.write("([void 0], ");
+                if let Some(spread_node) = self.arena.get(*spread_idx) {
+                    self.emit_spread_expression(spread_node);
+                }
+                self.write(", false)");
+            }
+        }
+
+        for segment in &segments[1..] {
+            match segment {
+                ArraySegment::Elements(elems) => {
+                    self.write(", [");
+                    self.emit_comma_separated(elems);
+                    self.write("], false)");
+                }
+                ArraySegment::Spread(spread_idx) => {
+                    self.write(", ");
+                    if let Some(spread_node) = self.arena.get(*spread_idx) {
+                        self.emit_spread_expression(spread_node);
+                    }
+                    self.write(", false)");
+                }
+            }
+        }
+    }
 }

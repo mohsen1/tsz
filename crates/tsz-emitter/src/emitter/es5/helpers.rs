@@ -496,6 +496,9 @@ impl<'a> Printer<'a> {
                 ObjectSegment::Elements(elems),
             ] => {
                 // Spread then elements: { ...a, b: 1 } → __assign(__assign({}, a), { b: 1 })
+                let has_computed = elems
+                    .iter()
+                    .any(|&idx| emit_utils::is_computed_property_member(self.arena, idx));
                 self.write_helper("__assign");
                 self.write("(");
                 self.write_helper("__assign");
@@ -504,7 +507,33 @@ impl<'a> Printer<'a> {
                     self.emit_spread_expression(spread_node);
                 }
                 self.write("), ");
-                self.emit_object_literal_entries_es5(elems);
+                if has_computed {
+                    let temp_var = self.make_unique_name_hoisted();
+                    self.write("(");
+                    self.write(&temp_var);
+                    self.write(" = ");
+                    let non_computed: Vec<NodeIndex> = elems
+                        .iter()
+                        .copied()
+                        .filter(|&idx| !emit_utils::is_computed_property_member(self.arena, idx))
+                        .collect();
+                    if non_computed.is_empty() {
+                        self.write("{}");
+                    } else {
+                        self.emit_object_literal_entries_es5(&non_computed);
+                    }
+                    for elem in *elems {
+                        if emit_utils::is_computed_property_member(self.arena, *elem) {
+                            self.write(", ");
+                            self.emit_property_assignment_es5(*elem, &temp_var);
+                        }
+                    }
+                    self.write(", ");
+                    self.write(&temp_var);
+                    self.write(")");
+                } else {
+                    self.emit_object_literal_entries_es5(elems);
+                }
                 self.write(")");
             }
             [first, rest @ ..] => {
@@ -534,12 +563,27 @@ impl<'a> Printer<'a> {
                             .iter()
                             .any(|&idx| emit_utils::is_computed_property_member(self.arena, idx));
                         if has_computed {
-                            // Use temp var for computed properties
-                            let temp_var = self.ctx.destructuring_state.next_temp_var();
+                            // Use temp var for computed properties.
+                            // Emit non-computed properties in the initial object literal,
+                            // then emit ALL properties (including computed) as assignments.
+                            let temp_var = self.make_unique_name_hoisted();
                             self.write("(");
                             self.write(&temp_var);
                             self.write(" = ");
-                            self.emit_object_literal_entries_es5(elems);
+                            // Emit only non-computed properties in the initial object literal
+                            let non_computed: Vec<NodeIndex> = elems
+                                .iter()
+                                .copied()
+                                .filter(|&idx| {
+                                    !emit_utils::is_computed_property_member(self.arena, idx)
+                                })
+                                .collect();
+                            if non_computed.is_empty() {
+                                self.write("{}");
+                            } else {
+                                self.emit_object_literal_entries_es5(&non_computed);
+                            }
+                            // Emit only computed properties as assignments on the temp var
                             for elem in *elems {
                                 if emit_utils::is_computed_property_member(self.arena, *elem) {
                                     self.write(", ");
@@ -571,11 +615,22 @@ impl<'a> Printer<'a> {
                                 emit_utils::is_computed_property_member(self.arena, idx)
                             });
                             if has_computed {
-                                let temp_var = self.ctx.destructuring_state.next_temp_var();
+                                let temp_var = self.make_unique_name_hoisted();
                                 self.write("(");
                                 self.write(&temp_var);
                                 self.write(" = ");
-                                self.emit_object_literal_entries_es5(elems);
+                                let non_computed: Vec<NodeIndex> = elems
+                                    .iter()
+                                    .copied()
+                                    .filter(|&idx| {
+                                        !emit_utils::is_computed_property_member(self.arena, idx)
+                                    })
+                                    .collect();
+                                if non_computed.is_empty() {
+                                    self.write("{}");
+                                } else {
+                                    self.emit_object_literal_entries_es5(&non_computed);
+                                }
                                 for elem in *elems {
                                     if emit_utils::is_computed_property_member(self.arena, *elem) {
                                         self.write(", ");

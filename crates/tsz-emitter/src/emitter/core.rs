@@ -1148,6 +1148,7 @@ impl<'a> Printer<'a> {
                 || k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
                 || k == syntax_kind_ext::TEMPLATE_EXPRESSION
                 || k == syntax_kind_ext::CALL_EXPRESSION
+                || k == syntax_kind_ext::NEW_EXPRESSION
                 || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
         )
     }
