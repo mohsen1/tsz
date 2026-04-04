@@ -141,7 +141,6 @@ bar(1, "");
 // TODO: higher-order generic inference for compose/map/filter chains doesn't
 // correctly propagate type parameters to emit TS2339 for the invalid pipeline.
 #[test]
-#[ignore = "higher-order generic inference chain does not produce TS2339 yet"]
 fn higher_order_generic_return_mismatch_preserves_followup_ts2339() {
     let source = r#"
 class SetOf<A> {
