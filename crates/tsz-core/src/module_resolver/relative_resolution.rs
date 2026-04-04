@@ -101,19 +101,9 @@ impl ModuleResolver {
                 // a directory index (e.g., ./pkg → ./pkg/index.d.ts), don't suggest an
                 // extension (TS2834) because adding .js to the specifier won't work.
                 let resolved_ext = ModuleExtension::from_path(&resolved);
-                // When the resolved file is .tsx and jsx is configured, tsc
-                // allows the extensionless import because the .tsx file will be
-                // compiled to .jsx (preserve) or .js (react/react-jsx/etc.).
-                if resolved_ext == ModuleExtension::Tsx && self.jsx.is_some() {
-                    return Ok(ResolvedModule {
-                        resolved_path: resolved.clone(),
-                        resolved_using_ts_extension: false,
-                        is_external: false,
-                        package_name: None,
-                        original_specifier: specifier.to_string(),
-                        extension: resolved_ext,
-                    });
-                }
+                // In NodeNext/ESM mode, extensionless imports are ALWAYS an
+                // error — even for .tsx files with jsx configured. tsc requires
+                // explicit .js or .jsx extensions in NodeNext mode.
                 let resolved_via_index = {
                     let resolved_path = Path::new(&resolved);
                     resolved_path.file_name().is_some_and(|name| {
