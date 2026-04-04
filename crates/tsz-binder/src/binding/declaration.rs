@@ -716,114 +716,103 @@ impl BinderState {
     }
 
     pub(crate) fn bind_class_member(&mut self, arena: &NodeArena, idx: NodeIndex) {
-        if let Some(node) = arena.get(idx) {
-            match node.kind {
-                k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                    if let Some(method) = arena.get_method_decl(node) {
-                        self.bind_modifiers(arena, method.modifiers.as_ref());
-                        if let Some(name_node) = arena.get(method.name)
-                            && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-                        {
-                            self.bind_node(arena, method.name);
-                        }
-                        if let Some(name) = Self::get_property_name(arena, method.name) {
-                            // Single-pass modifier extraction avoids 3 separate list walks
-                            let flags = symbol_flags::METHOD
-                                | Self::extract_member_modifier_flags(
-                                    arena,
-                                    method.modifiers.as_ref(),
-                                );
-                            let sym_id = self.declare_symbol(arena, &name, flags, idx, false);
-                            self.node_symbols.insert(method.name.0, sym_id);
-                        }
-                        self.bind_callable_body_with_type_params(
-                            arena,
-                            &method.parameters,
-                            method.body,
-                            idx,
-                            method.type_parameters.as_ref(),
-                        );
-                    }
+        let Some(node) = arena.get(idx) else {
+            return;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                let Some(method) = arena.get_method_decl(node) else {
+                    return;
+                };
+                self.bind_modifiers(arena, method.modifiers.as_ref());
+                if let Some(name_node) = arena.get(method.name)
+                    && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                {
+                    self.bind_node(arena, method.name);
                 }
-                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                    if let Some(prop) = arena.get_property_decl(node) {
-                        self.bind_modifiers(arena, prop.modifiers.as_ref());
-                        if let Some(name_node) = arena.get(prop.name)
-                            && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-                        {
-                            self.bind_node(arena, prop.name);
-                        }
-                        if let Some(name) = Self::get_property_name(arena, prop.name) {
-                            // Single-pass modifier extraction avoids 3 separate list walks
-                            let flags = symbol_flags::PROPERTY
-                                | Self::extract_member_modifier_flags(
-                                    arena,
-                                    prop.modifiers.as_ref(),
-                                );
-                            let sym_id = self.declare_symbol(arena, &name, flags, idx, false);
-                            self.node_symbols.insert(prop.name.0, sym_id);
-                        }
-
-                        if prop.initializer.is_some() {
-                            self.bind_node(arena, prop.initializer);
-                        }
-                    }
+                if let Some(name) = Self::get_property_name(arena, method.name) {
+                    // Single-pass modifier extraction avoids 3 separate list walks
+                    let flags = symbol_flags::METHOD
+                        | Self::extract_member_modifier_flags(arena, method.modifiers.as_ref());
+                    let sym_id = self.declare_symbol(arena, &name, flags, idx, false);
+                    self.node_symbols.insert(method.name.0, sym_id);
                 }
-                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                    if let Some(accessor) = arena.get_accessor(node) {
-                        self.bind_modifiers(arena, accessor.modifiers.as_ref());
-                        if let Some(name_node) = arena.get(accessor.name)
-                            && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-                        {
-                            self.bind_node(arena, accessor.name);
-                        }
-                        if let Some(name) = Self::get_property_name(arena, accessor.name) {
-                            // Single-pass modifier extraction avoids 3 separate list walks
-                            let base_flags = if node.kind == syntax_kind_ext::GET_ACCESSOR {
-                                symbol_flags::GET_ACCESSOR
-                            } else {
-                                symbol_flags::SET_ACCESSOR
-                            };
-                            let flags = base_flags
-                                | Self::extract_member_modifier_flags(
-                                    arena,
-                                    accessor.modifiers.as_ref(),
-                                );
-                            let sym_id = self.declare_symbol(arena, &name, flags, idx, false);
-                            self.node_symbols.insert(accessor.name.0, sym_id);
-                        }
-                        self.bind_callable_body(arena, &accessor.parameters, accessor.body, idx);
-                    }
-                }
-                k if k == syntax_kind_ext::CONSTRUCTOR => {
-                    self.declare_symbol(
-                        arena,
-                        "constructor",
-                        symbol_flags::CONSTRUCTOR,
-                        idx,
-                        false,
-                    );
-                    if let Some(ctor) = arena.get_constructor(node) {
-                        self.bind_modifiers(arena, ctor.modifiers.as_ref());
-                        // Declare PROPERTY symbols for parameter properties (public/private/
-                        // protected/readonly params) in the class scope BEFORE entering the
-                        // constructor's function scope. This enables reference tracking for
-                        // TS6138 ("Property 'x' is declared but its value is never read").
-                        self.bind_parameter_properties(arena, &ctor.parameters);
-                        self.bind_callable_body(arena, &ctor.parameters, ctor.body, idx);
-                    }
-                }
-                k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
-                    if let Some(block) = arena.get_block(node) {
-                        self.enter_scope(ContainerKind::Block, idx);
-                        for &stmt_idx in &block.statements.nodes {
-                            self.bind_node(arena, stmt_idx);
-                        }
-                        self.exit_scope(arena);
-                    }
-                }
-                _ => {}
+                self.bind_callable_body_with_type_params(
+                    arena,
+                    &method.parameters,
+                    method.body,
+                    idx,
+                    method.type_parameters.as_ref(),
+                );
             }
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                let Some(prop) = arena.get_property_decl(node) else {
+                    return;
+                };
+                self.bind_modifiers(arena, prop.modifiers.as_ref());
+                if let Some(name_node) = arena.get(prop.name)
+                    && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                {
+                    self.bind_node(arena, prop.name);
+                }
+                if let Some(name) = Self::get_property_name(arena, prop.name) {
+                    // Single-pass modifier extraction avoids 3 separate list walks
+                    let flags = symbol_flags::PROPERTY
+                        | Self::extract_member_modifier_flags(arena, prop.modifiers.as_ref());
+                    let sym_id = self.declare_symbol(arena, &name, flags, idx, false);
+                    self.node_symbols.insert(prop.name.0, sym_id);
+                }
+
+                if prop.initializer.is_some() {
+                    self.bind_node(arena, prop.initializer);
+                }
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                let Some(accessor) = arena.get_accessor(node) else {
+                    return;
+                };
+                self.bind_modifiers(arena, accessor.modifiers.as_ref());
+                if let Some(name_node) = arena.get(accessor.name)
+                    && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                {
+                    self.bind_node(arena, accessor.name);
+                }
+                if let Some(name) = Self::get_property_name(arena, accessor.name) {
+                    // Single-pass modifier extraction avoids 3 separate list walks
+                    let base_flags = if node.kind == syntax_kind_ext::GET_ACCESSOR {
+                        symbol_flags::GET_ACCESSOR
+                    } else {
+                        symbol_flags::SET_ACCESSOR
+                    };
+                    let flags = base_flags
+                        | Self::extract_member_modifier_flags(arena, accessor.modifiers.as_ref());
+                    let sym_id = self.declare_symbol(arena, &name, flags, idx, false);
+                    self.node_symbols.insert(accessor.name.0, sym_id);
+                }
+                self.bind_callable_body(arena, &accessor.parameters, accessor.body, idx);
+            }
+            k if k == syntax_kind_ext::CONSTRUCTOR => {
+                self.declare_symbol(arena, "constructor", symbol_flags::CONSTRUCTOR, idx, false);
+                if let Some(ctor) = arena.get_constructor(node) {
+                    self.bind_modifiers(arena, ctor.modifiers.as_ref());
+                    // Declare PROPERTY symbols for parameter properties (public/private/
+                    // protected/readonly params) in the class scope BEFORE entering the
+                    // constructor's function scope. This enables reference tracking for
+                    // TS6138 ("Property 'x' is declared but its value is never read").
+                    self.bind_parameter_properties(arena, &ctor.parameters);
+                    self.bind_callable_body(arena, &ctor.parameters, ctor.body, idx);
+                }
+            }
+            k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
+                if let Some(block) = arena.get_block(node) {
+                    self.enter_scope(ContainerKind::Block, idx);
+                    for &stmt_idx in &block.statements.nodes {
+                        self.bind_node(arena, stmt_idx);
+                    }
+                    self.exit_scope(arena);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1823,76 +1812,73 @@ impl BinderState {
 
                     if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
                         self.record_flow(idx);
-                        if let Some(bin) = arena.get_binary_expr(node) {
-                            if bin.operator_token
-                                == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-                                || bin.operator_token == SyntaxKind::BarBarEqualsToken as u16
-                                || bin.operator_token
-                                    == SyntaxKind::QuestionQuestionEqualsToken as u16
-                            {
-                                self.bind_short_circuit_expression(
-                                    arena,
-                                    idx,
-                                    bin.left,
-                                    bin.right,
-                                    bin.operator_token,
-                                );
-                                continue;
-                            }
+                        let Some(bin) = arena.get_binary_expr(node) else {
+                            continue;
+                        };
+                        if bin.operator_token == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+                            || bin.operator_token == SyntaxKind::BarBarEqualsToken as u16
+                            || bin.operator_token == SyntaxKind::QuestionQuestionEqualsToken as u16
+                        {
+                            self.bind_short_circuit_expression(
+                                arena,
+                                idx,
+                                bin.left,
+                                bin.right,
+                                bin.operator_token,
+                            );
+                            continue;
+                        }
 
-                            if Self::is_assignment_operator(bin.operator_token) {
-                                // For destructuring defaults (LHS is a pattern),
-                                // bind RHS before LHS to match runtime eval order.
-                                let lhs_is_destructuring = bin.operator_token
-                                    == SyntaxKind::EqualsToken as u16
-                                    && arena.get(bin.left).is_some_and(|left_node| {
-                                        left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                                            || left_node.kind
-                                                == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                                            || left_node.kind
-                                                == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                                            || left_node.kind
-                                                == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                                    });
-                                stack.push(WorkItem::PostAssign(idx));
-                                if lhs_is_destructuring {
-                                    // Stack is LIFO: push LHS last so it runs after RHS
-                                    if bin.left.is_some() {
-                                        stack.push(WorkItem::Visit(bin.left));
-                                    }
-                                    if bin.right.is_some() {
-                                        stack.push(WorkItem::Visit(bin.right));
-                                    }
-                                } else {
-                                    if bin.right.is_some() {
-                                        stack.push(WorkItem::Visit(bin.right));
-                                    }
-                                    if bin.left.is_some() {
-                                        stack.push(WorkItem::Visit(bin.left));
-                                    }
+                        if Self::is_assignment_operator(bin.operator_token) {
+                            // For destructuring defaults (LHS is a pattern),
+                            // bind RHS before LHS to match runtime eval order.
+                            let lhs_is_destructuring = bin.operator_token
+                                == SyntaxKind::EqualsToken as u16
+                                && arena.get(bin.left).is_some_and(|left_node| {
+                                    left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                        || left_node.kind
+                                            == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                        || left_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                        || left_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                });
+                            stack.push(WorkItem::PostAssign(idx));
+                            if lhs_is_destructuring {
+                                // Stack is LIFO: push LHS last so it runs after RHS
+                                if bin.left.is_some() {
+                                    stack.push(WorkItem::Visit(bin.left));
                                 }
-                                continue;
+                                if bin.right.is_some() {
+                                    stack.push(WorkItem::Visit(bin.right));
+                                }
+                            } else {
+                                if bin.right.is_some() {
+                                    stack.push(WorkItem::Visit(bin.right));
+                                }
+                                if bin.left.is_some() {
+                                    stack.push(WorkItem::Visit(bin.left));
+                                }
                             }
-                            // Delegate short-circuit operators to proper flow handling
-                            if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
-                                || bin.operator_token == SyntaxKind::BarBarToken as u16
-                                || bin.operator_token == SyntaxKind::QuestionQuestionToken as u16
-                            {
-                                self.bind_short_circuit_expression(
-                                    arena,
-                                    idx,
-                                    bin.left,
-                                    bin.right,
-                                    bin.operator_token,
-                                );
-                                continue;
-                            }
-                            if bin.right.is_some() {
-                                stack.push(WorkItem::Visit(bin.right));
-                            }
-                            if bin.left.is_some() {
-                                stack.push(WorkItem::Visit(bin.left));
-                            }
+                            continue;
+                        }
+                        // Delegate short-circuit operators to proper flow handling
+                        if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+                            || bin.operator_token == SyntaxKind::BarBarToken as u16
+                            || bin.operator_token == SyntaxKind::QuestionQuestionToken as u16
+                        {
+                            self.bind_short_circuit_expression(
+                                arena,
+                                idx,
+                                bin.left,
+                                bin.right,
+                                bin.operator_token,
+                            );
+                            continue;
+                        }
+                        if bin.right.is_some() {
+                            stack.push(WorkItem::Visit(bin.right));
+                        }
+                        if bin.left.is_some() {
+                            stack.push(WorkItem::Visit(bin.left));
                         }
                         continue;
                     }
