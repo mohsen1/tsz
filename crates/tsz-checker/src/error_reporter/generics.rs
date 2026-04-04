@@ -381,7 +381,21 @@ impl<'a> CheckerState<'a> {
         // tsc's getBaseTypeOfLiteralType applied before typeToString.
         let widened_arg =
             crate::query_boundaries::common::widen_literal_type(self.ctx.types, type_arg);
-        let type_str = self.format_type_diagnostic(widened_arg);
+        let mut type_str = self.format_type_diagnostic(widened_arg);
+        // When the type arg node is a `typeof expr<Args>` (TYPE_QUERY with type args),
+        // tsc includes "typeof" in the TS2344 message. The type formatter strips
+        // "typeof" from Application(TypeQuery, args), so we prepend it here.
+        if let Some(node) = self.ctx.arena.get(idx)
+            && node.kind == syntax_kind_ext::TYPE_QUERY
+            && self
+                .ctx
+                .arena
+                .get_type_query(node)
+                .and_then(|tq| tq.type_arguments.as_ref())
+                .is_some_and(|args| !args.nodes.is_empty())
+        {
+            type_str = format!("typeof {type_str}");
+        }
         let constraint_str = self.format_type_diagnostic(constraint);
         self.error_at_node_msg(
             idx,
