@@ -1187,9 +1187,10 @@ impl<'a> Printer<'a> {
         let counter = self.ctx.destructuring_state.for_of_counter;
 
         // TypeScript's variable naming pattern:
-        // Top-level: e_N (error container), _a (temp for return function)
-        // For loop: _b (iterator), _c (result)
-        // Catch: e_N_1 (error value, not pre-declared)
+        // - Simple identifier expression `arr`: iterator=arr_1, result=arr_1_1
+        // - Complex expression: iterator=_b, result=_c (generic temps)
+        // - Top-level hoisted: e_N (error container), _a (return temp)
+        // - Catch: e_N_1 (error value, not pre-declared)
         let error_container_name = format!("e_{}", counter + 1);
         let return_temp_name = self
             .reserved_iterator_return_temps
@@ -1202,8 +1203,42 @@ impl<'a> Printer<'a> {
         // allocating this loop's iterator/result temps.
         self.preallocate_nested_iterator_return_temps(for_in_of.statement);
 
-        let loop_iterator_name = self.get_temp_var_name(); // _b
-        let loop_result_name = self.get_temp_var_name(); // _c
+        // Derive iterator/result names from the expression when it's a simple identifier,
+        // matching tsc's naming: `arr` -> `arr_1` (iterator), `arr_1_1` (result).
+        // For complex expressions, fall back to generic temp names (_b, _c).
+        let (loop_iterator_name, loop_result_name) = if let Some(expr_node) =
+            self.arena.get(for_in_of.expression)
+            && expr_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ident) = self.arena.get_identifier(expr_node)
+        {
+            let base = self.arena.resolve_identifier_text(ident).to_string();
+            // Find unique iterator name: base_1, base_2, ...
+            let mut iter_name = None;
+            for suffix in 1..=100 {
+                let candidate = format!("{base}_{suffix}");
+                if !self.file_identifiers.contains(&candidate)
+                    && !self.generated_temp_names.contains(&candidate)
+                {
+                    iter_name = Some(candidate);
+                    break;
+                }
+            }
+            if let Some(iter_name) = iter_name {
+                self.generated_temp_names.insert(iter_name.clone());
+                // Result name: iterator_name + "_1"
+                let result_name = format!("{iter_name}_1");
+                self.generated_temp_names.insert(result_name.clone());
+                (iter_name, result_name)
+            } else {
+                let a = self.get_temp_var_name();
+                let b = self.get_temp_var_name();
+                (a, b)
+            }
+        } else {
+            let a = self.get_temp_var_name();
+            let b = self.get_temp_var_name();
+            (a, b)
+        };
         let catch_error_name = format!("e_{}_1", counter + 1);
 
         self.ctx.destructuring_state.for_of_counter += 1;
