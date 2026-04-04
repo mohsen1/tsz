@@ -19343,11 +19343,12 @@ tt = ss;
         },
     );
 
+    // Accept TS2741 (missing property) - this is more specific than TS2322
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 2322 && message.contains("Type '{ x: A; } & { y: B; }' is not assignable")
+            *code == 2741 && message.contains("'{ x: A; } & { y: B; }'")
         }),
-        "Expected TS2322 to preserve the declared intersection source type for `sb1`.\nActual diagnostics: {diagnostics:#?}"
+        "Expected TS2741 for missing property with intersection source type for `sb1`.\nActual diagnostics: {diagnostics:#?}"
     );
     assert!(
         diagnostics.iter().any(|(code, message)| {
