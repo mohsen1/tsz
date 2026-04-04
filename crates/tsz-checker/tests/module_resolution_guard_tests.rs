@@ -262,7 +262,10 @@ const x: import("fo") = { x: 0, y: 0 };
         &binder,
         &types,
         "test.ts".to_string(),
-        CheckerOptions::default(),
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
     );
     checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
@@ -356,7 +359,10 @@ console.log(ph.value);
         binder1.as_ref(),
         &types,
         "/a/b/main.ts".to_string(),
-        CheckerOptions::default(),
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
     );
     checker
         .ctx

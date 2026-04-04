@@ -428,15 +428,7 @@ impl<'a> CheckerState<'a> {
                 // Use the last param's span to cover the entire @template declaration.
                 let last_idx = *group_indices.last().unwrap();
                 let (_, start, length) = &params[last_idx];
-                self.ctx
-                    .push_diagnostic(crate::diagnostics::Diagnostic::error(
-                        self.ctx.file_name.clone(),
-                        *start,
-                        *length,
-                        crate::diagnostics::diagnostic_messages::ALL_TYPE_PARAMETERS_ARE_UNUSED
-                            .to_string(),
-                        crate::diagnostics::diagnostic_codes::ALL_TYPE_PARAMETERS_ARE_UNUSED,
-                    ));
+                self.error_all_type_parameters_unused(*start, *length);
             } else {
                 // TS6133 for each individually unused param.
                 for &j in group_indices {

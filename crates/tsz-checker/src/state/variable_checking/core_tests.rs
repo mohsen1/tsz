@@ -774,7 +774,15 @@ function test<T>(obj: { [K in keyof T]: T[K] }) {
     let value = obj.foo;
 }
 "#;
-        let ts2339 = check_source_diagnostics(source)
+        let all_diags = check_source_diagnostics(source);
+        eprintln!(
+            "ALL DIAGS for inline mapped: {:?}",
+            all_diags
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+        let ts2339 = all_diags
             .into_iter()
             .filter(|d| d.code == 2339)
             .collect::<Vec<_>>();

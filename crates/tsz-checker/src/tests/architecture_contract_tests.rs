@@ -652,8 +652,24 @@ fn test_subtype_identity_checker_no_direct_solver_inspection() {
 
 #[test]
 fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers() {
-    let assignment_checker_src = fs::read_to_string("src/assignability/assignment_checker.rs")
-        .expect("failed to read src/assignability/assignment_checker.rs for architecture guard");
+    let assignment_checker_src = {
+        let mut s = String::new();
+        let dir = Path::new("src/assignability/assignment_checker");
+        for entry in fs::read_dir(dir).expect("failed to read assignment_checker directory") {
+            let entry = entry.expect("failed to read directory entry");
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    s.push_str(&content);
+                }
+            }
+        }
+        assert!(
+            !s.is_empty(),
+            "failed to read any .rs files from assignment_checker directory"
+        );
+        s
+    };
     assert!(
         assignment_checker_src.contains("check_assignable_or_report_at("),
         "assignment compatibility should route through check_assignable_or_report_at for centralized mismatch policy"
@@ -2376,12 +2392,12 @@ fn migrated_files_no_raw_contextual_type_mutation() {
         "types/computation/array_literal.rs",
         "types/queries/binding.rs",
         "types/type_checking/core.rs",
-        "declarations/import/core.rs",
-        "assignability/assignment_checker.rs",
+        "declarations/import/core/mod.rs",
+        "assignability/assignment_checker/mod.rs",
         // property_access_type.rs migrated skip_flow_narrowing, not contextual_type
         // Wave 2 migrations:
         "assignability/compound_assignment.rs",
-        "error_reporter/call_errors.rs",
+        "error_reporter/call_errors/mod.rs",
         "state/variable_checking/destructuring.rs",
         "state/state_checking/property.rs",
         "state/state_checking_members/ambient_signature_checks.rs",
@@ -2745,7 +2761,7 @@ fn request_empty_cache_bypass_stays_confined_to_approved_entry_points() {
 fn request_aware_contextual_retry_hot_paths_do_not_reintroduce_recursive_cache_clears() {
     let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let whole_file_bans = [
-        "assignability/assignment_checker.rs",
+        "assignability/assignment_checker/mod.rs",
         "state/state_checking/property.rs",
         "types/type_checking/core.rs",
     ];
@@ -2825,7 +2841,7 @@ fn semantic_diagnostic_reporters_must_route_primary_anchor_selection_through_fin
 
     let files = [
         "assignability.rs",
-        "call_errors.rs",
+        "call_errors",
         "properties.rs",
         "generics.rs",
     ];
@@ -2839,8 +2855,23 @@ fn semantic_diagnostic_reporters_must_route_primary_anchor_selection_through_fin
     ];
 
     for file in files {
-        let content =
-            fs::read_to_string(base.join(file)).unwrap_or_else(|e| panic!("read {file}: {e}"));
+        let path = base.join(file);
+        let content = if path.is_dir() {
+            // Read all .rs files in the directory and concatenate
+            let mut combined = String::new();
+            for entry in fs::read_dir(&path).unwrap_or_else(|e| panic!("read dir {file}: {e}")) {
+                let entry = entry.expect("failed to read dir entry");
+                let p = entry.path();
+                if p.extension().and_then(|e| e.to_str()) == Some("rs") {
+                    if let Ok(c) = fs::read_to_string(&p) {
+                        combined.push_str(&c);
+                    }
+                }
+            }
+            combined
+        } else {
+            fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {file}: {e}"))
+        };
         assert!(
             content.contains("DiagnosticAnchorKind::")
                 || content.contains("resolve_diagnostic_anchor(")
