@@ -400,17 +400,12 @@ impl<'a> CheckerState<'a> {
                 factory.union(member_types)
             };
 
-            // Cache the structural type in both environments for compatibility.
-            // Note: Enum types now use TypeData::Enum(def_id, member_type) directly.
-            self.ctx.register_def_in_envs(def_id, structural_type);
-
-            // CRITICAL: Return TypeData::Enum(def_id, structural_type) NOT Lazy(def_id)
-            // - Lazy(def_id) creates infinite recursion in ensure_refs_resolved
-            // - structural_type alone loses nominal identity (E1 becomes 0 | 1)
-            // - Enum(def_id, structural_type) preserves both:
-            //   1. DefId for nominal identity (E1 != E2)
-            //   2. structural_type for assignability to primitives (E1 <: number)
+            // CRITICAL: Create the nominal Enum type wrapper FIRST, then register
+            // it in the type environments. The Enum(def_id, structural_type) preserves
+            // nominal identity — without it, Lazy(DefId) resolves to bare `number`
+            // and cross-enum assignments like `let b: B = a` silently pass.
             let enum_type = factory.enum_type(def_id, structural_type);
+            self.ctx.register_def_in_envs(def_id, enum_type);
 
             // Compute and cache the enum namespace object type for `typeof Enum` / `keyof typeof Enum`.
             // This object has member names as properties (e.g., { Up: Direction.Up, Down: Direction.Down }).
