@@ -1877,7 +1877,7 @@ impl<'a> CheckerState<'a> {
                         && !has_explicit_this_context
                         && self.ctx.this_type_stack.last().is_some_and(|&top| {
                             access_query::is_this_type(self.ctx.types, top)
-                                || crate::query_boundaries::state::checking::is_type_parameter_like(
+                                || crate::query_boundaries::common::contains_type_parameters(
                                     self.ctx.types,
                                     top,
                                 )
@@ -2074,13 +2074,13 @@ impl<'a> CheckerState<'a> {
                                     access.name_or_argument,
                                 );
                             } else {
-                                // Suppress TS2339 for types containing unresolved type parameters,
+                                // Suppress TS2339 for bare type parameters,
                                 // for index access types (like T[keyof T]), or for
                                 // unknown/error types that result from unresolved generics.
-                                // Use has_unresolved_type_parameters which correctly handles
+                                // Use is_type_parameter_like which correctly handles
                                 // mapped types (their iteration variable is not "unresolved").
                                 let should_suppress_inner =
-                                    crate::query_boundaries::common::has_unresolved_type_parameters(
+                                    crate::query_boundaries::common::is_type_parameter_like(
                                         self.ctx.types,
                                         display_object_type,
                                     ) || tsz_solver::is_index_access_type(
@@ -2097,13 +2097,13 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         } else {
-                            // Suppress TS2339 for types containing unresolved type parameters,
+                            // Suppress TS2339 for bare type parameters,
                             // for index access types (like T[keyof T]), or for
                             // unknown/error types that result from unresolved generics.
-                            // Use has_unresolved_type_parameters which correctly handles
+                            // Use is_type_parameter_like which correctly handles
                             // mapped types (their iteration variable is not "unresolved").
                             let should_suppress =
-                                crate::query_boundaries::common::has_unresolved_type_parameters(
+                                crate::query_boundaries::common::is_type_parameter_like(
                                     self.ctx.types,
                                     display_object_type,
                                 ) || tsz_solver::is_index_access_type(
