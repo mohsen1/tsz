@@ -2439,7 +2439,6 @@ fn test_ts2322_check_jsx_strict_nullability_effect() {
 }
 
 #[test]
-#[ignore = "new test: JSDoc generic identity return annotation inference gap"]
 fn test_ts2322_assignable_through_generic_identity_in_jsdoc_mode_jsx() {
     let source = r#"
         // @ts-check
@@ -2458,16 +2457,17 @@ fn test_ts2322_assignable_through_generic_identity_in_jsdoc_mode_jsx() {
         },
     );
     assert!(
-        !diagnostics
+        diagnostics
             .iter()
             .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-        "Expected no TS2322 for .jsx generic identity-style JSDoc return annotations, got: {diagnostics:?}"
+        "Expected TS2322 for 'string' not assignable to 'number' in @returns (.jsx), got: {diagnostics:?}"
     );
 }
 
 #[test]
-#[ignore = "new test: JSDoc generic identity return annotation inference gap"]
 fn test_ts2322_assignable_through_generic_identity_in_jsdoc_mode() {
+    // In @ts-check JS files, @returns {number} annotations ARE checked by tsc.
+    // Returning "string" from a @returns {number} function should emit TS2322.
     let source = r#"
         // @ts-check
         /** @returns {number} */
@@ -2485,15 +2485,14 @@ fn test_ts2322_assignable_through_generic_identity_in_jsdoc_mode() {
         },
     );
     assert!(
-        !diagnostics
+        diagnostics
             .iter()
             .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-        "Expected JS return @returns annotations to be deferred in this branch, got: {diagnostics:?}"
+        "Expected TS2322 for 'string' not assignable to 'number' in @returns, got: {diagnostics:?}"
     );
 }
 
 #[test]
-#[ignore = "new test: JSDoc generic identity return annotation inference gap"]
 fn test_ts2322_assignable_through_generic_identity_in_jsdoc_mode_mjs() {
     let source = r#"
         // @ts-check
@@ -2512,10 +2511,10 @@ fn test_ts2322_assignable_through_generic_identity_in_jsdoc_mode_mjs() {
         },
     );
     assert!(
-        !diagnostics
+        diagnostics
             .iter()
             .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-        "Expected JS return @returns annotations to be deferred in this branch for mjs, got: {diagnostics:?}"
+        "Expected TS2322 for 'string' not assignable to 'number' in @returns (.mjs), got: {diagnostics:?}"
     );
 }
 
