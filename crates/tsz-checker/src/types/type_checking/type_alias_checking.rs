@@ -763,6 +763,15 @@ impl<'a> CheckerState<'a> {
         }
 
         if !has_applicable {
+            // Skip TS2635 if any type argument node contains parse errors (e.g. JSDoc
+            // syntax like `?string` outside documentation comments). tsc reports the
+            // syntax errors but does not validate type argument applicability in that case.
+            if type_arg_nodes
+                .iter()
+                .any(|&node| self.node_contains_any_parse_error(node))
+            {
+                return;
+            }
             // TS2635: emit at last type argument node
             let error_node = type_arg_nodes.last().copied().unwrap_or(type_query_idx);
             self.error_no_applicable_signatures_for_type_args(expr_type, error_node);

@@ -1160,18 +1160,35 @@ impl ParserState {
     }
 
     /// Look ahead for `using` in a for-statement initializer position.
-    /// In `for (using of ...)`, `of` is the for-of keyword, not a binding name,
-    /// so `using` should be parsed as an identifier expression.
-    /// Excludes `of` and `in` as the next token since they indicate for-of/for-in.
+    /// Matches tsc's `nextTokenIsBindingIdentifierOrStartOfDestructuringOnSameLineDisallowOf`.
+    ///
+    /// When `using` is followed by `of`, we look a second token ahead:
+    /// - `for (using of = null;;)` → `=` after `of` means `of` is a binding name (using declaration)
+    /// - `for (using of;;)` → `;` after `of` means `of` is a binding name (using declaration)
+    /// - `for (using of: T = v;;)` → `:` after `of` means `of` is a binding name (using declaration)
+    /// - `for (using of expr)` → anything else means `of` is the for-of keyword
+    ///
+    /// `in` after `using` always indicates for-in, not a using declaration.
     pub(crate) fn look_ahead_is_using_declaration_in_for(&mut self) -> bool {
-        look_ahead_is(&mut self.scanner, self.current_token, |token| {
-            // `of` and `in` after `using` mean this is `for (using of/in ...)`,
-            // not a using declaration.
-            if token == SyntaxKind::OfKeyword || token == SyntaxKind::InKeyword {
-                return false;
-            }
-            is_identifier_or_keyword(token) || token == SyntaxKind::OpenBraceToken
-        })
+        let snapshot = self.scanner.save_state();
+        let next = self.scanner.scan();
+
+        let result = if next == SyntaxKind::InKeyword {
+            false
+        } else if next == SyntaxKind::OfKeyword {
+            // Look one more token ahead: if `=`, `;`, or `:` follows `of`,
+            // then `of` is a binding name in a using declaration.
+            let next2 = self.scanner.scan();
+            next2 == SyntaxKind::EqualsToken
+                || next2 == SyntaxKind::SemicolonToken
+                || next2 == SyntaxKind::ColonToken
+        } else {
+            (is_identifier_or_keyword(next) || next == SyntaxKind::OpenBraceToken)
+                && !self.scanner.has_preceding_line_break()
+        };
+
+        self.scanner.restore_state(snapshot);
+        result
     }
 
     pub(crate) fn look_ahead_is_await_using_declaration(&mut self) -> bool {
