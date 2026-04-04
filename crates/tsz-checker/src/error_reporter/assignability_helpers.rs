@@ -220,7 +220,10 @@ impl<'a> CheckerState<'a> {
                     || resolver.has_index_signature(candidate, IndexKind::Number)
             });
 
-        if target_has_index || target_shape.string_index.is_some() || target_shape.number_index.is_some() {
+        if target_has_index
+            || target_shape.string_index.is_some()
+            || target_shape.number_index.is_some()
+        {
             return None;
         }
 

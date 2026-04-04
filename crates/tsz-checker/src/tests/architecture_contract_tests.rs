@@ -433,8 +433,9 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         .expect("failed to read src/state/type_analysis/mod.rs for architecture guard");
     // Include split-off modules that are part of the state_type_analysis logical module
     state_type_analysis_src.push_str(
-        &fs::read_to_string("src/state/type_analysis/computed/mod.rs")
-            .expect("failed to read src/state/type_analysis/computed/mod.rs for architecture guard"),
+        &fs::read_to_string("src/state/type_analysis/computed/mod.rs").expect(
+            "failed to read src/state/type_analysis/computed/mod.rs for architecture guard",
+        ),
     );
     state_type_analysis_src.push_str(
         &fs::read_to_string("src/state/type_analysis/computed_helpers.rs").expect(
