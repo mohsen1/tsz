@@ -298,15 +298,46 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // Only search lib globals when the lookup includes VALUE meaning.
+        // For TYPE-only lookups, lib globals contain thousands of interfaces
+        // that produce noisy false-positive suggestions. Built-in type keywords
+        // (string, number, etc.) are still searched for TYPE-meaning lookups.
+        let include_lib_globals =
+            meaning_flags == 0 || meaning_flags & tsz_binder::symbol_flags::VALUE != 0;
+
         Self::search_global_candidates(
             name,
             name_len,
             maximum_length_difference,
             meaning_flags,
-            &self.ctx.lib_contexts,
+            if include_lib_globals {
+                &self.ctx.lib_contexts
+            } else {
+                &[]
+            },
             &mut best_distance,
             &mut best_candidate,
         );
+
+        // Suppress suggestions from lib-only TYPE symbols (DOM interfaces like
+        // ParentNode, Cache, etc.) that were merged into the user binder's scope
+        // tables during checker init. tsc does not surface these as spelling
+        // suggestions for user code. Lib globals with VALUE meaning (Error,
+        // RegExp, Array, etc.) are kept because they're directly usable.
+        if let Some(ref candidate) = best_candidate {
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(candidate.as_str()) {
+                if self.ctx.binder.lib_symbol_ids.contains(&sym_id) {
+                    let has_value = self
+                        .ctx
+                        .binder
+                        .get_symbol(sym_id)
+                        .is_some_and(|sym| sym.flags & tsz_binder::symbol_flags::VALUE != 0);
+                    if !has_value {
+                        return None;
+                    }
+                }
+            }
+        }
 
         best_candidate.map(|c| vec![c])
     }
