@@ -670,7 +670,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     self.resolver,
                     def_id,
                 )
-            })?;
+            });
+        let variances = variances?;
 
         if variances.len() != s_app.args.len() {
             return None;
@@ -731,6 +732,35 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .iter()
                 .any(|arg| crate::contains_type_parameters(self.interner, *arg));
             if !source_has_type_param {
+                return Some(SubtypeResult::False);
+            }
+        }
+
+        // When variance flags (REJECTION_UNRELIABLE, NEEDS_STRUCTURAL_FALLBACK)
+        // prevent definitive rejection, still trust invariant rejection when ALL
+        // type arguments on both sides are concrete (no type parameters). These
+        // flags are conservative guards for edge cases involving type parameters:
+        // - REJECTION_UNRELIABLE: indexed access types may normalize away
+        //   differences between type parameter args
+        // - NEEDS_STRUCTURAL_FALLBACK: mapped type modifiers may produce
+        //   compatible structures from incompatible type parameter args
+        //
+        // Neither concern applies to concrete types, whose structural forms are
+        // stable. This matches tsc's behavior where same-base type references
+        // (e.g., Constraint<Num> vs Constraint<Runtype<any>>) use variance
+        // analysis and correctly detect invariance even when the type contains
+        // indexed access patterns like A['witness'].
+        if any_checked
+            && !all_ok
+            && (rejection_unreliable || needs_structural_fallback)
+            && variances.iter().any(|v| v.is_invariant())
+        {
+            let any_arg_has_type_param = s_app
+                .args
+                .iter()
+                .chain(t_app.args.iter())
+                .any(|arg| crate::contains_type_parameters(self.interner, *arg));
+            if !any_arg_has_type_param {
                 return Some(SubtypeResult::False);
             }
         }
