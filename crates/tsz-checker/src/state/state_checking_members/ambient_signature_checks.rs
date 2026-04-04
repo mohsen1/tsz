@@ -420,6 +420,9 @@ impl<'a> CheckerState<'a> {
             && self
                 .get_member_name_display_text(prop.name)
                 .is_some_and(|n| n == "prototype");
+        // Check if property is abstract - abstract properties should emit TS7008
+        // even if assigned in constructor (since the assignment is an error - TS2715)
+        let is_abstract = self.has_abstract_modifier(&prop.modifiers);
         if self.ctx.no_implicit_any()
             && effective_declared_type.is_none()
             && prop.initializer.is_none()
@@ -427,7 +430,7 @@ impl<'a> CheckerState<'a> {
             && !is_private_in_ambient
             && !is_static_prototype
             // Constructor assignments only apply to instance properties, not static
-            && (is_static || !self.property_assigned_in_enclosing_class_constructor(prop.name))
+            && (is_static || is_abstract || !self.property_assigned_in_enclosing_class_constructor(prop.name))
             // TSC also suppresses TS7008 for static properties assigned in class
             // static blocks (e.g., `static { this.x = 1; }`)
             && !(is_static

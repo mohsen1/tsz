@@ -766,8 +766,6 @@ impl<'a> CheckerState<'a> {
             if matches!(
                 parent_node.kind,
                 syntax_kind_ext::FUNCTION_DECLARATION
-                    | syntax_kind_ext::FUNCTION_EXPRESSION
-                    | syntax_kind_ext::ARROW_FUNCTION
                     | syntax_kind_ext::METHOD_DECLARATION
                     | syntax_kind_ext::CONSTRUCTOR
                     | syntax_kind_ext::GET_ACCESSOR
@@ -776,6 +774,17 @@ impl<'a> CheckerState<'a> {
                     | syntax_kind_ext::CLASS_DECLARATION
             ) {
                 break;
+            }
+
+            // When traversing into a function expression from within, return the function
+            // expression itself as the anchor. This matches tsc's behavior for contextual
+            // typing failures where the error should point at the entire function rather
+            // than the inner expression that triggered the type mismatch.
+            if matches!(
+                parent_node.kind,
+                syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION
+            ) {
+                return parent;
             }
 
             if matches!(
