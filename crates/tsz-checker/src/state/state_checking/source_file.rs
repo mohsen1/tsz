@@ -289,6 +289,9 @@ impl<'a> CheckerState<'a> {
             // TS8039: Check for @template tags after @typedef/@callback/@overload
             self.check_template_after_typedef_callback();
 
+            // TS1273/TS1277: Check for invalid modifiers on @template type parameters
+            self.check_jsdoc_template_modifiers();
+
             // TS2304: Check for @typedef base types that can't be resolved
             self.check_jsdoc_typedef_base_types();
         }

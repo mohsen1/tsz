@@ -1024,6 +1024,161 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// TS1273/TS1277: Check for invalid modifiers on JSDoc `@template` type parameters.
+    ///
+    /// In tsc, certain modifier keywords before a `@template` type parameter name
+    /// are always invalid (e.g. `private`, `public`, `protected`, `static` -> TS1273),
+    /// while others like `const` are only valid on function/method/class type params
+    /// (TS1277 when used on a `@typedef`/`@callback`).
+    pub(crate) fn check_jsdoc_template_modifiers(&mut self) {
+        use crate::diagnostics::diagnostic_codes;
+        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return;
+        };
+        let source_text: String = sf.text.to_string();
+        let comments = sf.comments.clone();
+
+        // Modifier keywords that can NEVER appear on a type parameter (TS1273).
+        const NEVER_VALID_MODIFIERS: &[&str] = &[
+            "private",
+            "public",
+            "protected",
+            "static",
+            "override",
+            "abstract",
+            "readonly",
+            "async",
+            "declare",
+            "default",
+            "export",
+        ];
+
+        // `const` -> only on function/method/class type params (TS1277 otherwise)
+        const CONST_MODIFIER: &str = "const";
+
+        for comment in &comments {
+            if !is_jsdoc_comment(comment, &source_text) {
+                continue;
+            }
+            let comment_text =
+                &source_text[comment.pos as usize..(comment.end as usize).min(source_text.len())];
+            let content = get_jsdoc_content(comment, &source_text);
+
+            // Check if comment contains @typedef or @callback (typedef-like host).
+            // For `const` modifier, TS1277 only fires when the host is a typedef/callback
+            // (where const type params are invalid). For comments on functions, methods,
+            // classes, or constructors, `const` is valid and we skip the diagnostic.
+            let has_typedef = content.contains("@typedef") || content.contains("@callback");
+
+            for raw_line in content.lines() {
+                let trimmed = raw_line.trim().trim_start_matches('*').trim();
+                let Some(rest) = trimmed.strip_prefix("@template") else {
+                    continue;
+                };
+                let rest = rest.trim();
+                if rest.is_empty() {
+                    continue;
+                }
+
+                // Skip past optional constraint `{...}`
+                let after_constraint = if rest.starts_with('{') {
+                    let mut depth = 1usize;
+                    let mut close_idx = None;
+                    for (idx, ch) in rest[1..].char_indices() {
+                        match ch {
+                            '{' => depth += 1,
+                            '}' => {
+                                depth = depth.saturating_sub(1);
+                                if depth == 0 {
+                                    close_idx = Some(idx + 1);
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(ci) = close_idx {
+                        rest[ci + 1..].trim()
+                    } else {
+                        continue;
+                    }
+                } else {
+                    rest
+                };
+
+                // Extract the first word (potential modifier or type param name)
+                let first_word_end = after_constraint
+                    .find(|c: char| c.is_ascii_whitespace() || c == ',')
+                    .unwrap_or(after_constraint.len());
+                let first_word = &after_constraint[..first_word_end];
+                if first_word.is_empty() {
+                    continue;
+                }
+
+                // Check if followed by another identifier (if it's a modifier, a name should follow)
+                let after_first = after_constraint[first_word_end..].trim_start();
+                let has_following_name = !after_first.is_empty()
+                    && after_first
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$');
+
+                if !has_following_name {
+                    // Not a modifier pattern (e.g. `@template T`), skip
+                    continue;
+                }
+
+                // Find position of the modifier in the source text for error squiggle
+                let find_modifier_pos = |modifier: &str| -> (u32, u32) {
+                    // Search for `@template <ws> modifier` pattern in the comment
+                    if let Some(template_offset) = comment_text.find("@template") {
+                        let after_template = &comment_text[template_offset + "@template".len()..];
+                        if let Some(mod_offset) = after_template.find(modifier) {
+                            let abs_pos = comment.pos
+                                + template_offset as u32
+                                + "@template".len() as u32
+                                + mod_offset as u32;
+                            return (abs_pos, modifier.len() as u32);
+                        }
+                    }
+                    (comment.pos, 0)
+                };
+
+                // Check never-valid modifiers (TS1273)
+                if NEVER_VALID_MODIFIERS.contains(&first_word) {
+                    let (pos, len) = find_modifier_pos(first_word);
+                    let message =
+                        format!("'{first_word}' modifier cannot appear on a type parameter");
+                    self.error_at_position(
+                        pos,
+                        len,
+                        &message,
+                        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_TYPE_PARAMETER,
+                    );
+                    continue;
+                }
+
+                // Check `const` modifier (TS1277 only when on typedef/callback)
+                if first_word == CONST_MODIFIER {
+                    if has_typedef {
+                        let (pos, len) = find_modifier_pos(CONST_MODIFIER);
+                        let message =
+                            "'const' modifier can only appear on a type parameter of a function, method or class".to_string();
+                        self.error_at_position(
+                            pos,
+                            len,
+                            &message,
+                            diagnostic_codes::MODIFIER_CAN_ONLY_APPEAR_ON_A_TYPE_PARAMETER_OF_A_FUNCTION_METHOD_OR_CLASS,
+                        );
+                    }
+                    continue;
+                }
+            }
+        }
+    }
+
     /// TS2300: Check for duplicate `@import` names across JSDoc comments.
     ///
     /// When the same name is imported via `@import` in multiple JSDoc comments,
