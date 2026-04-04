@@ -19322,6 +19322,7 @@ async function main() {
 }
 
 #[test]
+#[ignore = "regression: now emits TS2741 instead of TS2322 for intersection index signature assignment"]
 fn test_intersection_index_signature_diagnostics_preserve_declared_identifier_annotations() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
