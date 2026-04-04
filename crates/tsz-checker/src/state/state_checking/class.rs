@@ -260,6 +260,10 @@ impl<'a> CheckerState<'a> {
 
         // Check for unused type parameters (TS6133)
         self.check_unused_type_params(&class.type_parameters, stmt_idx);
+        // In JS files, @template type parameters come from JSDoc, not AST.
+        if class.type_parameters.is_none() {
+            self.check_unused_jsdoc_template_type_params(stmt_idx);
+        }
 
         // Check heritage clauses for unresolved names (TS2304)
         // Must be checked AFTER type parameters are pushed so heritage can reference type params
@@ -338,13 +342,18 @@ impl<'a> CheckerState<'a> {
 
                     if let Some(modifiers) = member_modifiers {
                         // TS18010: An accessibility modifier cannot be used with a private identifier.
-                        if self.has_private_modifier(modifiers)
+                        let has_ast_accessibility = self.has_private_modifier(modifiers)
                             || self.has_protected_modifier(modifiers)
                             || self.has_modifier_kind(
                                 modifiers,
                                 tsz_scanner::SyntaxKind::PublicKeyword,
-                            )
-                        {
+                            );
+                        // In JS files, accessibility modifiers come from JSDoc tags
+                        // (@public, @private, @protected) rather than AST modifiers.
+                        let has_jsdoc_accessibility = !has_ast_accessibility
+                            && self.is_js_file()
+                            && self.has_jsdoc_accessibility_modifier(member_idx);
+                        if has_ast_accessibility || has_jsdoc_accessibility {
                             self.error_at_node(
                                 member_idx,
                                 diagnostic_messages::AN_ACCESSIBILITY_MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,

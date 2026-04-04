@@ -543,6 +543,28 @@ impl<'a> CheckerState<'a> {
             None
         }
     }
+    /// Check if a node has any JSDoc accessibility modifier (`@public`, `@private`, `@protected`).
+    ///
+    /// Used for TS18010 detection in JS files where accessibility comes from JSDoc
+    /// tags rather than AST modifiers.
+    pub(crate) fn has_jsdoc_accessibility_modifier(&self, idx: NodeIndex) -> bool {
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return false;
+        };
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let Some(jsdoc) = self.try_leading_jsdoc(
+            comments,
+            self.ctx.arena.get(idx).map_or(0, |n| n.pos),
+            source_text,
+        ) else {
+            return false;
+        };
+        Self::jsdoc_contains_tag(&jsdoc, "public")
+            || Self::jsdoc_contains_tag(&jsdoc, "private")
+            || Self::jsdoc_contains_tag(&jsdoc, "protected")
+    }
+
     /// Scan statements for `@extends`/`@augments` not on class declarations (TS8022).
     pub(crate) fn find_orphaned_extends_tags_for_statements(
         &self,

@@ -383,9 +383,68 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        for (j, (name, start, length)) in params.iter().enumerate() {
-            if !used[j] {
-                self.error_declared_but_never_read(name, *start, *length);
+        // Also scan JSDoc comments within the declaration body for type
+        // expressions (e.g., `/** @type {T} */ this.p;` inside a class).
+        // The leading JSDoc only covers the class-level comment; body-level
+        // JSDoc comments may reference template type parameters.
+        {
+            use tsz_common::comments::is_jsdoc_comment;
+            let body_start = node.pos as usize;
+            let body_end = node.end as usize;
+            for comment in comments {
+                let cpos = comment.pos as usize;
+                let cend = comment.end as usize;
+                if cpos < body_start || cend > body_end {
+                    continue;
+                }
+                if !is_jsdoc_comment(comment, source_text) {
+                    continue;
+                }
+                let comment_text = comment.get_text(source_text);
+                for type_expr in Self::jsdoc_type_expressions(comment_text) {
+                    for (j, (param_name, _, _)) in params.iter().enumerate() {
+                        if !used[j] && Self::jsdoc_type_expr_mentions_name(type_expr, param_name) {
+                            used[j] = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Group params by their @template tag (identified by same start position).
+        // If ALL params from a single @template tag are unused, emit TS6205
+        // ("All type parameters are unused.") for the whole tag.
+        // Otherwise, emit TS6133 for each individually unused param.
+        use rustc_hash::FxHashMap;
+        let mut tag_groups: FxHashMap<u32, Vec<usize>> = FxHashMap::default();
+        for (j, (_name, start, _length)) in params.iter().enumerate() {
+            tag_groups.entry(*start).or_default().push(j);
+        }
+
+        for (_tag_start, group_indices) in &tag_groups {
+            let all_unused = group_indices.iter().all(|&j| !used[j]);
+            if all_unused && group_indices.len() > 1 {
+                // TS6205: All type parameters are unused.
+                // Use the last param's span to cover the entire @template declaration.
+                let last_idx = *group_indices.last().unwrap();
+                let (_, start, length) = &params[last_idx];
+                self.ctx
+                    .push_diagnostic(crate::diagnostics::Diagnostic::error(
+                        self.ctx.file_name.clone(),
+                        *start,
+                        *length,
+                        crate::diagnostics::diagnostic_messages::ALL_TYPE_PARAMETERS_ARE_UNUSED
+                            .to_string(),
+                        crate::diagnostics::diagnostic_codes::ALL_TYPE_PARAMETERS_ARE_UNUSED,
+                    ));
+            } else {
+                // TS6133 for each individually unused param.
+                for &j in group_indices {
+                    if !used[j] {
+                        let (name, start, length) = &params[j];
+                        self.error_declared_but_never_read(name, *start, *length);
+                    }
+                }
             }
         }
     }
