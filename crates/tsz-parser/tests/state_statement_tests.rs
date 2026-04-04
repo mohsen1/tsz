@@ -632,9 +632,10 @@ fn stray_at_before_enum_prefers_ts1109_over_decorator_recovery() {
     );
 }
 
-/// Test that 'await' as a label in a static block emits TS1003 (Identifier expected).
+/// Test that 'await' as a label in a static block emits TS1109 (Expression expected),
+/// matching tsc which treats `await` as a keyword in static blocks.
 #[test]
-fn test_await_label_in_static_block_emits_ts1003() {
+fn test_await_label_in_static_block_emits_ts1109() {
     let source = r#"class C {
     static {
         await:
@@ -645,9 +646,9 @@ fn test_await_label_in_static_block_emits_ts1003() {
     let diags = parser.get_diagnostics();
     let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
 
-    // Should emit TS1003 for 'await' as label in static block
+    // Should emit TS1109 for 'await' as label in static block (matching tsc)
     assert!(
-        codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED),
-        "Expected TS1003 for 'await' as label in static block, got codes: {codes:?}"
+        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "Expected TS1109 for 'await' as label in static block, got codes: {codes:?}"
     );
 }
