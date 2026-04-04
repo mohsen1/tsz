@@ -1198,6 +1198,41 @@ impl<'a> CheckerState<'a> {
                 .types
                 .resolve_atom_ref(filtered_names[0])
                 .to_string();
+
+            // When the source is a function/callable type and the remaining property is
+            // private or protected, the function fundamentally can't satisfy the class's
+            // nominal brand requirement. TSC emits TS2322 (general mismatch) here, not
+            // TS2741 (missing property). For class-to-class assignments, TSC keeps TS2741.
+            let source_is_function = tsz_solver::is_function_type(self.ctx.types, source)
+                || tsz_solver::is_function_type(self.ctx.types, source_type);
+            if source_is_function
+                && let Some(prop_info) =
+                    self.property_info_for_display(target_type, filtered_names[0])
+                && prop_info.visibility != tsz_solver::Visibility::Public
+            {
+                let src_str = if depth == 0 {
+                    self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                } else {
+                    self.format_type_diagnostic(source_type)
+                };
+                let tgt_str = if depth == 0 {
+                    self.format_assignability_type_for_message(target, source)
+                } else {
+                    self.format_type_diagnostic(target_type)
+                };
+                let message = format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&src_str, &tgt_str],
+                );
+                return Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                );
+            }
+
             let src_str = if depth == 0 {
                 if source_type == TypeId::OBJECT {
                     "{}".to_string()
