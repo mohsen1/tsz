@@ -426,6 +426,12 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_nested_type_refs_for_ts2314(&mut self, root: NodeIndex) {
         use tsz_parser::parser::node::NodeAccess;
 
+        // Collect type parameter names from function type / constructor type nodes
+        // so that type references to them are not falsely flagged as needing type
+        // arguments (e.g., `<A>(x: A) => A` where `A` shadows an outer generic).
+        let mut type_param_names = FxHashSet::default();
+        self.collect_type_param_names_from_function_type(root, &mut type_param_names);
+
         let mut stack = vec![root];
         let mut visited = FxHashSet::default();
         while let Some(idx) = stack.pop() {
@@ -439,8 +445,17 @@ impl<'a> CheckerState<'a> {
                 && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
             {
                 if type_ref.type_arguments.is_none() {
-                    // No type arguments provided - check if generic type requires them
-                    self.check_type_ref_requires_args(type_ref.type_name, idx);
+                    // Skip TS2314 if the reference name matches a local type parameter
+                    // introduced by this or a nested function/constructor type.
+                    let is_local_type_param = self
+                        .ctx
+                        .arena
+                        .get(type_ref.type_name)
+                        .and_then(|n| self.ctx.arena.get_identifier(n))
+                        .is_some_and(|id| type_param_names.contains(id.escaped_text.as_str()));
+                    if !is_local_type_param {
+                        self.check_type_ref_requires_args(type_ref.type_name, idx);
+                    }
                 }
                 // Don't descend into TYPE_REFERENCE children to avoid double-checking
                 // type arguments (those are separately validated when the outer
@@ -448,6 +463,43 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             // Push children for traversal
+            stack.extend(self.ctx.arena.get_children(idx));
+        }
+    }
+
+    /// Recursively collect type parameter names from FUNCTION_TYPE and
+    /// CONSTRUCTOR_TYPE nodes within the given AST subtree.
+    fn collect_type_param_names_from_function_type(
+        &self,
+        root: NodeIndex,
+        names: &mut FxHashSet<String>,
+    ) {
+        use tsz_parser::parser::node::NodeAccess;
+
+        let mut stack = vec![root];
+        let mut visited = FxHashSet::default();
+        while let Some(idx) = stack.pop() {
+            if idx.is_none() || !visited.insert(idx) {
+                continue;
+            }
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if (node.kind == syntax_kind_ext::FUNCTION_TYPE
+                || node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE)
+                && let Some(func_data) = self.ctx.arena.get_function_type(node)
+                && let Some(ref type_params) = func_data.type_parameters
+            {
+                for &tp_idx in &type_params.nodes {
+                    if let Some(tp_node) = self.ctx.arena.get(tp_idx)
+                        && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
+                        && let Some(name_node) = self.ctx.arena.get(tp_data.name)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        names.insert(ident.escaped_text.clone());
+                    }
+                }
+            }
             stack.extend(self.ctx.arena.get_children(idx));
         }
     }
