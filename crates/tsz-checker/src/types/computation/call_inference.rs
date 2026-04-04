@@ -1870,6 +1870,24 @@ impl<'a> CheckerState<'a> {
                 let is_direct_callback_body_assignability =
                     callback_body_start.is_some_and(|start| diag.start >= start)
                         && is_assignability;
+                // When the contextual type for a callback argument is fully
+                // resolved (no type parameters, no infer types), assignability
+                // errors from inside the callback body are real — the later
+                // instantiated retry does not re-check the body, so these
+                // diagnostics would be lost. Keep them.
+                // Note: the diagnostic position may be at the arrow function
+                // start rather than inside the body, so we also check for
+                // assignability errors anywhere in the function arg when the
+                // context is concrete.
+                let is_concrete_callback_assignability = is_function_arg_diag
+                    && is_assignability
+                    && !expected_is_unresolved
+                    && expected_type.is_some_and(|et| {
+                        et != TypeId::UNKNOWN
+                            && et != TypeId::ERROR
+                            && et != TypeId::ANY
+                            && !common::contains_type_parameters(self.ctx.types, et)
+                    });
                 if expected_is_unresolved
                     && (is_function_arg_diag
                         || (is_object_literal_diag && is_provisional_implicit_any))
@@ -1882,11 +1900,13 @@ impl<'a> CheckerState<'a> {
                 // `ClientEvents[string]`) do not leak past the instantiated retry.
                 // The narrow exceptions here are body-owned diagnostics that the
                 // later instantiated retry does not recreate: nullish checks like
-                // TS18048 and direct callback-body assignability like nested JSX
-                // TS2322. Keep those while still dropping wide-generic callback noise.
+                // TS18048, direct callback-body assignability like nested JSX
+                // TS2322, and assignability errors from callbacks with concrete
+                // contextual types.
                 if is_function_arg_diag
                     && !is_nullish_callback_body_diag
                     && !is_direct_callback_body_assignability
+                    && !is_concrete_callback_assignability
                 {
                     // Don't filter out TS2339 errors - they should always be reported
                     return false;
