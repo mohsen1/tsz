@@ -732,6 +732,29 @@ impl<'a> Printer<'a> {
                         }
                     }
                 }
+                // Hoist `var` declarations from for/for-in/for-of loop initializers.
+                // In System modules, `for (var x in ...)` becomes `var x;` at the
+                // module scope and `for (x in ...)` inside execute().
+                if stmt_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                    || stmt_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                {
+                    if let Some(for_data) = self.arena.get_for_in_of(stmt_node) {
+                        self.collect_var_names_from_initializer(
+                            for_data.initializer,
+                            &mut names,
+                            &mut seen,
+                        );
+                    }
+                }
+                if stmt_node.kind == syntax_kind_ext::FOR_STATEMENT {
+                    if let Some(loop_data) = self.arena.get_loop(stmt_node) {
+                        self.collect_var_names_from_initializer(
+                            loop_data.initializer,
+                            &mut names,
+                            &mut seen,
+                        );
+                    }
+                }
                 if has_top_level_using {
                     let needs_default_temp = (stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
                         && self
@@ -809,6 +832,47 @@ impl<'a> Printer<'a> {
         }
 
         names
+    }
+
+    /// Collect variable names from a for/for-in/for-of initializer that is a
+    /// `var` declaration list.  `let`/`const` are block-scoped and are NOT hoisted.
+    fn collect_var_names_from_initializer(
+        &self,
+        initializer: NodeIndex,
+        names: &mut Vec<String>,
+        seen: &mut HashSet<String>,
+    ) {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return;
+        };
+        if init_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return;
+        }
+        // Only hoist `var` declarations (not `let`/`const`)
+        let is_var = (init_node.flags as u32
+            & (tsz_parser::parser::node_flags::LET | tsz_parser::parser::node_flags::CONST))
+            == 0;
+        if !is_var {
+            return;
+        }
+        let Some(decl_list) = self.arena.get_variable(init_node) else {
+            return;
+        };
+        for &decl_idx in &decl_list.declarations.nodes {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            let mut binding_names = Vec::new();
+            self.collect_binding_names(decl.name, &mut binding_names);
+            for name in binding_names {
+                if !name.is_empty() && seen.insert(name.clone()) {
+                    names.push(name);
+                }
+            }
+        }
     }
 
     fn collect_system_dependency_vars(
@@ -2138,6 +2202,44 @@ impl<'a> Printer<'a> {
             self.write("\", ");
             self.write(&func_name);
             self.write(");");
+            return true;
+        }
+
+        // `export { x, x as y }` — emit `exports_1("x", <value>); exports_1("y", <value>);`
+        // where `<value>` is either the import substitution or the local name.
+        if clause_node.kind == syntax_kind_ext::NAMED_EXPORTS
+            && let Some(named_exports) = self.arena.get_named_imports(clause_node)
+        {
+            for (i, &spec_idx) in named_exports.elements.nodes.iter().enumerate() {
+                let Some(spec) = self.arena.get_specifier_at(spec_idx) else {
+                    continue;
+                };
+                let local_name = if spec.property_name.is_some() {
+                    self.get_identifier_text_idx(spec.property_name)
+                } else {
+                    self.get_identifier_text_idx(spec.name)
+                };
+                let export_name = self.get_identifier_text_idx(spec.name);
+                if local_name.is_empty() || export_name.is_empty() {
+                    continue;
+                }
+                // Check if the local name has an import substitution
+                let value = if let Some(subst) =
+                    self.commonjs_named_import_substitutions.get(&local_name)
+                {
+                    subst.clone()
+                } else {
+                    local_name
+                };
+                if i > 0 {
+                    self.write_line();
+                }
+                self.write("exports_1(\"");
+                self.write(&export_name);
+                self.write("\", ");
+                self.write(&value);
+                self.write(");");
+            }
             return true;
         }
 
