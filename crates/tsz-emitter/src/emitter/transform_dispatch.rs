@@ -104,6 +104,7 @@ impl<'a> Printer<'a> {
             TransformDirective::ES5Enum { enum_node } => EmitDirective::ES5Enum {
                 enum_node: *enum_node,
             },
+            TransformDirective::ES5GeneratorFunction { .. } => EmitDirective::Identity,
             TransformDirective::CommonJSExport {
                 names,
                 is_default,

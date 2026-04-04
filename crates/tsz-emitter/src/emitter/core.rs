@@ -164,6 +164,9 @@ pub struct PrinterOptions {
     /// When true, rewrite `.ts`/`.tsx`/`.mts`/`.cts` extensions to `.js`/`.jsx`/`.mjs`/`.cjs`
     /// in relative import/export specifiers during emit.
     pub rewrite_relative_import_extensions: bool,
+    /// True when jsx was explicitly set to "preserve" (not the unset default).
+    /// Used by rewriteRelativeImportExtensions to add preserveJsx arg.
+    pub jsx_preserve_explicit: bool,
 }
 
 impl Default for PrinterOptions {
@@ -200,6 +203,7 @@ impl Default for PrinterOptions {
             strict_null_checks: false,
             verbatim_module_syntax: false,
             rewrite_relative_import_extensions: false,
+            jsx_preserve_explicit: false,
         }
     }
 }

@@ -80,6 +80,12 @@ pub enum TransformDirective {
         enum_node: NodeIndex,
     },
 
+    /// ES5 Generator Function: Transform generator to ES5-compatible form
+    ES5GeneratorFunction {
+        /// Original function node index
+        function_node: NodeIndex,
+    },
+
     /// `CommonJS` Export: Wrap declaration with exports assignment
     ///
     /// ```typescript

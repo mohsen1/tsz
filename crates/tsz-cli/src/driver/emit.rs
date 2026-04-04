@@ -154,6 +154,9 @@ pub(crate) fn emit_outputs(
             // Wire JSX options from resolved compiler options to printer
             if let Some(jsx) = context.options.jsx {
                 printer_options.jsx = config_jsx_to_emitter_jsx(jsx);
+                if matches!(jsx, JsxEmit::Preserve) {
+                    printer_options.jsx_preserve_explicit = true;
+                }
             }
             if !context.options.checker.jsx_factory.is_empty() {
                 printer_options.jsx_factory = Some(context.options.checker.jsx_factory.clone());
