@@ -644,12 +644,10 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::MAPPED_TYPE => {
                 self.check_mapped_type_constraint(node_idx);
-                // Recurse into mapped type template to validate nested types.
-                if let Some(mapped) = self.ctx.arena.get_mapped_type(node)
-                    && mapped.type_node != NodeIndex::NONE
-                {
-                    self.check_type_node(mapped.type_node);
-                }
+                // Do NOT recurse into mapped type template (mapped.type_node).
+                // The mapped type parameter (e.g. P in [P in keyof T]) is only
+                // in scope within the mapped type and cannot be resolved by name
+                // resolution during check_type_node, causing false TS2304 errors.
             }
             k if k == syntax_kind_ext::TUPLE_TYPE => {
                 // Force tuple element validation (TS1257, TS1265, TS1266)
