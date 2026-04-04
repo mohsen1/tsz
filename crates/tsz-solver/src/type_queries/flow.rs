@@ -776,6 +776,13 @@ fn types_have_common_properties_relaxed(
         return false;
     }
 
+    // Check if either type is a class type (has nominal identity via symbol).
+    // For class types, we need stricter checking: all target properties must exist
+    // in the source (nominal typing), not just shared properties.
+    let source_is_class = is_class_type(db, source);
+    let target_is_class = is_class_type(db, target);
+    let strict_class_check = source_is_class || target_is_class;
+
     use rustc_hash::FxHashMap;
     let mut source_by_name: FxHashMap<Atom, Vec<(TypeId, bool)>> = FxHashMap::default();
     for (name, ty, optional) in &source_props {
@@ -785,8 +792,8 @@ fn types_have_common_properties_relaxed(
             .push((*ty, *optional));
     }
 
-    // For TS2352: only check that shared properties are comparable.
-    // Missing target properties are allowed.
+    // For TS2352: check that shared properties are comparable.
+    // For class types (nominal), require ALL target properties to exist.
     let mut found_common = false;
     for (target_name, target_ty, target_optional) in &target_props {
         if let Some(source_entries) = source_by_name.get(target_name) {
@@ -802,10 +809,24 @@ fn types_have_common_properties_relaxed(
             if !any_comparable {
                 return false;
             }
+        } else if strict_class_check && !target_optional {
+            // For class types, missing required target property means not comparable
+            return false;
         }
-        // Intentionally NOT returning false for missing target properties
+        // For non-class types, missing target properties are allowed
     }
     found_common
+}
+
+/// Check if a type is a class type (has nominal identity via symbol in its shape).
+fn is_class_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            shape.symbol.is_some()
+        }
+        _ => false,
+    }
 }
 
 fn types_are_comparable_inner(
