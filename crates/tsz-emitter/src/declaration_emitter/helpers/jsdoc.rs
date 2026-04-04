@@ -358,6 +358,132 @@ impl<'a> DeclarationEmitter<'a> {
         t.starts_with("function(") || t.starts_with("function (")
     }
 
+    /// Convert a JSDoc `function(...)` type to TypeScript arrow function syntax.
+    /// e.g. `function(this:Object, ...*):*` -> `(this: Object, ...args: any[]) => any`
+    pub(crate) fn convert_jsdoc_function_type(type_text: &str) -> Option<String> {
+        let t = type_text.trim();
+        let rest = t.strip_prefix("function")?.trim();
+        let rest = rest.strip_prefix('(')?;
+
+        // Find matching closing paren (handling nested parens)
+        let mut depth = 1usize;
+        let mut close_idx = None;
+        for (i, ch) in rest.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close_idx = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let close_idx = close_idx?;
+        let params_str = &rest[..close_idx];
+        let after_close = rest[close_idx + 1..].trim();
+
+        // Parse return type (after `:`)
+        let return_type = if let Some(ret) = after_close.strip_prefix(':') {
+            Self::normalize_jsdoc_type_atom(ret.trim())
+        } else {
+            "void".to_string()
+        };
+
+        // Parse parameters
+        let mut ts_params = Vec::new();
+        if !params_str.trim().is_empty() {
+            let raw_params = Self::split_jsdoc_params(params_str);
+            let mut unnamed_idx = 0u32;
+            for raw in &raw_params {
+                let raw = raw.trim();
+                if raw.is_empty() {
+                    continue;
+                }
+                let (is_rest, raw) = if let Some(s) = raw.strip_prefix("...") {
+                    (true, s.trim())
+                } else {
+                    (false, raw)
+                };
+
+                // Check for `name:Type` or just `Type`
+                if let Some(colon) = Self::find_param_colon(raw) {
+                    let name = raw[..colon].trim();
+                    let ptype = Self::normalize_jsdoc_type_atom(raw[colon + 1..].trim());
+                    if is_rest {
+                        ts_params.push(format!("...args: {ptype}[]"));
+                    } else {
+                        ts_params.push(format!("{name}: {ptype}"));
+                    }
+                } else {
+                    let ptype = Self::normalize_jsdoc_type_atom(raw);
+                    if is_rest {
+                        ts_params.push(format!("...args: {ptype}[]"));
+                    } else {
+                        let name = format!("arg{unnamed_idx}");
+                        unnamed_idx += 1;
+                        ts_params.push(format!("{name}: {ptype}"));
+                    }
+                }
+            }
+        }
+
+        Some(format!("({}) => {}", ts_params.join(", "), return_type))
+    }
+
+    /// Normalize a single JSDoc type atom: `*` -> `any`, otherwise pass through.
+    fn normalize_jsdoc_type_atom(s: &str) -> String {
+        let s = s.trim();
+        if s == "*" {
+            "any".to_string()
+        } else {
+            s.to_string()
+        }
+    }
+
+    /// Split JSDoc function parameters by commas, respecting nested parens.
+    fn split_jsdoc_params(s: &str) -> Vec<&str> {
+        let mut result = Vec::new();
+        let mut depth = 0usize;
+        let mut start = 0;
+        for (i, ch) in s.char_indices() {
+            match ch {
+                '(' | '<' | '{' | '[' => depth += 1,
+                ')' | '>' | '}' | ']' => {
+                    if depth > 0 {
+                        depth -= 1;
+                    }
+                }
+                ',' if depth == 0 => {
+                    result.push(&s[start..i]);
+                    start = i + 1;
+                }
+                _ => {}
+            }
+        }
+        result.push(&s[start..]);
+        result
+    }
+
+    /// Find the colon separating name from type in a JSDoc param like `this:Object`.
+    /// Returns None if no colon found (the whole thing is a type).
+    fn find_param_colon(s: &str) -> Option<usize> {
+        // The name part should be a simple identifier (letters, digits, _, $)
+        // If the first `:` appears after such a name, it's a name:type separator.
+        let s = s.trim();
+        for (i, ch) in s.char_indices() {
+            if ch == ':' {
+                return Some(i);
+            }
+            if !ch.is_ascii_alphanumeric() && ch != '_' && ch != '$' {
+                return None;
+            }
+        }
+        None
+    }
+
     pub(in crate::declaration_emitter) fn parse_jsdoc_param_decl(
         line: &str,
     ) -> Option<JsdocParamDecl> {
@@ -434,7 +560,7 @@ impl<'a> DeclarationEmitter<'a> {
             let (type_expr, _) = Self::parse_jsdoc_braced_type_and_name(rest)?;
             let text = Self::normalize_jsdoc_type_text(type_expr, false);
             if Self::jsdoc_type_needs_checker_resolution(&text) {
-                return None;
+                return Self::convert_jsdoc_function_type(&text);
             }
             return Some(text);
         }
@@ -515,11 +641,16 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         let jsdoc = self.function_like_jsdoc_for_node(initializer);
-        if !jsdoc
+        // In JS files, tsc always converts `const x = (arrow) => ...` or
+        // `const x = function(...) {}` to `function x(...)` in declarations,
+        // regardless of whether JSDoc @param/@returns tags are present.
+        // Only bail out for non-export-equals when there are no JSDoc tags
+        // AND no attached JSDoc comment at all (so we don't lose doc comments).
+        let has_jsdoc_tags = jsdoc
             .as_deref()
-            .is_some_and(Self::jsdoc_has_function_signature_tags)
-            && !is_export_equals_root
-        {
+            .is_some_and(Self::jsdoc_has_function_signature_tags);
+        let has_any_jsdoc = jsdoc.is_some();
+        if !has_jsdoc_tags && !is_export_equals_root && !has_any_jsdoc {
             return false;
         }
 
