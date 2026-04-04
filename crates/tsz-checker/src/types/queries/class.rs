@@ -675,12 +675,10 @@ impl<'a> CheckerState<'a> {
                     self.collect_infer_params_with_constraints_inner(span.expression, params);
                 }
             }
-            k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
-                if let Some(wrapped) = self.ctx.arena.get_parenthesized(node) {
-                    self.collect_infer_params_with_constraints_inner(wrapped.expression, params);
-                }
-            }
-            k if k == syntax_kind_ext::OPTIONAL_TYPE || k == syntax_kind_ext::REST_TYPE => {
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE
+                || k == syntax_kind_ext::OPTIONAL_TYPE
+                || k == syntax_kind_ext::REST_TYPE =>
+            {
                 if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
                     self.collect_infer_params_with_constraints_inner(wrapped.type_node, params);
                 }
@@ -869,14 +867,13 @@ impl<'a> CheckerState<'a> {
                     self.collect_infer_type_parameters_inner(span.expression, params);
                 }
             }
-            // Parenthesized Types: unwrap and check inner type
-            k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
-                if let Some(wrapped) = self.ctx.arena.get_parenthesized(node) {
-                    self.collect_infer_type_parameters_inner(wrapped.expression, params);
-                }
-            }
-            // Optional, Rest Types: unwrap and check inner type
-            k if k == syntax_kind_ext::OPTIONAL_TYPE || k == syntax_kind_ext::REST_TYPE => {
+            // Parenthesized, Optional, Rest Types: unwrap and check inner type
+            // Note: PARENTHESIZED_TYPE uses WrappedTypeData (get_wrapped_type),
+            // NOT ParenthesizedData (get_parenthesized) which is for expressions.
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE
+                || k == syntax_kind_ext::OPTIONAL_TYPE
+                || k == syntax_kind_ext::REST_TYPE =>
+            {
                 if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
                     self.collect_infer_type_parameters_inner(wrapped.type_node, params);
                 }
