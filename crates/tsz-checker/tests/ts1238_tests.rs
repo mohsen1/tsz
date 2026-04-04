@@ -197,3 +197,26 @@ fn ts1238_not_emitted_without_experimental_decorators() {
         "Should not emit TS1238 without experimentalDecorators, got: {codes:?}"
     );
 }
+
+#[test]
+fn ts1238_generic_decorator_call_emits_error() {
+    let codes = check_with_experimental_decorators(
+        r#"
+interface I<T> {
+    prototype: T,
+    m: () => T
+}
+function dec<T>(c: I<T>) { }
+
+@dec
+class C {
+    _brand: any;
+    static m() {}
+}
+"#,
+    );
+    assert!(
+        codes.contains(&1238),
+        "Expected TS1238 for generic decorator with incompatible call, got: {codes:?}"
+    );
+}
