@@ -350,6 +350,14 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    /// Returns true when a JSDoc type expression contains syntax that cannot
+    /// be emitted verbatim as TypeScript and should instead be resolved through
+    /// the checker/solver type cache.
+    pub(crate) fn jsdoc_type_needs_checker_resolution(type_text: &str) -> bool {
+        let t = type_text.trim();
+        t.starts_with("function(") || t.starts_with("function (")
+    }
+
     pub(in crate::declaration_emitter) fn parse_jsdoc_param_decl(
         line: &str,
     ) -> Option<JsdocParamDecl> {
@@ -424,7 +432,11 @@ impl<'a> DeclarationEmitter<'a> {
             };
             let rest = rest.trim();
             let (type_expr, _) = Self::parse_jsdoc_braced_type_and_name(rest)?;
-            return Some(Self::normalize_jsdoc_type_text(type_expr, false));
+            let text = Self::normalize_jsdoc_type_text(type_expr, false);
+            if Self::jsdoc_type_needs_checker_resolution(&text) {
+                return None;
+            }
+            return Some(text);
         }
         None
     }

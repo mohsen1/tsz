@@ -680,7 +680,9 @@ impl<'a> DeclarationEmitter<'a> {
                             self.write(" | undefined");
                         }
                     }
-                } else if let Some(jsdoc_param) = jsdoc_param {
+                } else if let Some(ref jsdoc_param) = jsdoc_param
+                    && !Self::jsdoc_type_needs_checker_resolution(&jsdoc_param.type_text)
+                {
                     self.write(": ");
                     self.write(&jsdoc_param.type_text);
                 } else if let Some(type_id) = self.get_node_type_or_names(&[param_idx, param.name])
