@@ -2055,15 +2055,23 @@ impl<'a> CheckerState<'a> {
                                 // Suppress TS2339 for types containing type parameters,
                                 // for index access types (like T[keyof T]), or for
                                 // unknown/error types that result from unresolved generics.
-                                let should_suppress_inner =
-                                    crate::query_boundaries::common::contains_type_parameters(
+                                // But do NOT suppress for bare type parameters — accessing
+                                // a property on an unconstrained T should emit TS2339.
+                                let is_bare_type_param =
+                                    crate::query_boundaries::state::checking::is_type_parameter_like(
+                                        self.ctx.types,
+                                        display_object_type,
+                                    );
+                                let should_suppress_inner = !is_bare_type_param
+                                    && (crate::query_boundaries::common::contains_type_parameters(
                                         self.ctx.types,
                                         display_object_type,
                                     ) || tsz_solver::is_index_access_type(
                                         self.ctx.types,
                                         display_object_type,
-                                    ) || display_object_type == TypeId::UNKNOWN
-                                        || display_object_type == TypeId::ERROR;
+                                    ))
+                                    || display_object_type == TypeId::UNKNOWN
+                                    || display_object_type == TypeId::ERROR;
                                 if !should_suppress_inner {
                                     self.error_property_not_exist_at(
                                         property_name,
@@ -2079,13 +2087,20 @@ impl<'a> CheckerState<'a> {
                             // However, for mapped types with resolved constraints (no type
                             // parameters), we should still emit TS2339. This handles cases
                             // like `Omit<Foo, "c">` where the constraint is "a" | "b".
+                            // Also, bare type parameters should always emit TS2339 —
+                            // accessing a property on an unconstrained T is an error.
+                            let is_bare_type_param =
+                                crate::query_boundaries::state::checking::is_type_parameter_like(
+                                    self.ctx.types,
+                                    display_object_type,
+                                );
                             let mut should_suppress = tsz_solver::is_index_access_type(
                                 self.ctx.types,
                                 display_object_type,
                             ) || display_object_type == TypeId::UNKNOWN
                                 || display_object_type == TypeId::ERROR;
 
-                            if !should_suppress {
+                            if !should_suppress && !is_bare_type_param {
                                 if crate::query_boundaries::common::contains_type_parameters(
                                     self.ctx.types,
                                     display_object_type,
@@ -2111,7 +2126,6 @@ impl<'a> CheckerState<'a> {
                                     }
                                 }
                             }
-
                             if !should_suppress {
                                 self.error_property_not_exist_at(
                                     property_name,
