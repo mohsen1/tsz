@@ -480,21 +480,29 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Check for `module.exports` property access
-        if target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && let Some(access) = self.ctx.arena.get_access_expr(target_node)
-        {
-            let is_module = self
-                .ctx
-                .arena
-                .get_identifier_at(access.expression)
-                .is_some_and(|ident| ident.escaped_text == "module");
-            let is_exports = self
-                .ctx
-                .arena
-                .get_identifier_at(access.name_or_argument)
-                .is_some_and(|ident| ident.escaped_text == "exports");
-            return is_module && is_exports;
+        // Check for property access expressions rooted at `exports` or `module.exports`
+        // This handles patterns like `exports.X = ...` and `module.exports.X = ...`
+        if target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            // First check if the entire expression is `module.exports`
+            if let Some(access) = self.ctx.arena.get_access_expr(target_node) {
+                let is_module = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(access.expression)
+                    .is_some_and(|ident| ident.escaped_text == "module");
+                let is_exports = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(access.name_or_argument)
+                    .is_some_and(|ident| ident.escaped_text == "exports");
+                if is_module && is_exports {
+                    return true;
+                }
+            }
+
+            // Also check for `exports.X` patterns using is_exports_rooted_access
+            // This handles cases like `exports.apply = undefined` which are CJS export assignments
+            return self.is_exports_rooted_access(target_idx);
         }
 
         false

@@ -461,6 +461,35 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return TypeId::ERROR;
         }
 
+        // TS2304: Check for forward reference in typeof expressions.
+        // typeof expression cannot reference a variable declared after it.
+        // This typically happens in return type annotations referencing function body locals.
+        if let Some(expr_node) = self.ctx.arena.get(type_query.expr_name)
+            && expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+            && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
+            && let Some(sym_id) = self.ctx.binder.file_locals.get(ident.escaped_text.as_str())
+            && let Some(symbol) = self.ctx.binder.get_symbol(*sym_id)
+        {
+            if let Some((decl_start, _)) = symbol.value_declaration_span
+            {
+                // If the declaration is after the typeof expression, it's a forward reference
+                if decl_start > expr_node.pos {
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                    let msg = format_message(
+                        diagnostic_messages::CANNOT_FIND_NAME,
+                        &[&ident.escaped_text],
+                    );
+                    self.ctx.error(
+                        expr_node.pos,
+                        expr_node.end - expr_node.pos,
+                        msg,
+                        diagnostic_codes::CANNOT_FIND_NAME,
+                    );
+                    return TypeId::ERROR;
+                }
+            }
+        }
+
         // Prefer the already-computed value-space type at this query site when available.
         // This preserves flow-sensitive narrowing for `typeof expr` in type positions.
         if let Some(&expr_type) = self.ctx.node_types.get(&type_query.expr_name.0)
