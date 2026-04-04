@@ -1134,10 +1134,23 @@ impl<'a> CheckerState<'a> {
                     self.evaluate_type_with_env(source_type),
                 )
                 || is_function_type_display(&display_src);
+            // Types with construct signatures (class constructors like DateConstructor)
+            // are NOT pure function types — they should still produce TS2740/TS2741
+            // for missing properties instead of being downgraded to TS2322.
+            let src_has_construct =
+                tsz_solver::type_queries::has_construct_signatures(self.ctx.types, source)
+                    || tsz_solver::type_queries::has_construct_signatures(
+                        self.ctx.types,
+                        source_eval,
+                    )
+                    || tsz_solver::type_queries::has_construct_signatures(
+                        self.ctx.types,
+                        source_type,
+                    );
             let tgt_has_call =
                 tsz_solver::type_queries::has_call_signatures(self.ctx.types, target)
                     || tsz_solver::type_queries::has_call_signatures(self.ctx.types, target_eval);
-            if is_src_fn && !tgt_has_call {
+            if is_src_fn && !tgt_has_call && !src_has_construct {
                 let src_str = if depth == 0 {
                     self.format_assignment_source_type_for_diagnostic(source, target, idx)
                 } else {
