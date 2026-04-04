@@ -744,7 +744,7 @@ fn deeply_any_for_array_of_string() {
 }
 
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
+#[ignore = "tuple_list resolution returns empty for dynamically created tuples in test context"]
 fn deeply_any_for_tuple_of_any() {
     let interner = TypeInterner::new();
     let tuple = interner.tuple(vec![
@@ -793,11 +793,12 @@ fn deeply_any_for_union_of_any() {
 }
 
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
 fn deeply_any_for_union_with_non_any() {
     let interner = TypeInterner::new();
+    // union2(ANY, STRING) normalizes to ANY (tsc semantics: any | T = any),
+    // so the result IS deeply any. This verifies the normalization is correct.
     let union = interner.union2(TypeId::ANY, TypeId::STRING);
-    assert!(!is_type_deeply_any(&interner, union));
+    assert!(is_type_deeply_any(&interner, union));
 }
 
 #[test]
