@@ -1075,11 +1075,18 @@ impl<'a> CheckerState<'a> {
                 // with polymorphic `ThisType`.  This enables fluent method chaining
                 // on subclass instances:  c.foo().bar().baz()  where each method is
                 // defined on a different class in the hierarchy.
-                if method.body.is_some()
-                    && method.type_annotation.is_none()
-                    && signature.return_type == partial_type
-                {
-                    signature.return_type = self.ctx.types.this_type();
+                //
+                // Two checks: (1) type-based — the inferred return matches partial_type,
+                // or (2) syntactic — every return statement returns `this`. The syntactic
+                // check is needed because type interning or flow analysis may produce a
+                // TypeId that doesn't equal partial_type even though it represents the
+                // same class instance.
+                if method.body.is_some() && method.type_annotation.is_none() {
+                    let type_match = signature.return_type == partial_type;
+                    let syntactic_match = self.method_body_returns_only_this(method.body);
+                    if type_match || syntactic_match {
+                        signature.return_type = self.ctx.types.this_type();
+                    }
                 }
                 let callable_type = factory.callable(CallableShape {
                     call_signatures: vec![signature.clone()],
@@ -1904,6 +1911,47 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(class_type_param_updates);
 
         instance_type
+    }
+
+    /// Check if a method body syntactically returns only `this`.
+    /// Returns true if every return statement in the body has `this` as
+    /// its expression (or the body is an expression-bodied arrow returning `this`).
+    fn method_body_returns_only_this(&self, body_idx: NodeIndex) -> bool {
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return false;
+        };
+        // Expression body (arrow): check if it's `this`
+        if body_node.kind == SyntaxKind::ThisKeyword as u16 {
+            return true;
+        }
+        // Block body: check all return statements
+        if body_node.kind != syntax_kind_ext::BLOCK {
+            return false;
+        }
+        let Some(block) = self.ctx.arena.get_block(body_node) else {
+            return false;
+        };
+        let mut found_return = false;
+        for &stmt_idx in &block.statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT {
+                if let Some(return_data) = self.ctx.arena.get_return_statement(stmt_node) {
+                    if return_data.expression.is_none() {
+                        continue; // empty return is fine
+                    }
+                    let Some(expr_node) = self.ctx.arena.get(return_data.expression) else {
+                        return false;
+                    };
+                    if expr_node.kind != SyntaxKind::ThisKeyword as u16 {
+                        return false; // returns something other than `this`
+                    }
+                    found_return = true;
+                }
+            }
+        }
+        found_return
     }
 
     fn merge_class_instance_with_interface(
