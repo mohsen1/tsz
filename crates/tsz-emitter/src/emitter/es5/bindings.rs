@@ -97,6 +97,49 @@ impl<'a> Printer<'a> {
     ) {
         let using_async = (flags & node_flags::AWAIT_USING) == node_flags::AWAIT_USING;
 
+        // When a block-level using wrapper is already active (block_using_env is set),
+        // just emit the __addDisposableResource calls inline as `var d1 = ..., d2 = ...;`.
+        // The try/catch/finally is handled by the block wrapper in emit_block.
+        if let Some((ref env_name, block_using_async)) = self.block_using_env.clone() {
+            let async_flag = using_async || block_using_async;
+            let initialized_decls: Vec<_> = decl_list
+                .declarations
+                .nodes
+                .iter()
+                .copied()
+                .filter(|&decl_idx| {
+                    self.arena
+                        .get(decl_idx)
+                        .and_then(|n| self.arena.get_variable_declaration(n))
+                        .is_some_and(|d| d.initializer.is_some())
+                })
+                .collect();
+            if !initialized_decls.is_empty() {
+                self.write("var ");
+                for (i, &decl_idx) in initialized_decls.iter().enumerate() {
+                    if let Some(decl_node) = self.arena.get(decl_idx)
+                        && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                    {
+                        self.emit(decl.name);
+                        self.write(" = ");
+                        self.write_helper("__addDisposableResource");
+                        self.write("(");
+                        self.write(&env_name);
+                        self.write(", ");
+                        self.emit(decl.initializer);
+                        self.write(", ");
+                        self.write(if async_flag { "true" } else { "false" });
+                        self.write(")");
+                        if i + 1 < initialized_decls.len() {
+                            self.write(", ");
+                        }
+                    }
+                }
+                self.write(";");
+            }
+            return;
+        }
+
         let is_block_scoped = (flags & tsz_parser::parser::node_flags::LET != 0)
             || (flags & tsz_parser::parser::node_flags::CONST != 0);
         if is_block_scoped {
