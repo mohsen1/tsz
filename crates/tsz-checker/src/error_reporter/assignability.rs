@@ -648,10 +648,12 @@ impl<'a> CheckerState<'a> {
                     if let Some(missing_props) =
                         self.missing_required_properties_from_index_signature_source(source, target)
                     {
-                        let src_str =
-                            self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
-                        let tgt_str =
-                            self.format_assignment_target_type_for_diagnostic(target, source, anchor_idx);
+                        let src_str = self.format_assignment_source_type_for_diagnostic(
+                            source, target, anchor_idx,
+                        );
+                        let tgt_str = self.format_assignment_target_type_for_diagnostic(
+                            target, source, anchor_idx,
+                        );
                         let (message, code) = if missing_props.len() == 1 {
                             let prop_name = self
                                 .ctx
@@ -661,12 +663,16 @@ impl<'a> CheckerState<'a> {
                             if prop_name.starts_with("__js_ctor_brand_") {
                                 // Synthetic brand from JS constructor functions — TSC
                                 // doesn't report these as missing properties.
-                                self.error_type_not_assignable_generic_with_anchor(source, target, anchor_idx);
+                                self.error_type_not_assignable_generic_with_anchor(
+                                    source, target, anchor_idx,
+                                );
                                 return;
                             }
                             if prop_name.starts_with("__private_brand") {
                                 // Private brand mismatch
-                                self.error_type_not_assignable_generic_with_anchor(source, target, anchor_idx);
+                                self.error_type_not_assignable_generic_with_anchor(
+                                    source, target, anchor_idx,
+                                );
                                 return;
                             }
                             (
@@ -704,7 +710,11 @@ impl<'a> CheckerState<'a> {
                         };
                         self.emit_render_request_at_anchor(
                             anchor,
-                            DiagnosticRenderRequest::simple(DiagnosticAnchorKind::Exact, code, message),
+                            DiagnosticRenderRequest::simple(
+                                DiagnosticAnchorKind::Exact,
+                                code,
+                                message,
+                            ),
                         );
                         return;
                     }
