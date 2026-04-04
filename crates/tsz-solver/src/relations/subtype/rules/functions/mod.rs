@@ -50,7 +50,10 @@ pub(super) fn erase_type_params_to_any(type_params: &[TypeParamInfo]) -> TypeSub
 
 /// Erase a call signature's type parameters to `any`, producing a non-generic
 /// `FunctionShape`. Used by the N×M signature comparison path.
-pub(super) fn erase_call_sig_to_any(sig: &CallSignature, interner: &dyn crate::TypeDatabase) -> FunctionShape {
+pub(super) fn erase_call_sig_to_any(
+    sig: &CallSignature,
+    interner: &dyn crate::TypeDatabase,
+) -> FunctionShape {
     use crate::instantiation::instantiate::instantiate_type;
     if sig.type_params.is_empty() {
         return FunctionShape {
@@ -87,7 +90,10 @@ pub(super) fn erase_call_sig_to_any(sig: &CallSignature, interner: &dyn crate::T
 
 /// Erase a function shape's type parameters to `any`, producing a non-generic
 /// `FunctionShape`. Used by the N×M signature comparison path.
-pub(super) fn erase_fn_shape_to_any(f: &FunctionShape, interner: &dyn crate::TypeDatabase) -> FunctionShape {
+pub(super) fn erase_fn_shape_to_any(
+    f: &FunctionShape,
+    interner: &dyn crate::TypeDatabase,
+) -> FunctionShape {
     use crate::instantiation::instantiate::instantiate_type;
     if f.type_params.is_empty() {
         return f.clone();

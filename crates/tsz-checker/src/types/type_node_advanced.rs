@@ -299,12 +299,27 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 // fully resolvable when T has circular reference
                 let is_conditional = tsz_solver::is_conditional_type(self.ctx.types, object_type);
 
+                // Suppress TS2339 for indexed access types (e.g., T[keyof T]) where the
+                // result type cannot be determined until the type parameter is instantiated.
+                let is_index_access = tsz_solver::is_index_access_type(self.ctx.types, object_type)
+                    || tsz_solver::is_index_access_type(self.ctx.types, resolved_object);
+
+                // Suppress TS2339 when the object type contains unresolved type parameters.
+                // E.g., `Cond<T[K]>["foo"]` where T and K are generic.
+                let object_has_type_params =
+                    crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        object_type,
+                    );
+
                 if !is_type_param
                     && !is_error_or_any
                     && !is_generic_application
                     && !index_has_type_params
                     && !is_lazy_with_potential_generic
                     && !is_conditional
+                    && !is_index_access
+                    && !object_has_type_params
                 {
                     let prop_result =
                         crate::query_boundaries::property_access::resolve_property_access(
