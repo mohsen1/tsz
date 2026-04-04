@@ -1086,6 +1086,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         )
                         .is_true()
                     {
+                        // Check if the failure is due to missing properties
+                        if let Some(reason) = self.explain_failure(prop_type, number_idx.value_type) {
+                            if matches!(
+                                reason,
+                                SubtypeFailureReason::MissingProperty { .. }
+                                    | SubtypeFailureReason::MissingProperties { .. }
+                            ) {
+                                return Some(reason);
+                            }
+                        }
                         return Some(SubtypeFailureReason::IndexSignatureMismatch {
                             index_kind: "number",
                             source_value_type: prop_type,
@@ -1109,6 +1119,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     )
                     .is_true()
                 {
+                    // Check if the failure is due to missing properties
+                    if let Some(reason) = self.explain_failure(prop_type, string_idx.value_type) {
+                        if matches!(
+                            reason,
+                            SubtypeFailureReason::MissingProperty { .. }
+                                | SubtypeFailureReason::MissingProperties { .. }
+                        ) {
+                            return Some(reason);
+                        }
+                    }
                     return Some(SubtypeFailureReason::IndexSignatureMismatch {
                         index_kind: "string",
                         source_value_type: prop_type,

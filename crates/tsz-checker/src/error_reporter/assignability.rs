@@ -342,6 +342,17 @@ impl<'a> CheckerState<'a> {
     /// TS2741/TS2739/TS2740 (missing property codes). This variant uses full
     /// failure analysis for accurate message formatting (e.g., union best-match),
     /// then downgrades any "missing property" code to TS2322.
+    /// Like `error_type_not_assignable_at_with_anchor`, but for object literal
+    /// property-value elaboration contexts. TSC's `elaborateElementwise` reports
+    /// TS2322 at the property name for property-value type mismatches, not
+    /// TS2741/TS2739/TS2740 (missing property codes). This variant uses full
+    /// failure analysis for accurate message formatting (e.g., union best-match),
+    /// then downgrades any "missing property" code to TS2322.
+    /// 
+    /// NOTE: For empty object literals `{}` that are missing required properties,
+    /// we should NOT downgrade TS2741 to TS2322 - we should keep TS2741 because
+    /// the issue is missing properties, not type mismatch. Only downgrade when
+    /// there are actual property-value type mismatches.
     pub fn error_type_not_assignable_at_with_anchor_elaboration(
         &mut self,
         source: TypeId,
@@ -354,13 +365,41 @@ impl<'a> CheckerState<'a> {
             self.resolve_diagnostic_anchor_node(anchor_idx, DiagnosticAnchorKind::Exact);
         let diag_count_before = self.ctx.diagnostics.len();
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
-        // Downgrade TS2741/TS2739/TS2740 to TS2322 for elaboration contexts.
-        let needs_downgrade = self.ctx.diagnostics[diag_count_before..].iter().any(|d| {
+        
+        // Check if we generated any missing property diagnostics (TS2741/TS2739/TS2740)
+        let has_missing_property_diag = self.ctx.diagnostics[diag_count_before..].iter().any(|d| {
             d.code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
                 || d.code == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
                 || d.code
                     == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
         });
+        
+        // Check if the source type has any properties (is not an empty object literal)
+        // For empty object literals, we should keep TS2741 because the issue is missing
+        // properties, not property-value type mismatch.
+        let source_has_properties = tsz_solver::type_queries::get_object_shape(self.ctx.types, source)
+            .map(|shape| !shape.properties.is_empty())
+            .unwrap_or(false);
+        
+        // Only downgrade TS2741/TS2739/TS2740 to TS2322 when:
+        // 1. There's a missing property diagnostic AND
+        // 2. The source has properties (i.e., it's a property-value mismatch, not empty object)
+        // OR
+        // 1. There's no missing property diagnostic (i.e., it's a type mismatch on existing properties)
+        let needs_downgrade = if has_missing_property_diag && !source_has_properties {
+            // Empty object literal missing properties - keep TS2741, don't downgrade
+            false
+        } else {
+            // Either no missing property diagnostic, or source has properties
+            // (meaning we have property-value mismatches that should be TS2322)
+            self.ctx.diagnostics[diag_count_before..].iter().any(|d| {
+                d.code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                    || d.code == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                    || d.code
+                        == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+            })
+        };
+        
         if needs_downgrade {
             let src_str = self.format_type_diagnostic(source);
             let tgt_str = self.format_type_diagnostic(target);
@@ -382,7 +421,6 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
-
     pub fn error_type_does_not_satisfy_the_expected_type(
         &mut self,
         source: TypeId,
