@@ -729,6 +729,9 @@ impl<'a> LoweringPass<'a> {
                     self.mark_async_generator_helpers();
                 }
                 directives.push(TransformDirective::ES5AsyncFunction { function_node });
+            } else if func.asterisk_token {
+                self.transforms.helpers_mut().generator = true;
+                directives.push(TransformDirective::ES5GeneratorFunction { function_node });
             } else if self.function_parameters_need_es5_transform(&func.parameters) {
                 // Mark rest helper if parameters have rest
                 if self.function_parameters_need_rest_helper(&func.parameters) {
@@ -1057,6 +1060,9 @@ impl<'a> LoweringPass<'a> {
                 self.mark_async_helpers();
             }
             TransformDirective::ES5AsyncFunction { function_node: idx }
+        } else if self.ctx.target_es5 && func.asterisk_token {
+            self.transforms.helpers_mut().generator = true;
+            TransformDirective::ES5GeneratorFunction { function_node: idx }
         } else if self.ctx.target_es5
             && self.function_parameters_need_es5_transform(&func.parameters)
         {
@@ -1525,6 +1531,38 @@ impl<'a> LoweringPass<'a> {
             helpers.create_binding = true;
         }
 
+        // __rewriteRelativeImportExtension helper: needed when
+        // rewriteRelativeImportExtensions is set and a dynamic import() or
+        // require() call has a non-string-literal specifier argument.
+        if self.ctx.options.rewrite_relative_import_extensions
+            && !is_super_call
+            && let Some(expr_node) = self.arena.get(call.expression)
+        {
+            let is_import_call = expr_node.kind == SyntaxKind::ImportKeyword as u16;
+            let is_require_call = !is_import_call
+                && expr_node.kind == SyntaxKind::Identifier as u16
+                && self
+                    .arena
+                    .get_identifier(expr_node)
+                    .is_some_and(|id| id.escaped_text == "require");
+            if is_import_call || is_require_call {
+                let first_arg = call
+                    .arguments
+                    .as_ref()
+                    .and_then(|args| args.nodes.iter().copied().find(|n| n.is_some()));
+                let is_string_literal =
+                    first_arg.and_then(|a| self.arena.get(a)).is_some_and(|n| {
+                        n.kind == SyntaxKind::StringLiteral as u16
+                            || n.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                    });
+                if !is_string_literal {
+                    self.transforms
+                        .helpers_mut()
+                        .rewrite_relative_import_extension = true;
+                }
+            }
+        }
+
         // Check if call has spread arguments and needs ES5 transformation
         if self.ctx.target_es5
             && !is_super_call
@@ -1632,8 +1670,13 @@ impl<'a> LoweringPass<'a> {
                     idx,
                     TransformDirective::ES5AsyncFunction { function_node: idx },
                 );
+            } else if func.asterisk_token {
+                self.transforms.helpers_mut().generator = true;
+                self.transforms.insert(
+                    idx,
+                    TransformDirective::ES5GeneratorFunction { function_node: idx },
+                );
             } else if self.function_parameters_need_es5_transform(&func.parameters) {
-                // Mark rest helper if parameters have rest
                 if self.function_parameters_need_rest_helper(&func.parameters) {
                     self.transforms.helpers_mut().rest = true;
                 }

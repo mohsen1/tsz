@@ -360,6 +360,16 @@ pub const SET_FUNCTION_NAME_HELPER: &str = r#"var __setFunctionName = (this && t
     return Object.defineProperty(f, "name", { configurable: true, value: prefix ? "".concat(prefix, " ", name) : name });
 };"#;
 
+/// Helper code for __rewriteRelativeImportExtension (dynamic import/require specifier rewriting)
+pub const REWRITE_RELATIVE_IMPORT_EXTENSION_HELPER: &str = r#"var __rewriteRelativeImportExtension = (this && this.__rewriteRelativeImportExtension) || function (path, preserveJsx) {
+    if (typeof path === "string" && /^\.\.?\//.test(path)) {
+        return path.replace(/\.(tsx)$|((?:\.d)?)((?:\.[^./]+?)?)\.([cm]?)ts$/i, function (m, tsx, d, ext, cm) {
+            return tsx ? preserveJsx ? ".jsx" : ".js" : d && (!ext || !cm) ? m : (d + ext + "." + cm.toLowerCase() + "js");
+        });
+    }
+    return path;
+};"#;
+
 /// Tracks which helper functions are needed in the output.
 #[derive(Default, Clone)]
 pub struct HelpersNeeded {
@@ -396,6 +406,7 @@ pub struct HelpersNeeded {
     pub run_initializers: bool,
     pub prop_key: bool,
     pub set_function_name: bool,
+    pub rewrite_relative_import_extension: bool,
 }
 
 impl HelpersNeeded {
@@ -430,6 +441,7 @@ impl HelpersNeeded {
             || self.run_initializers
             || self.prop_key
             || self.set_function_name
+            || self.rewrite_relative_import_extension
     }
 
     /// Returns the list of `__helperName` strings for all needed helpers.
@@ -523,6 +535,9 @@ impl HelpersNeeded {
         if self.set_function_name {
             names.push("__setFunctionName");
         }
+        if self.rewrite_relative_import_extension {
+            names.push("__rewriteRelativeImportExtension");
+        }
         names
     }
 }
@@ -589,6 +604,10 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(SET_MODULE_DEFAULT_HELPER);
         output.push('\n');
         output.push_str(IMPORT_STAR_HELPER);
+        output.push('\n');
+    }
+    if helpers.rewrite_relative_import_extension {
+        output.push_str(REWRITE_RELATIVE_IMPORT_EXTENSION_HELPER);
         output.push('\n');
     }
     if helpers.export_star {
