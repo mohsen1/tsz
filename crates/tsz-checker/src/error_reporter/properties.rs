@@ -382,6 +382,25 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Suppress TS2339 when the base expression of a property access has syntax errors.
+        // This prevents cascading errors when the parser has already reported syntax issues
+        // (e.g., malformed import.defer() without parentheses → TS1005 already emitted).
+        if let Some(parent) = self.ctx.arena.get_extended(idx)
+            && let Some(parent_node) = self.ctx.arena.get(parent.parent)
+            && parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        {
+            if let Some(access) = self.ctx.arena.get_access_expr(parent_node) {
+                // Check if the base expression has parse errors nearby
+                if self.node_has_nearby_parse_error(access.expression) {
+                    return;
+                }
+                // Also check if there are parse errors anywhere on the parent property access
+                if self.node_has_nearby_parse_error(parent.parent) {
+                    return;
+                }
+            }
+        }
+
         // Suppress TS2339 when the property access is on an expression rooted in an
         // unresolved import (TS2307 was already emitted for the missing module).
         // This prevents cascading errors when a namespace import fails to resolve.
