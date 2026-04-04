@@ -1961,6 +1961,11 @@ impl<'a> CheckerState<'a> {
                 if name.is_empty() {
                     continue;
                 }
+                // Skip `const` modifier keyword (e.g., `@template const T`).
+                // tsc treats `const` as a type parameter modifier, not a name.
+                if name == "const" {
+                    continue;
+                }
                 if name
                     .chars()
                     .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
