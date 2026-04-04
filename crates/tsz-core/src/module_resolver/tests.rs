@@ -1408,9 +1408,7 @@ fn test_extensionless_json_import_does_not_resolve_with_resolve_json_module() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-// TODO: Fix package.json "main" resolution for non-TS extensions (e.g., .css files).
 #[test]
-#[ignore]
 fn test_resolver_package_main_with_unknown_extension() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_test_resolver_main_unknown");
