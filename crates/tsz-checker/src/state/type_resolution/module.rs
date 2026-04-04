@@ -2002,7 +2002,7 @@ export interface Row2 { b: string }
             .iter()
             .position(|name| name == "/main.ts")
             .expect("entry file should exist");
-        let augmentation_idx = file_names
+        let _augmentation_idx = file_names
             .iter()
             .position(|name| name == "/a.d.ts")
             .expect("augmentation file should exist");
