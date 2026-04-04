@@ -1,0 +1,2115 @@
+use super::*;
+
+// =============================================================================
+// 1. Simple Declarations
+// =============================================================================
+
+#[test]
+fn test_function_declaration() {
+    let source = "export function add(a: number, b: number): number { return a + b; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export declare function add"),
+        "Expected export declare: {output}"
+    );
+    assert!(
+        output.contains("a: number"),
+        "Expected parameter type: {output}"
+    );
+    assert!(
+        output.contains("): number;"),
+        "Expected return type: {output}"
+    );
+}
+
+#[test]
+fn test_non_exported_function_declaration_emits_declare_function() {
+    let source = "function helper(x: string): string { return x; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare function helper"),
+        "Expected non-exported function to be emitted as declare function: {output}"
+    );
+    assert!(
+        !output.contains("export declare function helper"),
+        "Expected no export keyword for non-exported top-level function in global scope: {output}"
+    );
+}
+
+#[test]
+fn test_class_declaration() {
+    let source = r#"
+    export class Calculator {
+        private value: number;
+        add(n: number): this {
+            this.value += n;
+            return this;
+        }
+    }
+    "#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("class Calculator"),
+        "Expected class declaration: {output}"
+    );
+    assert!(output.contains("value"), "Expected property: {output}");
+    assert!(
+        output.contains("add") && output.contains("number"),
+        "Expected method signature with add and number: {output}"
+    );
+}
+
+#[test]
+fn test_interface_declaration() {
+    let source = "export interface Point { x: number; y: number; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("interface Point"),
+        "Expected interface: {output}"
+    );
+    assert!(output.contains("number"), "Expected number type: {output}");
+}
+
+#[test]
+fn test_type_alias() {
+    let source = "export type ID = string | number;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export type ID = string | number"),
+        "Expected type alias: {output}"
+    );
+}
+
+#[test]
+fn test_type_only_export_module_gets_empty_export_marker() {
+    // When a module has only an import (module syntax) and private types,
+    // the .d.ts needs `export {};` to preserve module semantics, since tsc
+    // would not emit any explicit exports for a file like this.
+    let source = r#"
+import "some-dep";
+type T = { x: number };
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export {};"),
+        "Expected empty export marker for import-only module: {output}"
+    );
+}
+
+#[test]
+fn test_type_export_module_still_needs_empty_export_marker() {
+    // tsc emits `export {};` even when there are type exports (interfaces,
+    // type aliases) because type exports are erased at runtime.
+    let source = r#"
+type T = { x: number };
+export interface I {
+    f: T;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export interface I"),
+        "Expected exported interface: {output}"
+    );
+    assert!(
+        output.contains("export {};"),
+        "Expected empty export marker even with type exports: {output}"
+    );
+}
+
+#[test]
+fn test_empty_named_export_has_no_extra_spacing() {
+    let source = "export {};";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export {};"),
+        "Expected compact empty export syntax: {output}"
+    );
+    assert!(
+        !output.contains("export {  };"),
+        "Did not expect extra spacing in empty export syntax: {output}"
+    );
+}
+
+#[test]
+fn test_private_set_accessor_omits_type_and_uses_value_param_name() {
+    let source = r#"
+declare class C {
+    private set x(foo: string);
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare class C"),
+        "Expected declared class: {output}"
+    );
+    assert!(
+        output.contains("private set x(value);"),
+        "Expected private setter value parameter canonicalization: {output}"
+    );
+}
+
+#[test]
+fn test_public_set_accessor_preserves_source_param_name() {
+    let source = r#"
+declare class C {
+    set x(foo: string);
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("set x(foo: string);"),
+        "Expected public setter to preserve source parameter name: {output}"
+    );
+}
+
+#[test]
+fn test_accessor_comments_with_bodies_are_preserved() {
+    let source = r#"
+export class C {
+    /** getter property*/
+    public get x() {
+        return 1;
+    }
+    /** setter property*/
+    public set x(/** this is value*/ value: number) {
+    }
+}
+"#;
+    let output = emit_dts(source);
+
+    assert!(
+        output.contains("/** getter property*/\n    get x(): number;"),
+        "Expected getter JSDoc to be preserved in declaration emit: {output}"
+    );
+    assert!(
+        output.contains("/** setter property*/\n    set x(/** this is value*/ value: number);"),
+        "Expected setter JSDoc to be preserved in declaration emit: {output}"
+    );
+}
+
+#[test]
+fn test_exported_interface_member_comments_are_preserved() {
+    let output = emit_dts(
+        r#"
+export interface Box {
+    /** width docs */
+    width: number;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("/** width docs */\n    width: number;"),
+        "Expected exported interface member JSDoc to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_multiline_parameter_comments_keep_interface_signature_indent() {
+    let output = emit_dts(
+        r#"
+export interface ICallSignatureWithParameters {
+    /** This is comment for function signature*/
+    (/** this is comment about a*/a: string,
+        /** this is comment for b*/
+        b: number): void;
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "    (/** this is comment about a*/ a: string, \n    /** this is comment for b*/\n    b: number): void;"
+        ),
+        "Expected multiline parameter comments to keep interface signature indentation: {output}"
+    );
+}
+
+#[test]
+fn test_get_accessor_uses_matching_setter_parameter_type_for_computed_name() {
+    let output = emit_dts(
+        r#"
+const enum G {
+    B = 2,
+}
+class C {
+    get [G.B]() {
+        return true;
+    }
+    set [G.B](value: number) {}
+}
+"#,
+    );
+
+    assert!(
+        output.contains("get [G.B](): number;"),
+        "Expected getter to reuse matching setter parameter type: {output}"
+    );
+    assert!(
+        !output.contains("get [G.B](): boolean;"),
+        "Did not expect getter body type to override matching setter parameter type: {output}"
+    );
+}
+
+#[test]
+fn test_computed_methods_emit_as_property_signatures() {
+    let output = emit_dts(
+        r#"
+const key: string = Math.random() > 0.5 ? "a" : "b";
+export class C {
+    [key](): string {
+        return "x";
+    }
+
+    regular(): number {
+        return 1;
+    }
+}
+"#,
+    );
+
+    // tsc emits computed methods as method signatures, not property signatures.
+    assert!(
+        output.contains("[key](): string;"),
+        "Expected computed method to use method syntax (matching tsc): {output}"
+    );
+    assert!(
+        !output.contains("[key]: () => string;"),
+        "Did not expect property signature for computed method: {output}"
+    );
+    assert!(
+        output.contains("regular(): number;"),
+        "Expected ordinary methods to stay as methods: {output}"
+    );
+}
+
+#[test]
+fn test_declaration_file_exports_do_not_gain_duplicate_declare() {
+    let source = r#"
+export class A {}
+export function f(): void;
+export const x: number;
+"#;
+    let mut parser = ParserState::new("test.d.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export class A"),
+        "Expected exported class to preserve declaration-file form: {output}"
+    );
+    assert!(
+        output.contains("export function f(): void;"),
+        "Expected exported function to preserve declaration-file form: {output}"
+    );
+    assert!(
+        output.contains("export const x: number;"),
+        "Expected exported variable to preserve declaration-file form: {output}"
+    );
+    assert!(
+        !output.contains("export declare class A"),
+        "Did not expect duplicate declare on exported class: {output}"
+    );
+    assert!(
+        !output.contains("export declare function f"),
+        "Did not expect duplicate declare on exported function: {output}"
+    );
+    assert!(
+        !output.contains("export declare const x"),
+        "Did not expect duplicate declare on exported variable: {output}"
+    );
+}
+
+#[test]
+fn test_js_exported_function_and_class_do_not_emit_declare() {
+    let source = r#"
+export function main() {}
+export class Z {}
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export function main(): void;"),
+        "Expected JS export function declaration form: {output}"
+    );
+    assert!(
+        output.contains("export class Z"),
+        "Expected JS export class declaration form: {output}"
+    );
+    assert!(
+        !output.contains("export declare function main"),
+        "Did not expect declare on JS exported function: {output}"
+    );
+    assert!(
+        !output.contains("export declare class Z"),
+        "Did not expect declare on JS exported class: {output}"
+    );
+}
+
+#[test]
+fn test_js_const_literal_uses_type_annotation() {
+    let source = "export const x = 1;";
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export const x: 1;"),
+        "Expected JS const literal to emit a literal type annotation: {output}"
+    );
+    assert!(
+        !output.contains("export const x = 1;"),
+        "Did not expect JS const literal to stay as an initializer: {output}"
+    );
+}
+
+#[test]
+fn test_ts_const_await_literal_uses_initializer() {
+    let source = "const x = await 1;\nexport { x };";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare const x = 1;"),
+        "Expected TS await literal const to emit an initializer: {output}"
+    );
+    assert!(
+        !output.contains("declare const x: number;"),
+        "Did not expect TS await literal const to widen to number: {output}"
+    );
+}
+
+#[test]
+fn test_js_variable_preserves_name_like_jsdoc_type_reference() {
+    let source = r#"
+/**
+ * @callback Foo
+ * @param {...string} args
+ * @returns {number}
+ */
+/** @type {Foo} */
+export const x = () => 1;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export const x: Foo;"),
+        "Expected JS @type alias reference to be preserved: {output}"
+    );
+    // TODO: @callback synthesis not yet implemented — enable when supported
+    // assert!(
+    //     output.contains("export type Foo = (...args: string[]) => number;"),
+    //     "Expected JS @callback alias to be synthesized after the exported value: {output}"
+    // );
+}
+
+#[test]
+fn test_js_variable_preserves_unresolved_name_like_jsdoc_type_reference() {
+    let source = r#"
+/** @type {B} */
+var notOK = 0;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare var notOK: B;"),
+        "Expected unresolved JSDoc type reference to be preserved in .d.ts emit: {output}"
+    );
+}
+
+#[test]
+fn test_js_trailing_jsdoc_type_aliases_are_emitted() {
+    let source = r#"
+export {};
+/** @typedef {string | number | symbol} PropName */
+/**
+ * Callback
+ *
+ * @callback NumberToStringCb
+ * @param {number} a
+ * @returns {string}
+ */
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export type PropName = string | number | symbol;"),
+        "Expected trailing JSDoc typedef alias to be emitted: {output}"
+    );
+    assert!(
+        output.contains("export type NumberToStringCb = (a: number) => string;"),
+        "Expected trailing JSDoc callback alias to be emitted: {output}"
+    );
+    assert!(
+        !output.contains("export {};"),
+        "Did not expect an extra export scope marker once JSDoc aliases are emitted: {output}"
+    );
+}
+
+#[test]
+fn test_js_callback_without_return_tag_defaults_to_any() {
+    let source = r#"
+/**
+ * Callback to be invoked when test execution is complete.
+ *
+ * @callback DoneCB
+ * @param {number} failures - Number of failures that occurred.
+ */
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("type DoneCB = (failures: number) => any;"),
+        "Expected JS @callback aliases without @returns to default to any: {output}"
+    );
+}
+
+#[test]
+fn test_js_leading_jsdoc_typedef_before_function_is_emitted() {
+    let source = r#"
+/** @typedef {{x: string} | number} SomeType */
+/**
+ * @param {number} x
+ * @returns {SomeType}
+ */
+export function doTheThing(x) {
+  return x;
+}
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export type SomeType = {\n    x: string;\n} | number;"),
+        "Expected leading JSDoc typedef alias before exported function: {output}"
+    );
+    let alias_pos = output
+        .find("export type SomeType =")
+        .expect("Expected typedef alias to be emitted");
+    let function_pos = output
+        .find("export function doTheThing(")
+        .expect("Expected exported function declaration to be emitted");
+    assert!(
+        alias_pos < function_pos,
+        "Expected typedef alias to be emitted before the function declaration: {output}"
+    );
+}
+
+#[test]
+fn test_js_script_typedef_before_variable_is_emitted_as_local_type() {
+    let source = r#"
+/** @typedef {{x: string}} LocalType */
+const value = 1;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("type LocalType = {\n    x: string;\n};"),
+        "Expected script typedef before variable statement to be emitted as a local type alias: {output}"
+    );
+    assert!(
+        !output.contains("export type LocalType"),
+        "Did not expect script typedef to be emitted as an exported type alias: {output}"
+    );
+}
+
+#[test]
+fn test_js_multiline_typedef_before_function_variable_is_emitted() {
+    let source = r#"
+/**
+ * @typedef {{
+ *   [id: string]: [Function, Function];
+ * }} ResolveRejectMap
+ */
+/**
+ * @param {ResolveRejectMap} handlers
+ * @returns {Promise<any>}
+ */
+const send = handlers => Promise.resolve(handlers);
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare function send(handlers: ResolveRejectMap): Promise<any>;"),
+        "Expected JSDoc-annotated JS function variable to emit as a function declaration: {output}"
+    );
+    assert!(
+        output.contains("type ResolveRejectMap = {\n    [id: string]: [Function, Function];\n};"),
+        "Expected multiline JSDoc typedef alias to be emitted as a local type alias: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_uses_jsdoc_signature_types() {
+    let source = r#"
+/**
+ * @param {number} x
+ * @returns {string}
+ */
+function format(x) {
+  return String(x);
+}
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare function format(x: number): string;"),
+        "Expected JSDoc function declaration types to flow into .d.ts emit: {output}"
+    );
+}
+
+#[test]
+fn test_js_named_exports_fold_into_declarations() {
+    let source = r#"
+const x = 1;
+function f() {}
+export { x, f };
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export const x: 1;"),
+        "Expected named-exported const to fold into an exported declaration: {output}"
+    );
+    assert!(
+        output.contains("export function f(): void;"),
+        "Expected named-exported function to fold into an exported declaration: {output}"
+    );
+    assert!(
+        !output.contains("export { x, f };"),
+        "Did not expect a redundant named export clause after folding: {output}"
+    );
+}
+
+#[test]
+fn test_js_named_exports_preserve_explicit_export_order() {
+    let source = r#"
+function require() {}
+const exports = {};
+class Object {}
+export const __esModule = false;
+export { require, exports, Object };
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    let expected = r#"export const __esModule: false;
+export function require(): void;
+export const exports: {};
+export class Object {
+}"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected explicit JS exports to stay ahead of folded named exports: {output}"
+    );
+}
+
+#[test]
+fn test_js_export_import_equals_drops_export_keyword() {
+    let source = "export import fs2 = require(\"fs\");";
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("import fs2 = require(\"fs\");"),
+        "Expected JS export import= to emit as plain import=: {output}"
+    );
+    assert!(
+        !output.contains("export import fs2"),
+        "Did not expect JS export import= to keep the export keyword: {output}"
+    );
+}
+
+#[test]
+fn test_js_import_meta_url_infers_string() {
+    let source = r#"
+const x = import.meta.url;
+export { x };
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export const x: string;"),
+        "Expected import.meta.url to emit as string in JS declarations: {output}"
+    );
+}
+
+#[test]
+fn test_ts_import_meta_url_infers_string() {
+    let source = r#"
+const x = import.meta.url;
+export { x };
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare const x: string;"),
+        "Expected import.meta.url to emit as string in TS declarations: {output}"
+    );
+}
+
+#[test]
+fn test_js_top_level_await_literal_preserves_literal_type() {
+    let source = r#"
+const x = await 1;
+export { x };
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export const x: 1;"),
+        "Expected top-level await of a literal to preserve the literal type: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_using_arguments_emits_rest_param() {
+    let source = r#"
+function f(x) {
+    arguments;
+}
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare function f(x: any, ...args: any[]): void;"),
+        "Expected JS functions that reference arguments to gain a synthetic rest param: {output}"
+    );
+}
+
+#[test]
+fn test_js_object_literal_functions_emit_namespace() {
+    let source = r#"
+const foo = {
+    f1: (params) => {}
+};
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    let expected = r#"declare namespace foo {
+    function f1(params: any): void;
+}"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected namespace-like JS object literals to emit as declare namespaces: {output}"
+    );
+}
+
+#[test]
+fn test_js_object_literal_values_emit_namespace_members() {
+    let source = r#"
+const Strings = {
+    a: "A",
+    b: "B"
+};
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    let expected = r#"declare namespace Strings {
+    let a: string;
+    let b: string;
+}"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected JS object literal values to emit as namespace members: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_zero_arg_constructor_is_omitted() {
+    let source = r#"
+export class Preferences {
+    constructor() {}
+}
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        !output.contains("constructor();"),
+        "Expected zero-arg JS constructors to be omitted from declaration emit: {output}"
+    );
+}
+
+#[test]
+fn test_js_subclass_zero_arg_constructor_is_emitted() {
+    let source = r#"
+export class Super {
+    /**
+     * @param {string} firstArg
+     * @param {string} secondArg
+     */
+    constructor(firstArg, secondArg) { }
+}
+
+export class Sub extends Super {
+    constructor() {
+        super('first', 'second');
+    }
+}
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("constructor();"),
+        "Expected zero-arg JS constructor in subclass to be emitted in declaration: {output}"
+    );
+}
+
+#[test]
+fn test_js_export_equals_emits_before_target_declaration() {
+    let source = r#"
+const a = {};
+export = a;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.starts_with("export = a;\ndeclare const a: {};"),
+        "Expected JS export= to emit before its target declaration: {output}"
+    );
+    assert_eq!(
+        output.matches("export = a;").count(),
+        1,
+        "Did not expect duplicate JS export= statements: {output}"
+    );
+}
+
+#[test]
+fn test_js_module_exports_emits_before_target_declaration() {
+    let source = r#"
+const a = {};
+module.exports = a;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.starts_with("export = a;\ndeclare const a: {};"),
+        "Expected JS module.exports assignment to emit as export=: {output}"
+    );
+    assert_eq!(
+        output.matches("export = a;").count(),
+        1,
+        "Did not expect duplicate JS export= statements: {output}"
+    );
+}
+
+#[test]
+fn test_js_exports_assignment_emits_named_exports_and_filters_locals() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+exports.j = 1;
+exports.k = void 0;
+var o = {};
+function C() {
+    this.p = 1;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export const j:"),
+        "Expected CommonJS named export value declaration: {output}"
+    );
+    assert!(
+        !output.contains("declare var o:"),
+        "Did not expect non-exported locals to leak into JS module declarations: {output}"
+    );
+    assert!(
+        !output.contains("declare function C"),
+        "Did not expect non-exported helper declarations to leak into JS module declarations: {output}"
+    );
+    assert!(
+        !output.contains("export const k:"),
+        "Did not expect void exports to synthesize declarations: {output}"
+    );
+}
+
+#[test]
+fn test_js_exports_assignment_skips_chained_void_zero_preinit() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+exports.y = exports.x = void 0;
+exports.x = 1;
+exports.y = 2;
+"#,
+    );
+
+    assert!(
+        output.contains("export const x: 1;"),
+        "Expected x export declaration to survive past the void-zero preinit: {output}"
+    );
+    assert!(
+        output.contains("export const y: 2;"),
+        "Expected y export declaration to survive past the void-zero preinit: {output}"
+    );
+    assert!(
+        !output.contains("export const y: undefined;"),
+        "Did not expect chained void-zero preinit to synthesize an undefined export: {output}"
+    );
+}
+
+#[test]
+fn test_js_exports_assignment_marks_same_name_function_exported() {
+    let output = emit_js_dts(
+        r#"
+function foo() {}
+exports.foo = foo;
+"#,
+    );
+
+    assert!(
+        output.contains("export function foo(): void;"),
+        "Expected same-name CommonJS export to reuse the function declaration: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_function_expandos_emit_as_namespace_exports() {
+    let source = r#"
+function foo() {}
+foo.foo = foo;
+foo.default = foo;
+module.exports = foo;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    let expected = r#"export = foo;
+declare function foo(): void;
+declare namespace foo {
+    export { foo };
+    export { foo as default };
+}"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected CommonJS function expandos to emit as namespace exports: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_exported_arrow_function_preserves_any_return_type() {
+    let source = r#"
+const donkey = (ast) => ast;
+module.exports = donkey;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let Some(root_node) = parser.arena.get(root) else {
+        panic!("missing root node");
+    };
+    let Some(source_file) = parser.arena.get_source_file(root_node) else {
+        panic!("missing source file");
+    };
+    let var_stmt_idx = source_file.statements.nodes[0];
+    let var_stmt = parser
+        .arena
+        .get(var_stmt_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .expect("missing variable statement");
+    let decl_list = parser
+        .arena
+        .get(var_stmt.declarations.nodes[0])
+        .and_then(|node| parser.arena.get_variable(node))
+        .expect("missing declaration list");
+    let decl = parser
+        .arena
+        .get(decl_list.declarations.nodes[0])
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing declaration");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let ast_atom = interner.intern_string("ast");
+    let donkey_type = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(ast_atom, TypeId::ANY)],
+        TypeId::ANY,
+    ));
+
+    let mut type_cache = TypeCacheView::default();
+    type_cache.node_types.insert(decl.name.0, donkey_type);
+    type_cache
+        .node_types
+        .insert(decl.initializer.0, donkey_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare function donkey(ast: any): any;"),
+        "Expected concise-arrow CommonJS export to preserve any return type: {output}"
+    );
+    assert!(
+        !output.contains("declare function donkey(ast: any): void;"),
+        "Did not expect concise-arrow CommonJS export to collapse to void: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_prototype_and_static_assignments_emit_synthetic_declarations() {
+    let source = r#"
+module.exports = MyClass;
+
+function MyClass() {}
+MyClass.staticMethod = function() {}
+MyClass.prototype.method = function() {}
+MyClass.staticProperty = 123;
+
+/**
+ * Callback to be invoked when test execution is complete.
+ *
+ * @callback DoneCB
+ * @param {number} failures - Number of failures that occurred.
+ */
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    let expected = r#"export = MyClass;
+declare function MyClass(): void;
+declare class MyClass {
+    method(): void;
+}
+declare namespace MyClass {
+    export { staticMethod, staticProperty, DoneCB };
+}
+declare function staticMethod(): void;
+declare var staticProperty: number;
+/**
+ * Callback to be invoked when test execution is complete.
+ */
+type DoneCB = (failures: number) => any;"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected CommonJS static/prototype assignments to emit synthetic declarations: {output}"
+    );
+}
+
+#[test]
+fn test_js_exports_assignment_marks_same_name_class_exported() {
+    let output = emit_js_dts(
+        r#"
+class K {}
+exports.K = K;
+"#,
+    );
+
+    assert!(
+        output.contains("export class K"),
+        "Expected same-name CommonJS export to reuse the class declaration: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_property_access_export_reuses_assigned_initializer_type() {
+    let source = r#"
+var NS = {};
+NS.K = class {};
+exports.K = NS.K;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let Some(root_node) = parser.arena.get(root) else {
+        panic!("missing root node");
+    };
+    let Some(source_file) = parser.arena.get_source_file(root_node) else {
+        panic!("missing source file");
+    };
+    let class_expr = parser
+        .arena
+        .get(source_file.statements.nodes[1])
+        .and_then(|node| parser.arena.get_expression_statement(node))
+        .map(|stmt| {
+            parser
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(stmt.expression)
+        })
+        .and_then(|expr| {
+            parser
+                .arena
+                .get(expr)
+                .and_then(|node| parser.arena.get_binary_expr(node))
+        })
+        .map(|binary| {
+            parser
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(binary.right)
+        })
+        .expect("missing assigned class expression");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let constructor_type = interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature::new(Vec::new(), TypeId::ANY)],
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    });
+
+    let mut type_cache = TypeCacheView::default();
+    type_cache.node_types.insert(class_expr.0, constructor_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export var K: {"),
+        "Expected property-access CommonJS export to emit a synthetic declaration: {output}"
+    );
+    assert!(
+        output.contains("new (): any;"),
+        "Expected property-access CommonJS export to reuse the assigned initializer type: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_named_class_expression_emits_exported_class() {
+    let output = emit_js_dts(
+        r#"
+exports.K = class K {
+    values() {}
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export class K {"),
+        "Expected named CommonJS class expression to emit as an exported class: {output}"
+    );
+    assert!(
+        output.contains("values(): void;"),
+        "Expected named CommonJS class expression members to be preserved: {output}"
+    );
+    assert!(
+        !output.contains("export var K: {"),
+        "Did not expect named CommonJS class expression to lower as a constructor object: {output}"
+    );
+}
+
+#[test]
+fn test_object_literal_computed_numeric_names_prefer_syntax_shape() {
+    let output = emit_dts(
+        r#"
+var v = {
+  [-1]: {},
+  [+1]: {},
+  [~1]: {},
+  [!1]: {}
+};
+"#,
+    );
+
+    assert!(
+        output.contains("[-1]: {};"),
+        "Expected negative computed numeric literal to survive in fallback object typing: {output}"
+    );
+    assert!(
+        !output.contains("\"-1\": {};"),
+        "Did not expect canonical string form to survive once syntax override is applied: {output}"
+    );
+    assert!(
+        output.contains("1: {};"),
+        "Expected unary-plus computed numeric literal to normalize to a numeric property: {output}"
+    );
+    assert!(
+        !output.contains("[~1]: {}"),
+        "Did not expect non-emittable computed names to survive fallback object typing: {output}"
+    );
+    assert!(
+        !output.contains("[!1]: {}"),
+        "Did not expect non-emittable computed names to survive fallback object typing: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_class_static_assignments_emit_typedef_and_namespace_exports() {
+    let source = r#"
+class Handler {
+    static get OPTIONS() {
+        return 1;
+    }
+
+    process() {
+    }
+}
+Handler.statische = function() { }
+const Strings = {
+    a: "A",
+    b: "B"
+};
+
+module.exports = Handler;
+module.exports.Strings = Strings;
+
+/**
+ * @typedef {Object} HandlerOptions
+ * @property {String} name
+ * Should be able to export a type alias at the same time.
+ */
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    let expected = r#"export = Handler;
+declare class Handler {
+    static get OPTIONS(): number;
+    process(): void;
+}
+declare namespace Handler {
+    export { statische, Strings, HandlerOptions };
+}
+declare function statische(): void;
+declare namespace Strings {
+    let a: string;
+    let b: string;
+}
+type HandlerOptions = {
+    /**
+     * Should be able to export a type alias at the same time.
+     */
+    name: string;
+};"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected CommonJS class static assignments and typedefs to emit in source order: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_static_method_augmentation_emits_namespace_merge() {
+    let source = r#"
+export class Clazz {
+    static method() { }
+}
+
+Clazz.method.prop = 5;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    let expected = r#"export class Clazz {
+}
+export namespace Clazz {
+    function method(): void;
+    namespace method {
+        let prop: number;
+    }
+}"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected JS static method augmentations to emit as a merged namespace: {output}"
+    );
+}
+
+#[test]
+fn test_js_reexports_from_same_module_are_grouped() {
+    let source = r#"
+export { default } from "fs";
+export { default as foo } from "fs";
+export { bar as baz } from "fs";
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export { default, default as foo, bar as baz } from \"fs\";"),
+        "Expected JS re-exports from the same module to be grouped: {output}"
+    );
+    assert_eq!(
+        output.matches(" from \"fs\";").count(),
+        1,
+        "Did not expect duplicate JS re-export lines after grouping: {output}"
+    );
+}
+
+#[test]
+fn test_method_declaration_emits_inferred_return_type() {
+    let source = r#"
+class C {
+    add() {
+        return 1;
+    }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let Some(root_node) = parser.arena.get(root) else {
+        panic!("missing root node");
+    };
+    let Some(source_file) = parser.arena.get_source_file(root_node) else {
+        panic!("missing source file data");
+    };
+    let Some(class_node) = parser.arena.get(source_file.statements.nodes[0]) else {
+        panic!("missing class node");
+    };
+    let Some(class_decl) = parser.arena.get_class(class_node) else {
+        panic!("missing class declaration");
+    };
+    let method_idx = class_decl.members.nodes[0];
+
+    let interner = TypeInterner::new();
+    let method_type = interner.function(FunctionShape {
+        type_params: Vec::new(),
+        params: Vec::new(),
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let mut type_cache = TypeCacheView::default();
+    type_cache.node_types.insert(method_idx.0, method_type);
+
+    let binder = BinderState::new();
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("add(): number;"),
+        "Expected inferred method return type: {output}"
+    );
+}
+
+#[test]
+fn test_property_declaration_infers_type_from_numeric_initializer_when_type_cache_missing() {
+    let source = r#"
+abstract class C {
+    abstract prop = 1;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("abstract prop: number;"),
+        "Expected inferred property type from initializer: {output}"
+    );
+}
+
+#[test]
+fn test_variable_declaration_infers_accessor_object_type_from_initializer_when_type_cache_missing()
+{
+    let source = r#"
+export var basePrototype = {
+  get primaryPath() {
+    return 1;
+  },
+};
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output
+            .contains("export declare var basePrototype: {\n    readonly primaryPath: number;\n};"),
+        "Expected multi-line object literal accessor inference with body type: {output}"
+    );
+}
+
+#[test]
+fn test_object_literal_computed_accessor_pair_emits_writable_symbol_property() {
+    let output = emit_dts_with_binding(
+        r#"
+var obj = {
+    get [Symbol.isConcatSpreadable]() { return ""; },
+    set [Symbol.isConcatSpreadable](x) { }
+};
+"#,
+    );
+
+    assert!(
+        output.contains("[Symbol.isConcatSpreadable]: string;"),
+        "Expected computed accessor pair to collapse to writable symbol property: {output}"
+    );
+    assert!(
+        !output.contains("readonly [Symbol.isConcatSpreadable]: string;"),
+        "Did not expect computed accessor pair to remain readonly: {output}"
+    );
+}
+
+#[test]
+fn test_object_literal_computed_literal_key_reuses_resolved_property_name() {
+    let source = r#"
+const Foo = {
+    BANANA: "banana" as "banana",
+};
+
+export const Baa = {
+    [Foo.BANANA]: 1,
+};
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let baa_decl = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            parser
+                .arena
+                .get_variable_declaration(node)
+                .filter(|decl| parser.arena.get_identifier_text(decl.name) == Some("Baa"))
+                .map(|decl| (NodeIndex(idx as u32), decl))
+        })
+        .map(|(_, decl)| decl)
+        .expect("missing Baa declaration");
+    let object_literal = parser
+        .arena
+        .get(baa_decl.initializer)
+        .and_then(|node| parser.arena.get_literal_expr(node))
+        .expect("missing Baa object literal");
+    let prop_assignment = parser
+        .arena
+        .get(object_literal.elements.nodes[0])
+        .and_then(|node| parser.arena.get_property_assignment(node))
+        .expect("missing computed property assignment");
+    let computed_expr = parser
+        .arena
+        .get(prop_assignment.name)
+        .and_then(|node| parser.arena.get_computed_property(node))
+        .map(|computed| computed.expression)
+        .expect("missing computed property name");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let banana_type = interner.literal_string("banana");
+    let banana_atom = interner.intern_string("banana");
+    let object_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![PropertyInfo::new(banana_atom, TypeId::NUMBER)],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.node_types.insert(computed_expr.0, banana_type);
+    type_cache
+        .node_types
+        .insert(baa_decl.initializer.0, object_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("banana: number;"),
+        "Expected computed literal key to emit resolved property name: {output}"
+    );
+    assert!(
+        !output.contains("[Foo.BANANA]: number;"),
+        "Did not expect computed literal key syntax to leak into declaration output: {output}"
+    );
+}
+
+#[test]
+fn test_enum_member_initializers_respect_const_assertion_widening() {
+    let output = emit_dts_with_binding(
+        r#"
+enum E { A, B }
+let widened = E.B;
+let preserved = E.B as const;
+class C {
+    p1 = E.B;
+    p2 = E.B as const;
+    readonly p3 = E.B;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare let widened: E;"),
+        "Expected let enum member to widen to enum type: {output}"
+    );
+    assert!(
+        output.contains("declare let preserved: E.B;"),
+        "Expected const-asserted enum member to preserve member type: {output}"
+    );
+    assert!(
+        output.contains("p1: E;"),
+        "Expected property widening: {output}"
+    );
+    assert!(
+        output.contains("p2: E.B;"),
+        "Expected const-asserted property member type: {output}"
+    );
+    assert!(
+        output.contains("readonly p3 = E.B;"),
+        "Expected readonly enum property initializer form: {output}"
+    );
+}
+
+#[test]
+fn test_inaccessible_constructor_new_initializer_emits_any() {
+    let source = r#"
+class C {
+    constructor(public x: number) {}
+}
+
+class D {
+    private constructor(public x: number) {}
+}
+
+class E {
+    protected constructor(public x: number) {}
+}
+
+var c = new C(1);
+var d = new D(1);
+var e = new E(1);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let Some(root_node) = parser.arena.get(root) else {
+        panic!("missing root node");
+    };
+    let Some(source_file) = parser.arena.get_source_file(root_node) else {
+        panic!("missing source file data");
+    };
+
+    let class_c_idx = source_file.statements.nodes[0];
+    let class_d_idx = source_file.statements.nodes[1];
+    let class_e_idx = source_file.statements.nodes[2];
+    let var_c_stmt_idx = source_file.statements.nodes[3];
+    let var_d_stmt_idx = source_file.statements.nodes[4];
+    let var_e_stmt_idx = source_file.statements.nodes[5];
+
+    let class_c = parser
+        .arena
+        .get(class_c_idx)
+        .and_then(|node| parser.arena.get_class(node))
+        .expect("missing class C");
+    let class_d = parser
+        .arena
+        .get(class_d_idx)
+        .and_then(|node| parser.arena.get_class(node))
+        .expect("missing class D");
+    let class_e = parser
+        .arena
+        .get(class_e_idx)
+        .and_then(|node| parser.arena.get_class(node))
+        .expect("missing class E");
+
+    let var_c_decl = parser
+        .arena
+        .get(var_c_stmt_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing var c declaration");
+    let var_d_decl = parser
+        .arena
+        .get(var_d_stmt_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing var d declaration");
+    let var_e_decl = parser
+        .arena
+        .get(var_e_stmt_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing var e declaration");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let c_sym = binder
+        .get_node_symbol(class_c.name)
+        .or_else(|| binder.get_node_symbol(class_c_idx))
+        .expect("missing symbol for C");
+    let d_sym = binder
+        .get_node_symbol(class_d.name)
+        .or_else(|| binder.get_node_symbol(class_d_idx))
+        .expect("missing symbol for D");
+    let e_sym = binder
+        .get_node_symbol(class_e.name)
+        .or_else(|| binder.get_node_symbol(class_e_idx))
+        .expect("missing symbol for E");
+
+    let interner = TypeInterner::new();
+    let c_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: Some(c_sym),
+    });
+    let d_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: Some(d_sym),
+    });
+    let e_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: Some(e_sym),
+    });
+
+    let mut type_cache = TypeCacheView::default();
+    type_cache.node_types.insert(var_c_decl.name.0, c_type);
+    type_cache.node_types.insert(var_d_decl.name.0, d_type);
+    type_cache.node_types.insert(var_e_decl.name.0, e_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare var c: C;"),
+        "Expected C type: {output}"
+    );
+    assert!(
+        output.contains("declare var d: any;"),
+        "Expected d to degrade to any: {output}"
+    );
+    assert!(
+        output.contains("declare var e: any;"),
+        "Expected e to degrade to any: {output}"
+    );
+}
+
+#[test]
+fn test_construct_signature_new_initializer_keeps_inferred_any() {
+    let source = r#"
+interface Input {}
+interface Factory {
+    new (value: Input);
+}
+declare var ctor: Factory;
+declare var value: Input;
+var instance = new ctor(value);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let Some(root_node) = parser.arena.get(root) else {
+        panic!("missing root node");
+    };
+    let Some(source_file) = parser.arena.get_source_file(root_node) else {
+        panic!("missing source file data");
+    };
+
+    let instance_stmt_idx = source_file.statements.nodes[4];
+    let instance_decl = parser
+        .arena
+        .get(instance_stmt_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing instance declaration");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(instance_decl.name.0, TypeId::ANY);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare var instance: any;"),
+        "Expected construct-signature new initializer to preserve inferred any: {output}"
+    );
+    assert!(
+        !output.contains("declare var instance: ctor;"),
+        "Did not expect constructor variable name to leak into the emitted type: {output}"
+    );
+}
+
+#[test]
+fn test_constructor_type_no_double_semicolon() {
+    let source = "export type Ctor = new (...args: any[]) => void;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("new (...args: any[]) => void;"),
+        "Expected constructor type in output: {output}"
+    );
+    assert!(
+        !output.contains(";;"),
+        "Must not have double semicolon in constructor type alias: {output}"
+    );
+}
+
+#[test]
+fn test_template_literal_type_no_double_semicolon() {
+    let source = r#"export type Outcome = `${string}_${string}`;"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("`${string}_${string}`"),
+        "Expected template literal type in output: {output}"
+    );
+    assert!(
+        !output.contains(";;"),
+        "Must not have double semicolon in template literal type alias: {output}"
+    );
+}
+
+#[test]
+fn test_infer_type_no_double_semicolon() {
+    let source = "export type Unpack<T> = T extends (infer U)[] ? U : T;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("infer U"),
+        "Expected infer type in output: {output}"
+    );
+    assert!(
+        !output.contains(";;"),
+        "Must not have double semicolon in type alias with infer: {output}"
+    );
+}
+
+#[test]
+fn test_abstract_constructor_type() {
+    let source = "export type AbstractCtor = abstract new () => object;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("abstract new () => object;"),
+        "Expected abstract constructor type in output: {output}"
+    );
+    assert!(
+        !output.contains(";;"),
+        "Must not have double semicolon in abstract constructor type: {output}"
+    );
+}
+
+#[test]
+fn test_simple_template_literal_type() {
+    let source = r#"export type Greeting = `hello`;"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("`hello`"),
+        "Expected simple template literal type in output: {output}"
+    );
+    assert!(
+        !output.contains(";;"),
+        "Must not have double semicolon in simple template literal type: {output}"
+    );
+}
+
+#[test]
+fn test_public_modifier_omitted_from_dts_class_members() {
+    // tsc omits `public` from .d.ts output since it's the default accessibility
+    let source = r#"
+    export class Foo {
+        public x: number;
+        public greet(): string { return "hello"; }
+        protected y: number;
+        private z: number;
+    }
+    "#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    // `public` should be stripped (it's the default)
+    assert!(
+        !output.contains("public "),
+        "Expected `public` modifier to be omitted from .d.ts output: {output}"
+    );
+    // `protected` and `private` should be preserved
+    assert!(
+        output.contains("protected y"),
+        "Expected `protected` modifier to be preserved: {output}"
+    );
+    assert!(
+        output.contains("private z"),
+        "Expected `private` modifier to be preserved: {output}"
+    );
+    // Members themselves should still be present
+    assert!(
+        output.contains("x: number"),
+        "Expected public property to still be emitted (without modifier): {output}"
+    );
+    assert!(
+        output.contains("greet("),
+        "Expected public method to still be emitted (without modifier): {output}"
+    );
+}
+
+// =============================================================================
+// 2. Variable Declarations
+// =============================================================================
+
+#[test]
+fn test_variable_const_declaration() {
+    let output = emit_dts("export const MAX: number = 100;");
+    assert!(
+        output.contains("export declare const MAX: number;"),
+        "Expected const variable in .d.ts: {output}"
+    );
+}
+
+#[test]
+fn test_variable_let_declaration() {
+    let output = emit_dts("export let count: number = 0;");
+    assert!(
+        output.contains("export declare let count: number;"),
+        "Expected let variable in .d.ts: {output}"
+    );
+}
+
+#[test]
+fn test_variable_var_declaration() {
+    let output = emit_dts("export var name: string = 'hello';");
+    assert!(
+        output.contains("export declare var name: string;"),
+        "Expected var variable in .d.ts: {output}"
+    );
+}
+
+// =============================================================================
+// 3. Visibility / Access Modifiers
+// =============================================================================
+
+#[test]
+fn test_private_method_emits_name_only() {
+    // tsc emits just `private methodName;` for private methods
+    let output = emit_dts(
+        r#"
+    export class Foo {
+        private secret(): void {}
+    }
+    "#,
+    );
+    assert!(
+        output.contains("private secret;"),
+        "Expected private method to emit name only: {output}"
+    );
+    // Should NOT include parameters or return type
+    assert!(
+        !output.contains("private secret()"),
+        "Private method should not have params in .d.ts: {output}"
+    );
+}
+
+#[test]
+fn test_protected_member_included() {
+    let output = emit_dts(
+        r#"
+    export class Foo {
+        protected bar: number;
+    }
+    "#,
+    );
+    assert!(
+        output.contains("protected bar: number;"),
+        "Expected protected member to be included: {output}"
+    );
+}
+
+#[test]
+fn test_private_property_omits_type_annotation() {
+    // tsc omits type annotations for private properties in .d.ts
+    let output = emit_dts(
+        r#"
+    export class Foo {
+        private value: number;
+    }
+    "#,
+    );
+    assert!(
+        output.contains("private value;"),
+        "Expected private property without type annotation: {output}"
+    );
+    assert!(
+        !output.contains("private value: number;"),
+        "Private property should NOT have type annotation: {output}"
+    );
+}
+
+// =============================================================================
+// 4. Export Handling
+// =============================================================================
+
+#[test]
+fn test_named_export_with_specifiers() {
+    let output = emit_dts(
+        r#"
+    const a: number = 1;
+    const b: string = "x";
+    export { a, b };
+    "#,
+    );
+    assert!(
+        output.contains("export { a, b }"),
+        "Expected named export specifiers: {output}"
+    );
+}
+
+#[test]
+fn test_re_export_from_module() {
+    let output = emit_dts(r#"export { foo, bar } from "./other";"#);
+    assert!(
+        output.contains("export { foo, bar } from"),
+        "Expected re-export: {output}"
+    );
+}
+
+#[test]
+fn test_star_re_export() {
+    let output = emit_dts(r#"export * from "./utils";"#);
+    assert!(
+        output.contains("export * from"),
+        "Expected star re-export: {output}"
+    );
+}
+
+#[test]
+fn test_type_only_export() {
+    let output = emit_dts(r#"export type { Foo } from "./types";"#);
+    assert!(
+        output.contains("export type { Foo }"),
+        "Expected type-only export: {output}"
+    );
+}
+
+#[test]
+fn test_export_default_identifier() {
+    // export default <identifier> should emit directly
+    let output = emit_dts(
+        r#"
+    declare const myValue: number;
+    export default myValue;
+    "#,
+    );
+    assert!(
+        output.contains("export default myValue;"),
+        "Expected export default identifier: {output}"
+    );
+}
+
