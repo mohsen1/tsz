@@ -6,8 +6,8 @@
 //! delegate.
 
 use super::call_evaluator::{
-    AssignabilityChecker, CallEvaluator, CallResult, CallWithCheckerResult,
-    CombinedUnionSignature, UnionCallSignatureCompatibility,
+    AssignabilityChecker, CallEvaluator, CallResult, CallWithCheckerResult, CombinedUnionSignature,
+    UnionCallSignatureCompatibility,
 };
 use crate::instantiation::instantiate::TypeSubstitution;
 use crate::types::{
