@@ -1,0 +1,1121 @@
+//! Symbol resolution and object type printing for the TypePrinter.
+
+use tsz_binder::{Symbol, SymbolId, symbol_flags};
+use tsz_common::interner::Atom;
+use tsz_parser::parser::node::{NodeAccess, NodeArena};
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::types::TypeId;
+use tsz_solver::visitor;
+
+use super::{
+    TypePrinter, escape_string_for_double_quote, needs_property_name_quoting,
+    needs_property_name_quoting_with_flag, quote_property_name,
+};
+
+impl<'a> TypePrinter<'a> {
+    /// Check if a symbol is visible (exported) from the current module.
+    ///
+    /// A symbol is visible if:
+    /// 1. It has the `EXPORT_VALUE` flag or `is_exported` field is true
+    /// 2. Its parent is not a Function or Method (not a local type)
+    pub(crate) fn is_symbol_visible(&self, sym_id: SymbolId) -> bool {
+        let Some(arena) = self.symbol_arena else {
+            return false;
+        };
+        let Some(symbol) = arena.get(sym_id) else {
+            return false;
+        };
+
+        // Check if it's exported
+        if symbol.is_exported || symbol.has_any_flags(symbol_flags::EXPORT_VALUE) {
+            // Check parentage - if parent is a function/method, it's local and must be inlined
+            if symbol.parent.is_some()
+                && let Some(parent) = arena.get(symbol.parent)
+                && parent.has_any_flags(symbol_flags::FUNCTION | symbol_flags::METHOD)
+            {
+                return false; // Local to function, must inline
+            }
+            return true;
+        }
+
+        false
+    }
+
+    pub(crate) fn symbol_is_nameable(&self, sym_id: SymbolId) -> bool {
+        let Some(arena) = self.symbol_arena else {
+            return false;
+        };
+        let Some(symbol) = arena.get(sym_id) else {
+            return false;
+        };
+
+        if symbol.declarations.is_empty() {
+            return !symbol.parent.is_some();
+        }
+
+        symbol
+            .declarations
+            .iter()
+            .copied()
+            .any(|decl| self.declaration_is_nameable(decl))
+            || self.foreign_global_like_symbol_is_nameable(sym_id, symbol)
+    }
+
+    pub(crate) fn foreign_global_like_symbol_is_nameable(
+        &self,
+        sym_id: SymbolId,
+        symbol: &Symbol,
+    ) -> bool {
+        if symbol.declarations.is_empty()
+            || self.resolve_symbol_module_path(sym_id).is_some()
+            || self.is_local_import_alias(sym_id)
+        {
+            return false;
+        }
+
+        let Some(node_arena) = self.node_arena else {
+            return true;
+        };
+
+        !symbol
+            .declarations
+            .iter()
+            .copied()
+            .any(|decl| node_arena.get(decl).is_some())
+    }
+
+    pub(crate) fn declaration_is_nameable(&self, decl_idx: tsz_parser::NodeIndex) -> bool {
+        let Some(node_arena) = self.node_arena else {
+            return false;
+        };
+        let Some(decl_node) = node_arena.get(decl_idx) else {
+            return false;
+        };
+
+        if decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            || decl_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || decl_node.kind == syntax_kind_ext::ARROW_FUNCTION
+        {
+            return false;
+        }
+
+        if let Some(is_nameable_statement) =
+            self.declaration_statement_container_is_nameable(node_arena, decl_idx)
+        {
+            return is_nameable_statement;
+        }
+
+        let mut current = node_arena.get_extended(decl_idx).map(|ext| ext.parent);
+        while let Some(parent_idx) = current {
+            let Some(parent_node) = node_arena.get(parent_idx) else {
+                break;
+            };
+
+            match parent_node.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => return false,
+                k if k == syntax_kind_ext::FUNCTION_EXPRESSION => return false,
+                k if k == syntax_kind_ext::ARROW_FUNCTION => return false,
+                k if k == syntax_kind_ext::METHOD_DECLARATION => return false,
+                k if k == syntax_kind_ext::GET_ACCESSOR => return false,
+                k if k == syntax_kind_ext::SET_ACCESSOR => return false,
+                k if k == syntax_kind_ext::CONSTRUCTOR => return false,
+                k if k == syntax_kind_ext::BLOCK => return false,
+                k if k == syntax_kind_ext::CASE_BLOCK => return false,
+                k if k == syntax_kind_ext::SOURCE_FILE => return true,
+                k if k == syntax_kind_ext::MODULE_BLOCK => return true,
+                _ => {
+                    current = node_arena.get_extended(parent_idx).map(|ext| ext.parent);
+                }
+            }
+        }
+
+        true
+    }
+
+    pub(crate) fn declaration_statement_container_is_nameable(
+        &self,
+        node_arena: &NodeArena,
+        decl_idx: tsz_parser::NodeIndex,
+    ) -> Option<bool> {
+        for node in &node_arena.nodes {
+            if node_arena
+                .get_source_file(node)
+                .is_some_and(|source_file| source_file.statements.nodes.contains(&decl_idx))
+            {
+                return Some(true);
+            }
+
+            if node_arena
+                .get_module_block(node)
+                .and_then(|module_block| module_block.statements.as_ref())
+                .is_some_and(|statements| statements.nodes.contains(&decl_idx))
+            {
+                return Some(true);
+            }
+
+            if node_arena
+                .get_block(node)
+                .is_some_and(|block| block.statements.nodes.contains(&decl_idx))
+            {
+                return Some(false);
+            }
+        }
+
+        None
+    }
+
+    pub(crate) fn symbol_type_fallback(&self, sym_id: SymbolId) -> Option<TypeId> {
+        let cache = self.type_cache?;
+        let type_id = cache.symbol_types.get(&sym_id).copied()?;
+        if visitor::type_query_symbol(self.interner, type_id)
+            .is_some_and(|sym_ref| sym_ref.0 == sym_id.0)
+        {
+            return None;
+        }
+        Some(type_id)
+    }
+
+    pub(crate) fn def_type_fallback(&self, def_id: tsz_solver::def::DefId) -> Option<TypeId> {
+        self.type_cache?.def_types.get(&def_id.0).copied()
+    }
+
+    pub(crate) fn symbol_def_type_fallback(&self, sym_id: SymbolId) -> Option<TypeId> {
+        let cache = self.type_cache?;
+        let def_id = cache
+            .def_to_symbol
+            .iter()
+            .find_map(|(def_id, &candidate_sym_id)| {
+                (candidate_sym_id == sym_id).then_some(*def_id)
+            })?;
+        cache.def_types.get(&def_id.0).copied()
+    }
+
+    pub(crate) fn non_qualifiable_symbol_inline_fallback(
+        &self,
+        sym_id: SymbolId,
+    ) -> Option<TypeId> {
+        let type_id = self
+            .symbol_def_type_fallback(sym_id)
+            .or_else(|| self.symbol_type_fallback(sym_id))?;
+        if self.type_contains_symbol_reference(type_id, sym_id, 0) {
+            return None;
+        }
+        Some(type_id)
+    }
+
+    pub(crate) fn symbol_needs_inline_type_query(&self, sym_id: SymbolId) -> bool {
+        if self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id) {
+            return false;
+        }
+
+        let Some(arena) = self.symbol_arena else {
+            return false;
+        };
+        let Some(symbol) = arena.get(sym_id) else {
+            return false;
+        };
+
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            let Some(node_arena) = self.node_arena else {
+                return false;
+            };
+            let Some(decl_node) = node_arena.get(decl_idx) else {
+                return false;
+            };
+            matches!(
+                decl_node.kind,
+                k if k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION
+                    || k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION
+            )
+        })
+    }
+
+    /// Resolve a SymbolRef/SymbolId to its qualified name (e.g., "M.c" for `typeof M.c`).
+    /// If an enclosing symbol is set, the qualified name is relative to it
+    /// (e.g., inside namespace `m1.m2`, type `m1.m2.c` becomes `c`).
+    pub(crate) fn resolve_symbol_qualified_name(&self, sym_id: SymbolId) -> Option<String> {
+        let arena = self.symbol_arena?;
+        let sym = arena.get(sym_id)?;
+
+        // When a symbol is a "default" export alias, resolve the underlying
+        // declaration's actual name (e.g., `export default class MyComponent`
+        // should print "MyComponent", not "default").
+        let mut qualified_name =
+            if sym.escaped_name == "default" && sym.flags & symbol_flags::ALIAS != 0 {
+                self.resolve_default_export_name(sym)
+                    .unwrap_or_else(|| sym.escaped_name.clone())
+            } else {
+                sym.escaped_name.clone()
+            };
+        let mut current_parent = sym.parent;
+
+        // Build the enclosing symbol's ancestor set for stripping
+        let enclosing_ancestors = if let Some(enc_id) = self.enclosing_symbol {
+            let mut ancestors = rustc_hash::FxHashSet::default();
+            ancestors.insert(enc_id);
+            let mut p = enc_id;
+            while let Some(ps) = arena.get(p) {
+                if ps.parent == SymbolId::NONE {
+                    break;
+                }
+                ancestors.insert(ps.parent);
+                p = ps.parent;
+            }
+            ancestors
+        } else {
+            rustc_hash::FxHashSet::default()
+        };
+
+        while current_parent != SymbolId::NONE {
+            // Stop qualifying when we reach the enclosing scope
+            if enclosing_ancestors.contains(&current_parent) {
+                break;
+            }
+            if let Some(parent_sym) = arena.get(current_parent) {
+                // Don't prepend for source files and blocks
+                if !parent_sym.escaped_name.starts_with('"')
+                    && !parent_sym.escaped_name.starts_with("__")
+                {
+                    // If the current name is not a valid identifier, use indexed access
+                    // notation: (typeof Parent)["member"] instead of Parent.member
+                    if !Self::is_valid_identifier(&qualified_name) {
+                        qualified_name = format!(
+                            "(typeof {})[\"{}\"]",
+                            parent_sym.escaped_name, qualified_name
+                        );
+                        // Skip further parent traversal since we already have full reference
+                        current_parent = parent_sym.parent;
+                        while current_parent != SymbolId::NONE {
+                            if enclosing_ancestors.contains(&current_parent) {
+                                break;
+                            }
+                            if let Some(ps) = arena.get(current_parent) {
+                                if !ps.escaped_name.starts_with('"')
+                                    && !ps.escaped_name.starts_with("__")
+                                {
+                                    // Wrap in more typeof for nested namespaces
+                                    qualified_name =
+                                        format!("(typeof {}).{}", ps.escaped_name, qualified_name);
+                                }
+                                current_parent = ps.parent;
+                            } else {
+                                break;
+                            }
+                        }
+                        return Some(qualified_name);
+                    }
+                    qualified_name = format!("{}.{}", parent_sym.escaped_name, qualified_name);
+                }
+                current_parent = parent_sym.parent;
+            } else {
+                break;
+            }
+        }
+
+        Some(qualified_name)
+    }
+
+    /// For a "default" export alias symbol, resolve the underlying declaration's
+    /// actual name (e.g., `export default class MyComponent` → "`MyComponent`").
+    pub(crate) fn resolve_default_export_name(&self, sym: &Symbol) -> Option<String> {
+        let node_arena = self.node_arena?;
+        let decl_idx = sym.value_declaration;
+        let decl_node = node_arena.get(decl_idx)?;
+
+        // Check if it's a class declaration/expression with a name
+        if let Some(class_data) = node_arena.get_class(decl_node)
+            && let Some(name) = node_arena.get_identifier_text(class_data.name)
+        {
+            return Some(name.to_string());
+        }
+
+        // Check if it's a function declaration with a name
+        if let Some(func_data) = node_arena.get_function(decl_node)
+            && let Some(name) = node_arena.get_identifier_text(func_data.name)
+        {
+            return Some(name.to_string());
+        }
+
+        None
+    }
+
+    /// Resolve an atom to its string representation.
+    pub(crate) fn resolve_atom(&self, atom: Atom) -> String {
+        self.interner.resolve_atom(atom)
+    }
+
+    pub(crate) fn resolve_symbol_module_path(&self, sym_id: SymbolId) -> Option<String> {
+        self.module_path_resolver
+            .and_then(|resolver| resolver(sym_id))
+    }
+
+    pub(crate) fn resolve_namespace_import_alias(&self, sym_id: SymbolId) -> Option<String> {
+        self.namespace_alias_resolver
+            .and_then(|resolver| resolver(sym_id))
+    }
+
+    pub(crate) fn import_qualified_symbol_name(&self, sym_id: SymbolId) -> Option<String> {
+        let module_path = self.resolve_symbol_module_path(sym_id)?;
+        let name = self.resolve_symbol_qualified_name(sym_id)?;
+
+        // When the qualified name starts with the module specifier (e.g.
+        // `url.Url` from `declare module "url"`), strip the redundant prefix
+        // since the import() wrapper already specifies the module.
+        let stripped_name = self.strip_module_prefix_from_qualified_name(&module_path, &name);
+        Some(format!("import(\"{module_path}\").{stripped_name}"))
+    }
+
+    /// If `qualified_name` starts with `<module_last_segment>.`, strip that
+    /// prefix. For example, `url.Url` with module path `url` becomes `Url`.
+    pub(crate) fn strip_module_prefix_from_qualified_name<'b>(
+        &self,
+        module_path: &str,
+        qualified_name: &'b str,
+    ) -> &'b str {
+        // Get the last segment of the module path (e.g., "url" from "@types/url")
+        let module_last = module_path.rsplit('/').next().unwrap_or(module_path);
+        // Check if qualified name starts with `<module_last>.`
+        if let Some(rest) = qualified_name.strip_prefix(module_last) {
+            if let Some(stripped) = rest.strip_prefix('.') {
+                if !stripped.is_empty() {
+                    return stripped;
+                }
+            }
+        }
+        qualified_name
+    }
+
+    pub(crate) fn is_local_import_alias(&self, sym_id: SymbolId) -> bool {
+        self.symbol_arena
+            .and_then(|arena| arena.get(sym_id))
+            .is_some_and(|symbol| {
+                symbol.has_any_flags(symbol_flags::ALIAS) && symbol.import_module.is_some()
+            })
+    }
+
+    pub(crate) fn can_reference_symbol_by_name(&self, sym_id: SymbolId) -> bool {
+        if self.is_local_import_alias(sym_id) {
+            return self
+                .local_import_alias_name_resolver
+                .is_none_or(|resolver| resolver(sym_id));
+        }
+
+        if self.resolve_symbol_module_path(sym_id).is_some() {
+            return false;
+        }
+
+        self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id)
+    }
+
+    pub(crate) fn print_named_symbol_reference(
+        &self,
+        sym_id: SymbolId,
+        needs_typeof: bool,
+    ) -> Option<String> {
+        if let Some(name) = self.resolve_symbol_qualified_name(sym_id)
+            && (self.can_reference_symbol_by_name(sym_id) || self.is_global_symbol(sym_id))
+        {
+            return Some(if needs_typeof {
+                format!("typeof {name}")
+            } else {
+                name
+            });
+        }
+
+        // If a local import alias brings this symbol into scope, use the
+        // symbol's bare name instead of an import("...") wrapper. The import
+        // statement will be emitted separately.
+        if self
+            .has_local_import_alias_resolver
+            .is_some_and(|resolver| resolver(sym_id))
+        {
+            if let Some(arena) = self.symbol_arena
+                && let Some(sym) = arena.get(sym_id)
+            {
+                let name = &sym.escaped_name;
+                return Some(if needs_typeof {
+                    format!("typeof {name}")
+                } else {
+                    name.clone()
+                });
+            }
+        }
+
+        if !needs_typeof
+            && !self.symbol_is_import_qualifiable(sym_id)
+            && let Some(symbol_type) = self.non_qualifiable_symbol_inline_fallback(sym_id)
+        {
+            let mut nested = self.clone();
+            nested.current_depth += 1;
+            return Some(nested.print_type(symbol_type));
+        }
+
+        if let Some(name) = self.import_qualified_symbol_name(sym_id) {
+            return Some(if needs_typeof {
+                format!("typeof {name}")
+            } else {
+                name
+            });
+        }
+
+        None
+    }
+
+    pub(crate) fn symbol_is_import_qualifiable(&self, sym_id: SymbolId) -> bool {
+        let Some(arena) = self.symbol_arena else {
+            return true;
+        };
+        let Some(symbol) = arena.get(sym_id) else {
+            return true;
+        };
+
+        if symbol.has_any_flags(symbol_flags::ALIAS) && symbol.import_module.is_some() {
+            return true;
+        }
+
+        symbol.is_exported || symbol.has_any_flags(symbol_flags::EXPORT_VALUE)
+    }
+
+    pub(crate) fn print_namespace_reference(&self, sym_id: SymbolId) -> Option<String> {
+        if let Some(alias) = self.resolve_namespace_import_alias(sym_id) {
+            return Some(format!("typeof {alias}"));
+        }
+        if let Some(name) = self.resolve_symbol_qualified_name(sym_id)
+            && (self.can_reference_symbol_by_name(sym_id) || self.is_global_symbol(sym_id))
+        {
+            return Some(format!("typeof {name}"));
+        }
+        self.resolve_symbol_module_path(sym_id)
+            .map(|module_path| format!("typeof import(\"{module_path}\")"))
+    }
+
+    /// Convert a `TypeId` to TypeScript syntax string.
+    pub fn print_type(&self, type_id: TypeId) -> String {
+        // Fast path: check built-in intrinsics (TypeId < 100)
+        if type_id.is_intrinsic() {
+            return self.print_intrinsic_type(type_id);
+        }
+
+        if let Some(literal) = visitor::literal_value(self.interner, type_id) {
+            return self.print_literal(&literal);
+        }
+        if let Some(app_id) = visitor::application_id(self.interner, type_id) {
+            let app = self.interner.type_application(app_id);
+            let base_has_name = visitor::lazy_def_id(self.interner, app.base).is_some()
+                || visitor::type_query_symbol(self.interner, app.base).is_some()
+                || visitor::enum_components(self.interner, app.base).is_some()
+                || visitor::object_shape_id(self.interner, app.base)
+                    .or_else(|| visitor::object_with_index_shape_id(self.interner, app.base))
+                    .and_then(|shape_id| self.interner.object_shape(shape_id).symbol)
+                    .is_some();
+            if base_has_name {
+                return self.print_type_application(app_id);
+            }
+        }
+        if let Some(shape_id) = visitor::object_shape_id(self.interner, type_id)
+            .or_else(|| visitor::object_with_index_shape_id(self.interner, type_id))
+        {
+            return self.print_object_type(shape_id);
+        }
+        if let Some(type_list_id) = visitor::union_list_id(self.interner, type_id) {
+            return self.print_union(type_list_id);
+        }
+        if let Some(type_list_id) = visitor::intersection_list_id(self.interner, type_id) {
+            return self.print_intersection(type_list_id);
+        }
+        if let Some(elem_id) = visitor::array_element_type(self.interner, type_id) {
+            let elem_str = self.print_type(elem_id);
+            // Parenthesize complex element types (union, intersection, function, conditional, keyof, readonly)
+            let needs_parens = visitor::union_list_id(self.interner, elem_id).is_some()
+                || visitor::intersection_list_id(self.interner, elem_id).is_some()
+                || visitor::function_shape_id(self.interner, elem_id).is_some()
+                || visitor::conditional_type_id(self.interner, elem_id).is_some()
+                || visitor::keyof_inner_type(self.interner, elem_id).is_some()
+                || visitor::readonly_inner_type(self.interner, elem_id).is_some();
+            if needs_parens {
+                return format!("({elem_str})[]");
+            }
+            return format!("{elem_str}[]");
+        }
+        if let Some(tuple_id) = visitor::tuple_list_id(self.interner, type_id) {
+            return self.print_tuple(tuple_id);
+        }
+        if let Some(func_id) = visitor::function_shape_id(self.interner, type_id) {
+            return self.print_function_type(func_id);
+        }
+        if let Some(callable_id) = visitor::callable_shape_id(self.interner, type_id) {
+            return self.print_callable(callable_id);
+        }
+        if let Some(param_info) = visitor::type_param_info(self.interner, type_id) {
+            return self.print_type_parameter(&param_info);
+        }
+        if let Some(def_id) = visitor::lazy_def_id(self.interner, type_id) {
+            return self.print_lazy_type(def_id);
+        }
+        if let Some((def_id, members_id)) = visitor::enum_components(self.interner, type_id) {
+            return self.print_enum(def_id, members_id);
+        }
+        if let Some(app_id) = visitor::application_id(self.interner, type_id) {
+            return self.print_type_application(app_id);
+        }
+        if let Some(cond_id) = visitor::conditional_type_id(self.interner, type_id) {
+            return self.print_conditional(cond_id);
+        }
+        if let Some(template_id) = visitor::template_literal_id(self.interner, type_id) {
+            return self.print_template_literal(template_id);
+        }
+        if let Some(mapped_id) = visitor::mapped_type_id(self.interner, type_id) {
+            return self.print_mapped_type(mapped_id);
+        }
+        if let Some((container, index)) = visitor::index_access_parts(self.interner, type_id) {
+            return self.print_index_access(container, index);
+        }
+        if let Some(sym_ref) = visitor::type_query_symbol(self.interner, type_id) {
+            let sym_id = SymbolId(sym_ref.0);
+            if let Some(arena) = self.symbol_arena
+                && let Some(symbol) = arena.get(sym_id)
+                && symbol.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE)
+                && let Some(name) = self.print_named_symbol_reference(sym_id, false)
+            {
+                return name;
+            }
+            if self.symbol_needs_inline_type_query(sym_id)
+                && let Some(symbol_type) = self.symbol_type_fallback(sym_id)
+            {
+                return self.print_type(symbol_type);
+            }
+            if let Some(name) = self.resolve_symbol_qualified_name(sym_id)
+                && (self.can_reference_symbol_by_name(sym_id) || self.is_global_symbol(sym_id))
+            {
+                return format!("typeof {name}");
+            }
+            if let Some(name) = self.print_named_symbol_reference(sym_id, true) {
+                return name;
+            }
+            return "any".to_string();
+        }
+        if let Some(inner_id) = visitor::keyof_inner_type(self.interner, type_id) {
+            let inner_str = self.print_type(inner_id);
+            // Parenthesize union/intersection/conditional operand of keyof
+            let needs_parens = visitor::union_list_id(self.interner, inner_id).is_some()
+                || visitor::intersection_list_id(self.interner, inner_id).is_some()
+                || visitor::conditional_type_id(self.interner, inner_id).is_some();
+            if needs_parens {
+                return format!("keyof ({inner_str})");
+            }
+            return format!("keyof {inner_str}");
+        }
+        if let Some(inner_id) = visitor::readonly_inner_type(self.interner, type_id) {
+            let inner_str = self.print_type(inner_id);
+            // Parenthesize union/intersection/conditional operand of readonly
+            let needs_parens = visitor::union_list_id(self.interner, inner_id).is_some()
+                || visitor::intersection_list_id(self.interner, inner_id).is_some()
+                || visitor::conditional_type_id(self.interner, inner_id).is_some();
+            if needs_parens {
+                return format!("readonly ({inner_str})");
+            }
+            return format!("readonly {inner_str}");
+        }
+        if visitor::unique_symbol_ref(self.interner, type_id).is_some() {
+            return "unique symbol".to_string();
+        }
+        if visitor::is_this_type(self.interner, type_id) {
+            return "this".to_string();
+        }
+        if let Some((kind, type_arg)) = visitor::string_intrinsic_components(self.interner, type_id)
+        {
+            return self.print_string_intrinsic(kind, type_arg);
+        }
+        if let Some(sym_ref) = visitor::module_namespace_symbol_ref(self.interner, type_id) {
+            if let Some(name) = self.print_namespace_reference(SymbolId(sym_ref.0)) {
+                return name;
+            }
+            return "any".to_string();
+        }
+        if let Some(index) = visitor::recursive_index(self.interner, type_id) {
+            return format!("T{index}");
+        }
+        if let Some(index) = visitor::bound_parameter_index(self.interner, type_id) {
+            return format!("P{index}");
+        }
+        if let Some(inner) = visitor::no_infer_inner_type(self.interner, type_id) {
+            // NoInfer<T> evaluates to T, so format the inner type
+            return self.print_type(inner);
+        }
+        if visitor::is_error_type(self.interner, type_id) {
+            return "any".to_string();
+        }
+
+        "any".to_string()
+    }
+
+    pub(crate) fn print_intrinsic_type(&self, type_id: TypeId) -> String {
+        if matches!(type_id, TypeId::ERROR | TypeId::ANY) {
+            // Errors and `any` emit as `any` in declarations.
+            return "any".to_string();
+        }
+        match type_id {
+            TypeId::NEVER => "never".to_string(),
+            TypeId::UNKNOWN => "unknown".to_string(),
+            TypeId::VOID => "void".to_string(),
+            TypeId::UNDEFINED | TypeId::NULL if !self.strict_null_checks => "any".to_string(),
+            TypeId::UNDEFINED => "undefined".to_string(),
+            TypeId::NULL => "null".to_string(),
+            TypeId::BOOLEAN => "boolean".to_string(),
+            TypeId::NUMBER => "number".to_string(),
+            TypeId::STRING => "string".to_string(),
+            TypeId::BIGINT => "bigint".to_string(),
+            TypeId::SYMBOL => "symbol".to_string(),
+            TypeId::OBJECT => "object".to_string(),
+            TypeId::FUNCTION => "Function".to_string(),
+            TypeId::BOOLEAN_TRUE => "true".to_string(),
+            TypeId::BOOLEAN_FALSE => "false".to_string(),
+            _ => "any".to_string(),
+        }
+    }
+
+    pub(crate) fn print_literal(&self, literal: &tsz_solver::types::LiteralValue) -> String {
+        match literal {
+            tsz_solver::types::LiteralValue::String(atom) => {
+                format!(
+                    "\"{}\"",
+                    escape_string_for_double_quote(&self.resolve_atom(*atom))
+                )
+            }
+            tsz_solver::types::LiteralValue::Number(n) => {
+                let v = n.0;
+                if v.is_infinite() {
+                    if v.is_sign_positive() {
+                        "Infinity".to_string()
+                    } else {
+                        "-Infinity".to_string()
+                    }
+                } else if v.is_nan() {
+                    "NaN".to_string()
+                } else {
+                    v.to_string()
+                }
+            }
+            tsz_solver::types::LiteralValue::Boolean(b) => b.to_string(),
+            tsz_solver::types::LiteralValue::BigInt(atom) => {
+                format!("{}n", self.resolve_atom(*atom))
+            }
+        }
+    }
+
+    pub(crate) fn print_object_type(&self, shape_id: tsz_solver::types::ObjectShapeId) -> String {
+        let shape = self.interner.object_shape(shape_id);
+
+        // If this object has a nominal symbol (class/interface instance), print the name.
+        // Use the name when the symbol is visible (exported) or reachable (module-level).
+        if let Some(sym_id) = shape.symbol
+            && self.can_reference_symbol_by_name(sym_id)
+            && let Some(name) = self.resolve_symbol_qualified_name(sym_id)
+        {
+            return name;
+        }
+
+        if let Some(sym_id) = shape.symbol
+            && let Some(arena) = self.symbol_arena
+            && let Some(symbol) = arena.get(sym_id)
+            && !symbol.has_any_flags(symbol_flags::MODULE)
+        {
+            if !self.symbol_is_import_qualifiable(sym_id) {
+                // Non-exported foreign nominal types cannot be named via
+                // import("...").Name. Inline their structure instead.
+            } else if let Some(name) = self.print_named_symbol_reference(sym_id, false) {
+                return name;
+            }
+        }
+
+        if let Some(sym_id) = shape.symbol
+            && let Some(arena) = self.symbol_arena
+            && let Some(symbol) = arena.get(sym_id)
+            && symbol.has_any_flags(symbol_flags::MODULE)
+            && let Some(name) = self.print_namespace_reference(sym_id)
+        {
+            return name;
+        }
+
+        let has_index = shape.string_index.is_some() || shape.number_index.is_some();
+
+        if shape.properties.is_empty()
+            && !has_index
+            && let Some(sym_id) = shape.symbol
+            && let Some(ast_members) = self.synthesized_empty_shape_members(sym_id)
+        {
+            if let Some(indent) = self.indent_level {
+                let member_indent = "    ".repeat((indent + 1) as usize);
+                let closing_indent = "    ".repeat(indent as usize);
+                let lines: Vec<String> = ast_members
+                    .iter()
+                    .map(|member| format!("{member_indent}{member};"))
+                    .collect();
+                return format!("{{\n{}\n{}}}", lines.join("\n"), closing_indent);
+            }
+            return format!("{{ {} }}", ast_members.join("; "));
+        }
+
+        if shape.properties.is_empty() && !has_index {
+            return "{}".to_string();
+        }
+
+        // Filter out internal properties that tsc strips from .d.ts output:
+        // - `prototype`: class constructor prototype property
+        // - `__private_brand_*`: internal private member brand fields
+        // - `length`, `name`: standard Function.prototype properties
+        // - `arguments`, `caller`: legacy Function.prototype properties
+        let should_skip_property = |prop: &tsz_solver::types::PropertyInfo| {
+            let name = self.resolve_atom(prop.name);
+            name == "prototype"
+                || name.starts_with("__private_brand_")
+                || name == "length"
+                || name == "name"
+                || name == "arguments"
+                || name == "caller"
+        };
+
+        // When indent context is set, format as multi-line (matching tsc's .d.ts output)
+        if let Some(indent) = self.indent_level {
+            let member_indent = "    ".repeat((indent + 1) as usize);
+            let closing_indent = "    ".repeat(indent as usize);
+
+            // Create a nested printer with incremented indent for property types
+            let mut nested = self.clone();
+            nested.indent_level = Some(indent + 1);
+
+            let mut lines = Vec::new();
+
+            // Emit index signatures first
+            if let Some(ref idx) = shape.string_index {
+                let mut line = String::new();
+                line.push_str(&member_indent);
+                if idx.readonly {
+                    line.push_str("readonly ");
+                }
+                let param = idx
+                    .param_name
+                    .map(|a| self.resolve_atom(a))
+                    .unwrap_or_else(|| "x".to_string());
+                let widened = self.widen_synthesized_method_return_type(idx.value_type);
+                line.push_str(&format!(
+                    "[{}: string]: {};",
+                    param,
+                    nested.print_type(widened)
+                ));
+                lines.push(line);
+            }
+            if let Some(ref idx) = shape.number_index {
+                let mut line = String::new();
+                line.push_str(&member_indent);
+                if idx.readonly {
+                    line.push_str("readonly ");
+                }
+                let param = idx
+                    .param_name
+                    .map(|a| self.resolve_atom(a))
+                    .unwrap_or_else(|| "x".to_string());
+                let widened = self.widen_synthesized_method_return_type(idx.value_type);
+                line.push_str(&format!(
+                    "[{}: number]: {};",
+                    param,
+                    nested.print_type(widened)
+                ));
+                lines.push(line);
+            }
+
+            // Sort properties by declaration order when any have non-zero order,
+            // otherwise fall back to the interning order (sorted by name).
+            let has_decl_order = shape.properties.iter().any(|p| p.declaration_order > 0);
+            let mut sorted_props;
+            let props: &[tsz_solver::types::PropertyInfo] = if has_decl_order {
+                sorted_props = shape.properties.clone();
+                sorted_props.sort_by_key(|p| p.declaration_order);
+                &sorted_props
+            } else {
+                &shape.properties
+            };
+
+            for property in props {
+                if should_skip_property(property) {
+                    continue;
+                }
+                let mut line = String::new();
+                line.push_str(&member_indent);
+
+                if property.is_method
+                    && let Some(method_str) =
+                        nested.print_property_as_method(property, shape.symbol)
+                {
+                    line.push_str(&method_str);
+                    line.push(';');
+                    lines.push(line);
+                    continue;
+                }
+
+                if let Some(accessors) = nested.print_property_as_accessors(property) {
+                    for accessor in accessors {
+                        let mut accessor_line = String::new();
+                        accessor_line.push_str(&member_indent);
+                        accessor_line.push_str(&accessor);
+                        accessor_line.push(';');
+                        lines.push(accessor_line);
+                    }
+                    continue;
+                }
+
+                // Readonly marker
+                if property.readonly {
+                    line.push_str("readonly ");
+                }
+
+                // Property name (quote if needed)
+                let name = self.resolve_atom(property.name);
+                if needs_property_name_quoting_with_flag(&name, property.is_string_named) {
+                    line.push_str(&quote_property_name(&name));
+                } else {
+                    line.push_str(&name);
+                }
+
+                // Optional marker
+                if property.optional {
+                    line.push('?');
+                }
+
+                // Property type
+                line.push_str(": ");
+                let prop_type = nested.declaration_property_type(property);
+                let printed = nested.print_type(prop_type);
+                line.push_str(&printed);
+                // When an optional property's type is a union containing
+                // `undefined` but the printer stripped it (e.g. because
+                // strictNullChecks is off), re-append `| undefined` so the
+                // declaration output matches tsc.
+                if property.optional
+                    && !printed.ends_with("undefined")
+                    && nested.type_has_undefined_in_union(prop_type)
+                {
+                    line.push_str(" | undefined");
+                }
+
+                line.push(';');
+                lines.push(line);
+            }
+
+            format!("{{\n{}\n{}}}", lines.join("\n"), closing_indent)
+        } else {
+            // Flat format when no indent context (non-DTS usage)
+            let mut members = Vec::new();
+
+            // Emit index signatures first
+            if let Some(ref idx) = shape.string_index {
+                let mut member = String::new();
+                if idx.readonly {
+                    member.push_str("readonly ");
+                }
+                let param = idx
+                    .param_name
+                    .map(|a| self.resolve_atom(a))
+                    .unwrap_or_else(|| "x".to_string());
+                let widened = self.widen_synthesized_method_return_type(idx.value_type);
+                member.push_str(&format!(
+                    "[{}: string]: {}",
+                    param,
+                    self.print_type(widened)
+                ));
+                members.push(member);
+            }
+            if let Some(ref idx) = shape.number_index {
+                let mut member = String::new();
+                if idx.readonly {
+                    member.push_str("readonly ");
+                }
+                let param = idx
+                    .param_name
+                    .map(|a| self.resolve_atom(a))
+                    .unwrap_or_else(|| "x".to_string());
+                let widened = self.widen_synthesized_method_return_type(idx.value_type);
+                member.push_str(&format!(
+                    "[{}: number]: {}",
+                    param,
+                    self.print_type(widened)
+                ));
+                members.push(member);
+            }
+
+            // Sort properties by declaration order when available
+            let has_decl_order = shape.properties.iter().any(|p| p.declaration_order > 0);
+            let mut sorted_props_flat;
+            let props_flat: &[tsz_solver::types::PropertyInfo] = if has_decl_order {
+                sorted_props_flat = shape.properties.clone();
+                sorted_props_flat.sort_by_key(|p| p.declaration_order);
+                &sorted_props_flat
+            } else {
+                &shape.properties
+            };
+
+            for property in props_flat {
+                if should_skip_property(property) {
+                    continue;
+                }
+                let mut member = String::new();
+
+                // Try to emit as method syntax if the property is a method
+                if property.is_method
+                    && let Some(method_str) = self.print_property_as_method(property, shape.symbol)
+                {
+                    member.push_str(&method_str);
+                    members.push(member);
+                    continue;
+                }
+
+                if let Some(accessors) = self.print_property_as_accessors(property) {
+                    members.extend(accessors);
+                    continue;
+                }
+
+                // Readonly modifier
+                if property.readonly {
+                    member.push_str("readonly ");
+                }
+
+                // Property name (quote if needed)
+                let name = self.resolve_atom(property.name);
+                if needs_property_name_quoting_with_flag(&name, property.is_string_named) {
+                    member.push_str(&quote_property_name(&name));
+                } else {
+                    member.push_str(&name);
+                }
+
+                // Optional marker
+                if property.optional {
+                    member.push('?');
+                }
+
+                // Property type
+                member.push_str(": ");
+                let prop_type = self.declaration_property_type(property);
+                let printed = self.print_type(prop_type);
+                member.push_str(&printed);
+                // Preserve `| undefined` for optional properties (see indented
+                // path above for detailed comment).
+                if property.optional
+                    && !printed.ends_with("undefined")
+                    && self.type_has_undefined_in_union(prop_type)
+                {
+                    member.push_str(" | undefined");
+                }
+
+                members.push(member);
+            }
+
+            format!("{{ {} }}", members.join("; "))
+        }
+    }
+
+    /// Print a property as method syntax: `name(params): ret` instead of `name: (params) => ret`.
+    /// Returns `None` if the property's type is not a function shape.
+    pub(crate) fn print_property_as_method(
+        &self,
+        property: &tsz_solver::types::PropertyInfo,
+        container_symbol: Option<SymbolId>,
+    ) -> Option<String> {
+        if self.computed_method_requires_property_syntax(property, container_symbol) {
+            return None;
+        }
+
+        let name = self.resolve_atom(property.name);
+        let printed_name = if needs_property_name_quoting(&name) {
+            quote_property_name(&name)
+        } else {
+            name
+        };
+
+        if let Some(func_id) = visitor::function_shape_id(self.interner, property.type_id) {
+            let func_shape = self.interner.function_shape(func_id);
+            return Some(self.print_method_signature(
+                &printed_name,
+                property.optional,
+                &func_shape.type_params,
+                &func_shape.params,
+                func_shape.type_predicate.as_ref(),
+                func_shape.return_type,
+            ));
+        }
+
+        let callable_id = visitor::callable_shape_id(self.interner, property.type_id)?;
+        let callable = self.interner.callable_shape(callable_id);
+        if callable.call_signatures.len() != 1
+            || !callable.construct_signatures.is_empty()
+            || callable.string_index.is_some()
+            || callable.number_index.is_some()
+            || callable.properties.iter().any(|prop| {
+                let prop_name = self.resolve_atom(prop.name);
+                // Filter out internal properties
+                prop_name != "prototype"
+                    && !prop_name.starts_with("__private_brand_")
+                    && prop_name != "length"
+                    && prop_name != "name"
+                    && prop_name != "arguments"
+                    && prop_name != "caller"
+            })
+        {
+            return None;
+        }
+
+        let sig = &callable.call_signatures[0];
+        Some(self.print_method_signature(
+            &printed_name,
+            property.optional,
+            &sig.type_params,
+            &sig.params,
+            sig.type_predicate.as_ref(),
+            sig.return_type,
+        ))
+    }
+
+    pub(crate) fn computed_method_requires_property_syntax(
+        &self,
+        property: &tsz_solver::types::PropertyInfo,
+        container_symbol: Option<SymbolId>,
+    ) -> bool {
+        if !property.is_method {
+            return false;
+        }
+
+        let name = self.resolve_atom(property.name);
+        if !(name.starts_with('[') && name.ends_with(']')) {
+            return false;
+        }
+
+        let parent_symbol = property.parent_id.or(container_symbol);
+        let Some(name_idx) = self.find_member_name_node(parent_symbol, property.name) else {
+            return false;
+        };
+        let Some(node_arena) = self.node_arena else {
+            return false;
+        };
+        let Some(name_node) = node_arena.get(name_idx) else {
+            return false;
+        };
+        let Some(computed) = node_arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let Some(type_cache) = self.type_cache else {
+            return false;
+        };
+        let Some(key_type) = type_cache
+            .node_types
+            .get(&computed.expression.0)
+            .copied()
+            .or_else(|| type_cache.node_types.get(&name_idx.0).copied())
+        else {
+            return false;
+        };
+
+        !tsz_solver::type_queries::is_type_usable_as_property_name(self.interner, key_type)
+    }
+}
