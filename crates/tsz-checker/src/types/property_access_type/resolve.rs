@@ -1674,7 +1674,9 @@ impl<'a> CheckerState<'a> {
                     ) && !crate::query_boundaries::common::type_parameter_constraint(
                         self.ctx.types,
                         object_type_for_access,
-                    ).is_some() {
+                    )
+                    .is_some()
+                    {
                         // Unconstrained type parameter - emit TS2339
                         if !property_name.starts_with('#') && !accessibility_error_emitted {
                             self.error_property_not_exist_at(
@@ -1685,7 +1687,7 @@ impl<'a> CheckerState<'a> {
                         }
                         return TypeId::ERROR;
                     }
-                    
+
                     let resolved_class_access =
                         self.resolve_class_for_access(access.expression, object_type_for_access);
                     let class_chain_summary = resolved_class_access
