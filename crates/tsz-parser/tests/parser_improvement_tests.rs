@@ -3012,10 +3012,9 @@ fn test_decorator_type_assertion_reports_brace_expected_and_expression_expected_
 }
 
 #[test]
-#[ignore = "TODO: TS1125 for invalid escape sequences in tagged templates not yet implemented"]
-fn test_ts1125_multiple_errors_in_tagged_template() {
-    // Test that all invalid escapes in a tagged template are reported
-    // Source has 3 invalid escapes: \u{hello}, \xtraordinary, \uworld
+fn test_ts1125_tagged_template_does_not_emit_errors() {
+    // Tagged templates (ES2018+) allow invalid escape sequences per spec.
+    // tsc does NOT emit TS1125 for tagged templates — only for untagged templates.
     let source =
         r#"const x = tag`\u{hello} ${ 100 } \xtraordinary ${ 200 } wonderful ${ 300 } \uworld`;"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -3024,7 +3023,28 @@ fn test_ts1125_multiple_errors_in_tagged_template() {
 
     let ts1125_diagnostics: Vec<_> = diagnostics.iter().filter(|d| d.code == 1125).collect();
 
-    // We should get 3 TS1125 errors
+    // Tagged templates should NOT get TS1125 errors
+    assert_eq!(
+        ts1125_diagnostics.len(),
+        0,
+        "Expected 0 TS1125 errors for tagged template, got {}: {:?}",
+        ts1125_diagnostics.len(),
+        ts1125_diagnostics
+    );
+}
+
+#[test]
+fn test_ts1125_untagged_template_emits_errors() {
+    // Untagged templates with invalid escape sequences DO get TS1125.
+    let source =
+        r#"const y = `\u{hello} ${ 100 } \xtraordinary ${ 200 } wonderful ${ 300 } \uworld`;"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let diagnostics = parser.get_diagnostics();
+
+    let ts1125_diagnostics: Vec<_> = diagnostics.iter().filter(|d| d.code == 1125).collect();
+
+    // We should get 3 TS1125 errors (for \u{hello}, \xtraordinary, \uworld)
     assert_eq!(
         ts1125_diagnostics.len(),
         3,
