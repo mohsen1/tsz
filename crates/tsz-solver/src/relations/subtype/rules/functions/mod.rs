@@ -14,11 +14,10 @@ use crate::inference::infer::InferenceContext;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::type_param_info;
 use crate::types::{
-    CallSignature, CallableShape, CallableShapeId, FunctionShape, FunctionShapeId,
-    InferencePriority, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, TypeData, TypeId,
-    TypeParamInfo, TypePredicate, Visibility,
+    CallSignature, FunctionShape, InferencePriority, ParamInfo, TypeData, TypeId, TypeParamInfo,
+    TypePredicate,
 };
-use crate::visitor::{callable_shape_id, contains_this_type};
+use crate::visitor::contains_this_type;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};

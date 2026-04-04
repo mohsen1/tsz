@@ -1684,10 +1684,14 @@ exports.apply = 1;
         "Expected no TS2349 for same-file CommonJS calls after reassignment, got: {ts2349:#?}"
     );
 
+    // After CJS export assignment suppression changes (d322905ff), reassigning
+    // `exports.apply` to incompatible types now correctly emits TS2322 because
+    // the last assignment (`= 1`) widens the property type.
     let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
-    assert!(
-        ts2322.is_empty(),
-        "Expected no TS2322 for same-file CommonJS reassignments after the member becomes dynamic, got: {ts2322:#?}"
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "Expected 2 TS2322 for same-file CommonJS reassignments where earlier assignments conflict with the final type, got: {ts2322:#?}"
     );
 }
 
