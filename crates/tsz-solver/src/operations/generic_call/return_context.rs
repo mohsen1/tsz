@@ -383,7 +383,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 {
                     substitution.insert(tp.name, target_fn.return_type);
                 }
-                // Recurse for non-TypeParameter positions (nested structures)
+                // Recurse for non-TypeParameter positions (nested structures).
+                // Use an ungated helper that doesn't apply the
+                // target-contains-untracked and references-other-tracked guards.
+                // When the target function is generic, its type params (e.g. `A`
+                // from `<A>(a: A[]) => Box<A>[]`) are legitimate targets, not
+                // contaminants from nested generic signatures.
                 for (source_param, target_param) in
                     source_fn.params.iter().zip(target_fn.params.iter())
                 {
@@ -391,12 +396,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         self.interner.lookup(source_param.type_id),
                         Some(TypeData::TypeParameter(_))
                     ) {
-                        self.collect_return_context_substitution(
+                        self.collect_return_context_for_generic_target(
                             source_param.type_id,
                             target_param.type_id,
                             tracked_type_params,
                             substitution,
-                            visited,
                         );
                     }
                 }
@@ -404,12 +408,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     self.interner.lookup(source_fn.return_type),
                     Some(TypeData::TypeParameter(_))
                 ) {
-                    self.collect_return_context_substitution(
+                    self.collect_return_context_for_generic_target(
                         source_fn.return_type,
                         target_fn.return_type,
                         tracked_type_params,
                         substitution,
-                        visited,
                     );
                 }
             } else {
@@ -590,6 +593,80 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let evaluated = self.interner.evaluate_type(test_app);
             if evaluated == target {
                 substitution.insert(tp.name, target);
+            }
+        }
+    }
+
+    /// Structural matching helper for the generic-target-function case.
+    /// Unlike `collect_return_context_substitution`, this does NOT apply the
+    /// `target_contains_untracked_type_params` or `type_references_other_tracked_params`
+    /// guards. Those guards exist to prevent contamination from nested generic
+    /// signatures (e.g., `Promise.catch`'s TResult), but when the target is the
+    /// contextual type's own generic function, its type params (like `A` in
+    /// `<A>(a: A[]) => Box<A>[]`) are legitimate substitution targets.
+    fn collect_return_context_for_generic_target(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        tracked_type_params: &FxHashSet<tsz_common::Atom>,
+        substitution: &mut TypeSubstitution,
+    ) {
+        // Direct TypeParameter leaf — insert without guards
+        if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(source)
+            && tracked_type_params.contains(&tp.name)
+            && target != TypeId::UNKNOWN
+            && target != TypeId::ERROR
+            && substitution.get(tp.name).is_none()
+        {
+            substitution.insert(tp.name, target);
+            return;
+        }
+
+        // Array matching
+        if let (Some(source_elem), Some(target_elem)) = (
+            crate::type_queries::get_array_element_type(self.interner.as_type_database(), source),
+            crate::type_queries::get_array_element_type(self.interner.as_type_database(), target),
+        ) {
+            self.collect_return_context_for_generic_target(
+                source_elem,
+                target_elem,
+                tracked_type_params,
+                substitution,
+            );
+            return;
+        }
+
+        // Tuple matching
+        if let (Some(TypeData::Tuple(source_list_id)), Some(TypeData::Tuple(target_list_id))) =
+            (self.interner.lookup(source), self.interner.lookup(target))
+        {
+            let source_elems = self.interner.tuple_list(source_list_id);
+            let target_elems = self.interner.tuple_list(target_list_id);
+            for (source_elem, target_elem) in source_elems.iter().zip(target_elems.iter()) {
+                self.collect_return_context_for_generic_target(
+                    source_elem.type_id,
+                    target_elem.type_id,
+                    tracked_type_params,
+                    substitution,
+                );
+            }
+            return;
+        }
+
+        // Application matching (same base, same arg count)
+        if let (Some((source_base, source_args)), Some((target_base, target_args))) = (
+            crate::type_queries::get_application_info(self.interner.as_type_database(), source),
+            crate::type_queries::get_application_info(self.interner.as_type_database(), target),
+        ) {
+            if source_base == target_base && source_args.len() == target_args.len() {
+                for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
+                    self.collect_return_context_for_generic_target(
+                        *source_arg,
+                        *target_arg,
+                        tracked_type_params,
+                        substitution,
+                    );
+                }
             }
         }
     }
