@@ -724,17 +724,17 @@ fn types_have_common_properties_relaxed(
         (db.lookup(source), db.lookup(target))
     {
         let tuple_elements = db.tuple_list(tuple_id);
-        return tuple_elements
-            .iter()
-            .any(|elem| types_are_comparable_for_assertion_inner(db, arr_elem, elem.type_id, depth + 1));
+        return tuple_elements.iter().any(|elem| {
+            types_are_comparable_for_assertion_inner(db, arr_elem, elem.type_id, depth + 1)
+        });
     }
     if let (Some(TypeData::Tuple(tuple_id)), Some(TypeData::Array(arr_elem))) =
         (db.lookup(source), db.lookup(target))
     {
         let tuple_elements = db.tuple_list(tuple_id);
-        return tuple_elements
-            .iter()
-            .any(|elem| types_are_comparable_for_assertion_inner(db, elem.type_id, arr_elem, depth + 1));
+        return tuple_elements.iter().any(|elem| {
+            types_are_comparable_for_assertion_inner(db, elem.type_id, arr_elem, depth + 1)
+        });
     }
 
     // Handle tuple↔tuple comparability: check element types pairwise
@@ -746,7 +746,12 @@ fn types_have_common_properties_relaxed(
         // Check if any element from source is comparable to any from target
         return src_elements.iter().any(|src_elem| {
             tgt_elements.iter().any(|tgt_elem| {
-                types_are_comparable_for_assertion_inner(db, src_elem.type_id, tgt_elem.type_id, depth + 1)
+                types_are_comparable_for_assertion_inner(
+                    db,
+                    src_elem.type_id,
+                    tgt_elem.type_id,
+                    depth + 1,
+                )
             })
         });
     }
@@ -1143,17 +1148,17 @@ fn types_have_common_properties(
         (db.lookup(source), db.lookup(target))
     {
         let tuple_elements = db.tuple_list(tuple_id);
-        return tuple_elements
-            .iter()
-            .any(|elem| types_are_comparable_for_assertion_inner(db, arr_elem, elem.type_id, depth + 1));
+        return tuple_elements.iter().any(|elem| {
+            types_are_comparable_for_assertion_inner(db, arr_elem, elem.type_id, depth + 1)
+        });
     }
     if let (Some(TypeData::Tuple(tuple_id)), Some(TypeData::Array(arr_elem))) =
         (db.lookup(source), db.lookup(target))
     {
         let tuple_elements = db.tuple_list(tuple_id);
-        return tuple_elements
-            .iter()
-            .any(|elem| types_are_comparable_for_assertion_inner(db, elem.type_id, arr_elem, depth + 1));
+        return tuple_elements.iter().any(|elem| {
+            types_are_comparable_for_assertion_inner(db, elem.type_id, arr_elem, depth + 1)
+        });
     }
 
     // Handle tuple↔tuple comparability: check element types pairwise
@@ -1165,7 +1170,12 @@ fn types_have_common_properties(
         // Check if any element from source is comparable to any from target
         return src_elements.iter().any(|src_elem| {
             tgt_elements.iter().any(|tgt_elem| {
-                types_are_comparable_for_assertion_inner(db, src_elem.type_id, tgt_elem.type_id, depth + 1)
+                types_are_comparable_for_assertion_inner(
+                    db,
+                    src_elem.type_id,
+                    tgt_elem.type_id,
+                    depth + 1,
+                )
             })
         });
     }
