@@ -320,26 +320,66 @@ impl<'a> CheckerState<'a> {
         );
 
         // Suppress suggestions from lib-only TYPE symbols (DOM interfaces like
-        // ParentNode, Cache, etc.) that were merged into the user binder's scope
-        // tables during checker init. tsc does not surface these as spelling
-        // suggestions for user code. Lib globals with VALUE meaning (Error,
-        // RegExp, Array, etc.) are kept because they're directly usable.
+        // ParentNode, Cache, CSSStyleDeclaration, etc.) that were merged into
+        // the user binder's scope tables during checker init. tsc does not
+        // surface these as spelling suggestions for user code. Lib globals
+        // with VALUE meaning (Error, RegExp, Array, etc.) are kept because
+        // they're directly usable.
         if let Some(ref candidate) = best_candidate {
-            if let Some(sym_id) = self.ctx.binder.file_locals.get(candidate.as_str()) {
-                if self.ctx.binder.lib_symbol_ids.contains(&sym_id) {
-                    let has_value = self
-                        .ctx
-                        .binder
-                        .get_symbol(sym_id)
-                        .is_some_and(|sym| sym.flags & tsz_binder::symbol_flags::VALUE != 0);
-                    if !has_value {
-                        return None;
-                    }
-                }
+            let is_lib_type_only = self.is_lib_only_type_symbol(candidate);
+            if is_lib_type_only {
+                return None;
             }
         }
 
         best_candidate.map(|c| vec![c])
+    }
+
+    /// Check if a candidate name is a lib-only TYPE symbol (no VALUE meaning).
+    /// This checks both the user binder's `lib_symbol_ids` set AND all lib
+    /// binder `file_locals` to catch symbols found through scope chain walking.
+    fn is_lib_only_type_symbol(&self, candidate: &str) -> bool {
+        // Check 1: candidate is in user binder's file_locals and tracked as lib symbol
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(candidate) {
+            if self.ctx.binder.lib_symbol_ids.contains(&sym_id) {
+                let has_value = self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|sym| sym.flags & tsz_binder::symbol_flags::VALUE != 0);
+                if !has_value {
+                    return true;
+                }
+            }
+        }
+
+        // Check 2: candidate exists in a lib binder but not as a user-defined symbol.
+        // This catches cases where lib symbols are in scope through the scope chain
+        // but the lib_symbol_ids tracking missed them (e.g., scope-level merges).
+        let exists_in_lib = self.ctx.lib_contexts.iter().any(|lib_ctx| {
+            if let Some(sym_id) = lib_ctx.binder.file_locals.get(candidate) {
+                // Only suppress if the lib symbol is TYPE-only (no VALUE meaning)
+                lib_ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|sym| sym.flags & tsz_binder::symbol_flags::VALUE == 0)
+            } else {
+                false
+            }
+        });
+
+        if exists_in_lib {
+            // But if the user's own file defines this name (not from lib merge),
+            // don't suppress it.
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(candidate) {
+                if !self.ctx.binder.lib_symbol_ids.contains(&sym_id) {
+                    return false; // User-defined, keep it
+                }
+            }
+            return true;
+        }
+
+        false
     }
 
     /// Search lib globals and built-in type keywords for spelling suggestion
