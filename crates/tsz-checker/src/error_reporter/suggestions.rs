@@ -325,9 +325,18 @@ impl<'a> CheckerState<'a> {
         // surface these as spelling suggestions for user code. Lib globals
         // with VALUE meaning (Error, RegExp, Array, etc.) are kept because
         // they're directly usable.
+        // Suppress lib-origin suggestions for TYPE-only lookups.
+        // tsc's sequential processing and per-file suggestion cap (10) effectively
+        // prevents most lib-origin suggestions from appearing in files with many
+        // unresolved type names. Our demand-driven resolution processes names in a
+        // different order, so the cap doesn't always match. For TYPE-only lookups,
+        // conservatively suppress all lib-origin suggestions to avoid false TS2552
+        // (e.g., TypeDeclaration -> CSSStyleDeclaration, ParseNode -> ParentNode).
+        // VALUE-meaning lookups keep lib suggestions (e.g., array -> Array).
         if let Some(ref candidate) = best_candidate {
-            let is_lib_type_only = self.is_lib_only_type_symbol(candidate);
-            if is_lib_type_only {
+            // TYPE-only lookup: meaning_flags is exactly TYPE (from type context)
+            let is_type_only_lookup = meaning_flags == tsz_binder::symbol_flags::TYPE;
+            if is_type_only_lookup && self.is_lib_origin_symbol(candidate) {
                 return None;
             }
         }
@@ -335,38 +344,25 @@ impl<'a> CheckerState<'a> {
         best_candidate.map(|c| vec![c])
     }
 
-    /// Check if a candidate name is a lib-only TYPE symbol (no VALUE meaning).
-    /// This checks both the user binder's `lib_symbol_ids` set AND all lib
-    /// binder `file_locals` to catch symbols found through scope chain walking.
-    fn is_lib_only_type_symbol(&self, candidate: &str) -> bool {
+    /// Check if a candidate suggestion originates from a lib file.
+    ///
+    /// Returns true if the symbol was merged from a lib file into the user
+    /// binder's scope tables, or if it exists in any lib binder's file_locals.
+    /// User-defined symbols that shadow lib symbols are NOT considered lib-origin.
+    fn is_lib_origin_symbol(&self, candidate: &str) -> bool {
         // Check 1: candidate is in user binder's file_locals and tracked as lib symbol
         if let Some(sym_id) = self.ctx.binder.file_locals.get(candidate) {
             if self.ctx.binder.lib_symbol_ids.contains(&sym_id) {
-                let has_value = self
-                    .ctx
-                    .binder
-                    .get_symbol(sym_id)
-                    .is_some_and(|sym| sym.flags & tsz_binder::symbol_flags::VALUE != 0);
-                if !has_value {
-                    return true;
-                }
+                return true;
             }
         }
 
-        // Check 2: candidate exists in a lib binder but not as a user-defined symbol.
-        // This catches cases where lib symbols are in scope through the scope chain
-        // but the lib_symbol_ids tracking missed them (e.g., scope-level merges).
-        let exists_in_lib = self.ctx.lib_contexts.iter().any(|lib_ctx| {
-            if let Some(sym_id) = lib_ctx.binder.file_locals.get(candidate) {
-                // Only suppress if the lib symbol is TYPE-only (no VALUE meaning)
-                lib_ctx
-                    .binder
-                    .get_symbol(sym_id)
-                    .is_some_and(|sym| sym.flags & tsz_binder::symbol_flags::VALUE == 0)
-            } else {
-                false
-            }
-        });
+        // Check 2: candidate exists in a lib binder but not defined by the user
+        let exists_in_lib = self
+            .ctx
+            .lib_contexts
+            .iter()
+            .any(|lib_ctx| lib_ctx.binder.file_locals.get(candidate).is_some());
 
         if exists_in_lib {
             // But if the user's own file defines this name (not from lib merge),

@@ -1973,11 +1973,17 @@ impl<'a> CheckerState<'a> {
                             property_name,
                         )
                     {
-                        self.error_property_not_exist_at(
-                            property_name,
-                            object_type_for_access,
-                            access.name_or_argument,
-                        );
+                        // Suppress TS2339 for index access types on type parameters.
+                        // When accessing properties on types like T[keyof T], we cannot
+                        // determine what properties exist until T is instantiated.
+                        if !tsz_solver::is_index_access_type(self.ctx.types, object_type_for_access)
+                        {
+                            self.error_property_not_exist_at(
+                                property_name,
+                                object_type_for_access,
+                                access.name_or_argument,
+                            );
+                        }
                         return TypeId::ERROR;
                     }
 
@@ -2482,18 +2488,42 @@ impl<'a> CheckerState<'a> {
                                     access.name_or_argument,
                                 );
                             } else {
+                                // Suppress TS2339 for types containing type parameters
+                                // or for index access types (like T[keyof T]).
+                                let should_suppress_inner =
+                                    crate::query_boundaries::common::contains_type_parameters(
+                                        self.ctx.types,
+                                        display_object_type,
+                                    ) || tsz_solver::is_index_access_type(
+                                        self.ctx.types,
+                                        display_object_type,
+                                    );
+                                if !should_suppress_inner {
+                                    self.error_property_not_exist_at(
+                                        property_name,
+                                        display_object_type,
+                                        access.name_or_argument,
+                                    );
+                                }
+                            }
+                        } else {
+                            // Suppress TS2339 for types containing type parameters
+                            // or for index access types (like T[keyof T]).
+                            let should_suppress =
+                                crate::query_boundaries::common::contains_type_parameters(
+                                    self.ctx.types,
+                                    display_object_type,
+                                ) || tsz_solver::is_index_access_type(
+                                    self.ctx.types,
+                                    display_object_type,
+                                );
+                            if !should_suppress {
                                 self.error_property_not_exist_at(
                                     property_name,
                                     display_object_type,
                                     access.name_or_argument,
                                 );
                             }
-                        } else {
-                            self.error_property_not_exist_at(
-                                property_name,
-                                display_object_type,
-                                access.name_or_argument,
-                            );
                         }
                     }
                     if receiver_has_daa_error {
