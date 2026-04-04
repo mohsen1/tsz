@@ -835,7 +835,7 @@ impl<'a> CheckerState<'a> {
             if !is_abstract_class {
                 if let Some(member_node) = self.ctx.arena.get(member_idx) {
                     use crate::diagnostics::diagnostic_codes;
-                    
+
                     let member_has_abstract = match member_node.kind {
                         syntax_kind_ext::PROPERTY_DECLARATION => {
                             if let Some(prop) = self.ctx.arena.get_property_decl(member_node) {

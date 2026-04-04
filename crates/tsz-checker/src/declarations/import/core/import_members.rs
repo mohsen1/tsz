@@ -655,9 +655,13 @@ impl<'a> CheckerState<'a> {
                                 // When importing a type-only symbol in a JS file with checkJs enabled,
                                 // emit an error suggesting to use JSDoc type annotation instead.
                                 if self.is_js_file() && !clause.is_type_only {
-                                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-                                    let clean_module = module_name.trim_matches('\'').trim_matches('"');
-                                    let quoted_import = format!("import(\"{}\").{}", clean_module, import_name);
+                                    use crate::diagnostics::{
+                                        diagnostic_codes, diagnostic_messages, format_message,
+                                    };
+                                    let clean_module =
+                                        module_name.trim_matches('\'').trim_matches('"');
+                                    let quoted_import =
+                                        format!("import(\"{}\").{}", clean_module, import_name);
                                     let message = format_message(
                                         diagnostic_messages::IS_A_TYPE_AND_CANNOT_BE_IMPORTED_IN_JAVASCRIPT_FILES_USE_IN_A_JSDOC_TYPE_ANNOTAT,
                                         &[import_name, &quoted_import],
