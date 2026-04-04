@@ -14,7 +14,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 use super::assignability::{
-    is_builtin_wrapper_name, is_object_prototype_method,
+    is_builtin_wrapper_name, is_function_type_display, is_object_prototype_method,
     is_object_prototype_method_for_array_target, is_primitive_type_name,
 };
 use crate::query_boundaries::type_checking_utilities as query_utils;
@@ -649,6 +649,92 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // TSC emits TS2322 instead of TS2741 when the source has call signatures
+        // (pure function type, NOT class constructor) and the target does NOT have call
+        // signatures. Class constructors (construct-only) should still produce TS2741.
+        let source_eval_for_fn = self.evaluate_type_with_env(source);
+        let target_eval_for_fn = self.evaluate_type_with_env(target);
+        let is_source_fn = tsz_solver::type_queries::has_call_signatures(self.ctx.types, source)
+            || tsz_solver::type_queries::has_call_signatures(self.ctx.types, source_eval_for_fn)
+            || tsz_solver::type_queries::has_call_signatures(self.ctx.types, source_type)
+            || tsz_solver::type_queries::has_call_signatures(
+                self.ctx.types,
+                self.evaluate_type_with_env(source_type),
+            )
+            || is_function_type_display(&display_src_str);
+        let target_has_call_sigs =
+            tsz_solver::type_queries::has_call_signatures(self.ctx.types, target)
+                || tsz_solver::type_queries::has_call_signatures(
+                    self.ctx.types,
+                    target_eval_for_fn,
+                );
+        if is_source_fn && !target_has_call_sigs {
+            let src_str = if depth == 0 {
+                self.format_assignment_source_type_for_diagnostic(source, target, idx)
+            } else {
+                self.format_type_diagnostic(source_type)
+            };
+            let tgt_str = if depth == 0 {
+                self.format_assignability_type_for_message(target, source)
+            } else {
+                self.format_type_diagnostic(target_type)
+            };
+            let message = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&src_str, &tgt_str],
+            );
+            return Diagnostic::error(
+                file_name,
+                start,
+                length,
+                message,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+        }
+
+        // TSC emits TS2322 instead of TS2741 when the target has an index signature but the
+        // missing property is not a direct named property of the target. In this case, the
+        // "missing" property comes from the index signature value type, not from a required
+        // named property, so the generic assignability error is more appropriate.
+        {
+            use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
+            let resolver = IndexSignatureResolver::new(self.ctx.types);
+            let target_has_index = resolver.has_index_signature(target, IndexKind::String)
+                || resolver.has_index_signature(target, IndexKind::Number);
+            if target_has_index {
+                let prop_name_str = self.ctx.types.resolve_atom_ref(property_name);
+                let target_has_named_prop = tsz_solver::type_queries::find_property_in_type_by_str(
+                    self.ctx.types,
+                    target,
+                    &prop_name_str,
+                )
+                .is_some();
+                if !target_has_named_prop {
+                    let src_str = if depth == 0 {
+                        self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                    } else {
+                        self.format_type_diagnostic(source_type)
+                    };
+                    let tgt_str = if depth == 0 {
+                        self.format_assignability_type_for_message(target, source)
+                    } else {
+                        self.format_type_diagnostic(target_type)
+                    };
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&src_str, &tgt_str],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                }
+            }
+        }
+
         // TSC emits TS2322 instead of TS2741 when both source and target have index signatures.
         // For index signature to index signature assignments, the more general assignability error
         // is preferred over specific missing property errors.
@@ -1023,6 +1109,50 @@ impl<'a> CheckerState<'a> {
                 message,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
+        }
+
+        // TSC emits TS2322 instead of TS2739/TS2740/TS2741 when the source has call
+        // signatures (pure function type, NOT class constructor) and the target does NOT
+        // have call signatures. Class constructors (with construct-only signatures) should
+        // still produce TS2741 for missing properties.
+        {
+            let source_eval = self.evaluate_type_with_env(source);
+            let target_eval = self.evaluate_type_with_env(target);
+            let display_src = self.format_type_diagnostic(source_type);
+            let is_src_fn = tsz_solver::type_queries::has_call_signatures(self.ctx.types, source)
+                || tsz_solver::type_queries::has_call_signatures(self.ctx.types, source_eval)
+                || tsz_solver::type_queries::has_call_signatures(self.ctx.types, source_type)
+                || tsz_solver::type_queries::has_call_signatures(
+                    self.ctx.types,
+                    self.evaluate_type_with_env(source_type),
+                )
+                || is_function_type_display(&display_src);
+            let tgt_has_call =
+                tsz_solver::type_queries::has_call_signatures(self.ctx.types, target)
+                    || tsz_solver::type_queries::has_call_signatures(self.ctx.types, target_eval);
+            if is_src_fn && !tgt_has_call {
+                let src_str = if depth == 0 {
+                    self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                } else {
+                    self.format_type_diagnostic(source_type)
+                };
+                let tgt_str = if depth == 0 {
+                    self.format_assignability_type_for_message(target, source)
+                } else {
+                    self.format_type_diagnostic(target_type)
+                };
+                let message = format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&src_str, &tgt_str],
+                );
+                return Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                );
+            }
         }
 
         // Note: TS2696 for `Object` source is handled at the top of render_failure_reason.
