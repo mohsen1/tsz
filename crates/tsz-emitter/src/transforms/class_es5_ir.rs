@@ -781,7 +781,7 @@ impl<'a> ES5ClassTransformer<'a> {
         use crate::transforms::ir_printer::IRPrinter;
         let dec_node = self.arena.get(dec_idx)?;
         let dec = self.arena.get_decorator(dec_node)?;
-        let ir_expr = self.convert_expression(dec.expression);
+        let ir_expr = self.convert_expression_static(dec.expression);
         let mut printer = IRPrinter::with_arena(self.arena);
         if let Some(source_text) = self.source_text {
             printer.set_source_text(source_text);
@@ -800,7 +800,7 @@ impl<'a> ES5ClassTransformer<'a> {
             if let Some(dec_node) = self.arena.get(dec_idx)
                 && let Some(dec) = self.arena.get_decorator(dec_node)
             {
-                let ir_expr = self.convert_expression(dec.expression);
+                let ir_expr = self.convert_expression_static(dec.expression);
                 let mut printer = IRPrinter::with_arena(self.arena);
                 if let Some(source_text) = self.source_text {
                     printer.set_source_text(source_text);
