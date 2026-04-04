@@ -426,7 +426,7 @@ impl<'a> CheckerState<'a> {
             if all_unused && group_indices.len() > 1 {
                 // TS6205: All type parameters are unused.
                 // Use the last param's span to cover the entire @template declaration.
-                let last_idx = *group_indices.last().unwrap();
+                let last_idx = *group_indices.last().expect("group_indices is non-empty");
                 let (_, start, length) = &params[last_idx];
                 self.error_all_type_parameters_unused(*start, *length);
             } else {
