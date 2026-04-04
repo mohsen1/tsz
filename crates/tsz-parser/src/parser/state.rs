@@ -182,6 +182,9 @@ pub struct ParserState {
     /// Depth of nested type-member containers (interfaces, type literals,
     /// mapped types with member tails) currently being parsed.
     pub(crate) type_member_container_depth: u32,
+    /// When true, suppress escape-sequence errors in template literals.
+    /// Tagged templates (ES2018+) allow invalid escape sequences.
+    pub(crate) in_tagged_template: bool,
 }
 
 impl ParserState {
@@ -232,6 +235,7 @@ impl ParserState {
             saw_arrow_parameter_recovery: false,
             pending_failed_async_arrow_colon_recovery: false,
             type_member_container_depth: 0,
+            in_tagged_template: false,
         }
     }
 
@@ -262,6 +266,7 @@ impl ParserState {
         self.saw_arrow_parameter_recovery = false;
         self.pending_failed_async_arrow_colon_recovery = false;
         self.type_member_container_depth = 0;
+        self.in_tagged_template = false;
     }
 
     /// Check recursion limit - returns true if we can continue, false if limit exceeded
@@ -1010,6 +1015,11 @@ impl ParserState {
         });
     }
     pub(crate) fn report_invalid_string_or_template_escape_errors(&mut self) {
+        // Tagged templates (ES2018+) allow invalid escape sequences per spec.
+        // Only untagged templates and string literals should report escape errors.
+        if self.in_tagged_template {
+            return;
+        }
         let token_text = self.scanner.get_token_text_ref().to_string();
         if token_text.is_empty()
             || (self.scanner.get_token_flags() & TokenFlags::ContainsInvalidEscape as u32) == 0

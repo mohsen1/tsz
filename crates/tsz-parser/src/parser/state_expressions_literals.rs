@@ -3312,7 +3312,9 @@ impl ParserState {
                 // `new f\`abc\`.member(...)` parses the tagged template as
                 // part of the member expression, not as `(new f)\`abc\`...`.
                 SyntaxKind::NoSubstitutionTemplateLiteral | SyntaxKind::TemplateHead => {
+                    self.in_tagged_template = true;
                     let template = self.parse_template_literal();
+                    self.in_tagged_template = false;
                     let end_pos = self.token_end();
 
                     expr = self.arena.add_tagged_template(
