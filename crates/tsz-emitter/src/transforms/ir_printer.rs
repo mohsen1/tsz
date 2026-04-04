@@ -409,6 +409,16 @@ impl<'a> IRPrinter<'a> {
         }
     }
 
+    fn emit_sent_aware(&mut self, node: &IRNode) {
+        if matches!(node, IRNode::GeneratorSent) {
+            self.write("(");
+            self.emit_node(node);
+            self.write(")");
+        } else {
+            self.emit_node(node);
+        }
+    }
+
     fn emit_node(&mut self, node: &IRNode) {
         match node {
             // Literals
@@ -449,15 +459,17 @@ impl<'a> IRPrinter<'a> {
                 operator,
                 right,
             } => {
-                self.emit_node(left);
                 if *operator == "," {
+                    self.emit_node(left);
                     self.write(", ");
+                    self.emit_node(right);
                 } else {
+                    self.emit_sent_aware(left);
                     self.write(" ");
                     self.write(operator);
                     self.write(" ");
+                    self.emit_sent_aware(right);
                 }
-                self.emit_node(right);
             }
             IRNode::PrefixUnaryExpr { operator, operand } => {
                 self.write(operator);
@@ -477,7 +489,7 @@ impl<'a> IRPrinter<'a> {
                     // matching TSC's behavior for synthetic code wrappers.
                     self.force_iife_multiline_empty = true;
                 }
-                self.emit_node(callee);
+                self.emit_sent_aware(callee);
                 self.force_iife_multiline_empty = false;
                 if is_iife {
                     self.write(")");
@@ -500,7 +512,7 @@ impl<'a> IRPrinter<'a> {
                 }
             }
             IRNode::PropertyAccess { object, property } => {
-                self.emit_node(object);
+                self.emit_sent_aware(object);
                 if Self::ir_node_needs_double_dot(object) {
                     self.write("..");
                 } else {
