@@ -11,6 +11,36 @@ use tsz_solver::{
     Visibility,
 };
 
+/// Read a checker source path. If the path is a directory, concatenate all .rs files.
+/// If the path ends with .rs and doesn't exist, try the path without .rs as a directory.
+fn read_checker_source_file(path: &str) -> String {
+    let p = Path::new(path);
+    if p.is_file() {
+        return fs::read_to_string(p).unwrap_or_default();
+    }
+    if p.is_dir() {
+        let mut combined = String::new();
+        if let Ok(entries) = fs::read_dir(p) {
+            for entry in entries.flatten() {
+                if entry.path().extension().and_then(|e| e.to_str()) == Some("rs") {
+                    if let Ok(c) = fs::read_to_string(entry.path()) {
+                        combined.push_str(&c);
+                    }
+                }
+            }
+        }
+        return combined;
+    }
+    // Try stripping .rs extension and treating as directory
+    if path.ends_with(".rs") {
+        let dir_path = &path[..path.len() - 3];
+        if Path::new(dir_path).is_dir() {
+            return read_checker_source_file(dir_path);
+        }
+    }
+    String::new()
+}
+
 fn make_animal_and_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
     let animal_name = interner.intern_string("name");
     let dog_breed = interner.intern_string("breed");
@@ -309,7 +339,7 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
     let jsx_checker_src = {
         let mut buf = String::new();
         for file in &[
-            "src/checkers/jsx/orchestration.rs",
+            "src/checkers/jsx/orchestration",
             "src/checkers/jsx/children.rs",
             "src/checkers/jsx/props/mod.rs",
             "src/checkers/jsx/props/resolution.rs",
@@ -317,7 +347,7 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
             "src/checkers/jsx/runtime.rs",
             "src/checkers/jsx/diagnostics.rs",
         ] {
-            buf.push_str(&fs::read_to_string(file).unwrap_or_default());
+            buf.push_str(&read_checker_source_file(file));
         }
         buf
     };
@@ -1557,7 +1587,7 @@ fn checker_files_stay_under_loc_limit() {
         ("types/function_type.rs", 1940),
         ("state/type_analysis/computed_commonjs.rs", 2787),
         ("checkers/jsx/props/resolution.rs", 1600),
-        ("checkers/jsx/orchestration.rs", 2397),
+        ("checkers/jsx/orchestration", 2397),
         ("checkers/call_checker.rs", 2201),
         ("types/computation/call.rs", 2176),
         ("types/property_access_helpers.rs", 2104),
@@ -2415,7 +2445,7 @@ fn migrated_files_no_raw_contextual_type_mutation() {
         "checkers/call_checker/mod.rs",
         "types/computation/call_inference.rs",
         "dispatch.rs",
-        "checkers/jsx/orchestration.rs",
+        "checkers/jsx/orchestration",
         "checkers/jsx/children.rs",
         "checkers/jsx/props/mod.rs",
         "checkers/jsx/props/resolution.rs",
@@ -2442,9 +2472,7 @@ fn migrated_files_no_raw_contextual_type_mutation() {
 
     for file in migrated_files {
         let path = base.join(file);
-        let content = fs::read_to_string(&path).unwrap_or_else(|e| {
-            panic!("Failed to read {file}: {e}");
-        });
+        let content = read_checker_source_file(&path.to_string_lossy());
 
         // Count raw mutations (exclude comments and the TypingRequest module itself)
         let violations: Vec<(usize, &str)> = content
@@ -2506,9 +2534,7 @@ fn migrated_files_no_raw_skip_flow_narrowing_mutation() {
 
     for file in migrated_files {
         let path = base.join(file);
-        let content = fs::read_to_string(&path).unwrap_or_else(|e| {
-            panic!("Failed to read {file}: {e}");
-        });
+        let content = read_checker_source_file(&path.to_string_lossy());
 
         let violations: Vec<(usize, &str)> = content
             .lines()
@@ -2564,9 +2590,7 @@ fn migrated_helper_files_no_raw_ambient_request_reads() {
 
     for file in migrated_files {
         let path = base.join(file);
-        let content = fs::read_to_string(&path).unwrap_or_else(|e| {
-            panic!("Failed to read {file}: {e}");
-        });
+        let content = read_checker_source_file(&path.to_string_lossy());
 
         let violations: Vec<(usize, &str)> = content
             .lines()
@@ -2602,7 +2626,7 @@ fn migrated_helper_files_no_raw_ambient_request_reads() {
 fn migrated_files_no_raw_contextual_assertion_mutation() {
     let migrated_files = &[
         "dispatch.rs",
-        "checkers/jsx/orchestration.rs",
+        "checkers/jsx/orchestration",
         "checkers/jsx/children.rs",
         "checkers/jsx/props/mod.rs",
         "checkers/jsx/props/resolution.rs",
@@ -2630,9 +2654,7 @@ fn migrated_files_no_raw_contextual_assertion_mutation() {
 
     for file in migrated_files {
         let path = base.join(file);
-        let content = fs::read_to_string(&path).unwrap_or_else(|e| {
-            panic!("Failed to read {file}: {e}");
-        });
+        let content = read_checker_source_file(&path.to_string_lossy());
 
         let violations: Vec<(usize, &str)> = content
             .lines()
@@ -2677,9 +2699,7 @@ fn no_typing_context_bridge_helper_or_calls() {
 
     for file in files {
         let path = base.join(file);
-        let content = fs::read_to_string(&path).unwrap_or_else(|e| {
-            panic!("Failed to read {file}: {e}");
-        });
+        let content = read_checker_source_file(&path.to_string_lossy());
 
         let violations: Vec<(usize, &str)> = content
             .lines()
@@ -2915,8 +2935,7 @@ fn no_ambient_current_callable_type() {
 
     for file in migrated_files {
         let path = checker_root.join(file);
-        let content =
-            fs::read_to_string(&path).unwrap_or_else(|e| panic!("Failed to read {file}: {e}"));
+        let content = read_checker_source_file(&path.to_string_lossy());
 
         // Allow the doc comment in CallableContext's definition but forbid actual usage.
         // Filter out lines that are comments (starting with /// or //).
