@@ -563,6 +563,14 @@ impl<'a> CheckerState<'a> {
                                     }
                                 }
                             }
+                            continue;
+                        }
+                        // Property signatures/declarations: recurse into type
+                        // annotations to validate nested type references.
+                        if let Some(prop) = self.ctx.arena.get_property_decl(member_node)
+                            && prop.type_annotation != NodeIndex::NONE
+                        {
+                            self.check_type_node(prop.type_annotation);
                         }
                     }
 
@@ -636,6 +644,12 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::MAPPED_TYPE => {
                 self.check_mapped_type_constraint(node_idx);
+                // Recurse into mapped type template to validate nested types.
+                if let Some(mapped) = self.ctx.arena.get_mapped_type(node)
+                    && mapped.type_node != NodeIndex::NONE
+                {
+                    self.check_type_node(mapped.type_node);
+                }
             }
             k if k == syntax_kind_ext::TUPLE_TYPE => {
                 // Force tuple element validation (TS1257, TS1265, TS1266)
@@ -710,66 +724,9 @@ impl<'a> CheckerState<'a> {
         }
 
         if !has_applicable {
-            // TS2344: check parent type reference constraint
-            self.emit_ts2344_for_invalid_instantiation_expr(type_query_idx);
-
             // TS2635: emit at last type argument node
             let error_node = type_arg_nodes.last().copied().unwrap_or(type_query_idx);
             self.error_no_applicable_signatures_for_type_args(expr_type, error_node);
-        }
-    }
-
-    /// Emit TS2344 when invalid instantiation expression is a type argument.
-    fn emit_ts2344_for_invalid_instantiation_expr(&mut self, type_query_idx: NodeIndex) {
-        let parent_idx = self
-            .ctx
-            .arena
-            .get_extended(type_query_idx)
-            .map(|ext| ext.parent)
-            .unwrap_or(NodeIndex::NONE);
-        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-            return;
-        };
-        if parent_node.kind != syntax_kind_ext::TYPE_REFERENCE {
-            return;
-        }
-        let Some(type_ref) = self.ctx.arena.get_type_ref(parent_node) else {
-            return;
-        };
-        let Some(sym_id) = self
-            .resolve_type_symbol_for_lowering(type_ref.type_name)
-            .map(tsz_binder::SymbolId)
-        else {
-            return;
-        };
-        let Some(args) = &type_ref.type_arguments else {
-            return;
-        };
-        let Some(arg_index) = args.nodes.iter().position(|&idx| idx == type_query_idx) else {
-            return;
-        };
-        let lib_binders = self.get_lib_binders();
-        let base_name = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(sym_id, &lib_binders)
-            .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
-        let type_params = self.get_reference_type_params_for_symbol(sym_id, &base_name);
-        if let Some(param) = type_params.get(arg_index)
-            && let Some(constraint) = param.constraint
-        {
-            let resolved_constraint = self.resolve_lazy_type(constraint);
-            if resolved_constraint != TypeId::ANY
-                && resolved_constraint != TypeId::ERROR
-                && resolved_constraint != TypeId::UNKNOWN
-            {
-                let type_arg = self.get_type_from_type_node(type_query_idx);
-                self.error_type_constraint_not_satisfied(
-                    type_arg,
-                    resolved_constraint,
-                    type_query_idx,
-                );
-            }
         }
     }
 
