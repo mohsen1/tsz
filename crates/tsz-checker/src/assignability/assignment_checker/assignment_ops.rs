@@ -1000,9 +1000,9 @@ impl<'a> CheckerState<'a> {
                     self.invalidate_expression_for_contextual_retry(right_idx);
                 }
             }
-            crate::context::TypingRequest::with_contextual_type(contextual_target)
+            TypingRequest::with_contextual_type(contextual_target)
         } else {
-            crate::context::TypingRequest::NONE
+            TypingRequest::NONE
         };
 
         let right_raw = self.get_type_of_node_with_request(right_idx, &contextual_request);
