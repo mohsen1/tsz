@@ -53,6 +53,40 @@ pub fn contains_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeId) -> bo
     })
 }
 
+/// Check if a type contains generic type parameters, excluding `ThisType`.
+///
+/// Like `contains_type_parameters_db`, but does NOT treat `ThisType` as a type
+/// parameter. This is appropriate for TS2352 (type assertion overlap) checking,
+/// where `this` resolves to the enclosing class type and should still be checked
+/// for overlap — tsc does not suppress type assertion checks for `this`.
+pub fn contains_generic_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::TypeParameter(_) | TypeData::Infer(_) | TypeData::BoundParameter(_)) => {
+            return true;
+        }
+        Some(
+            TypeData::Literal(_)
+            | TypeData::Intrinsic(_)
+            | TypeData::Error
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ModuleNamespace(_)
+            | TypeData::Recursive(_)
+            | TypeData::Enum(_, _)
+            | TypeData::ThisType,
+        ) => return false,
+        _ => {}
+    }
+    contains_type_matching(db, type_id, |key| {
+        matches!(
+            key,
+            TypeData::TypeParameter(_) | TypeData::Infer(_) | TypeData::BoundParameter(_)
+        )
+    })
+}
+
 /// Check if a type is directly an `Infer` type (not recursive).
 ///
 /// This is a lightweight O(1) check that only inspects the top-level type.
