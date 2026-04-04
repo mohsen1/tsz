@@ -224,7 +224,12 @@ impl<'a> Printer<'a> {
                     && let Some(import_decl) = self.arena.get_import_decl(clause_node)
                 {
                     let name = self.get_identifier_text_idx(import_decl.import_clause);
-                    if !name.is_empty() {
+                    // When the name is in commonjs_exported_var_names, the import-equals
+                    // declaration was already emitted as `exports.b = a.foo;` — no
+                    // separate `exports.b = b;` post-assignment is needed.
+                    if !name.is_empty()
+                        && !self.commonjs_exported_var_names.contains(name.as_str())
+                    {
                         self.write_line();
                         self.write("exports.");
                         self.write(&name);
