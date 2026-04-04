@@ -2265,6 +2265,48 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check whether a class extends a base class with the same name as the
+    /// given implements target. E.g., `class D extends C<string> implements C<number>`
+    /// has `C` as both the extends base and the implements target.
+    fn class_extends_same_base(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+        implements_name: &str,
+    ) -> bool {
+        let Some(ref heritage_clauses) = class_data.heritage_clauses else {
+            return false;
+        };
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                continue;
+            };
+            let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                continue;
+            };
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            for &type_idx in &heritage.types.nodes {
+                if let Some(name) = self.heritage_name_text(type_idx)
+                    && name == implements_name
+                {
+                    return true;
+                }
+                // Also check ExpressionWithTypeArguments
+                if let Some(type_node) = self.ctx.arena.get(type_idx)
+                    && let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node)
+                {
+                    if let Some(name) = self.heritage_name_text(expr_type_args.expression)
+                        && name == implements_name
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     // NOTE: check_abstract_members_from_type, find_abstract_members_in_type,
     // collect_class_names_from_instance_type, and is_property_abstract_via_parent
     // are in class_abstract_checker.rs
