@@ -649,7 +649,10 @@ impl<'a> AsyncES5Transformer<'a> {
                         ))));
                     } else if self.contains_await_recursive(ret.expression) {
                         self.emit_nested_suspension(
-                            ret.expression, cases, current_statements, current_label,
+                            ret.expression,
+                            cases,
+                            current_statements,
+                            current_label,
                         );
                         let value = self.expression_to_ir(ret.expression);
                         current_statements.push(IRNode::ReturnStatement(Some(Box::new(
@@ -724,7 +727,10 @@ impl<'a> AsyncES5Transformer<'a> {
                                 .push(IRNode::ThrowStatement(Box::new(IRNode::GeneratorSent)));
                         } else {
                             self.emit_nested_suspension(
-                                throw_data.expression, cases, current_statements, current_label,
+                                throw_data.expression,
+                                cases,
+                                current_statements,
+                                current_label,
                             );
                             let expr = self.expression_to_ir(throw_data.expression);
                             current_statements.push(IRNode::ThrowStatement(Box::new(expr)));
@@ -948,7 +954,10 @@ impl<'a> AsyncES5Transformer<'a> {
 
                 // Emit the yield for the nested await
                 self.emit_nested_suspension(
-                    decl.initializer, cases, current_statements, current_label,
+                    decl.initializer,
+                    cases,
+                    current_statements,
+                    current_label,
                 );
                 let init = self.expression_to_ir(decl.initializer);
                 current_statements.push(IRNode::ExpressionStatement(Box::new(
