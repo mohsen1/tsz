@@ -362,7 +362,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 .type_env
                 .try_borrow()
                 .ok()
-                .and_then(|env| env.get_def(def_id))
+                .and_then(|env| {
+                    // For classes, check class_instance_types first (instance type for
+                    // type position), then fall back to get_def (constructor/body type).
+                    // This matches TypeEnvironment::resolve_lazy behavior and ensures
+                    // indexed access types like C["x"] resolve class instance properties.
+                    env.get_class_instance_type(def_id)
+                        .or_else(|| env.get_def(def_id))
+                })
                 .or_else(|| self.ctx.definition_store.get_body(def_id))
                 .unwrap_or(unwrapped);
             crate::query_boundaries::common::unwrap_readonly(self.ctx.types, resolved)
