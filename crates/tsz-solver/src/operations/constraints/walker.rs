@@ -1661,6 +1661,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     priority,
                 );
             }
+            // Callable -> Object/ObjectWithIndex: constrain the Callable's static properties
+            // against the Object's properties. This handles inference from class constructor
+            // types against interfaces with property signatures (e.g., dec<T>(c: I<T>) where
+            // I<T> = { prototype: T, m: () => T } and the source is typeof SomeClass).
+            (
+                Some(TypeData::Callable(s_callable_id)),
+                Some(TypeData::Object(t_shape_id) | TypeData::ObjectWithIndex(t_shape_id)),
+            ) => {
+                let s_callable = self.interner.callable_shape(s_callable_id);
+                let t_shape = self.interner.object_shape(t_shape_id);
+                self.constrain_properties(
+                    ctx,
+                    var_map,
+                    &s_callable.properties,
+                    &t_shape.properties,
+                    priority,
+                    false,
+                );
+            }
             // Object/ObjectWithIndex to Array/Tuple: constrain index signatures to sequence element type
             (Some(TypeData::Object(s_shape_id)), Some(TypeData::Array(t_elem)))
             | (Some(TypeData::ObjectWithIndex(s_shape_id)), Some(TypeData::Array(t_elem))) => {
