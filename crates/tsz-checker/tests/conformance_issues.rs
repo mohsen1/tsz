@@ -23857,3 +23857,34 @@ declare namespace Immutable {
         "Should not emit TS2395 in declare namespace context. Got: {diagnostics:#?}"
     );
 }
+
+/// Object literal union normalization must include empty objects.
+///
+/// When computing the best common type of `[{ a: 1, b: 2 }, { a: "abc" }, {}]`,
+/// tsc normalizes the `{}` member to `{ a?: undefined; b?: undefined }` so that
+/// property access on the resulting union works without TS2339. Previously, tsz
+/// skipped empty objects during normalization, causing false TS2339 errors after
+/// freshness was stripped for variable declarations.
+#[test]
+fn test_object_literal_normalization_empty_object_no_ts2339() {
+    let options = CheckerOptions {
+        strict: true,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+let a2 = [{ a: 1, b: 2 }, { a: "abc" }, {}][0];
+a2.a;
+a2.b;
+"#,
+        options,
+    );
+    let ts2339 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2339)
+        .collect::<Vec<_>>();
+    assert!(
+        ts2339.is_empty(),
+        "Should not emit TS2339 for property access on normalized object literal union with empty object member. Got: {ts2339:#?}"
+    );
+}

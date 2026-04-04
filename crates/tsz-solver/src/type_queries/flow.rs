@@ -792,6 +792,24 @@ fn types_have_common_properties_relaxed(
         }
         // Intentionally NOT returning false for missing target properties
     }
+
+    if !found_common {
+        // Weak type overlap: if either side has ONLY optional properties (a "weak type"),
+        // it overlaps with any object that has at least one property. Every object
+        // structurally satisfies a weak type (optional properties can all be missing).
+        // This matches tsc's `isTypeComparableTo` which bypasses weak type detection
+        // (TS2559) in comparable contexts like type assertions.
+        let source_is_weak =
+            !source_props.is_empty() && source_props.iter().all(|(_, _, opt)| *opt);
+        let target_is_weak =
+            !target_props.is_empty() && target_props.iter().all(|(_, _, opt)| *opt);
+        if (source_is_weak && !target_props.is_empty())
+            || (target_is_weak && !source_props.is_empty())
+        {
+            return true;
+        }
+    }
+
     found_common
 }
 
