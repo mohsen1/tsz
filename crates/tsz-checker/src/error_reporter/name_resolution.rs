@@ -1004,25 +1004,12 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Suggestion collection and diagnostic emission are now handled by
-        // `collect_spelling_suggestions` + the boundary's `report_name_resolution_failure`.
-        // Attempt to collect suggestions and emit the appropriate diagnostic.
-        let suggestions = self.collect_spelling_suggestions(name, idx);
-        if !suggestions.is_empty() {
-            self.error_cannot_find_name_with_suggestions(name, &suggestions, idx);
-            return;
-        }
+        // The boundary's `report_name_resolution_failure` already checked for
+        // spelling suggestions via `collect_spelling_suggestions` before calling
+        // this function. The suggestion counter was incremented eagerly in
+        // `collect_spelling_suggestions`, so no counter update is needed here.
 
-        // tsc increments suggestionCount unconditionally for every name resolution
-        // failure, not just when a suggestion is found. This ensures the cap of 10
-        // counts all resolution attempts, matching tsc's behavior.
-        // Only increment for unique node indices to prevent counter inflation from
-        // repeated resolution of the same type reference (e.g., in generic contexts).
-        if self.ctx.name_resolution_reported_nodes.insert(idx) {
-            self.ctx.spelling_suggestions_emitted += 1;
-        }
-
-        // Fall back to standard error without suggestions
+        // Emit standard TS2304 "Cannot find name" error without suggestions
         if let Some(loc) = self.get_source_location(idx) {
             let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
                 self.ctx.types,
@@ -1057,11 +1044,21 @@ impl<'a> CheckerState<'a> {
             return Vec::new();
         }
 
-        // Only suppress suggestions when the cap is reached AND this is a new node.
-        // Repeated resolution of already-counted nodes should still get suggestions.
-        let reached_max_suggestions = self.ctx.spelling_suggestions_emitted >= 10
-            && !self.ctx.name_resolution_reported_nodes.contains(&idx);
-        if reached_max_suggestions {
+        // Eagerly increment the suggestion counter for each unique name resolution
+        // attempt. tsc increments `suggestionCount` synchronously during sequential
+        // checking, but our demand-driven type resolution can resolve many names
+        // before any diagnostics are emitted. Counting eagerly here (via Cell)
+        // ensures the cap of 10 is reached regardless of processing order.
+        let is_new_node = !self.ctx.name_resolution_reported_nodes.contains(&idx);
+        if is_new_node {
+            self.ctx
+                .spelling_suggestions_emitted
+                .set(self.ctx.spelling_suggestions_emitted.get() + 1);
+        }
+
+        // Suppress suggestions when the cap is reached for a new node.
+        // Already-counted nodes can still get suggestions (repeated resolution).
+        if self.ctx.spelling_suggestions_emitted.get() > 10 && is_new_node {
             return Vec::new();
         }
 
@@ -1232,22 +1229,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // tsc caps spelling suggestions at 10 per file.
-        // Only count unique node indices towards the cap to prevent inflation
-        // from repeated resolution of the same type reference.
-        if self.ctx.spelling_suggestions_emitted >= 10
-            && !self.ctx.name_resolution_reported_nodes.contains(&idx)
-        {
-            self.error_at_node(
-                idx,
-                &format!("Cannot find name '{name}'."),
-                diagnostic_codes::CANNOT_FIND_NAME,
-            );
-            return;
-        }
-        if self.ctx.name_resolution_reported_nodes.insert(idx) {
-            self.ctx.spelling_suggestions_emitted += 1;
-        }
+        // The suggestion counter was already incremented eagerly in
+        // `collect_spelling_suggestions`. Just mark the node as reported
+        // to prevent future double-counting.
+        self.ctx.name_resolution_reported_nodes.insert(idx);
 
         // Skip TS2304 for identifiers that are clearly not valid names.
         // These are likely parse errors that were added to the AST for error recovery.

@@ -58,7 +58,7 @@ impl<'a> CheckerContext<'a> {
             report_unresolved_imports: false,
             file_is_esm: None,
             file_is_esm_map: None,
-            spelling_suggestions_emitted: 0,
+            spelling_suggestions_emitted: std::cell::Cell::new(0),
             name_resolution_reported_nodes: FxHashSet::default(),
             no_implicit_override: false,
             types_extending_array: FxHashSet::default(),
