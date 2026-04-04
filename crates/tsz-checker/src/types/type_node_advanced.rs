@@ -321,6 +321,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     && !is_index_access
                     && !object_has_type_params
                 {
+                    use crate::query_boundaries::common::PropertyAccessResult;
+
                     let prop_result =
                         crate::query_boundaries::property_access::resolve_property_access(
                             self.ctx.types,
@@ -328,9 +330,28 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             &key,
                         );
 
+                    let prop_found =
+                        !matches!(prop_result, PropertyAccessResult::PropertyNotFound { .. });
+
+                    // When the property is not found via direct lookup, try evaluating
+                    // the full IndexAccess type. The solver's IndexAccess evaluator
+                    // can resolve through Lazy types and union distribution, which the
+                    // simple property access resolver cannot.
+                    let prop_found = if !prop_found {
+                        let factory = self.ctx.types.factory();
+                        let string_lit = factory.literal_string(&key);
+                        let index_access_type = factory.index_access(object_type, string_lit);
+                        let evaluated =
+                            tsz_solver::evaluate_type(self.ctx.types, index_access_type);
+                        evaluated != TypeId::ERROR
+                            && evaluated != TypeId::UNKNOWN
+                            && evaluated != TypeId::NEVER
+                    } else {
+                        true
+                    };
+
                     // If property not found and no index signature exists, emit TS2339
-                    use crate::query_boundaries::common::PropertyAccessResult;
-                    if matches!(prop_result, PropertyAccessResult::PropertyNotFound { .. }) {
+                    if !prop_found {
                         // Check if there's an index signature that allows this key
                         let has_index_sig = crate::query_boundaries::common::object_shape_for_type(
                             self.ctx.types,
