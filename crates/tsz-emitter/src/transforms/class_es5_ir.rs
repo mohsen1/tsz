@@ -1828,6 +1828,10 @@ impl<'a> ES5ClassTransformer<'a> {
             return;
         }
 
+        // Snapshot hoisted temps before processing constructor body so we can
+        // separate temps generated inside the constructor from class-level temps.
+        let temps_before = self.extra_hoisted_temps.borrow().len();
+
         // Emit statements before super() unchanged
         let mut prev_stmt_end = body_node.pos;
         for (i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
@@ -1882,6 +1886,25 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
                 body.push(self.convert_statement_this_captured(stmt_idx));
             }
+        }
+
+        // Hoist temps generated during constructor body to the top of the
+        // constructor function, not the class IIFE.
+        let temps_after = self.extra_hoisted_temps.borrow().len();
+        if temps_after > temps_before {
+            let ctor_temps: Vec<String> = self
+                .extra_hoisted_temps
+                .borrow_mut()
+                .drain(temps_before..)
+                .collect();
+            let var_decls: Vec<IRNode> = ctor_temps
+                .into_iter()
+                .map(|name| IRNode::VarDecl {
+                    name: name.into(),
+                    initializer: None,
+                })
+                .collect();
+            body.insert(0, IRNode::VarDeclList(var_decls));
         }
 
         // return _this;

@@ -697,6 +697,26 @@ impl<'a> AstToIr<'a> {
                 vec![]
             };
 
+            // Check for bare super(args) → _this = _super.call(this, args) || this
+            // This handles super() in expression contexts (e.g. computed property names).
+            if self.has_super {
+                let callee_node = self.arena.get(call.expression);
+                if let Some(cn) = callee_node
+                    && cn.kind == SyntaxKind::SuperKeyword as u16
+                {
+                    let mut call_args = vec![IRNode::this()];
+                    call_args.extend(args);
+                    // _this = _super.call(this, args...) || this
+                    return IRNode::assign(
+                        IRNode::id("_this"),
+                        IRNode::logical_or(
+                            IRNode::call(IRNode::prop(IRNode::id("_super"), "call"), call_args),
+                            IRNode::this(),
+                        ),
+                    );
+                }
+            }
+
             // Check for super.method(args) or super[expr](args) → _super.prototype.method.call(this, args)
             if self.has_super
                 && let Some(super_call) =
