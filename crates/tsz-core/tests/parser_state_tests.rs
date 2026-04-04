@@ -21,7 +21,7 @@ fn test_parser_simple_expression() {
     let mut parser = ParserState::new("test.ts".to_string(), "1 + 2".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(!parser.arena.is_empty());
 
     // Should have: SourceFile, ExpressionStatement, BinaryExpression, 2 NumericLiterals
@@ -110,7 +110,7 @@ fn test_parser_function() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Unexpected errors: {:?}",
@@ -123,7 +123,7 @@ fn test_parser_variable_declaration() {
     let mut parser = ParserState::new("test.ts".to_string(), "let x = 42;".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
 }
 
@@ -135,7 +135,7 @@ fn test_parser_if_statement() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
 }
 
@@ -144,7 +144,7 @@ fn test_parser_while_loop() {
     let mut parser = ParserState::new("test.ts".to_string(), "while (x < 10) { x++; }".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
 }
 
@@ -156,7 +156,7 @@ fn test_parser_for_loop() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
 }
 
@@ -168,7 +168,7 @@ fn test_parser_object_literal() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -181,7 +181,7 @@ fn test_parser_array_literal() {
     let mut parser = ParserState::new("test.ts".to_string(), "let arr = [1, 2, 3];".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
 }
 
@@ -623,7 +623,7 @@ fn test_parser_unterminated_template_expression_no_crash() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser
             .get_diagnostics()
@@ -640,7 +640,7 @@ fn test_parser_unterminated_template_literal_reports_ts1160() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser
             .get_diagnostics()
@@ -657,7 +657,7 @@ fn test_parser_template_literal_property_name_no_ts1160() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     let diagnostics = parser.get_diagnostics();
     assert!(
         diagnostics
@@ -679,7 +679,7 @@ fn test_parser_double_comma_emits_ts1136() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     let diagnostics = parser.get_diagnostics();
     assert!(
         diagnostics
@@ -694,7 +694,7 @@ fn test_parser_call_expression() {
     let mut parser = ParserState::new("test.ts".to_string(), "foo(1, 2, 3);".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
 }
 
@@ -703,7 +703,7 @@ fn test_parser_property_access() {
     let mut parser = ParserState::new("test.ts".to_string(), "obj.foo.bar;".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
 }
 
@@ -712,7 +712,7 @@ fn test_parser_new_expression() {
     let mut parser = ParserState::new("test.ts".to_string(), "new Foo(1, 2);".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
 }
 
@@ -724,7 +724,7 @@ fn test_parser_class_declaration() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -740,7 +740,7 @@ fn test_parser_class_with_constructor() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -756,7 +756,7 @@ fn test_parser_class_member_named_var() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -772,7 +772,7 @@ fn test_parser_class_extends() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     // May have some diagnostics for super() but should parse successfully
 }
 
@@ -785,7 +785,7 @@ fn test_parser_class_extends_call() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -802,7 +802,7 @@ fn test_parser_class_extends_property_access() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -815,7 +815,7 @@ fn test_parser_decorator_class() {
     let mut parser = ParserState::new("test.ts".to_string(), "@Component class Foo {}".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -831,7 +831,7 @@ fn test_parser_decorator_with_call() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -847,7 +847,7 @@ fn test_parser_multiple_decorators() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -863,7 +863,7 @@ fn test_parser_decorator_abstract_class() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -879,7 +879,7 @@ fn test_parser_class_extends_and_implements() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -895,7 +895,7 @@ fn test_parser_abstract_class() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -912,7 +912,7 @@ fn test_parser_abstract_class_in_iife() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     // Should parse without crashing
 }
 
@@ -924,7 +924,7 @@ fn test_parser_get_accessor() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -940,7 +940,7 @@ fn test_parser_set_accessor() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -957,7 +957,7 @@ fn test_parser_empty_accessor_body() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     // Should parse without crashing
 }
 
@@ -969,7 +969,7 @@ fn test_parser_get_set_pair() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1013,7 +1013,7 @@ fn test_parser_interface_declaration() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1029,7 +1029,7 @@ fn test_parser_interface_with_methods() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1045,7 +1045,7 @@ fn test_parser_interface_extends() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1058,7 +1058,7 @@ fn test_parser_type_alias() {
     let mut parser = ParserState::new("test.ts".to_string(), "type ID = string;".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1072,7 +1072,7 @@ fn test_parser_type_alias_object() {
     let mut parser = ParserState::new("test.ts".to_string(), "type Point = Coord;".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1088,7 +1088,7 @@ fn test_parser_index_signature() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1104,7 +1104,7 @@ fn test_parser_readonly_index_signature() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1120,7 +1120,7 @@ fn test_parser_readonly_property_signature() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1136,7 +1136,7 @@ fn test_parser_arrow_function_simple() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1152,7 +1152,7 @@ fn test_parser_arrow_function_single_param() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1168,7 +1168,7 @@ fn test_parser_arrow_function_block_body() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1184,7 +1184,7 @@ fn test_parser_arrow_function_no_params() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1200,7 +1200,7 @@ fn test_parser_arrow_function_in_object_literal() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1216,7 +1216,7 @@ fn test_parser_type_assertion_angle_bracket() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1232,7 +1232,7 @@ fn test_parser_literal_type_assertion_angle_bracket() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1248,7 +1248,7 @@ fn test_parser_async_function() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1264,7 +1264,7 @@ fn test_parser_async_arrow_function() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1280,7 +1280,7 @@ fn test_parser_async_arrow_single_param() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1296,7 +1296,7 @@ fn test_parser_generator_function() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1312,7 +1312,7 @@ fn test_parser_yield_expression() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1328,7 +1328,7 @@ fn test_parser_yield_star() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1344,7 +1344,7 @@ fn test_parser_await_expression() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1360,7 +1360,7 @@ fn test_parser_union_type() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1373,7 +1373,7 @@ fn test_parser_intersection_type() {
     let mut parser = ParserState::new("test.ts".to_string(), "let x: A & B & C;".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1387,7 +1387,7 @@ fn test_parser_union_intersection_mixed() {
     let mut parser = ParserState::new("test.ts".to_string(), "let x: A & B | C & D;".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1400,7 +1400,7 @@ fn test_parser_array_type() {
     let mut parser = ParserState::new("test.ts".to_string(), "let arr: string[];".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1413,7 +1413,7 @@ fn test_parser_nested_array_type() {
     let mut parser = ParserState::new("test.ts".to_string(), "let matrix: number[][];".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1429,7 +1429,7 @@ fn test_parser_union_array_type() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1445,7 +1445,7 @@ fn test_parser_tuple_type() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1461,7 +1461,7 @@ fn test_parser_tuple_type_mixed() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1477,7 +1477,7 @@ fn test_parser_tuple_array() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1493,7 +1493,7 @@ fn test_parser_generic_type() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1509,7 +1509,7 @@ fn test_parser_generic_type_multiple() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1525,7 +1525,7 @@ fn test_parser_generic_nested() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1541,7 +1541,7 @@ fn test_parser_promise_type() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1557,7 +1557,7 @@ fn test_parser_function_type() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1573,7 +1573,7 @@ fn test_parser_function_type_no_params() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1589,7 +1589,7 @@ fn test_parser_function_type_multiple_params() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1605,7 +1605,7 @@ fn test_parser_function_type_optional_param() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1621,7 +1621,7 @@ fn test_parser_function_type_rest_param() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1638,7 +1638,7 @@ fn test_parser_parenthesized_type_still_works() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1654,7 +1654,7 @@ fn test_parser_literal_type_string() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1670,7 +1670,7 @@ fn test_parser_literal_type_number() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1683,7 +1683,7 @@ fn test_parser_literal_type_boolean() {
     let mut parser = ParserState::new("test.ts".to_string(), "let flag: true;".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1699,7 +1699,7 @@ fn test_parser_typeof_type() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1715,7 +1715,7 @@ fn test_parser_typeof_type_qualified() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1736,7 +1736,7 @@ fn test_parser_generic_arrow_simple() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1752,7 +1752,7 @@ fn test_parser_generic_arrow_tsx_trailing_comma() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1769,7 +1769,7 @@ fn test_parser_generic_arrow_multiple_params() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1786,7 +1786,7 @@ fn test_parser_generic_arrow_with_constraint() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1803,7 +1803,7 @@ fn test_parser_generic_arrow_with_default() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1820,7 +1820,7 @@ fn test_parser_generic_arrow_with_constraint_and_default() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1837,7 +1837,7 @@ fn test_parser_async_generic_arrow() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1854,7 +1854,7 @@ fn test_parser_generic_arrow_expression_body() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1871,7 +1871,7 @@ fn test_parser_arrow_function_with_return_type() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1888,7 +1888,7 @@ fn test_parser_arrow_type_predicate() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1904,7 +1904,7 @@ fn test_parser_this_type_predicate() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1920,7 +1920,7 @@ fn test_parser_asserts_this_type_predicate() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1936,7 +1936,7 @@ fn test_parser_asserts_this_type_predicate_without_is() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1953,7 +1953,7 @@ fn test_parser_constructor_type() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1970,7 +1970,7 @@ fn test_parser_constructor_type_with_params() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -1987,7 +1987,7 @@ fn test_parser_generic_constructor_type() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2008,7 +2008,7 @@ fn test_parser_keyof_type() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2025,7 +2025,7 @@ fn test_parser_keyof_typeof() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2042,7 +2042,7 @@ fn test_parser_keyof_in_union() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2059,7 +2059,7 @@ fn test_parser_readonly_array() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2076,7 +2076,7 @@ fn test_parser_readonly_tuple() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2097,7 +2097,7 @@ fn test_parser_indexed_access_type() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2114,7 +2114,7 @@ fn test_parser_indexed_access_keyof() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2131,7 +2131,7 @@ fn test_parser_indexed_access_chain() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2148,7 +2148,7 @@ fn test_parser_indexed_access_with_array() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2165,7 +2165,7 @@ fn test_parser_indexed_access_number() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2186,7 +2186,7 @@ fn test_parser_conditional_type_simple() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2203,7 +2203,7 @@ fn test_parser_conditional_type_nested() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2220,7 +2220,7 @@ fn test_parser_conditional_type_with_infer() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2237,7 +2237,7 @@ fn test_parser_conditional_type_distributive() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2254,7 +2254,7 @@ fn test_parser_infer_type() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2275,7 +2275,7 @@ fn test_parser_mapped_type_simple() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2292,7 +2292,7 @@ fn test_parser_mapped_type_readonly() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2309,7 +2309,7 @@ fn test_parser_mapped_type_required() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2326,7 +2326,7 @@ fn test_parser_mapped_type_as_clause() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2343,7 +2343,7 @@ fn test_parser_type_literal() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2360,7 +2360,7 @@ fn test_parser_type_literal_method() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2381,7 +2381,7 @@ fn test_parser_template_literal_type_simple() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2398,7 +2398,7 @@ fn test_parser_template_literal_type_with_substitution() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2415,7 +2415,7 @@ fn test_parser_template_literal_type_multiple_substitutions() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2432,7 +2432,7 @@ fn test_parser_template_literal_type_with_union() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2449,7 +2449,7 @@ fn test_parser_template_literal_type_uppercase() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2470,7 +2470,7 @@ fn test_parser_jsx_self_closing() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2487,7 +2487,7 @@ fn test_parser_jsx_with_children() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2504,7 +2504,7 @@ fn test_parser_jsx_with_attributes() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2521,7 +2521,7 @@ fn test_parser_jsx_with_expression() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2538,7 +2538,7 @@ fn test_parser_jsx_fragment() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2555,7 +2555,7 @@ fn test_parser_jsx_spread_attribute() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2572,7 +2572,7 @@ fn test_parser_jsx_namespaced() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2589,7 +2589,7 @@ fn test_parser_jsx_member_expression() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2609,7 +2609,7 @@ fn test_parser_import_default() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2625,7 +2625,7 @@ fn test_parser_import_named() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2641,7 +2641,7 @@ fn test_parser_import_namespace() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2654,7 +2654,7 @@ fn test_parser_import_side_effect() {
     let mut parser = ParserState::new("test.ts".to_string(), r#"import "foo";"#.to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2670,7 +2670,7 @@ fn test_parser_export_function() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2683,7 +2683,7 @@ fn test_parser_export_const() {
     let mut parser = ParserState::new("test.ts".to_string(), "export const x = 42;".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2699,7 +2699,7 @@ fn test_parser_export_default() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2715,7 +2715,7 @@ fn test_parser_re_export() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2731,7 +2731,7 @@ fn test_parser_default_re_export_specifiers() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2744,7 +2744,7 @@ fn test_parser_export_star() {
     let mut parser = ParserState::new("test.ts".to_string(), r#"export * from "foo";"#.to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -2764,7 +2764,7 @@ fn test_parser_static_members() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     // May have diagnostics for static but should parse
 }
 
@@ -2776,7 +2776,7 @@ fn test_parser_private_protected() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -2787,7 +2787,7 @@ fn test_parser_readonly() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -2798,7 +2798,7 @@ fn test_parser_constructor_parameter_properties() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -2809,7 +2809,7 @@ fn test_parser_optional_chaining() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -2817,7 +2817,7 @@ fn test_parser_optional_chain_call_with_type_arguments() {
     let mut parser = ParserState::new("test.ts".to_string(), "let x = obj?.<T>(value)".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -2828,7 +2828,7 @@ fn test_parser_relational_with_parenthesized_rhs() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -2839,7 +2839,7 @@ fn test_parser_every_type_arrow_conditional_comma() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
 }
 
@@ -2851,7 +2851,7 @@ fn test_parser_every_type_arrow_conditional_comma_expression() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
 }
 
@@ -2863,7 +2863,7 @@ fn test_parser_checker_every_type_arrow_optional_chain() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
 }
 
@@ -2875,7 +2875,7 @@ fn test_parser_checker_every_type_arrow_optional_chain_line() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
 }
 
@@ -2887,7 +2887,7 @@ fn test_parser_arrow_optional_chain_with_ternary_comma() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
 }
 
@@ -2899,7 +2899,7 @@ fn test_parser_spread_in_call_arguments() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -2910,7 +2910,7 @@ fn test_parser_as_expression_followed_by_logical_or() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -2921,7 +2921,7 @@ fn test_parser_keyword_identifier_in_expression() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -2932,7 +2932,7 @@ fn test_parser_arrow_param_keyword_identifier() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -2943,7 +2943,7 @@ fn test_parser_type_predicate_keyword_param() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -2954,7 +2954,7 @@ fn test_parser_namespace_identifier_assignment_statement() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -2965,7 +2965,7 @@ fn test_parser_type_identifier_assignment_statement() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -2973,7 +2973,7 @@ fn test_parser_nullish_coalescing() {
     let mut parser = ParserState::new("test.ts".to_string(), "let x = a ?? b ?? c".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -2984,7 +2984,7 @@ fn test_parser_type_predicate() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -2995,7 +2995,7 @@ fn test_parser_mapped_type() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -3006,7 +3006,7 @@ fn test_parser_conditional_type() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -3017,7 +3017,7 @@ fn test_parser_infer_type_complex() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -3029,7 +3029,7 @@ fn test_parser_rest_spread() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -3040,7 +3040,7 @@ fn test_parser_destructuring_default() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -3051,7 +3051,7 @@ fn test_parser_computed_property() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -3062,7 +3062,7 @@ fn test_parser_symbol_property() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -3073,7 +3073,7 @@ fn test_parser_bigint_literal() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -3084,7 +3084,7 @@ fn test_parser_numeric_separator() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -3095,7 +3095,7 @@ fn test_parser_private_identifier() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -3106,7 +3106,7 @@ fn test_parser_satisfies() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -3118,7 +3118,7 @@ fn test_parser_using_declaration() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -3129,7 +3129,7 @@ fn test_parser_static_property() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -3145,7 +3145,7 @@ fn test_parser_static_method() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -3161,7 +3161,7 @@ fn test_parser_private_property() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -3177,7 +3177,7 @@ fn test_parser_protected_method() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -3193,7 +3193,7 @@ fn test_parser_readonly_property() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -3209,7 +3209,7 @@ fn test_parser_public_constructor() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -3225,7 +3225,7 @@ fn test_parser_static_get_accessor() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -3241,7 +3241,7 @@ fn test_parser_private_set_accessor() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -3258,7 +3258,7 @@ fn test_parser_multiple_modifiers() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -3274,7 +3274,7 @@ fn test_parser_override_method() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -3290,7 +3290,7 @@ fn test_parser_async_method() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -3306,7 +3306,7 @@ fn test_parser_abstract_method_in_class() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -3322,7 +3322,7 @@ fn test_parser_call_signature() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -3338,7 +3338,7 @@ fn test_parser_construct_signature() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -3363,7 +3363,7 @@ fn test_parser_interface_with_call_and_construct() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -3379,7 +3379,7 @@ fn test_parser_type_literal_with_call_signature() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -3396,7 +3396,7 @@ fn test_parser_accessor_signature_in_type() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -3414,7 +3414,7 @@ fn test_parser_accessor_body_in_type_context() {
     let root = parser.parse_source_file();
 
     // Should parse (checker will report error about body)
-    assert!(!root.is_none());
+    assert!(root.is_some());
     // Parser may report an error about unexpected token, but should recover
 }
 
@@ -3426,7 +3426,7 @@ fn test_parser_interface_accessor_signature() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Errors: {:?}",
@@ -3445,7 +3445,7 @@ fn test_parser_class_semicolon_element_ts1068() {
     let mut parser = ParserState::new("test.ts".to_string(), "class C { ; }".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Class with semicolon element should not error: {:?}",
@@ -3469,7 +3469,7 @@ fn test_parser_class_multiple_semicolons() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "Class with multiple semicolons should not error: {:?}",
@@ -3483,7 +3483,7 @@ fn test_parser_await_as_type_name() {
     let mut parser = ParserState::new("test.ts".to_string(), "var v: await;".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "'await' as type name should not error: {:?}",
@@ -3497,7 +3497,7 @@ fn test_parser_await_as_parameter_name() {
     let mut parser = ParserState::new("test.ts".to_string(), "function f(await) { }".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "'await' as parameter name should not error: {:?}",
@@ -3514,7 +3514,7 @@ fn test_parser_await_as_identifier_with_default() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "'await = await' should not error: {:?}",
@@ -3531,7 +3531,7 @@ fn test_parser_await_in_async_function() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "await in async function should not error: {:?}",
@@ -3548,7 +3548,7 @@ fn test_parser_await_in_async_arrow() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "await in async arrow should not error: {:?}",
@@ -3570,7 +3570,7 @@ fn test_parser_await_in_async_method() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "await in async method should not error: {:?}",
@@ -3584,7 +3584,7 @@ fn test_parser_yield_as_type_name() {
     let mut parser = ParserState::new("test.ts".to_string(), "var v: yield;".to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "'yield' as type name should not error: {:?}",
@@ -3604,7 +3604,7 @@ fn test_parser_await_type_in_async_context() {
     );
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(
         parser.get_diagnostics().is_empty(),
         "'await' as type in async context should not error: {:?}",
@@ -3846,7 +3846,7 @@ outer: for (let i = 0; i < 10; i++) {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
 
     // Verify the label is stored
@@ -3861,7 +3861,7 @@ outer: for (let i = 0; i < 10; i++) {
         .get_jump_data(break_node)
         .expect("jump data not found");
     assert!(
-        !jump_data.label.is_none(),
+        jump_data.label.is_some(),
         "Label should be stored, not NONE"
     );
 
@@ -3893,7 +3893,7 @@ outer: for (let i = 0; i < 10; i++) {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
 
     // Verify the label is stored
@@ -3908,7 +3908,7 @@ outer: for (let i = 0; i < 10; i++) {
         .get_jump_data(continue_node)
         .expect("jump data not found");
     assert!(
-        !jump_data.label.is_none(),
+        jump_data.label.is_some(),
         "Label should be stored, not NONE"
     );
 
@@ -3938,7 +3938,7 @@ for (let i = 0; i < 10; i++) {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
 
     // Verify no label is stored (should be NONE)
@@ -3968,7 +3968,7 @@ for (let i = 0; i < 10; i++) {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
 
     // Verify no label is stored (should be NONE)
@@ -3998,7 +3998,7 @@ myLabel: while (true) {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
 
     // Verify labeled statement is parsed
@@ -4027,7 +4027,7 @@ outer: for (;;) {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    assert!(!root.is_none());
+    assert!(root.is_some());
 
     // The break should have NONE for label due to ASI
     let arena = parser.get_arena();
@@ -4058,7 +4058,7 @@ fn test_ts1038_declare_inside_declare_namespace() {
     let source = r#"declare namespace X { declare var y: number; }"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 #[test]
@@ -4066,7 +4066,7 @@ fn test_ts1038_declare_inside_regular_namespace() {
     let source = r#"namespace M { declare module 'nope' { } }"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    assert!(!root.is_none());
+    assert!(root.is_some());
 }
 
 // =============================================================================

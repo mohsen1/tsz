@@ -26,15 +26,15 @@ mod symbol_id_tests {
     fn some_values_are_not_none() {
         let id = SymbolId(0);
         assert!(id.is_some());
-        assert!(!id.is_none());
+        assert!(id.is_some());
 
         let id = SymbolId(42);
         assert!(id.is_some());
-        assert!(!id.is_none());
+        assert!(id.is_some());
 
         let id = SymbolId(u32::MAX - 1);
         assert!(id.is_some());
-        assert!(!id.is_none());
+        assert!(id.is_some());
     }
 
     #[test]

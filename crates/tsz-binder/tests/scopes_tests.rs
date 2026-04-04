@@ -19,7 +19,7 @@ fn scope_id_none_is_none() {
 fn scope_id_some_is_some() {
     let id = ScopeId(0);
     assert!(id.is_some());
-    assert!(!id.is_none());
+    assert!(id.is_some());
 }
 
 #[test]
@@ -27,17 +27,17 @@ fn scope_id_arbitrary_values() {
     // Zero is valid
     let zero = ScopeId(0);
     assert!(zero.is_some());
-    assert!(!zero.is_none());
+    assert!(zero.is_some());
 
     // Mid-range values are valid
     let mid = ScopeId(1000);
     assert!(mid.is_some());
-    assert!(!mid.is_none());
+    assert!(mid.is_some());
 
     // Max - 1 is valid
     let almost_max = ScopeId(u32::MAX - 1);
     assert!(almost_max.is_some());
-    assert!(!almost_max.is_none());
+    assert!(almost_max.is_some());
 
     // Max (NONE sentinel) is not valid
     let none = ScopeId(u32::MAX);

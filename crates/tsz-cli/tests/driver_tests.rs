@@ -1259,7 +1259,7 @@ fn symbol_snapshot_by_id(binder: &BinderState, sym_id: SymbolId) -> Option<Symbo
         value_declaration: sym.value_declaration.0,
         value_declaration_span: sym.value_declaration_span,
         first_declaration_span: sym.first_declaration_span,
-        parent_name: (!sym.parent.is_none()).then(|| {
+        parent_name: (sym.parent.is_some()).then(|| {
             symbol_name_for_id(binder, sym.parent).unwrap_or_else(|| format!("#{}", sym.parent.0))
         }),
         exports,

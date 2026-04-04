@@ -9,7 +9,7 @@ fn test_parse_single_file() {
     let result = parse_file_single("test.ts".to_string(), "let x = 42;".to_string());
 
     assert_eq!(result.file_name, "test.ts");
-    assert!(!result.source_file.is_none());
+    assert!(result.source_file.is_some());
     assert!(result.parse_diagnostics.is_empty());
 }
 
@@ -25,7 +25,7 @@ fn test_parse_multiple_files_parallel() {
 
     assert_eq!(results.len(), 3);
     for result in &results {
-        assert!(!result.source_file.is_none());
+        assert!(result.source_file.is_some());
         assert!(result.parse_diagnostics.is_empty());
     }
 }
@@ -158,7 +158,7 @@ fn test_parse_and_bind_single_uses_json_synthetic_bind_path() {
     );
 
     assert_eq!(result.file_name, "settings.json");
-    assert!(!result.source_file.is_none());
+    assert!(result.source_file.is_some());
     assert!(result.parse_diagnostics.is_empty());
     assert!(!result.arena.is_empty());
 }
@@ -175,7 +175,7 @@ fn test_bind_single_file() {
     );
 
     assert_eq!(result.file_name, "test.ts");
-    assert!(!result.source_file.is_none());
+    assert!(result.source_file.is_some());
     assert!(result.parse_diagnostics.is_empty());
     // Should have symbols for x and foo
     assert!(result.file_locals.has("x"));
