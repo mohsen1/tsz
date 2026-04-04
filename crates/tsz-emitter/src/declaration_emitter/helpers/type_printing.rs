@@ -240,33 +240,193 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(crate) fn print_type_id_with_outer_type_params(&self, type_id: tsz_solver::types::TypeId, outer_type_params: &NodeList) -> String {
-        let Some(interner) = self.type_interner else { return "any".to_string(); };
-        let type_id = if let Some(cache) = &self.type_cache { let resolver = DtsCacheResolver { cache }; let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(interner, &resolver); evaluator.set_max_mapped_keys(1_024); evaluator.evaluate(type_id) } else { let mut evaluator = tsz_solver::TypeEvaluator::new(interner); evaluator.set_max_mapped_keys(1_024); evaluator.evaluate(type_id) };
+    pub(crate) fn print_type_id_with_outer_type_params(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        outer_type_params: &NodeList,
+    ) -> String {
+        let Some(interner) = self.type_interner else {
+            return "any".to_string();
+        };
+        let type_id = if let Some(cache) = &self.type_cache {
+            let resolver = DtsCacheResolver { cache };
+            let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(interner, &resolver);
+            evaluator.set_max_mapped_keys(1_024);
+            evaluator.evaluate(type_id)
+        } else {
+            let mut evaluator = tsz_solver::TypeEvaluator::new(interner);
+            evaluator.set_max_mapped_keys(1_024);
+            evaluator.evaluate(type_id)
+        };
         let mut outer_names = Vec::new();
-        for &param_idx in &outer_type_params.nodes { if let Some(param_node) = self.arena.get(param_idx) && let Some(param) = self.arena.get_type_parameter(param_node) && let Some(name_text) = self.get_identifier_text(param.name) { let atom = interner.intern_string(&name_text); outer_names.push(atom); } }
+        for &param_idx in &outer_type_params.nodes {
+            if let Some(param_node) = self.arena.get(param_idx)
+                && let Some(param) = self.arena.get_type_parameter(param_node)
+                && let Some(name_text) = self.get_identifier_text(param.name)
+            {
+                let atom = interner.intern_string(&name_text);
+                outer_names.push(atom);
+            }
+        }
         let module_path_resolver = |sym_id| self.resolve_symbol_module_path(sym_id);
         let namespace_alias_resolver = |sym_id| self.resolve_namespace_import_alias(sym_id);
-        let local_import_alias_name_resolver = |sym_id| self.can_reference_local_import_alias_by_name(sym_id);
-        let has_local_import_alias_resolver = |sym_id| { if let Some(binder) = self.binder { self.symbol_has_local_import_alias(binder, sym_id) } else { false } };
-        let mut printer = TypePrinter::new(interner).with_indent_level(self.indent_level).with_node_arena(self.arena).with_module_path_resolver(&module_path_resolver).with_namespace_alias_resolver(&namespace_alias_resolver).with_local_import_alias_name_resolver(&local_import_alias_name_resolver).with_has_local_import_alias_resolver(&has_local_import_alias_resolver).with_strict_null_checks(self.strict_null_checks).with_outer_type_params(outer_names);
-        if let Some(binder) = self.binder { printer = printer.with_symbols(&binder.symbols); }
-        if let Some(cache) = &self.type_cache { printer = printer.with_type_cache(cache); }
-        if let Some(enc_sym) = self.enclosing_namespace_symbol { printer = printer.with_enclosing_symbol(enc_sym); }
+        let local_import_alias_name_resolver =
+            |sym_id| self.can_reference_local_import_alias_by_name(sym_id);
+        let has_local_import_alias_resolver = |sym_id| {
+            if let Some(binder) = self.binder {
+                self.symbol_has_local_import_alias(binder, sym_id)
+            } else {
+                false
+            }
+        };
+        let mut printer = TypePrinter::new(interner)
+            .with_indent_level(self.indent_level)
+            .with_node_arena(self.arena)
+            .with_module_path_resolver(&module_path_resolver)
+            .with_namespace_alias_resolver(&namespace_alias_resolver)
+            .with_local_import_alias_name_resolver(&local_import_alias_name_resolver)
+            .with_has_local_import_alias_resolver(&has_local_import_alias_resolver)
+            .with_strict_null_checks(self.strict_null_checks)
+            .with_outer_type_params(outer_names);
+        if let Some(binder) = self.binder {
+            printer = printer.with_symbols(&binder.symbols);
+        }
+        if let Some(cache) = &self.type_cache {
+            printer = printer.with_type_cache(cache);
+        }
+        if let Some(enc_sym) = self.enclosing_namespace_symbol {
+            printer = printer.with_enclosing_symbol(enc_sym);
+        }
         printer.print_type(type_id)
     }
-    pub(crate) fn collect_type_param_names(&self, type_params: &NodeList) -> Vec<String> { let mut names = Vec::new(); for &param_idx in &type_params.nodes { if let Some(param_node) = self.arena.get(param_idx) && let Some(param) = self.arena.get_type_parameter(param_node) && let Some(name_text) = self.get_identifier_text(param.name) { names.push(name_text); } } names }
-    pub(crate) fn rename_shadowed_type_params_in_text(text: &str, outer_names: &[String]) -> String {
-        if outer_names.is_empty() { return text.to_string(); }
-        let bytes = text.as_bytes(); let len = bytes.len(); let mut renames: Vec<(String, String)> = Vec::new(); let mut i = 0;
-        while i < len { if bytes[i] == b'<' { let mut depth = 1; let mut j = i + 1; let mut param_names: Vec<String> = Vec::new(); let mut current_start = j; while j < len && depth > 0 { match bytes[j] { b'<' => depth += 1, b'>' => { depth -= 1; if depth == 0 { if let Some(name) = Self::extract_type_param_name(&text[current_start..j]) { param_names.push(name); } } } b',' if depth == 1 => { if let Some(name) = Self::extract_type_param_name(&text[current_start..j]) { param_names.push(name); } current_start = j + 1; } _ => {} } j += 1; } let is_func_type_params = j < len && bytes[j] == b'('; if is_func_type_params { for name in &param_names { let trimmed = name.trim(); if outer_names.iter().any(|o| o == trimmed) && !renames.iter().any(|(o, _)| o == trimmed) { let mut s = 1u32; loop { let cand = format!("{}_{}", trimmed, s); if !outer_names.contains(&cand) && !renames.iter().any(|(_, r)| *r == cand) { renames.push((trimmed.to_string(), cand)); break; } s += 1; } } } } i = j; } else { i += 1; } }
-        let mut result = text.to_string(); for (original, renamed) in &renames { result = Self::replace_whole_word(&result, original, renamed); } result
+    pub(crate) fn collect_type_param_names(&self, type_params: &NodeList) -> Vec<String> {
+        let mut names = Vec::new();
+        for &param_idx in &type_params.nodes {
+            if let Some(param_node) = self.arena.get(param_idx)
+                && let Some(param) = self.arena.get_type_parameter(param_node)
+                && let Some(name_text) = self.get_identifier_text(param.name)
+            {
+                names.push(name_text);
+            }
+        }
+        names
     }
-    fn extract_type_param_name(segment: &str) -> Option<String> { let trimmed = segment.trim(); if trimmed.is_empty() { return None; } let trimmed = trimmed.strip_prefix("const ").unwrap_or(trimmed).trim(); let trimmed = trimmed.strip_prefix("in ").unwrap_or(trimmed).trim(); let trimmed = trimmed.strip_prefix("out ").unwrap_or(trimmed).trim(); let name: String = trimmed.chars().take_while(|ch| ch.is_alphanumeric() || *ch == '_' || *ch == '$').collect(); if name.is_empty() { None } else { Some(name) } }
-    fn replace_whole_word(text: &str, word: &str, replacement: &str) -> String { let mut result = String::with_capacity(text.len() + 16); let bytes = text.as_bytes(); let word_bytes = word.as_bytes(); let word_len = word_bytes.len(); let text_len = bytes.len(); let mut i = 0; while i < text_len { if i + word_len <= text_len && &bytes[i..i + word_len] == word_bytes { let before_ok = i == 0 || !Self::is_ident_char(bytes[i - 1]); let after_ok = i + word_len >= text_len || !Self::is_ident_char(bytes[i + word_len]); if before_ok && after_ok { result.push_str(replacement); i += word_len; continue; } } result.push(bytes[i] as char); i += 1; } result }
-    fn is_ident_char(b: u8) -> bool { b.is_ascii_alphanumeric() || b == b'_' || b == b'$' }
+    pub(crate) fn rename_shadowed_type_params_in_text(
+        text: &str,
+        outer_names: &[String],
+    ) -> String {
+        if outer_names.is_empty() {
+            return text.to_string();
+        }
+        let bytes = text.as_bytes();
+        let len = bytes.len();
+        let mut renames: Vec<(String, String)> = Vec::new();
+        let mut i = 0;
+        while i < len {
+            if bytes[i] == b'<' {
+                let mut depth = 1;
+                let mut j = i + 1;
+                let mut param_names: Vec<String> = Vec::new();
+                let mut current_start = j;
+                while j < len && depth > 0 {
+                    match bytes[j] {
+                        b'<' => depth += 1,
+                        b'>' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                if let Some(name) =
+                                    Self::extract_type_param_name(&text[current_start..j])
+                                {
+                                    param_names.push(name);
+                                }
+                            }
+                        }
+                        b',' if depth == 1 => {
+                            if let Some(name) =
+                                Self::extract_type_param_name(&text[current_start..j])
+                            {
+                                param_names.push(name);
+                            }
+                            current_start = j + 1;
+                        }
+                        _ => {}
+                    }
+                    j += 1;
+                }
+                let is_func_type_params = j < len && bytes[j] == b'(';
+                if is_func_type_params {
+                    for name in &param_names {
+                        let trimmed = name.trim();
+                        if outer_names.iter().any(|o| o == trimmed)
+                            && !renames.iter().any(|(o, _)| o == trimmed)
+                        {
+                            let mut s = 1u32;
+                            loop {
+                                let cand = format!("{}_{}", trimmed, s);
+                                if !outer_names.contains(&cand)
+                                    && !renames.iter().any(|(_, r)| *r == cand)
+                                {
+                                    renames.push((trimmed.to_string(), cand));
+                                    break;
+                                }
+                                s += 1;
+                            }
+                        }
+                    }
+                }
+                i = j;
+            } else {
+                i += 1;
+            }
+        }
+        let mut result = text.to_string();
+        for (original, renamed) in &renames {
+            result = Self::replace_whole_word(&result, original, renamed);
+        }
+        result
+    }
+    fn extract_type_param_name(segment: &str) -> Option<String> {
+        let trimmed = segment.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let trimmed = trimmed.strip_prefix("const ").unwrap_or(trimmed).trim();
+        let trimmed = trimmed.strip_prefix("in ").unwrap_or(trimmed).trim();
+        let trimmed = trimmed.strip_prefix("out ").unwrap_or(trimmed).trim();
+        let name: String = trimmed
+            .chars()
+            .take_while(|ch| ch.is_alphanumeric() || *ch == '_' || *ch == '$')
+            .collect();
+        if name.is_empty() { None } else { Some(name) }
+    }
+    fn replace_whole_word(text: &str, word: &str, replacement: &str) -> String {
+        let mut result = String::with_capacity(text.len() + 16);
+        let bytes = text.as_bytes();
+        let word_bytes = word.as_bytes();
+        let word_len = word_bytes.len();
+        let text_len = bytes.len();
+        let mut i = 0;
+        while i < text_len {
+            if i + word_len <= text_len && &bytes[i..i + word_len] == word_bytes {
+                let before_ok = i == 0 || !Self::is_ident_char(bytes[i - 1]);
+                let after_ok =
+                    i + word_len >= text_len || !Self::is_ident_char(bytes[i + word_len]);
+                if before_ok && after_ok {
+                    result.push_str(replacement);
+                    i += word_len;
+                    continue;
+                }
+            }
+            result.push(bytes[i] as char);
+            i += 1;
+        }
+        result
+    }
+    fn is_ident_char(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+    }
 
-        pub(in crate::declaration_emitter) fn print_synthetic_class_extends_alias_type(
+    pub(in crate::declaration_emitter) fn print_synthetic_class_extends_alias_type(
         &self,
         type_id: tsz_solver::types::TypeId,
     ) -> String {

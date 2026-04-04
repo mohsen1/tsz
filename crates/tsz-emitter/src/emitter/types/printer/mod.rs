@@ -160,9 +160,68 @@ impl<'a> TypePrinter<'a> {
         self
     }
 
-    pub fn with_outer_type_params(mut self, names: Vec<Atom>) -> Self { self.outer_type_param_names = names; self }
-    pub(crate) fn resolve_type_param_name(&self, name: Atom) -> String { for (atom, renamed) in &self.type_param_renames { if *atom == name { return renamed.clone(); } } self.interner.resolve_atom(name) }
-    pub(crate) fn with_type_param_scope(&self, new_params: &[tsz_solver::types::TypeParamInfo]) -> Self { if new_params.is_empty() { return self.clone(); } let mut scoped = self.clone(); let mut all_in_scope: Vec<String> = scoped.outer_type_param_names.iter().map(|a| self.interner.resolve_atom(*a)).collect(); for (_atom, renamed) in &scoped.type_param_renames { if !all_in_scope.contains(renamed) { all_in_scope.push(renamed.clone()); } } scoped.type_param_renames.clear(); let mut new_names_in_scope: Vec<String> = Vec::new(); for tp in new_params { let original = self.interner.resolve_atom(tp.name); if all_in_scope.contains(&original) || new_names_in_scope.contains(&original) { let mut suffix = 1u32; loop { let candidate = format!("{}_{}", original, suffix); if !all_in_scope.contains(&candidate) && !new_names_in_scope.contains(&candidate) { scoped.type_param_renames.push((tp.name, candidate.clone())); new_names_in_scope.push(candidate); break; } suffix += 1; } } else { new_names_in_scope.push(original); } if !scoped.outer_type_param_names.contains(&tp.name) { scoped.outer_type_param_names.push(tp.name); } } for name_str in &new_names_in_scope { let atom = scoped.interner.intern_string(name_str); if !scoped.outer_type_param_names.contains(&atom) { scoped.outer_type_param_names.push(atom); } } scoped }
+    pub fn with_outer_type_params(mut self, names: Vec<Atom>) -> Self {
+        self.outer_type_param_names = names;
+        self
+    }
+    pub(crate) fn resolve_type_param_name(&self, name: Atom) -> String {
+        for (atom, renamed) in &self.type_param_renames {
+            if *atom == name {
+                return renamed.clone();
+            }
+        }
+        self.interner.resolve_atom(name)
+    }
+    pub(crate) fn with_type_param_scope(
+        &self,
+        new_params: &[tsz_solver::types::TypeParamInfo],
+    ) -> Self {
+        if new_params.is_empty() {
+            return self.clone();
+        }
+        let mut scoped = self.clone();
+        let mut all_in_scope: Vec<String> = scoped
+            .outer_type_param_names
+            .iter()
+            .map(|a| self.interner.resolve_atom(*a))
+            .collect();
+        for (_atom, renamed) in &scoped.type_param_renames {
+            if !all_in_scope.contains(renamed) {
+                all_in_scope.push(renamed.clone());
+            }
+        }
+        scoped.type_param_renames.clear();
+        let mut new_names_in_scope: Vec<String> = Vec::new();
+        for tp in new_params {
+            let original = self.interner.resolve_atom(tp.name);
+            if all_in_scope.contains(&original) || new_names_in_scope.contains(&original) {
+                let mut suffix = 1u32;
+                loop {
+                    let candidate = format!("{}_{}", original, suffix);
+                    if !all_in_scope.contains(&candidate)
+                        && !new_names_in_scope.contains(&candidate)
+                    {
+                        scoped.type_param_renames.push((tp.name, candidate.clone()));
+                        new_names_in_scope.push(candidate);
+                        break;
+                    }
+                    suffix += 1;
+                }
+            } else {
+                new_names_in_scope.push(original);
+            }
+            if !scoped.outer_type_param_names.contains(&tp.name) {
+                scoped.outer_type_param_names.push(tp.name);
+            }
+        }
+        for name_str in &new_names_in_scope {
+            let atom = scoped.interner.intern_string(name_str);
+            if !scoped.outer_type_param_names.contains(&atom) {
+                scoped.outer_type_param_names.push(atom);
+            }
+        }
+        scoped
+    }
 }
 
 mod symbol_resolution;

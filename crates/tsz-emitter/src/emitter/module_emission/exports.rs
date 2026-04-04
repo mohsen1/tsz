@@ -227,8 +227,7 @@ impl<'a> Printer<'a> {
                     // When the name is in commonjs_exported_var_names, the import-equals
                     // declaration was already emitted as `exports.b = a.foo;` — no
                     // separate `exports.b = b;` post-assignment is needed.
-                    if !name.is_empty()
-                        && !self.commonjs_exported_var_names.contains(name.as_str())
+                    if !name.is_empty() && !self.commonjs_exported_var_names.contains(name.as_str())
                     {
                         self.write_line();
                         self.write("exports.");

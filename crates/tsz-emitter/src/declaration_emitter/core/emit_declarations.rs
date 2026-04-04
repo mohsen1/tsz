@@ -713,9 +713,10 @@ impl<'a> DeclarationEmitter<'a> {
                         && !tp.nodes.is_empty()
                     {
                         let outer_names = self.collect_type_param_names(tp);
-                        self.write(
-                            &Self::rename_shadowed_type_params_in_text(&type_text, &outer_names),
-                        );
+                        self.write(&Self::rename_shadowed_type_params_in_text(
+                            &type_text,
+                            &outer_names,
+                        ));
                     } else {
                         self.write(&type_text);
                     }
@@ -733,7 +734,8 @@ impl<'a> DeclarationEmitter<'a> {
                         && !tp.nodes.is_empty()
                     {
                         self.write(
-                            &self.print_type_id_with_outer_type_params(effective_return_type_id, tp),
+                            &self
+                                .print_type_id_with_outer_type_params(effective_return_type_id, tp),
                         );
                     } else {
                         self.write(&self.print_type_id(effective_return_type_id));
