@@ -490,6 +490,9 @@ pub struct Printer<'a> {
     /// Used to substitute `import.meta` with `context_1.meta`.
     pub(crate) in_system_execute_body: bool,
 
+    pub(crate) system_reexported_names: FxHashMap<String, String>,
+    pub(crate) system_folded_export_names: FxHashSet<String>,
+
     /// When true, the current parenthesized expression is being emitted as the
     /// callee of a `new` expression. This prevents stripping parens around
     /// call expressions where removal would change semantics:
@@ -737,6 +740,8 @@ impl<'a> Printer<'a> {
             destructuring_read_depth: 0,
             paren_in_access_position: false,
             in_system_execute_body: false,
+            system_reexported_names: FxHashMap::default(),
+            system_folded_export_names: FxHashSet::default(),
             paren_in_new_callee: false,
             paren_is_direct_call_callee: false,
             object_literal_accessor_depth: 0,

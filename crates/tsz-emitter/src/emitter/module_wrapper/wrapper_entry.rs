@@ -596,6 +596,23 @@ impl<'a> Printer<'a> {
                         }
                     }
                 }
+                if stmt_node.kind == syntax_kind_ext::ENUM_DECLARATION
+                    && let Some(enum_decl) = self.arena.get_enum(stmt_node)
+                {
+                    let is_erased = self
+                        .arena
+                        .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
+                        || (self
+                            .arena
+                            .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
+                            && !self.ctx.options.preserve_const_enums);
+                    if !is_erased {
+                        let enum_name = self.get_identifier_text_idx(enum_decl.name);
+                        if !enum_name.is_empty() && seen.insert(enum_name.clone()) {
+                            names.push(enum_name);
+                        }
+                    }
+                }
                 if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
                     && let Some(export_decl) = self.arena.get_export_decl(stmt_node)
                     && export_decl.module_specifier.is_none()
@@ -725,6 +742,23 @@ impl<'a> Printer<'a> {
                             .has_modifier(&module_decl.modifiers, SyntaxKind::DeclareKeyword);
                         if !is_ambient {
                             let name = self.get_identifier_text_idx(module_decl.name);
+                            if !name.is_empty() && seen.insert(name.clone()) {
+                                names.push(name);
+                            }
+                        }
+                    }
+                    if clause_node.kind == syntax_kind_ext::ENUM_DECLARATION
+                        && let Some(enum_decl) = self.arena.get_enum(clause_node)
+                    {
+                        let is_erased = self
+                            .arena
+                            .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
+                            || (self
+                                .arena
+                                .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
+                                && !self.ctx.options.preserve_const_enums);
+                        if !is_erased {
+                            let name = self.get_identifier_text_idx(enum_decl.name);
                             if !name.is_empty() && seen.insert(name.clone()) {
                                 names.push(name);
                             }

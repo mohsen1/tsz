@@ -223,6 +223,46 @@ impl<'a> Printer<'a> {
         };
         self.register_system_import_substitutions(source, dep_vars);
 
+        let mut reexported_names: FxHashMap<String, String> = FxHashMap::default();
+        for &stmt_idx in &source.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export_decl.module_specifier.is_some() || export_decl.is_default_export {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                continue;
+            }
+            let Some(named_exports) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            for &spec_idx in &named_exports.elements.nodes {
+                if let Some(spec) = self.arena.get_specifier_at(spec_idx) {
+                    let local_name = if spec.property_name.is_some() {
+                        self.get_identifier_text_idx(spec.property_name)
+                    } else {
+                        self.get_identifier_text_idx(spec.name)
+                    };
+                    let export_name = self.get_identifier_text_idx(spec.name);
+                    if !local_name.is_empty() && !export_name.is_empty() {
+                        reexported_names.insert(local_name, export_name);
+                    }
+                }
+            }
+        }
+        self.system_reexported_names = reexported_names;
+        self.system_folded_export_names.clear();
+
         if let Some(first_using_idx) = source.statements.nodes.iter().position(|&stmt_idx| {
             self.arena
                 .get(stmt_idx)
@@ -302,26 +342,64 @@ impl<'a> Printer<'a> {
                 // Non-exported class declarations: var is hoisted, emit as assignment
                 self.emit_system_class_as_expression(stmt_node, stmt_idx);
             } else {
-                // For MODULE_DECLARATION (direct or inside EXPORT_DECLARATION),
-                // mark the namespace name as declared so the IIFE emitter doesn't
-                // emit a duplicate `var` declaration (the var is already hoisted).
                 if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION
                     && let Some(module_decl) = self.arena.get_module(stmt_node)
                 {
                     let module_name = self.get_identifier_text_idx(module_decl.name);
                     if !module_name.is_empty() {
-                        self.declared_namespace_names.insert(module_name);
+                        self.declared_namespace_names.insert(module_name.clone());
+                        if let Some(export_name) =
+                            self.system_reexported_names.get(&module_name).cloned()
+                        {
+                            self.emit_system_namespace_with_export_fold(
+                                stmt_idx,
+                                &module_name,
+                                &export_name,
+                            );
+                            self.system_folded_export_names.insert(module_name);
+                            continue;
+                        }
+                    }
+                }
+                if stmt_node.kind == syntax_kind_ext::ENUM_DECLARATION
+                    && let Some(enum_decl) = self.arena.get_enum(stmt_node)
+                {
+                    let enum_name = self.get_identifier_text_idx(enum_decl.name);
+                    if !enum_name.is_empty() {
+                        self.declared_namespace_names.insert(enum_name.clone());
+                        if let Some(export_name) =
+                            self.system_reexported_names.get(&enum_name).cloned()
+                        {
+                            self.emit_system_enum_with_export_fold(
+                                stmt_idx,
+                                &enum_name,
+                                &export_name,
+                            );
+                            self.write_line();
+                            self.system_folded_export_names.insert(enum_name);
+                            continue;
+                        }
                     }
                 }
                 if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
                     && let Some(export_decl) = self.arena.get_export_decl(stmt_node)
                     && let Some(clause_node) = self.arena.get(export_decl.export_clause)
-                    && clause_node.kind == syntax_kind_ext::MODULE_DECLARATION
-                    && let Some(module_decl) = self.arena.get_module(clause_node)
                 {
-                    let module_name = self.get_identifier_text_idx(module_decl.name);
-                    if !module_name.is_empty() {
-                        self.declared_namespace_names.insert(module_name);
+                    if clause_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                        && let Some(module_decl) = self.arena.get_module(clause_node)
+                    {
+                        let module_name = self.get_identifier_text_idx(module_decl.name);
+                        if !module_name.is_empty() {
+                            self.declared_namespace_names.insert(module_name);
+                        }
+                    }
+                    if clause_node.kind == syntax_kind_ext::ENUM_DECLARATION
+                        && let Some(enum_decl) = self.arena.get_enum(clause_node)
+                    {
+                        let enum_name = self.get_identifier_text_idx(enum_decl.name);
+                        if !enum_name.is_empty() {
+                            self.declared_namespace_names.insert(enum_name);
+                        }
                     }
                 }
                 self.emit(stmt_idx);
@@ -1080,6 +1158,20 @@ impl<'a> Printer<'a> {
             return true;
         }
 
+        if clause_node.kind == syntax_kind_ext::ENUM_DECLARATION
+            && let Some(enum_decl) = self.arena.get_enum(clause_node)
+        {
+            let enum_name = self.get_identifier_text_idx(enum_decl.name);
+            if !enum_name.is_empty() {
+                self.emit_system_enum_with_export_fold(
+                    export_decl.export_clause,
+                    &enum_name,
+                    &enum_name,
+                );
+                return true;
+            }
+        }
+
         // Exported function declarations: emit the function then register with exports_1
         if clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
             && let Some(func_decl) = self.arena.get_function(clause_node)
@@ -1108,7 +1200,8 @@ impl<'a> Printer<'a> {
         if clause_node.kind == syntax_kind_ext::NAMED_EXPORTS
             && let Some(named_exports) = self.arena.get_named_imports(clause_node)
         {
-            for (i, &spec_idx) in named_exports.elements.nodes.iter().enumerate() {
+            let mut emitted_any = false;
+            for &spec_idx in &named_exports.elements.nodes {
                 let Some(spec) = self.arena.get_specifier_at(spec_idx) else {
                     continue;
                 };
@@ -1121,6 +1214,9 @@ impl<'a> Printer<'a> {
                 if local_name.is_empty() || export_name.is_empty() {
                     continue;
                 }
+                if self.system_folded_export_names.contains(&local_name) {
+                    continue;
+                }
                 // Check if the local name has an import substitution
                 let value = if let Some(subst) =
                     self.commonjs_named_import_substitutions.get(&local_name)
@@ -1129,7 +1225,7 @@ impl<'a> Printer<'a> {
                 } else {
                     local_name
                 };
-                if i > 0 {
+                if emitted_any {
                     self.write_line();
                 }
                 self.write("exports_1(\"");
@@ -1137,11 +1233,50 @@ impl<'a> Printer<'a> {
                 self.write("\", ");
                 self.write(&value);
                 self.write(");");
+                emitted_any = true;
             }
             return true;
         }
 
         false
+    }
+
+    fn emit_system_enum_with_export_fold(
+        &mut self,
+        enum_idx: NodeIndex,
+        enum_name: &str,
+        export_name: &str,
+    ) {
+        let mut enum_emitter = crate::transforms::EnumES5Emitter::new(self.arena);
+        enum_emitter.set_indent_level(self.writer.indent_level());
+        enum_emitter.set_preserve_const_enums(self.ctx.options.preserve_const_enums);
+        if let Some(text) = self.source_text {
+            enum_emitter.set_source_text(text);
+        }
+        let mut output = enum_emitter.emit_enum(enum_idx);
+        let var_prefix = format!("var {enum_name};\n");
+        if output.starts_with(&var_prefix) {
+            output = output[var_prefix.len()..].to_string();
+        }
+        let from = format!("({enum_name} || ({enum_name} = {{}}))");
+        let to = format!("({enum_name} || (exports_1(\"{export_name}\", {enum_name} = {{}})))");
+        output = output.replacen(&from, &to, 1);
+        self.write(output.trim_end_matches('\n').trim_start());
+    }
+
+    fn emit_system_namespace_with_export_fold(
+        &mut self,
+        stmt_idx: NodeIndex,
+        ns_name: &str,
+        export_name: &str,
+    ) {
+        let start_pos = self.writer.len();
+        self.emit(stmt_idx);
+        let output = self.writer.get_output()[start_pos..].to_string();
+        self.writer.truncate(start_pos);
+        let from = format!("({ns_name} || ({ns_name} = {{}}))");
+        let to = format!("({ns_name} || (exports_1(\"{export_name}\", {ns_name} = {{}})))");
+        self.write(&output.replacen(&from, &to, 1));
     }
 
     pub(super) fn system_module_specifier_text(&self, specifier: NodeIndex) -> Option<String> {
