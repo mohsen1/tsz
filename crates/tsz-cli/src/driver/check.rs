@@ -3060,9 +3060,18 @@ let x2: string = f;
 
         let root_react_path = dir.join("node_modules/@types/react/index.d.ts");
         let tests_react_path = dir.join("tests/node_modules/@types/react/index.d.ts");
-        // Make the react index.d.ts a proper module (not a script) to avoid TS2669/TS2306
-        fs::write(&root_react_path, "declare global { }\nexport {}\n").unwrap();
-        fs::write(&tests_react_path, "export {}\n").unwrap();
+        // Both stubs must be proper external modules so that import resolution
+        // sees them as valid modules rather than producing TS2306/TS2669.
+        fs::write(
+            &root_react_path,
+            "export declare function createElement(tag: string): any;\n",
+        )
+        .unwrap();
+        fs::write(
+            &tests_react_path,
+            "export declare function createElement(tag: string): any;\n",
+        )
+        .unwrap();
 
         let src_index = dir.join("src/index.ts");
         let tests_index = dir.join("tests/index.ts");
@@ -3094,22 +3103,27 @@ let x2: string = f;
                 ),
                 (
                     root_react_path.to_str().unwrap(),
-                    "declare global { }\nexport {}\n",
+                    "export declare function createElement(tag: string): any;\n",
                 ),
-                (tests_react_path.to_str().unwrap(), "export {}\n"),
+                (
+                    tests_react_path.to_str().unwrap(),
+                    "export declare function createElement(tag: string): any;\n",
+                ),
             ],
             &options,
             &dir,
         );
 
-        // Module resolution now resolves @types/react. The test verifies that
-        // duplicate-package paths from different node_modules trees don't cause
-        // crashes or spurious diagnostics. With proper module exports the imports
-        // should resolve cleanly (no TS2307).
-        let has_ts2307 = diagnostics.iter().any(|diag| diag.code == 2307);
+        // With valid module stubs, both imports should resolve successfully.
+        // The test primarily validates that having duplicate @types/react at
+        // different node_modules depths does not crash or produce spurious errors.
+        // No TS2307/TS2306/TS2669 diagnostics should appear.
+        let error_codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
         assert!(
-            !has_ts2307,
-            "react should resolve via @types — unexpected TS2307, got: {diagnostics:?}"
+            !error_codes.contains(&2307)
+                && !error_codes.contains(&2306)
+                && !error_codes.contains(&2669),
+            "expected no module resolution errors with valid react stubs, got: {diagnostics:?}"
         );
 
         let _ = fs::remove_dir_all(&dir);
