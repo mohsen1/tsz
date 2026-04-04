@@ -826,9 +826,16 @@ impl<'a> CheckerState<'a> {
         // TSC emits TS2322 instead of TS2741 when the *source* type is an intersection.
         // This covers type aliases like `LinkedList<T> = T & { next: ... }` that may have
         // been evaluated to an intersection by the time we reach diagnostic rendering.
-        // Only check the top-level `source` type, not `source_type` (which is from the
-        // solver's MissingProperty reason and may be an inner/property type).
-        if tsz_solver::type_queries::is_intersection_type(self.ctx.types, source) {
+        // Check both the type data and the source's declaration annotation, since
+        // intersections may be flattened into Object types by the solver.
+        let source_evaluated_for_intersection = self.evaluate_type_with_env(source);
+        if tsz_solver::type_queries::is_intersection_type(self.ctx.types, source)
+            || tsz_solver::type_queries::is_intersection_type(
+                self.ctx.types,
+                source_evaluated_for_intersection,
+            )
+            || (depth == 0 && self.anchor_source_has_intersection_annotation(idx))
+        {
             let src_str = if depth == 0 {
                 self.format_assignment_source_type_for_diagnostic(source, target, idx)
             } else {
@@ -1186,6 +1193,33 @@ impl<'a> CheckerState<'a> {
         {
             let src_str = self.format_type_diagnostic(source);
             let tgt_str = self.format_type_diagnostic(target);
+            let message = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&src_str, &tgt_str],
+            );
+            return Diagnostic::error(
+                file_name,
+                start,
+                length,
+                message,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+        }
+
+        // TSC emits TS2322 instead of TS2739/TS2740 when the source is an intersection type.
+        if tsz_solver::is_intersection_type(self.ctx.types, source)
+            || tsz_solver::is_intersection_type(self.ctx.types, source_type)
+        {
+            let src_str = if depth == 0 {
+                self.format_assignment_source_type_for_diagnostic(source, target, idx)
+            } else {
+                self.format_type_diagnostic(source_type)
+            };
+            let tgt_str = if depth == 0 {
+                self.format_assignability_type_for_message(target, source)
+            } else {
+                self.format_type_diagnostic(target_type)
+            };
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&src_str, &tgt_str],
