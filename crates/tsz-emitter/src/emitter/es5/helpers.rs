@@ -512,21 +512,18 @@ impl<'a> Printer<'a> {
                     self.write("(");
                     self.write(&temp_var);
                     self.write(" = ");
-                    let non_computed: Vec<NodeIndex> = elems
+                    let first_computed = elems
                         .iter()
-                        .copied()
-                        .filter(|&idx| !emit_utils::is_computed_property_member(self.arena, idx))
-                        .collect();
-                    if non_computed.is_empty() {
-                        self.write("{}");
+                        .position(|&idx| emit_utils::is_computed_property_member(self.arena, idx))
+                        .unwrap_or(elems.len());
+                    if first_computed > 0 {
+                        self.emit_object_literal_entries_es5(&elems[..first_computed]);
                     } else {
-                        self.emit_object_literal_entries_es5(&non_computed);
+                        self.write("{}");
                     }
-                    for elem in *elems {
-                        if emit_utils::is_computed_property_member(self.arena, *elem) {
-                            self.write(", ");
-                            self.emit_property_assignment_es5(*elem, &temp_var);
-                        }
+                    for elem in &elems[first_computed..] {
+                        self.write(", ");
+                        self.emit_property_assignment_es5(*elem, &temp_var);
                     }
                     self.write(", ");
                     self.write(&temp_var);
@@ -564,31 +561,26 @@ impl<'a> Printer<'a> {
                             .any(|&idx| emit_utils::is_computed_property_member(self.arena, idx));
                         if has_computed {
                             // Use temp var for computed properties.
-                            // Emit non-computed properties in the initial object literal,
-                            // then emit ALL properties (including computed) as assignments.
+                            // Emit properties before the first computed in the literal,
+                            // then ALL properties from the first computed onward as assignments.
                             let temp_var = self.make_unique_name_hoisted();
                             self.write("(");
                             self.write(&temp_var);
                             self.write(" = ");
-                            // Emit only non-computed properties in the initial object literal
-                            let non_computed: Vec<NodeIndex> = elems
+                            let first_computed = elems
                                 .iter()
-                                .copied()
-                                .filter(|&idx| {
-                                    !emit_utils::is_computed_property_member(self.arena, idx)
+                                .position(|&idx| {
+                                    emit_utils::is_computed_property_member(self.arena, idx)
                                 })
-                                .collect();
-                            if non_computed.is_empty() {
-                                self.write("{}");
+                                .unwrap_or(elems.len());
+                            if first_computed > 0 {
+                                self.emit_object_literal_entries_es5(&elems[..first_computed]);
                             } else {
-                                self.emit_object_literal_entries_es5(&non_computed);
+                                self.write("{}");
                             }
-                            // Emit only computed properties as assignments on the temp var
-                            for elem in *elems {
-                                if emit_utils::is_computed_property_member(self.arena, *elem) {
-                                    self.write(", ");
-                                    self.emit_property_assignment_es5(*elem, &temp_var);
-                                }
+                            for elem in &elems[first_computed..] {
+                                self.write(", ");
+                                self.emit_property_assignment_es5(*elem, &temp_var);
                             }
                             self.write(", ");
                             self.write(&temp_var);
@@ -619,23 +611,20 @@ impl<'a> Printer<'a> {
                                 self.write("(");
                                 self.write(&temp_var);
                                 self.write(" = ");
-                                let non_computed: Vec<NodeIndex> = elems
+                                let first_computed = elems
                                     .iter()
-                                    .copied()
-                                    .filter(|&idx| {
-                                        !emit_utils::is_computed_property_member(self.arena, idx)
+                                    .position(|&idx| {
+                                        emit_utils::is_computed_property_member(self.arena, idx)
                                     })
-                                    .collect();
-                                if non_computed.is_empty() {
-                                    self.write("{}");
+                                    .unwrap_or(elems.len());
+                                if first_computed > 0 {
+                                    self.emit_object_literal_entries_es5(&elems[..first_computed]);
                                 } else {
-                                    self.emit_object_literal_entries_es5(&non_computed);
+                                    self.write("{}");
                                 }
-                                for elem in *elems {
-                                    if emit_utils::is_computed_property_member(self.arena, *elem) {
-                                        self.write(", ");
-                                        self.emit_property_assignment_es5(*elem, &temp_var);
-                                    }
+                                for elem in &elems[first_computed..] {
+                                    self.write(", ");
+                                    self.emit_property_assignment_es5(*elem, &temp_var);
                                 }
                                 self.write(", ");
                                 self.write(&temp_var);
