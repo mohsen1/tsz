@@ -650,6 +650,24 @@ impl<'a> CheckerState<'a> {
                             if has_type && !has_value {
                                 // Mark this specifier node as type-only for elision during emit
                                 self.ctx.type_only_nodes.insert(*element_idx);
+
+                                // TS18042: Check for type import in JavaScript file
+                                // When importing a type-only symbol in a JS file with checkJs enabled,
+                                // emit an error suggesting to use JSDoc type annotation instead.
+                                if self.is_js_file() && !clause.is_type_only {
+                                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                                    let clean_module = module_name.trim_matches('\'').trim_matches('"');
+                                    let quoted_import = format!("import(\"{}\").{}", clean_module, import_name);
+                                    let message = format_message(
+                                        diagnostic_messages::IS_A_TYPE_AND_CANNOT_BE_IMPORTED_IN_JAVASCRIPT_FILES_USE_IN_A_JSDOC_TYPE_ANNOTAT,
+                                        &[import_name, &quoted_import],
+                                    );
+                                    self.error_at_node(
+                                        *element_idx,
+                                        &message,
+                                        diagnostic_codes::IS_A_TYPE_AND_CANNOT_BE_IMPORTED_IN_JAVASCRIPT_FILES_USE_IN_A_JSDOC_TYPE_ANNOTAT,
+                                    );
+                                }
                             }
                         }
                     }

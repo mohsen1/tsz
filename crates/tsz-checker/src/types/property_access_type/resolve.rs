@@ -1666,6 +1666,26 @@ impl<'a> CheckerState<'a> {
                 }
 
                 PropertyAccessResult::PropertyNotFound { .. } => {
+                    // Special case: unconstrained type parameters should emit TS2339
+                    // because they have no properties by definition.
+                    if crate::query_boundaries::state::checking::is_type_parameter_like(
+                        self.ctx.types,
+                        object_type_for_access,
+                    ) && !crate::query_boundaries::common::type_parameter_constraint(
+                        self.ctx.types,
+                        object_type_for_access,
+                    ).is_some() {
+                        // Unconstrained type parameter - emit TS2339
+                        if !property_name.starts_with('#') && !accessibility_error_emitted {
+                            self.error_property_not_exist_at(
+                                property_name,
+                                object_type_for_access,
+                                access.name_or_argument,
+                            );
+                        }
+                        return TypeId::ERROR;
+                    }
+                    
                     let resolved_class_access =
                         self.resolve_class_for_access(access.expression, object_type_for_access);
                     let class_chain_summary = resolved_class_access
