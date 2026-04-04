@@ -781,7 +781,6 @@ const y: OriginalB = x;
 }
 
 #[test]
-#[ignore = "namespace-local ComponentClass inference broken after solver merge"]
 fn test_check_files_parallel_keeps_namespace_local_component_for_create_element_inference() {
     let files = vec![(
         "test.ts".to_string(),
@@ -1336,7 +1335,6 @@ c = d;
 }
 
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
 fn test_check_files_parallel_invariant_generic_error_preserves_assignability_diagnostic() {
     let files = vec![(
         "test.ts".to_string(),
@@ -1869,7 +1867,6 @@ export interface Row2 { b: string }
 }
 
 #[test]
-#[ignore = "pre-existing failure"]
 fn test_umd_export_vs_declare_global_const_emits_ts2451() {
     // `export as namespace React` in module.d.ts creates a UMD global binding.
     // `declare global { const React }` in global.d.ts creates a global const.

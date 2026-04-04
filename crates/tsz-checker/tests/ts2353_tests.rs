@@ -449,7 +449,6 @@ function foo(options?: { a: string, b: number } | null) {
 }
 
 #[test]
-#[ignore] // TODO: nested generic callee incorrectly pre-instantiates from outer call context
 fn nested_generic_callee_does_not_preinstantiate_from_outer_call_target() {
     let source = r#"
 interface Effect<out A> {
@@ -489,7 +488,6 @@ pipe(
 }
 
 #[test]
-#[ignore] // TODO: Promise resolve callback wraps PromiseLike inference an extra level
 fn promise_resolve_argument_skips_epc_for_infer_placeholder_target() {
     let source = r#"
 interface PromiseLike<T> {}

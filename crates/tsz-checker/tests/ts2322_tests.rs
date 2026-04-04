@@ -1378,7 +1378,6 @@ fn test_ts2322_no_false_positive_nested_conditional() {
 }
 
 #[test]
-#[ignore] // TODO: generic indexed write TS2322 with T[K] display not yet emitted
 fn test_ts2322_generic_indexed_write_preserves_type_parameter_display() {
     let source = r#"
         type Item = { a: string; b: number };

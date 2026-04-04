@@ -44,7 +44,6 @@ fn check_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
 // =========================================================================
 
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
 fn generic_type_ref_without_args_no_false_error() {
     // A generic interface used without type arguments (when all params have defaults)
     // should not produce spurious errors after the stable-identity refactoring.
@@ -228,7 +227,6 @@ const v: string = cfg.data.value;
 // TODO: mapped type parameter name 'P' is not resolved in scope by the binder,
 // causing a false TS2304. Blocked on binder mapped type param fix.
 #[test]
-#[ignore = "mapped type param scoping bug causes false TS2304 for 'P'"]
 fn mapped_type_with_alias_body_resolves() {
     // Mapped types reference type aliases via the def_id_resolver closure.
     // After refactoring to resolve_def_id_for_lowering, this should still work.

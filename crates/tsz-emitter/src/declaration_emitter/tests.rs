@@ -4868,7 +4868,6 @@ fn test_namespace_import_type_is_preserved_with_usage_analysis() {
 }
 
 #[test]
-#[ignore = "namespace import typeof alias not yet resolved in declaration emitter"]
 fn test_exported_namespace_import_initializer_preserves_typeof_alias() {
     let output = emit_dts_with_usage_analysis(
         r#"

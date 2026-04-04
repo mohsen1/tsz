@@ -570,8 +570,6 @@ mod tests {
     /// user type parameter with the same name as the mapped key param.
     /// Name-based substitution must be bypassed to avoid incorrectly
     /// replacing the outer P with the key literal.
-    // TODO: mapped type parameter names (P) are not resolved in scope by the binder,
-    // causing spurious TS2304. Once the binder is fixed, update this to expect 0 errors.
     #[test]
     fn mapped_type_name_collision_readonly_of_type_param() {
         let diags = check_source_diagnostics(
@@ -585,13 +583,10 @@ class A<P extends MyPartial<Foo>> {
     }
 }",
         );
-        let relevant: Vec<_> = diags
-            .iter()
-            .filter(|d| d.code != 2318 && d.code != 2304)
-            .collect();
+        let relevant: Vec<_> = diags.iter().filter(|d| d.code != 2318).collect();
         assert!(
             relevant.is_empty(),
-            "expected only TS2304 (mapped type param bug) or TS2318, got: {:?}",
+            "expected only TS2318 (if any), got: {:?}",
             relevant
                 .iter()
                 .map(|d| (d.code, &d.message_text))
@@ -601,8 +596,6 @@ class A<P extends MyPartial<Foo>> {
 
     /// Property access on a type parameter with a mapped-type constraint
     /// should resolve through the constraint.
-    // TODO: mapped type parameter names (P) are not resolved in scope by the binder,
-    // causing spurious TS2304. Once the binder is fixed, update this to expect 0 errors.
     #[test]
     fn type_param_property_access_with_mapped_constraint() {
         let diags = check_source_diagnostics(
@@ -612,13 +605,10 @@ function f<P extends MyPartial<Foo>>(p: P) {
     p.foo;
 }",
         );
-        let relevant: Vec<_> = diags
-            .iter()
-            .filter(|d| d.code != 2318 && d.code != 2304)
-            .collect();
+        let relevant: Vec<_> = diags.iter().filter(|d| d.code != 2318).collect();
         assert!(
             relevant.is_empty(),
-            "expected only TS2304 (mapped type param bug) or TS2318, got: {:?}",
+            "expected only TS2318 (if any), got: {:?}",
             relevant
                 .iter()
                 .map(|d| (d.code, &d.message_text))
