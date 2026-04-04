@@ -7451,7 +7451,6 @@ const derived_value = obj.derived;
 /// implemented. Generic type parameters in interface extends clauses are not
 /// correctly resolved.
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
 fn test_interface_extends_applies_type_arguments() {
     use crate::parser::ParserState;
 
@@ -7551,7 +7550,6 @@ const value = obj.value;
 }
 
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
 fn test_interface_extends_class_applies_type_arguments() {
     use crate::parser::ParserState;
 
@@ -16160,7 +16158,6 @@ function f(x: number) { return x; }
 // TODO: Fix TS2304 for mapped type parameter K in scope -- binder does not register
 // the iteration variable of mapped types in the type-level scope.
 #[test]
-#[ignore]
 fn test_generic_library_snippet_compiles_and_checks() {
     use crate::binder::SymbolTable;
     use crate::parallel;
@@ -16329,7 +16326,6 @@ const reducer = createReducer(0, {
 /// Note: Full instantiation of generic mapped types is tested in `solver/evaluate_tests.rs`.
 // TODO: Fix TS2304 for mapped type parameters (P, K) -- binder scope gap.
 #[test]
-#[ignore]
 fn test_key_remapping_syntax_parsing() {
     use crate::parser::ParserState;
 
@@ -16680,7 +16676,6 @@ const n: number = s;
 /// Pattern: `{ [K in keyof R]: ExtractState<R[K]> }`
 // TODO: Fix TS2304 for mapped type parameter K -- binder scope gap.
 #[test]
-#[ignore]
 fn test_redux_pattern_state_from_reducers_mapped() {
     use crate::parser::ParserState;
 
@@ -16808,7 +16803,6 @@ const partial: PartialState = { nested: { value: 42 } };
 ///
 /// NOTE: Currently ignored - see `test_redux_pattern_reducers_map_object`.
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
 fn test_redux_pattern_generic_function_with_conditional_return() {
     use crate::parser::ParserState;
 
@@ -16881,7 +16875,6 @@ const n: number = state;
 ///
 // TODO: Fix TS2304 for mapped type parameter K -- binder scope gap.
 #[test]
-#[ignore]
 fn test_redux_pattern_indexed_access_on_mapped_union() {
     use crate::parser::ParserState;
 
@@ -16948,7 +16941,6 @@ declare const action: AllActions;
 /// Homomorphic mapped types with conditional constraints are not correctly resolved.
 // TODO: Fix TS2304 for mapped type parameter K -- binder scope gap.
 #[test]
-#[ignore]
 fn test_redux_pattern_reducers_map_object() {
     use crate::parser::ParserState;
 
@@ -19848,7 +19840,6 @@ f({ c: 1 });
 }
 
 #[test]
-#[ignore = "pre-existing failure"]
 fn test_union_optional_variable_assignment_no_common_properties() {
     use crate::parser::ParserState;
 
@@ -22729,7 +22720,6 @@ declare let x: Recurse;
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_builtin_types_no_ts2304_errors() {
     // Regression test: Global types like Promise, Array, Map should not cause
     // TS2304 "Cannot find name" errors when lib.d.ts is not loaded.

@@ -3893,7 +3893,6 @@ fn compile_resolves_tsconfig_type_roots_includes_packages() {
 }
 
 #[test]
-#[ignore = "module resolution for node-next/nodenext not yet complete"]
 fn compile_resolves_node_modules_exports_subpath() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -4808,7 +4807,6 @@ fn compile_resolves_node_modules_types_versions_falls_back_to_wildcard() {
 }
 
 #[test]
-#[ignore = "module resolution for node-next/nodenext not yet complete"]
 fn compile_resolves_package_imports_wildcard() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -10488,7 +10486,6 @@ fn ts2688_resolved_types_no_error() {
 }
 
 #[test]
-#[ignore = "types entry resolution changed after merge"]
 fn ts2688_types_entry_still_loads_node_modules_package_globals() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
@@ -10543,7 +10540,6 @@ fn ts2688_types_entry_still_loads_node_modules_package_globals() {
 }
 
 #[test]
-#[ignore = "scoped types entry resolution changed after merge"]
 fn scoped_types_entry_resolves_plain_mangled_package_name_from_custom_roots() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
@@ -10589,7 +10585,6 @@ fn scoped_types_entry_resolves_plain_mangled_package_name_from_custom_roots() {
 }
 
 #[test]
-#[ignore = "scoped types entry resolution changed after merge"]
 fn scoped_types_entry_loads_at_types_scoped_package_globals_while_preserving_ts2688() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;

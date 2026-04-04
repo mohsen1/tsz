@@ -504,7 +504,6 @@ let x = <Comp name="hi" data-testid="foo" aria-label="bar" />;
 }
 
 #[test]
-#[ignore] // TODO: hyphenated attr error message format differs from expected
 fn test_declared_hyphenated_attr_uses_synthesized_assignability_error() {
     let source = r#"
 declare namespace JSX {
@@ -1848,7 +1847,6 @@ function test(Component: SFC<{{ x: number }}>) {{
 // =============================================================================
 
 #[test]
-#[ignore = "TODO: spread property type checking not yet wired in props.rs"]
 fn test_spread_overwrite_skips_type_check() {
     // When a later spread will overwrite an explicit attribute, tsc only
     // emits TS2783 (overwrite warning) and does NOT emit TS2322 (type mismatch).
@@ -2522,7 +2520,6 @@ const x = <GenComp prop={{"x"}}>{{i => ({{}}) }}</GenComp>;
 }
 
 #[test]
-#[ignore] // TODO: generic children callback missing third TS2322 mismatch
 fn test_jsx_generic_children_recover_inferred_return_type_errors() {
     let source = format!(
         r#"
@@ -2576,7 +2573,6 @@ declare namespace JSX {
 "#;
 
 #[test]
-#[ignore = "TODO: spread property type checking not yet wired in props.rs"]
 fn test_spread_attribute_type_mismatch_emits_ts2322() {
     // Spreading an object with wrong property type should emit TS2322
     let source = format!(
@@ -3409,7 +3405,6 @@ const decorator = function <U extends {{x: string}}>(props: U) {{
 }
 
 #[test]
-#[ignore = "TODO: spread property type checking not yet wired in props.rs"]
 fn test_intrinsic_generic_spread_type_mismatch_emits_ts2322_not_ts2741() {
     let source = r#"
 declare namespace JSX {
@@ -3438,7 +3433,6 @@ function make2<T extends { x: number }>(obj: T) {
 }
 
 #[test]
-#[ignore = "TODO: spread property type checking not yet wired in props.rs"]
 fn test_intrinsic_generic_spread_missing_required_emits_ts2322_not_ts2741() {
     let source = r#"
 declare namespace JSX {
@@ -3603,7 +3597,6 @@ declare const MockComponent: MockComponentInterface;
 }
 
 #[test]
-#[ignore = "TS2741 related info 'is declared here' lookup does not resolve arrow function param type properties"]
 fn jsx_children_react_jsx_ignores_element_children_attribute_and_keeps_related_info() {
     let source = r#"
 declare namespace JSX {
@@ -3651,7 +3644,6 @@ const Wrong = (props: { offspring: string }) => <h1>{props.offspring}</h1>;
 }
 
 #[test]
-#[ignore = "TS2345 arrow-body change suppresses generic JSX children errors — needs investigation"]
 fn jsx_children_generic_component_explicit_children_gets_contextual_return_type() {
     let source = format!(
         r#"
@@ -3677,7 +3669,6 @@ const mismatched = <ElemLit prop="x" children={{() => 12}} />;
 }
 
 #[test]
-#[ignore = "TS2345 arrow-body change suppresses generic JSX children errors — needs investigation"]
 fn jsx_children_generic_component_body_children_gets_contextual_return_type() {
     let source = format!(
         r#"

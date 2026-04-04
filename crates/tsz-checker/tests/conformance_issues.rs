@@ -786,7 +786,6 @@ var r10 = foo6(b);
 }
 
 #[test]
-#[ignore] // TODO: generic constructor callback produces false-positive TS2345
 fn test_generic_constructor_callback_valid_cases_stay_clean() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
@@ -1418,7 +1417,6 @@ class ProtectedDerived extends ProtectedBase implements I {}
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
 fn test_overloaded_interface_method_inheritance_uses_trailing_signature_compatibility() {
     let source = r#"
 interface Indexed<T> {
@@ -2825,7 +2823,6 @@ fn test_jsdoc_unwrapped_multiline_typedef_reports_ts1110() {
 }
 
 #[test]
-#[ignore = "pre-existing regression"]
 fn test_js_commonjs_deep_exports_assignment_reports_ts2339_against_current_module_surface() {
     let diagnostics = compile_and_get_diagnostics_named(
         "a.js",
@@ -4040,7 +4037,6 @@ fn compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
 }
 
 #[test]
-#[ignore] // TODO: complex generic inference for compose/transform pipeline not yet producing TS2339
 fn test_infer_from_generic_function_return_types1_preserves_ts2339_in_conformance_mode() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
@@ -4207,7 +4203,6 @@ fn test_lib_global_symbol_call_does_not_emit_ts2454() {
 }
 
 #[test]
-#[ignore = "Pre-existing failure: typed array overload resolution"]
 fn test_typed_array_to_locale_string_uses_options_parameter_type() {
     // Overload resolution for lib typed arrays is now fixed.
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
@@ -4232,7 +4227,6 @@ const text = values.toLocaleString("en-US", { style: "currency", currency: "EUR"
 }
 
 #[test]
-#[ignore = "Pre-existing failure: typed array overload resolution"]
 fn test_typed_array_to_locale_string_uses_options_parameter_type_with_merged_lib_contexts() {
     // Overload resolution for lib typed arrays is now fixed (merged lib contexts variant).
     let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
@@ -4676,7 +4670,6 @@ Workspace.Project.prototype = {
 }
 
 #[test]
-#[ignore = "requires lib files: no_lib=true causes TS2318 floods that prevent type resolution needed for TS2454"]
 fn test_jsdoc_local_constructor_alias_preserves_ts2454() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.js",
@@ -5674,7 +5667,6 @@ let o: O = { x: 5, y: false };
 }
 
 #[test]
-#[ignore] // TODO: mapped type key index access TS2536 not yet emitted
 fn test_mapped_type_key_index_access_constraint_emits_ts2536() {
     let diagnostics = compile_and_get_diagnostics(
         r"
@@ -5840,7 +5832,6 @@ fn compile_imports_and_get_diagnostics(
 /// Complexity: HIGH - requires binder/checker coordination
 /// See: docs/conformance-work-session-summary.md
 #[test]
-#[ignore = "pre-existing regression: false TS2345 emitted after invalid assignment narrowing"]
 fn test_flow_narrowing_from_invalid_assignment() {
     let diagnostics: Vec<_> = compile_and_get_diagnostics(
         r"
@@ -14379,7 +14370,6 @@ class A {
 }
 
 #[test]
-#[ignore] // TODO: keyof display shows expanded type instead of 'keyof A'
 fn private_name_keyof_excludes_ecmascript_private_members() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r##"
@@ -15353,7 +15343,6 @@ class MyClass {
 }
 
 #[test]
-#[ignore] // TODO: second destructuring site TS2339 not yet emitted
 fn test_destructuring_union_with_undefined_reports_ts2339() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
@@ -15781,7 +15770,6 @@ type Outer<WithC extends { name: string }> = Inner<WithC>;
 }
 
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
 fn test_ts2344_unconstrained_type_param_reports_object_constraint() {
     // tsc emits TS2344 when an unconstrained type parameter is used where
     // `T extends Object` is required. The unconstrained param cannot
@@ -17254,7 +17242,6 @@ fn test_computed_binding_element_identifier_key_unions_pre_and_default_assignmen
 }
 
 #[test]
-#[ignore = "computed assignment pattern tuple access regression"]
 fn test_computed_assignment_pattern_order_uses_exact_rhs_tuple_access() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
@@ -17489,7 +17476,6 @@ bar<CoolArray<number>>(10, 20);
 }
 
 #[test]
-#[ignore] // TODO: nested indexed access TS2536 classification incomplete
 fn test_constraint_with_indexed_access_reports_nested_ts2536() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
@@ -17928,7 +17914,6 @@ function f(obj: { a: number, b: 0 | 1 }, k: 'a' | 'b') {
 }
 
 #[test]
-#[ignore] // TODO: generic indexed write TS2322 not yet emitted
 fn test_assignment_diagnostic_widens_literal_for_generic_indexed_write() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
@@ -18016,7 +18001,6 @@ function foo<T>() {
 }
 
 #[test]
-#[ignore] // TODO: generic indexed return target TS2322 not yet emitted
 fn test_return_diagnostic_preserves_literal_for_generic_indexed_target() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
@@ -19338,7 +19322,6 @@ async function main() {
 }
 
 #[test]
-#[ignore] // TODO: intersection type display uses alias instead of expanded form
 fn test_intersection_index_signature_diagnostics_preserve_declared_identifier_annotations() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
@@ -19798,7 +19781,6 @@ const f: (x: Expression) => boolean = sink;
 }
 
 #[test]
-#[ignore] // TODO: union member ordering in TS2339 message differs from tsc
 fn test_union_restricted_indexed_access_prefers_ts2339_over_constraint_failure() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
@@ -19976,7 +19958,6 @@ let t: UseQueryOptions<X, "role.user.role">;
 }
 
 #[test]
-#[ignore = "Pre-existing failure: function intrinsic structural length"]
 fn test_function_intrinsic_satisfies_structural_length_constraint() {
     if !lib_files_available() {
         return;
@@ -20001,7 +19982,6 @@ let x: { length: number } = f;
 }
 
 #[test]
-#[ignore = "Pre-existing failure: promise chaining function constraint"]
 fn test_promise_chaining_function_constraint_only_reports_final_ts2322() {
     if !lib_files_available() {
         return;
@@ -23329,7 +23309,6 @@ const o1 = {
 /// incorrectly assumed compatibility after the first successful check cached
 /// intermediate results.
 #[test]
-#[ignore = "flow analysis evaluates Application types, bypassing variance fast path"]
 fn test_generic_variance_order_independent_rejection() {
     let source = r#"
 interface MyPromise<T> {
@@ -23394,7 +23373,6 @@ b = a;
 /// types for annotated variables. Structural comparison is correct (contravariant
 /// params pass), so only variance-based checking can reject this.
 #[test]
-#[ignore = "requires flow analysis to preserve Application types for annotated vars"]
 fn test_generic_variance_method_param_order_independent() {
     let source = r#"
 interface Setter<T> {

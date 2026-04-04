@@ -69,7 +69,6 @@ bar(g1, g2);
 ///   `inferredCovariantType && !(inferredCovariantType.flags & TypeFlags.Never)`
 /// Repro from TypeScript#19576 (neverInference.ts).
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
 fn never_covariant_falls_through_to_contra_candidates() {
     let source = r#"
 type Comparator<T> = (x: T, y: T) => number;

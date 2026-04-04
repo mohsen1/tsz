@@ -1895,7 +1895,6 @@ const e: MyError = new MyError("oops");
 }
 
 #[test]
-#[ignore = "heritage resolution no longer populates DefinitionInfo.extends; resolved through type pipeline instead"]
 fn test_resolve_heritage_user_class_extends_user_class() {
     // Verify heritage resolution works for user-defined classes within the same file
     // (same batch, so heritage should resolve during the primary binder pass).
