@@ -311,7 +311,9 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         for file in &[
             "src/checkers/jsx/orchestration.rs",
             "src/checkers/jsx/children.rs",
-            "src/checkers/jsx/props.rs",
+            "src/checkers/jsx/props/mod.rs",
+            "src/checkers/jsx/props/resolution.rs",
+            "src/checkers/jsx/props/validation.rs",
             "src/checkers/jsx/runtime.rs",
             "src/checkers/jsx/diagnostics.rs",
         ] {
@@ -1550,11 +1552,11 @@ fn checker_files_stay_under_loc_limit() {
     //   complex.rs (926), variable_checking/core.rs (1606),
     //   symbol_types.rs (892), error_reporter/core.rs (1576),
     //   types/computation/call.rs (1805), checkers/call_checker.rs (1396),
-    //   checkers/jsx/props.rs (1469)
+    //   checkers/jsx/props/mod.rs, checkers/jsx/props/resolution.rs, checkers/jsx/props/validation.rs (1469)
     let grandfathered: &[(&str, usize)] = &[
         ("types/function_type.rs", 1940),
         ("state/type_analysis/computed_commonjs.rs", 2787),
-        ("checkers/jsx/props.rs", 2312),
+        ("checkers/jsx/props/resolution.rs", 1600),
         ("checkers/jsx/orchestration.rs", 2397),
         ("checkers/call_checker.rs", 2201),
         ("types/computation/call.rs", 2176),
@@ -2415,7 +2417,9 @@ fn migrated_files_no_raw_contextual_type_mutation() {
         "dispatch.rs",
         "checkers/jsx/orchestration.rs",
         "checkers/jsx/children.rs",
-        "checkers/jsx/props.rs",
+        "checkers/jsx/props/mod.rs",
+        "checkers/jsx/props/resolution.rs",
+        "checkers/jsx/props/validation.rs",
         "checkers/jsx/runtime.rs",
         "checkers/jsx/diagnostics.rs",
         "types/computation/call.rs",
@@ -2600,7 +2604,9 @@ fn migrated_files_no_raw_contextual_assertion_mutation() {
         "dispatch.rs",
         "checkers/jsx/orchestration.rs",
         "checkers/jsx/children.rs",
-        "checkers/jsx/props.rs",
+        "checkers/jsx/props/mod.rs",
+        "checkers/jsx/props/resolution.rs",
+        "checkers/jsx/props/validation.rs",
         "checkers/jsx/runtime.rs",
         "checkers/jsx/diagnostics.rs",
         "types/computation/call.rs",
@@ -3966,7 +3972,7 @@ fn test_checker_file_size_ceiling() {
     // This number must only shrink as files are split into smaller modules.
     // Current oversized files (as of 2026-04-03):
     //   checkers/call_checker.rs, checkers/generic_checker.rs,
-    //   checkers/jsx/props.rs, checkers/jsx/orchestration.rs,
+    //   checkers/jsx/props/mod.rs, checkers/jsx/props/resolution.rs, checkers/jsx/props/validation.rs, checkers/jsx/orchestration.rs,
     //   types/type_checking/duplicate_identifiers.rs, types/function_type.rs,
     //   types/queries/lib.rs, types/utilities/core.rs, types/computation/binary.rs,
     //   types/computation/identifier.rs, types/computation/call.rs,
