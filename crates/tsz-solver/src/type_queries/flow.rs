@@ -704,14 +704,58 @@ fn types_have_common_properties_relaxed(
                 }
                 props
             }
+            // Arrays have no named properties for overlap checking - element types
+            // are compared separately in types_are_comparable_for_assertion_inner.
+            // Returning empty ensures we don't short-circuit array↔object comparisons.
+            Some(TypeData::Array(_)) => Vec::new(),
             _ => Vec::new(),
         }
+    }
+
+    // Handle array↔array comparability: check element types directly
+    if let (Some(TypeData::Array(src_elem)), Some(TypeData::Array(tgt_elem))) =
+        (db.lookup(source), db.lookup(target))
+    {
+        return types_are_comparable_for_assertion_inner(db, src_elem, tgt_elem, depth + 1);
+    }
+
+    // Handle array↔tuple comparability: array element vs any tuple element
+    if let (Some(TypeData::Array(arr_elem)), Some(TypeData::Tuple(tuple_id))) =
+        (db.lookup(source), db.lookup(target))
+    {
+        let tuple_elements = db.tuple_list(tuple_id);
+        return tuple_elements
+            .iter()
+            .any(|elem| types_are_comparable_for_assertion_inner(db, arr_elem, elem.type_id, depth + 1));
+    }
+    if let (Some(TypeData::Tuple(tuple_id)), Some(TypeData::Array(arr_elem))) =
+        (db.lookup(source), db.lookup(target))
+    {
+        let tuple_elements = db.tuple_list(tuple_id);
+        return tuple_elements
+            .iter()
+            .any(|elem| types_are_comparable_for_assertion_inner(db, elem.type_id, arr_elem, depth + 1));
+    }
+
+    // Handle tuple↔tuple comparability: check element types pairwise
+    if let (Some(TypeData::Tuple(src_tuple)), Some(TypeData::Tuple(tgt_tuple))) =
+        (db.lookup(source), db.lookup(target))
+    {
+        let src_elements = db.tuple_list(src_tuple);
+        let tgt_elements = db.tuple_list(tgt_tuple);
+        // Check if any element from source is comparable to any from target
+        return src_elements.iter().any(|src_elem| {
+            tgt_elements.iter().any(|tgt_elem| {
+                types_are_comparable_for_assertion_inner(db, src_elem.type_id, tgt_elem.type_id, depth + 1)
+            })
+        });
     }
 
     let source_props = get_properties(db, source);
     let target_props = get_properties(db, target);
 
-    if source_props.is_empty() || target_props.is_empty() {
+    // If both sides have no properties and aren't arrays/tuples, they don't overlap
+    if source_props.is_empty() && target_props.is_empty() {
         return false;
     }
 
@@ -1079,14 +1123,58 @@ fn types_have_common_properties(
                 }
                 props
             }
+            // Arrays have no named properties for overlap checking - element types
+            // are compared separately in types_are_comparable_for_assertion_inner.
+            // Returning empty ensures we don't short-circuit array↔object comparisons.
+            Some(TypeData::Array(_)) => Vec::new(),
             _ => Vec::new(),
         }
+    }
+
+    // Handle array↔array comparability: check element types directly
+    if let (Some(TypeData::Array(src_elem)), Some(TypeData::Array(tgt_elem))) =
+        (db.lookup(source), db.lookup(target))
+    {
+        return types_are_comparable_for_assertion_inner(db, src_elem, tgt_elem, depth + 1);
+    }
+
+    // Handle array↔tuple comparability: array element vs any tuple element
+    if let (Some(TypeData::Array(arr_elem)), Some(TypeData::Tuple(tuple_id))) =
+        (db.lookup(source), db.lookup(target))
+    {
+        let tuple_elements = db.tuple_list(tuple_id);
+        return tuple_elements
+            .iter()
+            .any(|elem| types_are_comparable_for_assertion_inner(db, arr_elem, elem.type_id, depth + 1));
+    }
+    if let (Some(TypeData::Tuple(tuple_id)), Some(TypeData::Array(arr_elem))) =
+        (db.lookup(source), db.lookup(target))
+    {
+        let tuple_elements = db.tuple_list(tuple_id);
+        return tuple_elements
+            .iter()
+            .any(|elem| types_are_comparable_for_assertion_inner(db, elem.type_id, arr_elem, depth + 1));
+    }
+
+    // Handle tuple↔tuple comparability: check element types pairwise
+    if let (Some(TypeData::Tuple(src_tuple)), Some(TypeData::Tuple(tgt_tuple))) =
+        (db.lookup(source), db.lookup(target))
+    {
+        let src_elements = db.tuple_list(src_tuple);
+        let tgt_elements = db.tuple_list(tgt_tuple);
+        // Check if any element from source is comparable to any from target
+        return src_elements.iter().any(|src_elem| {
+            tgt_elements.iter().any(|tgt_elem| {
+                types_are_comparable_for_assertion_inner(db, src_elem.type_id, tgt_elem.type_id, depth + 1)
+            })
+        });
     }
 
     let source_props = get_properties(db, source);
     let target_props = get_properties(db, target);
 
-    if source_props.is_empty() || target_props.is_empty() {
+    // If both sides have no properties and aren't arrays/tuples, they don't overlap
+    if source_props.is_empty() && target_props.is_empty() {
         return false;
     }
 
