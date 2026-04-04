@@ -319,7 +319,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     /// Compute the variances of each type parameter for a type application's base type.
-    pub(super) fn compute_application_variances(&self, base: TypeId) -> Option<std::sync::Arc<[Variance]>> {
+    pub(super) fn compute_application_variances(
+        &self,
+        base: TypeId,
+    ) -> Option<std::sync::Arc<[Variance]>> {
         let def_id = match self.interner.lookup(base)? {
             TypeData::Lazy(def_id) => def_id,
             _ => return None,
@@ -2042,5 +2045,4 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             _ => {}
         }
     }
-
 }
