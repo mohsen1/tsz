@@ -1482,4 +1482,3 @@ fn explore_generic_class_with_default_type() {
         "Should emit default type param: {output}"
     );
 }
-

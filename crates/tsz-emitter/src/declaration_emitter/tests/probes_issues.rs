@@ -1075,4 +1075,3 @@ fn test_conditional_type_in_indexed_access() {
         "conditional in indexed access needs parens: {output}"
     );
 }
-

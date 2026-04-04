@@ -261,12 +261,11 @@ impl<'a> Printer<'a> {
         // When a block contains `using`/`await using` declarations, tsc wraps ALL
         // statements in the block inside a single try/catch/finally, not just the
         // using declarations. We detect this here and set up the env + try wrapper.
-        let block_using_lowered =
-            if !self.ctx.options.target.supports_es2025() {
-                self.block_has_using_declarations(&block.statements)
-            } else {
-                false
-            };
+        let block_using_lowered = if !self.ctx.options.target.supports_es2025() {
+            self.block_has_using_declarations(&block.statements)
+        } else {
+            false
+        };
         let prev_block_using_env = self.block_using_env.take();
         let block_using_names: Option<(String, String, String, bool)> = if block_using_lowered {
             let using_async = self.block_has_await_using(&block.statements);

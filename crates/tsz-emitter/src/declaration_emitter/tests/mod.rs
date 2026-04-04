@@ -12,7 +12,6 @@ pub(super) use tsz_solver::{
     PropertyInfo, SymbolRef, TupleElement, TypeId, TypeInterner,
 };
 
-
 // =============================================================================
 // Helper
 // =============================================================================
@@ -188,7 +187,11 @@ pub(super) fn find_first_class_node(parser: &ParserState, class_kind: u16) -> No
         .unwrap_or_else(|| panic!("missing class node of kind {class_kind}"))
 }
 
-pub(super) fn find_class_node(parser: &ParserState, class_name: &str, class_kind: u16) -> NodeIndex {
+pub(super) fn find_class_node(
+    parser: &ParserState,
+    class_name: &str,
+    class_kind: u16,
+) -> NodeIndex {
     parser
         .arena
         .nodes
@@ -211,7 +214,10 @@ pub(super) fn find_class_node(parser: &ParserState, class_name: &str, class_kind
         .unwrap_or_else(|| panic!("missing class node for {class_name}"))
 }
 
-pub(super) fn find_class_extends_expression(parser: &ParserState, class_idx: NodeIndex) -> NodeIndex {
+pub(super) fn find_class_extends_expression(
+    parser: &ParserState,
+    class_idx: NodeIndex,
+) -> NodeIndex {
     let class = parser
         .arena
         .get(class_idx)
@@ -233,17 +239,16 @@ pub(super) fn find_class_extends_expression(parser: &ParserState, class_idx: Nod
         .unwrap_or(type_idx)
 }
 
-
-mod type_info;
-mod simple_declarations;
-mod type_formatting;
-mod generics_and_ambient;
 mod class_features;
-mod misc_features;
+mod comprehensive_parity;
 mod computed_properties;
+mod enum_template_and_advanced;
+mod fix_verification;
+mod generics_and_ambient;
+mod misc_features;
+mod probes_issues;
 mod probes_systematic;
 mod probes_tsc_comparison;
-mod probes_issues;
-mod fix_verification;
-mod comprehensive_parity;
-mod enum_template_and_advanced;
+mod simple_declarations;
+mod type_formatting;
+mod type_info;
