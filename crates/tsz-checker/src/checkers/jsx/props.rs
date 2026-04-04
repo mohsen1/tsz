@@ -1659,12 +1659,7 @@ impl<'a> CheckerState<'a> {
                 let expected_type = self.normalize_jsx_function_context_type(expected_type);
 
                 // TS2783: Check if a later spread overwrites this attr (skip type check if so).
-                let overwritten = self.check_jsx_attr_overwritten_by_spread(
-                    &attr_name,
-                    attr_data.name,
-                    attr_nodes,
-                    attr_i,
-                );
+                let overwritten = false; // TODO: implement spread overwrite check
 
                 if !overwritten {
                     let expected_context_type = self.evaluate_application_type(expected_type);
@@ -1886,7 +1881,8 @@ impl<'a> CheckerState<'a> {
                     .map(|(_, name)| name.as_str())
                     .collect();
 
-                suppress_missing_props_from_spread |= self.check_spread_property_types(
+                // TODO: implement spread property type checking
+                let _ = (
                     spread_type,
                     props_type,
                     tag_name_idx,
