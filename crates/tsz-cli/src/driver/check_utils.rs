@@ -2512,4 +2512,22 @@ export declare function __classPrivateFieldSet<T extends object, V>(receiver: T,
         );
         assert!(names.contains(&"pub_val"));
     }
+
+    #[test]
+    fn regex_flag_errors_do_not_suppress_semantic_diagnostics() {
+        // TS1499 (unknown regex flag) should not set has_syntax_parse_errors,
+        // so TS2339 (property does not exist) should still be emitted.
+        assert!(
+            is_non_suppressing_parse_error(1499),
+            "TS1499 (Unknown regex flag) should be non-suppressing"
+        );
+        assert!(
+            is_non_suppressing_parse_error(1500),
+            "TS1500 (Duplicate regex flag) should be non-suppressing"
+        );
+        assert!(
+            is_non_suppressing_parse_error(1502),
+            "TS1502 (Incompatible u/v flags) should be non-suppressing"
+        );
+    }
 }
