@@ -1199,21 +1199,47 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // TSC emits TS2322 instead of TS2739/TS2740 when both source and target have index signatures.
+        // TSC emits TS2322 instead of TS2739/TS2740 when both source and target have
+        // string index signatures. For number index signatures, suppress only when the
+        // target has no explicit named properties (i.e., it's purely an index-signature
+        // type like `{ [x: number]: T }`). Named interfaces that happen to have number
+        // index signatures (like String, Array) should still get TS2739/TS2740.
         use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
         let resolver = IndexSignatureResolver::new(self.ctx.types);
         // Check both original and evaluated types (needed for generic class instances)
         let source_evaluated = self.evaluate_type_with_env(source);
         let target_evaluated = self.evaluate_type_with_env(target);
-        let source_has_index = [source, source_evaluated].iter().any(|t| {
-            resolver.has_index_signature(*t, IndexKind::String)
-                || resolver.has_index_signature(*t, IndexKind::Number)
-        });
-        let target_has_index = [target, target_evaluated].iter().any(|t| {
-            resolver.has_index_signature(*t, IndexKind::String)
-                || resolver.has_index_signature(*t, IndexKind::Number)
-        });
-        if source_has_index && target_has_index {
+        let source_has_string_index = [source, source_evaluated]
+            .iter()
+            .any(|t| resolver.has_index_signature(*t, IndexKind::String));
+        let target_has_string_index = [target, target_evaluated]
+            .iter()
+            .any(|t| resolver.has_index_signature(*t, IndexKind::String));
+        let source_has_number_index = [source, source_evaluated]
+            .iter()
+            .any(|t| resolver.has_index_signature(*t, IndexKind::Number));
+        let target_has_number_index = [target, target_evaluated]
+            .iter()
+            .any(|t| resolver.has_index_signature(*t, IndexKind::Number));
+        // For number index signatures, only suppress when the missing properties are
+        // NOT explicitly declared on the target (they came from index value type expansion).
+        // We detect this by checking if none of the missing property names match a real
+        // named member of the target type's object shape.
+        let number_index_suppress =
+            source_has_number_index && target_has_number_index && !property_names.is_empty() && {
+                let target_shape =
+                    tsz_solver::type_queries::get_object_shape(self.ctx.types, target_type);
+                property_names.iter().all(|name| {
+                    // If none of the missing properties are real named members of the
+                    // target type, the "missing properties" came from index value type
+                    // comparison, not from actual missing named members.
+                    match &target_shape {
+                        Some(shape) => !shape.properties.iter().any(|p| p.name == *name),
+                        None => true,
+                    }
+                })
+            };
+        if (source_has_string_index && target_has_string_index) || number_index_suppress {
             let src_str = self.format_type_diagnostic(source);
             let tgt_str = self.format_type_diagnostic(target);
             let message = format_message(

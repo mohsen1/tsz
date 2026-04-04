@@ -3309,3 +3309,51 @@ fn test_index_signature_target_missing_prop_emits_ts2322_not_ts2741() {
         "Expected TS2322 for index signature target mismatch. Got: {diagnostics:?}"
     );
 }
+
+/// Regression: assignFromStringInterface2.ts
+/// When both source and target have number index signatures but the source is
+/// missing named properties from the target, TS2739/TS2740 should be emitted
+/// (not TS2322). Number index signatures (common on String, Array, etc.) must
+/// NOT suppress the missing-properties diagnostic.
+#[test]
+fn test_missing_properties_not_suppressed_by_number_index_signatures() {
+    let source = r#"
+        interface Target {
+            foo(): string;
+            bar(): string;
+            baz(): string;
+            qux(): string;
+            quux(): string;
+            corge(): string;
+            grault(): string;
+            [index: number]: string;
+        }
+
+        interface Source {
+            foo(): string;
+            [index: number]: string;
+        }
+
+        declare var target: Target;
+        declare var source: Source;
+        target = source;
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    // TS2740 = "missing the following properties ... and N more" (6+ missing)
+    let has_missing_props = diagnostics.iter().any(|(code, _)| {
+        *code == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+    });
+    assert!(
+        has_missing_props,
+        "Expected TS2740 (missing properties) when both types have number index signatures \
+         but source is missing named properties. Number index signatures should NOT suppress \
+         missing-property diagnostics in favor of TS2322. Got: {diagnostics:?}"
+    );
+    // Should NOT have TS2322 for this case — TS2740 replaces it
+    let has_ts2322 = diagnostics.iter().any(|(code, _)| *code == 2322);
+    assert!(
+        !has_ts2322,
+        "Expected TS2740, not TS2322, when source is missing named properties. Got: {diagnostics:?}"
+    );
+}
