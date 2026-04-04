@@ -299,30 +299,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 // fully resolvable when T has circular reference
                 let is_conditional = tsz_solver::is_conditional_type(self.ctx.types, object_type);
 
-                // Suppress TS2339 for indexed access types (e.g., T[keyof T]) where the
-                // result type cannot be determined until the type parameter is instantiated.
-                let is_index_access = tsz_solver::is_index_access_type(self.ctx.types, object_type)
-                    || tsz_solver::is_index_access_type(self.ctx.types, resolved_object);
-
-                // Suppress TS2339 when the object type contains unresolved type parameters.
-                // E.g., `Cond<T[K]>["foo"]` where T and K are generic.
-                let object_has_type_params =
-                    crate::query_boundaries::common::contains_type_parameters(
-                        self.ctx.types,
-                        object_type,
-                    );
-
                 if !is_type_param
                     && !is_error_or_any
                     && !is_generic_application
                     && !index_has_type_params
                     && !is_lazy_with_potential_generic
                     && !is_conditional
-                    && !is_index_access
-                    && !object_has_type_params
                 {
-                    use crate::query_boundaries::common::PropertyAccessResult;
-
                     let prop_result =
                         crate::query_boundaries::property_access::resolve_property_access(
                             self.ctx.types,
@@ -330,28 +313,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             &key,
                         );
 
-                    let prop_found =
-                        !matches!(prop_result, PropertyAccessResult::PropertyNotFound { .. });
-
-                    // When the property is not found via direct lookup, try evaluating
-                    // the full IndexAccess type. The solver's IndexAccess evaluator
-                    // can resolve through Lazy types and union distribution, which the
-                    // simple property access resolver cannot.
-                    let prop_found = if !prop_found {
-                        let factory = self.ctx.types.factory();
-                        let string_lit = factory.literal_string(&key);
-                        let index_access_type = factory.index_access(object_type, string_lit);
-                        let evaluated =
-                            tsz_solver::evaluate_type(self.ctx.types, index_access_type);
-                        evaluated != TypeId::ERROR
-                            && evaluated != TypeId::UNKNOWN
-                            && evaluated != TypeId::NEVER
-                    } else {
-                        true
-                    };
-
                     // If property not found and no index signature exists, emit TS2339
-                    if !prop_found {
+                    use crate::query_boundaries::common::PropertyAccessResult;
+                    if matches!(prop_result, PropertyAccessResult::PropertyNotFound { .. }) {
                         // Check if there's an index signature that allows this key
                         let has_index_sig = crate::query_boundaries::common::object_shape_for_type(
                             self.ctx.types,
@@ -495,36 +459,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 diagnostic_codes::CANNOT_FIND_NAME,
             );
             return TypeId::ERROR;
-        }
-
-        // TS2304: Check for forward reference in typeof expressions.
-        // typeof expression cannot reference a variable declared after it.
-        // This typically happens in return type annotations referencing function body locals.
-        if let Some(expr_node) = self.ctx.arena.get(type_query.expr_name)
-            && expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-            && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
-            && let Some(sym_id) = self.ctx.binder.file_locals.get(ident.escaped_text.as_str())
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-        {
-            if let Some((decl_start, _)) = symbol.value_declaration_span {
-                // If the declaration is after the typeof expression, it's a forward reference
-                if decl_start > expr_node.pos {
-                    use crate::diagnostics::{
-                        diagnostic_codes, diagnostic_messages, format_message,
-                    };
-                    let msg = format_message(
-                        diagnostic_messages::CANNOT_FIND_NAME,
-                        &[&ident.escaped_text],
-                    );
-                    self.ctx.error(
-                        expr_node.pos,
-                        expr_node.end - expr_node.pos,
-                        msg,
-                        diagnostic_codes::CANNOT_FIND_NAME,
-                    );
-                    return TypeId::ERROR;
-                }
-            }
         }
 
         // Prefer the already-computed value-space type at this query site when available.
