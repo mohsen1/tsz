@@ -19352,7 +19352,6 @@ tt = ss;
                     || message.contains("'{ x: A; } & { y: B; }'"))
         }),
         "Expected TS2322 or TS2741 to preserve the declared intersection source type for `sb1`.\nActual diagnostics: {diagnostics:#?}"
-
     );
     assert!(
         diagnostics.iter().any(|(code, message)| {
