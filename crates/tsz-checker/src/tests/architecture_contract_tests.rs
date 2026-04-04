@@ -832,8 +832,15 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         .expect("failed to read src/state/state_checking/class.rs for architecture guard");
     let state_heritage_checking_src = fs::read_to_string("src/state/state_checking/heritage.rs")
         .expect("failed to read src/state/state_checking/heritage.rs for architecture guard");
-    let property_access_type_src = fs::read_to_string("src/types/property_access_type.rs")
-        .expect("failed to read src/types/property_access_type.rs for architecture guard");
+    let property_access_type_src = {
+        let helpers = fs::read_to_string("src/types/property_access_type/helpers.rs").expect(
+            "failed to read src/types/property_access_type/helpers.rs for architecture guard",
+        );
+        let resolve = fs::read_to_string("src/types/property_access_type/resolve.rs").expect(
+            "failed to read src/types/property_access_type/resolve.rs for architecture guard",
+        );
+        format!("{helpers}\n{resolve}")
+    };
     let property_checker_src = fs::read_to_string("src/checkers/property_checker.rs")
         .expect("failed to read src/checkers/property_checker.rs for architecture guard");
     assert!(
@@ -1536,7 +1543,7 @@ fn checker_files_stay_under_loc_limit() {
         ("checkers/call_checker.rs", 2201),
         ("types/computation/call.rs", 2176),
         ("types/property_access_helpers.rs", 2104),
-        ("types/property_access_type.rs", 2278),
+        ("types/property_access_type/resolve.rs", 2311),
         ("declarations/import/core.rs", 2562),
         ("jsdoc/resolution.rs", 2357),
         ("assignability/assignment_checker.rs", 2083),
@@ -2454,7 +2461,8 @@ fn migrated_files_no_raw_contextual_type_mutation() {
 #[test]
 fn migrated_files_no_raw_skip_flow_narrowing_mutation() {
     let migrated_files = &[
-        "types/property_access_type.rs",
+        "types/property_access_type/helpers.rs",
+        "types/property_access_type/resolve.rs",
         "types/computation/access.rs",
         "types/computation/helpers.rs",
         "state/type_analysis/core.rs",
@@ -2519,7 +2527,8 @@ fn migrated_helper_files_no_raw_ambient_request_reads() {
         "state/type_analysis/core_type_query.rs",
         "state/type_analysis/computed_helpers_binding.rs",
         "state/type_analysis/computed_helpers.rs",
-        "types/property_access_type.rs",
+        "types/property_access_type/helpers.rs",
+        "types/property_access_type/resolve.rs",
         "state/variable_checking/destructuring.rs",
         "state/variable_checking/core.rs",
         "types/type_checking/core.rs",
