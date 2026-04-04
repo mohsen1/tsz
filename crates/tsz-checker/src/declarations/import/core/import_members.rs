@@ -654,7 +654,18 @@ impl<'a> CheckerState<'a> {
                                 // TS18042: Check for type import in JavaScript file
                                 // When importing a type-only symbol in a JS file with checkJs enabled,
                                 // emit an error suggesting to use JSDoc type annotation instead.
-                                if self.is_js_file() && !clause.is_type_only {
+                                // Skip if the specifier itself has the `type` modifier
+                                // (e.g., `import { type A } from "mod"` in a JS file is valid).
+                                let specifier_is_type_only = self
+                                    .ctx
+                                    .arena
+                                    .get(*element_idx)
+                                    .and_then(|n| self.ctx.arena.get_specifier(n))
+                                    .is_some_and(|s| s.is_type_only);
+                                if self.is_js_file()
+                                    && !clause.is_type_only
+                                    && !specifier_is_type_only
+                                {
                                     use crate::diagnostics::{
                                         diagnostic_codes, diagnostic_messages, format_message,
                                     };
