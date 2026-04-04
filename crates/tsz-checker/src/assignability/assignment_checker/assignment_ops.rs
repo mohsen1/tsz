@@ -500,11 +500,17 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// In JS files, assignments like `exports.n = {}` or `module.exports.n = {}`
-    /// where `n` is subsequently augmented with property assignments (e.g., `exports.n.K = ...`)
+    /// In JS files, assignments like `exports.n = {}` or `module.exports.b = function() {}`
+    /// where the target is subsequently augmented with property assignments (e.g., `exports.n.K = ...`)
     /// are JS container declarations. The type of the container is built up from all
     /// property assignments, so the initial value assignment should not be checked
     /// against the augmented type. tsc treats these as declarations, not assignments.
+    ///
+    /// tsc never checks the RHS of a CJS export property assignment against the
+    /// inferred export type when the export is augmented with sub-properties — the
+    /// export surface is built incrementally from all assignments in the file.
+    /// Checking `module.exports.b = function() {}` against the final merged type
+    /// `{ (): void; cat: string }` would emit false TS2741.
     fn is_js_container_export_declaration(&self, target_idx: NodeIndex) -> bool {
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::syntax_kind_ext;
@@ -518,7 +524,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        // Must be a property access expression (e.g., `exports.n` or `module.exports.n`)
+        // Must be a property access expression (e.g., `exports.n` or `module.exports.b`)
         if target_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             return false;
         }
@@ -533,26 +539,65 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Helper: check if a symbol has namespace-like members (is a JS container)
+        let symbol_is_container = |symbol: &tsz_binder::Symbol| -> bool {
+            if (symbol.flags
+                & (symbol_flags::NAMESPACE_MODULE
+                    | symbol_flags::VALUE_MODULE
+                    | symbol_flags::MODULE))
+                != 0
+            {
+                return true;
+            }
+            if symbol.members.as_ref().is_some_and(|m| !m.is_empty()) {
+                return true;
+            }
+            if symbol.exports.as_ref().is_some_and(|e| !e.is_empty()) {
+                return true;
+            }
+            false
+        };
+
         // Check if the target symbol has namespace-like members (is a JS container)
         if let Some(sym_id) = self.resolve_qualified_symbol(target_idx) {
             if let Some(symbol) = self
                 .get_cross_file_symbol(sym_id)
                 .or_else(|| self.ctx.binder.get_symbol(sym_id))
             {
-                // Check for namespace/module flags or non-empty members/exports
-                if (symbol.flags
-                    & (symbol_flags::NAMESPACE_MODULE
-                        | symbol_flags::VALUE_MODULE
-                        | symbol_flags::MODULE))
-                    != 0
-                {
+                if symbol_is_container(symbol) {
                     return true;
                 }
-                if symbol.members.as_ref().is_some_and(|m| !m.is_empty()) {
-                    return true;
+            }
+        }
+
+        // Fallback: when qualified symbol resolution fails (e.g., for `module.exports.b`
+        // where `module` doesn't have a standard binder symbol), look up the property name
+        // directly in the file's export table. This handles CJS patterns where
+        // `module.exports.b = function() {}` followed by `module.exports.b.cat = "cat"`
+        // creates an augmented export that the binder tracks in module_exports.
+        let prop_name = self
+            .ctx
+            .arena
+            .get_identifier_at(access.name_or_argument)
+            .map(|ident| ident.escaped_text.as_str());
+        if let Some(prop_name) = prop_name {
+            // Check the file's own export table
+            if let Some(file_exports) = self.ctx.binder.module_exports.get(&*self.ctx.file_name) {
+                if let Some(export_sym_id) = file_exports.get(prop_name) {
+                    if let Some(symbol) = self.ctx.binder.get_symbol(export_sym_id) {
+                        if symbol_is_container(symbol) {
+                            return true;
+                        }
+                    }
                 }
-                if symbol.exports.as_ref().is_some_and(|e| !e.is_empty()) {
-                    return true;
+            }
+            // Also check file_locals (for `exports.n` patterns where the symbol
+            // might be stored in locals rather than module_exports)
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(prop_name) {
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    if symbol_is_container(symbol) {
+                        return true;
+                    }
                 }
             }
         }
