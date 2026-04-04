@@ -893,9 +893,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             if source_has_rest {
-                let rest_param = if let Some(rest_param) = source_params_unpacked.last() {
-                    rest_param
-                } else {
+                let Some(rest_param) = source_params_unpacked.last() else {
                     return SubtypeResult::False;
                 };
                 let rest_elem_type = self.get_array_element_type(rest_param.type_id);
@@ -1579,9 +1577,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if source_has_rest {
-            let rest_param = if let Some(rest_param) = source_params.last() {
-                rest_param
-            } else {
+            let Some(rest_param) = source_params.last() else {
                 return SubtypeResult::False;
             };
             let rest_elem_type = self.get_array_element_type(rest_param.type_id);
