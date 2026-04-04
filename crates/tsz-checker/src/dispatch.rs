@@ -848,11 +848,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 && asserted_type != TypeId::UNKNOWN
                                 && expr_type != TypeId::NEVER
                                 && asserted_type != TypeId::NEVER
-                                // Skip TS2352 when expr_type contains generic type
-                                // parameters (TypeParameter/Infer/BoundParameter).
-                                // Note: ThisType is NOT skipped — tsc checks type
-                                // assertion overlap for `this` types.
-                                && !generic_query::contains_generic_type_parameters(
+                                // Skip TS2352 when expr_type is a bare type parameter
+                                // (unconstrained generic). These cannot be meaningfully
+                                // checked for overlap. Concrete instantiations like
+                                // C3<T2> should still be checked.
+                                && !generic_query::is_bare_type_parameter(
                                     self.checker.ctx.types,
                                     expr_type,
                                 )
