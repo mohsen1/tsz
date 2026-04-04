@@ -262,7 +262,7 @@ impl<'a> Printer<'a> {
         // statements in the block inside a single try/catch/finally, not just the
         // using declarations. We detect this here and set up the env + try wrapper.
         let block_using_lowered =
-            if !self.ctx.target_es5 && !self.ctx.options.target.supports_es2025() {
+            if !self.ctx.options.target.supports_es2025() {
                 self.block_has_using_declarations(&block.statements)
             } else {
                 false
@@ -512,7 +512,9 @@ impl<'a> Printer<'a> {
                 } else {
                     "await"
                 };
-                self.write("const ");
+                let result_kw = if self.ctx.target_es5 { "var" } else { "const" };
+                self.write(result_kw);
+                self.write(" ");
                 self.write(&result_name);
                 self.write(" = ");
                 self.write_helper("__disposeResources");
@@ -647,7 +649,7 @@ impl<'a> Printer<'a> {
         // so we just emit `const x = __addDisposableResource(env, expr, async)`.
         // When not set (standalone), emit the full try/catch per-statement.
         let using_is_lowered = has_using_declaration && !self.ctx.options.target.supports_es2025();
-        if using_is_lowered && !self.ctx.target_es5 {
+        if using_is_lowered {
             if let Some((ref env_name, using_async)) = self.block_using_env.clone() {
                 // Block-level try/catch is active — just emit the __addDisposableResource calls
                 for &decl_list_idx in &var_stmt.declarations.nodes {
@@ -863,26 +865,10 @@ impl<'a> Printer<'a> {
             })
             .collect();
 
-        // Hoist `var` declarations before the try block — variables must remain
-        // accessible after the try/catch/finally completes.
-        if !initialized_decls.is_empty() {
-            let mut var_names = Vec::new();
-            for &decl_idx in &initialized_decls {
-                if let Some(decl_node) = self.arena.get(decl_idx)
-                    && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-                {
-                    self.collect_binding_names(decl.name, &mut var_names);
-                }
-            }
-            if !var_names.is_empty() {
-                self.write("var ");
-                self.write(&var_names.join(", "));
-                self.write(";");
-                self.write_line();
-            }
-        }
+        let decl_kw = if self.ctx.target_es5 { "var" } else { "const" };
 
-        self.write("const ");
+        self.write(decl_kw);
+        self.write(" ");
         self.write(&env_name);
         self.write(" = { stack: [], error: void 0, hasError: false };");
         self.write_line();
@@ -891,8 +877,10 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
-        // Emit assignments (no `const`/`let` prefix — vars are hoisted above)
+        // Emit `const/var d1 = __addDisposableResource(env, expr, async), d2 = ...;`
         if !initialized_decls.is_empty() {
+            self.write(decl_kw);
+            self.write(" ");
             for (i, &decl_idx) in initialized_decls.iter().enumerate() {
                 if let Some(decl_node) = self.arena.get(decl_idx)
                     && let Some(decl) = self.arena.get_variable_declaration(decl_node)
@@ -947,7 +935,8 @@ impl<'a> Printer<'a> {
             } else {
                 "await"
             };
-            self.write("const ");
+            self.write(decl_kw);
+            self.write(" ");
             self.write(&result_name);
             self.write(" = ");
             self.write_helper("__disposeResources");

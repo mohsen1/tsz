@@ -1401,11 +1401,12 @@ impl<'a> Printer<'a> {
             })
             .collect();
 
-        // Block-level using: tsc emits `const d1 = __addDisposableResource(env, expr, false)`
-        // inside the try block. The `const` is kept because the try block is at the same
-        // block scope level as the using declaration.
+        // Block-level using: tsc emits `const/var d1 = __addDisposableResource(env, expr, false)`
+        // inside the try block. Uses `var` for ES5, `const` otherwise.
         if !initialized_decls.is_empty() {
-            self.write("const ");
+            let kw = if self.ctx.target_es5 { "var" } else { "const" };
+            self.write(kw);
+            self.write(" ");
             for (i, &decl_idx) in initialized_decls.iter().enumerate() {
                 if let Some(decl_node) = self.arena.get(decl_idx)
                     && let Some(decl) = self.arena.get_variable_declaration(decl_node)
