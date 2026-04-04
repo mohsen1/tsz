@@ -647,7 +647,129 @@ impl<'a> CheckerState<'a> {
                 // initializers in type position, including binding element defaults).
                 let _ = self.get_type_from_type_node(node_idx);
             }
+            k if k == syntax_kind_ext::TYPE_QUERY => {
+                // `typeof expr<Args>` — validate instantiation expression type args.
+                if let Some(type_query) = self.ctx.arena.get_type_query(node)
+                    && let Some(args) = &type_query.type_arguments
+                    && !args.nodes.is_empty()
+                {
+                    let args_nodes = args.nodes.clone();
+                    for &arg_idx in &args_nodes {
+                        self.check_type_node(arg_idx);
+                    }
+                    let expr_name = type_query.expr_name;
+                    let expr_type = self.get_type_of_node(expr_name);
+                    let num_type_args = args_nodes.len();
+                    self.check_instantiation_expression_type_args(
+                        expr_type,
+                        num_type_args,
+                        node_idx,
+                        &args_nodes,
+                    );
+                }
+            }
             _ => {}
+        }
+    }
+
+    /// Check TS2635/TS2344 for instantiation expression type arguments.
+    fn check_instantiation_expression_type_args(
+        &mut self,
+        expr_type: TypeId,
+        num_type_args: usize,
+        type_query_idx: NodeIndex,
+        type_arg_nodes: &[NodeIndex],
+    ) {
+        if expr_type == TypeId::ERROR || expr_type == TypeId::ANY {
+            return;
+        }
+
+        let db = self.ctx.types.as_type_database();
+        let call_sigs = crate::query_boundaries::common::call_signatures_for_type(db, expr_type);
+        let construct_sigs =
+            crate::query_boundaries::common::construct_signatures_for_type(db, expr_type);
+
+        let mut has_applicable = false;
+        if let Some(sigs) = &call_sigs {
+            for sig in sigs {
+                if sig.type_params.len() == num_type_args {
+                    has_applicable = true;
+                    break;
+                }
+            }
+        }
+        if !has_applicable {
+            if let Some(sigs) = &construct_sigs {
+                for sig in sigs {
+                    if sig.type_params.len() == num_type_args {
+                        has_applicable = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if !has_applicable {
+            // TS2344: check parent type reference constraint
+            self.emit_ts2344_for_invalid_instantiation_expr(type_query_idx);
+
+            // TS2635: emit at last type argument node
+            let error_node = type_arg_nodes.last().copied().unwrap_or(type_query_idx);
+            self.error_no_applicable_signatures_for_type_args(expr_type, error_node);
+        }
+    }
+
+    /// Emit TS2344 when invalid instantiation expression is a type argument.
+    fn emit_ts2344_for_invalid_instantiation_expr(&mut self, type_query_idx: NodeIndex) {
+        let parent_idx = self
+            .ctx
+            .arena
+            .get_extended(type_query_idx)
+            .map(|ext| ext.parent)
+            .unwrap_or(NodeIndex::NONE);
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return;
+        };
+        if parent_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return;
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(parent_node) else {
+            return;
+        };
+        let Some(sym_id) = self
+            .resolve_type_symbol_for_lowering(type_ref.type_name)
+            .map(tsz_binder::SymbolId)
+        else {
+            return;
+        };
+        let Some(args) = &type_ref.type_arguments else {
+            return;
+        };
+        let Some(arg_index) = args.nodes.iter().position(|&idx| idx == type_query_idx) else {
+            return;
+        };
+        let lib_binders = self.get_lib_binders();
+        let base_name = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(sym_id, &lib_binders)
+            .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
+        let type_params = self.get_reference_type_params_for_symbol(sym_id, &base_name);
+        if let Some(param) = type_params.get(arg_index)
+            && let Some(constraint) = param.constraint
+        {
+            let resolved_constraint = self.resolve_lazy_type(constraint);
+            if resolved_constraint != TypeId::ANY
+                && resolved_constraint != TypeId::ERROR
+                && resolved_constraint != TypeId::UNKNOWN
+            {
+                let type_arg = self.get_type_from_type_node(type_query_idx);
+                self.error_type_constraint_not_satisfied(
+                    type_arg,
+                    resolved_constraint,
+                    type_query_idx,
+                );
+            }
         }
     }
 
