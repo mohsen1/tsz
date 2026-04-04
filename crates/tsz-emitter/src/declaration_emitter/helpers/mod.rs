@@ -2,19 +2,8 @@
 //!
 //! Type syntax emission (type references, unions, mapped types, etc.) is in `type_emission.rs`.
 
-use super::{DeclarationEmitter, ImportPlan, PlannedImportModule, PlannedImportSymbol};
-use crate::emitter::type_printer::TypePrinter;
-use crate::output::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::sync::Arc;
-use tracing::debug;
-use tsz_binder::{BinderState, SymbolId, symbol_flags};
-use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
-use tsz_parser::parser::ParserState;
-use tsz_parser::parser::node::{Node, NodeAccess, NodeArena};
-use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::parser::{NodeIndex, NodeList};
-use tsz_scanner::SyntaxKind;
+use tsz_parser::parser::NodeIndex;
 
 /// Escape a cooked string value for embedding in a double-quoted string literal.
 ///

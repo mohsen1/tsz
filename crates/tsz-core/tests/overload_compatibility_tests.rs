@@ -50,9 +50,11 @@ var d = new Foo('str', 2)
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut opts = CheckerOptions::default();
-    opts.check_js = true;
-    opts.allow_js = true;
+    let opts = CheckerOptions {
+        check_js: true,
+        allow_js: true,
+        ..Default::default()
+    };
     // strict mode enables noImplicitAny etc.
     let mut checker = CheckerState::new(
         parser.get_arena(),

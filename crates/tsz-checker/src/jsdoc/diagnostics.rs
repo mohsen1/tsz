@@ -1083,16 +1083,16 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Skip past optional constraint `{...}`
-                let after_constraint = if rest.starts_with('{') {
+                let after_constraint = if let Some(inner) = rest.strip_prefix('{') {
                     let mut depth = 1usize;
                     let mut close_idx = None;
-                    for (idx, ch) in rest[1..].char_indices() {
+                    for (idx, ch) in inner.char_indices() {
                         match ch {
                             '{' => depth += 1,
                             '}' => {
                                 depth = depth.saturating_sub(1);
                                 if depth == 0 {
-                                    close_idx = Some(idx + 1);
+                                    close_idx = Some(idx);
                                     break;
                                 }
                             }
@@ -1100,7 +1100,7 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     if let Some(ci) = close_idx {
-                        rest[ci + 1..].trim()
+                        inner[ci + 1..].trim()
                     } else {
                         continue;
                     }

@@ -1,8 +1,8 @@
 use super::*;
 use crate::TypeInterner;
 use crate::types::{
-    CallSignature, CallableShape, FunctionShape, MappedModifier, MappedType, ObjectShape,
-    ParamInfo, PropertyInfo, StringIntrinsicKind, TemplateSpan, TypeParamInfo,
+    CallSignature, CallableShape, FunctionShape, MappedModifier, MappedType, ParamInfo,
+    PropertyInfo, StringIntrinsicKind, TemplateSpan, TypeParamInfo,
 };
 
 #[test]

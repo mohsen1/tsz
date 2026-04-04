@@ -3,14 +3,9 @@
 //! This module handles type reification: converting the Solver's internal `TypeId`
 //! representation into printable TypeScript syntax for declaration emit (.d.ts files).
 
-use tsz_binder::{Symbol, SymbolArena, SymbolId, symbol_flags};
-use tsz_common::interner::Atom;
-use tsz_parser::parser::node::{NodeAccess, NodeArena};
-use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::SyntaxKind;
+use tsz_binder::{SymbolArena, SymbolId};
+use tsz_parser::parser::node::NodeArena;
 use tsz_solver::TypeInterner;
-use tsz_solver::types::TypeId;
-use tsz_solver::visitor;
 
 use crate::type_cache_view::TypeCacheView;
 
@@ -230,6 +225,13 @@ fn needs_property_name_quoting_with_flag(name: &str, is_string_named: bool) -> b
     }
     !chars.all(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric())
 }
+
+#[cfg(test)]
+#[allow(unused_imports)]
+use tsz_binder::symbol_flags;
+#[cfg(test)]
+#[allow(unused_imports)]
+use tsz_solver::types::TypeId;
 
 #[cfg(test)]
 #[path = "../../../../tests/type_printer.rs"]

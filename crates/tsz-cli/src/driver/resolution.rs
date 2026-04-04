@@ -2089,11 +2089,10 @@ fn resolve_package_root(
     let is_symlinked_package_root = std::fs::symlink_metadata(package_root)
         .map(|meta| meta.file_type().is_symlink())
         .unwrap_or(false);
-    if !is_symlinked_package_root {
-        if let Some(resolved) = resolve_package_entry(package_root, "index", options, package_type)
-        {
-            return Some(resolved);
-        }
+    if !is_symlinked_package_root
+        && let Some(resolved) = resolve_package_entry(package_root, "index", options, package_type)
+    {
+        return Some(resolved);
     }
 
     None

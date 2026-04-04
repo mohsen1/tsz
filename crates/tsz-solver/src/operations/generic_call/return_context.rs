@@ -657,16 +657,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if let (Some((source_base, source_args)), Some((target_base, target_args))) = (
             crate::type_queries::get_application_info(self.interner.as_type_database(), source),
             crate::type_queries::get_application_info(self.interner.as_type_database(), target),
-        ) {
-            if source_base == target_base && source_args.len() == target_args.len() {
-                for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
-                    self.collect_return_context_for_generic_target(
-                        *source_arg,
-                        *target_arg,
-                        tracked_type_params,
-                        substitution,
-                    );
-                }
+        ) && source_base == target_base
+            && source_args.len() == target_args.len()
+        {
+            for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
+                self.collect_return_context_for_generic_target(
+                    *source_arg,
+                    *target_arg,
+                    tracked_type_params,
+                    substitution,
+                );
             }
         }
     }

@@ -421,7 +421,7 @@ impl<'a> CheckerState<'a> {
             tag_groups.entry(*start).or_default().push(j);
         }
 
-        for (_tag_start, group_indices) in &tag_groups {
+        for group_indices in tag_groups.values() {
             let all_unused = group_indices.iter().all(|&j| !used[j]);
             if all_unused && group_indices.len() > 1 {
                 // TS6205: All type parameters are unused.

@@ -7,9 +7,9 @@ use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, PrivateMethodInfo, collect_private_accessors,
     collect_private_fields, collect_private_methods, get_private_field_name, is_private_identifier,
 };
+use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_parser::syntax::transform_utils::{contains_super_reference, contains_this_reference};
 use tsz_scanner::SyntaxKind;
 

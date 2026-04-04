@@ -515,11 +515,6 @@ impl ModuleResolver {
             request.resolution_mode_override,
         ) {
             Ok(resolved_module) => {
-                eprintln!(
-                    "[DEBUG lookup] Primary resolution succeeded for '{}': {:?}",
-                    specifier, resolved_module.resolved_path
-                );
-
                 // TS6263: Module resolved to a .d.*.ts arbitrary extension declaration
                 // file but --allowArbitraryExtensions is not set.
                 if !self.allow_arbitrary_extensions
@@ -582,10 +577,6 @@ impl ModuleResolver {
                 }
             }
             Err(failure) => {
-                eprintln!(
-                    "[DEBUG lookup] Primary resolution FAILED for '{}': {:?}",
-                    specifier, failure
-                );
                 // JsxNotEnabled: file exists but --jsx is not set.
                 // Mark as resolved (suppress TS2307) but record the JSX error.
                 let jsx_resolved =

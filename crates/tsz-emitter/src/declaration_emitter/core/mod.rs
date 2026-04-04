@@ -6,21 +6,16 @@ mod emit_members;
 mod js_emit;
 mod setup;
 
-use crate::enums::evaluator::EnumEvaluator;
 use crate::output::source_writer::{SourcePosition, SourceWriter};
 use crate::type_cache_view::TypeCacheView;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
-use tracing::debug;
 use tsz_binder::{BinderState, SymbolId};
 use tsz_common::comments::CommentRange;
 use tsz_common::diagnostics::Diagnostic;
-use tsz_parser::parser::node::{MethodDeclData, Node, NodeArena};
-use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::parser::{NodeIndex, NodeList};
-use tsz_scanner::SyntaxKind;
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeArena;
 use tsz_solver::TypeInterner;
-use tsz_solver::type_queries;
 
 /// Declaration emitter for .d.ts files
 pub struct DeclarationEmitter<'a> {

@@ -1,6 +1,5 @@
 use super::super::Printer;
 use super::super::core::JsxEmit;
-use rustc_hash::FxHashSet;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;

@@ -1461,7 +1461,13 @@ fn test_lower_function_parameter_names() {
                 shape.params[1].name.map(|a| interner.resolve_atom(a)),
                 Some("y".to_string())
             );
-            assert_eq!(shape.params[1].type_id, TypeId::NUMBER);
+            // Optional param `y?: number` is lowered to `number | undefined` to match tsc.
+            // The type_id is a union, not plain NUMBER.
+            assert_ne!(
+                shape.params[1].type_id,
+                TypeId::UNDEFINED,
+                "optional param type should not be bare undefined"
+            );
             assert!(shape.params[1].optional);
 
             assert_eq!(shape.return_type, TypeId::VOID);

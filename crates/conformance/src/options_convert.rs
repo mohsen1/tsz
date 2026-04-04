@@ -715,7 +715,11 @@ mod tests {
         );
         let libs = opts["lib"].as_array().unwrap();
         assert!(libs.iter().any(|v| v == "es5"));
-        assert!(libs.iter().any(|v| v == "es2015"));
+        assert!(
+            libs.iter()
+                .any(|v| v.as_str().map_or(false, |s| s.starts_with("es2015"))),
+            "expected at least one es2015.* sub-lib, got: {libs:?}"
+        );
     }
 
     #[test]

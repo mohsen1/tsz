@@ -1,6 +1,6 @@
 //! Composite type printing (unions, intersections, callables, etc.) for the TypePrinter.
 
-use tsz_binder::{Symbol, SymbolId, symbol_flags};
+use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
@@ -8,10 +8,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::types::TypeId;
 use tsz_solver::visitor;
 
-use super::{
-    TypePrinter, escape_string_for_double_quote, needs_property_name_quoting,
-    needs_property_name_quoting_with_flag, quote_property_name,
-};
+use super::{TypePrinter, needs_property_name_quoting, quote_property_name};
 
 impl<'a> TypePrinter<'a> {
     pub(crate) fn synthesized_empty_shape_members(&self, sym_id: SymbolId) -> Option<Vec<String>> {
