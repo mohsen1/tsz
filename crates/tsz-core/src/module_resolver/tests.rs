@@ -2150,9 +2150,7 @@ fn test_lookup_extension_suggestion_esm() {
 }
 
 // TODO: TSX resolution is too permissive -- resolves ./foo to ./foo.tsx without
-// requiring explicit extension in NodeNext mode.
 #[test]
-#[ignore]
 fn test_lookup_extension_suggestion_tsx_preserve_uses_jsx() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_lookup_ext_suggestion_tsx_preserve");
@@ -2200,10 +2198,7 @@ fn test_lookup_extension_suggestion_tsx_preserve_uses_jsx() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-// TODO: TSX resolution is too permissive -- resolves ./foo to ./foo.tsx without
-// requiring explicit extension in NodeNext mode.
 #[test]
-#[ignore]
 fn test_lookup_extension_suggestion_tsx_react_uses_js() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_lookup_ext_suggestion_tsx_react");
