@@ -24030,3 +24030,37 @@ class C implements I {
         "Should NOT emit TS2741 for `this` keyword in elaboration — tsc uses TS2322. Got: {ts2741:#?}"
     );
 }
+
+/// Regression test: var redeclaration with generic call whose argument is incompatible
+/// should emit TS2403 when the call infers a different return type than the prior declaration.
+///
+/// tsc does NOT propagate prior var declaration types as contextual type for call expressions.
+/// Without this fix, the contextual type `Function[]` from the first declaration would cause
+/// `stringMapToArray(numberMap)` to infer `T=Function`, returning `Function[]` (matching the
+/// prior declaration) and suppressing the TS2403 error. With the fix, `T` is correctly
+/// inferred as `unknown` from the failed argument matching, returning `unknown[]`.
+#[test]
+fn test_ts2403_var_redecl_generic_call_no_contextual_from_prior_decl() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface NumberMap<T> {
+    [index: number]: T;
+}
+interface StringMap<T> {
+    [index: string]: T;
+}
+declare function stringMapToArray<T>(object: StringMap<T>): T[];
+declare var numberMap: NumberMap<string>;
+var v1: string[];
+var v1 = stringMapToArray(numberMap);
+"#,
+    );
+    assert!(
+        has_error(&diagnostics, 2345),
+        "Expected TS2345 for NumberMap<string> not assignable to StringMap<unknown>. Got: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2403),
+        "Expected TS2403 for var redeclaration type mismatch (string[] vs unknown[]). Got: {diagnostics:#?}"
+    );
+}
