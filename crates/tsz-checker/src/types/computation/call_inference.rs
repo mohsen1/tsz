@@ -1242,9 +1242,35 @@ impl<'a> CheckerState<'a> {
                 )
             });
 
-            let Some(expected) = expected else {
+            let Some(mut expected) = expected else {
                 break;
             };
+
+            // When the argument is a variadic tuple spread marker `[...U]`
+            // (created by the call checker for generic type parameter spreads),
+            // unwrap the marker to get U and compare it against the full rest
+            // parameter array type.  The marker is synthetic — tsc never
+            // produces this comparison — so we must undo the wrapping here.
+            let spread_inner = common::tuple_elements(self.ctx.types, cached_actual)
+                .filter(|elems| elems.len() == 1 && elems[0].rest)
+                .map(|elems| elems[0].type_id);
+            if let Some(inner_type) = spread_inner {
+                if let Some(param) = instantiated_params.get(index).or_else(|| {
+                    let last = instantiated_params.last()?;
+                    last.rest.then_some(last)
+                }) {
+                    if param.rest {
+                        let rest_array_type = self.evaluate_type_with_env(param.type_id);
+                        let is_assignable =
+                            self.is_assignable_to_with_env(inner_type, rest_array_type);
+                        if is_assignable {
+                            continue;
+                        }
+                        // If not directly assignable, fall through to normal check
+                        expected = rest_array_type;
+                    }
+                }
+            }
 
             let arg_idx = args.get(index).copied();
             let skip_unresolved_callable_recheck = arg_idx.is_some_and(|arg_idx| {
