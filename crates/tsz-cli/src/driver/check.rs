@@ -324,24 +324,6 @@ fn post_process_checker_diagnostics(
     }
 
     // ==========================================================================
-    // TS2590/TS2615 False Positive Suppressions (Type complexity/depth)
-    // ==========================================================================
-    if checker_diagnostics
-        .iter()
-        .any(|d| d.code == 2590 || d.code == 2615)
-    {
-        let file_path = file.file_name.as_str();
-        let test_path = conformance_test_name.as_deref().unwrap_or(file_path);
-
-        let suppress = test_path.contains("normalizedIntersectionTooComplex")
-            || test_path.contains("recursivelyExpandingUnionNoStackoverflow");
-
-        if suppress {
-            checker_diagnostics.retain(|diag| diag.code != 2590 && diag.code != 2615);
-        }
-    }
-
-    // ==========================================================================
     // TS2304/TS2305/TS2307/TS2694 False Positive Suppressions (Module resolution)
     // ==========================================================================
     if checker_diagnostics
@@ -351,11 +333,7 @@ fn post_process_checker_diagnostics(
         let file_path = file.file_name.as_str();
         let test_path = conformance_test_name.as_deref().unwrap_or(file_path);
 
-        let suppress = test_path.contains("tripleSlashTypesReferenceWithMissingExports")
-            || test_path.contains("tsxResolveExternalModuleExportsTypes")
-            || test_path.contains("declarationEmitForGlobalishSpecifierSymlink")
-            || test_path.contains("isolatedModulesReExportType")
-            || test_path.contains("reuseTypeAnnotationImportTypeInGlobalThisTypeArgument");
+        let suppress = test_path.contains("isolatedModulesReExportType");
 
         if suppress {
             checker_diagnostics.retain(|diag| !matches!(diag.code, 2304 | 2305 | 2307 | 2694));
@@ -372,10 +350,7 @@ fn post_process_checker_diagnostics(
         let file_path = file.file_name.as_str();
         let test_path = conformance_test_name.as_deref().unwrap_or(file_path);
 
-        let suppress = test_path.contains("declarationEmitTripleSlashReferenceAmbientModule")
-            || test_path.contains("thislessFunctionsNotContextSensitive3")
-            || test_path.contains("spellingSuggestionJSXAttribute")
-            || test_path.contains("reactTransitiveImportHasValidDeclaration");
+        let suppress = test_path.contains("spellingSuggestionJSXAttribute");
 
         if suppress {
             checker_diagnostics.retain(|diag| !matches!(diag.code, 2591 | 2783 | 2786 | 2883));
@@ -392,11 +367,8 @@ fn post_process_checker_diagnostics(
         let file_path = file.file_name.as_str();
         let test_path = conformance_test_name.as_deref().unwrap_or(file_path);
 
-        let suppress = test_path.contains("quickIntersectionCheckCorrectlyCachesErrors")
-            || test_path.contains("fuzzy")
-            || test_path.contains("inferenceExactOptionalProperties2")
-            || test_path.contains("inferTypePredicates")
-            || test_path.contains("expandoFunctionSymbolPropertyJs");
+        let suppress =
+            test_path.contains("fuzzy") || test_path.contains("expandoFunctionSymbolPropertyJs");
 
         if suppress {
             checker_diagnostics
@@ -414,8 +386,7 @@ fn post_process_checker_diagnostics(
         let file_path = file.file_name.as_str();
         let test_path = conformance_test_name.as_deref().unwrap_or(file_path);
 
-        let suppress = test_path.contains("indexedAccessPrivateMemberOfGenericConstraint")
-            || test_path.contains("isolatedDeclarationErrorsObjects");
+        let suppress = test_path.contains("isolatedDeclarationErrorsObjects");
 
         if suppress {
             checker_diagnostics.retain(|diag| !matches!(diag.code, 4105 | 2635 | 9038));
