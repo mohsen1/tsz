@@ -394,12 +394,27 @@ impl<'a> CheckerState<'a> {
                         // return value", so any actual return type is acceptable.
                         // This is the function-level void-return-substitutability
                         // rule, which differs from type-level `is_assignable_to`.
-                        (
-                            generator_component_mismatch
-                                || (expected_return != TypeId::VOID
-                                    && !self.is_assignable_to(actual_return, expected_return)),
-                            generator_component_mismatch,
-                        )
+                        //
+                        // For generator callbacks: when the per-component checks
+                        // (yield, return, next) all pass, trust them and skip the
+                        // overall `is_assignable_to` on the full generator
+                        // Application type.  The overall check can produce false
+                        // positives because the callback is re-evaluated WITHOUT
+                        // contextual type, so TNext defaults to `unknown`.  The
+                        // solver then checks TNext covariantly (`unknown </: number`)
+                        // instead of contravariantly, causing a spurious mismatch.
+                        // The component check already handles TNext contravariantly
+                        // (line: `is_assignable_to(expected_next, actual_next)`),
+                        // so it is the more accurate signal for generators.
+                        let return_type_mismatch =
+                            if is_generator_callback && !generator_component_mismatch {
+                                false
+                            } else {
+                                generator_component_mismatch
+                                    || (expected_return != TypeId::VOID
+                                        && !self.is_assignable_to(actual_return, expected_return))
+                            };
+                        (return_type_mismatch, generator_component_mismatch)
                     })
                     .unwrap_or((false, false));
             ((has_callback_body_diagnostic
