@@ -567,6 +567,26 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // When this function is the expression body of another function/arrow,
+        // the parent's JSDoc belongs to the parent — not to this nested function.
+        // E.g. `/** @template T @returns {(b: T) => T} */ const seq = a => b => b;`
+        // The JSDoc belongs to the outer arrow `a => ...`, not to the inner `b => b`.
+        // Without this guard, the ancestor walk would reach the variable declaration
+        // and incorrectly assign @template/@returns to the inner arrow.
+        if let Some(ext) = self.ctx.arena.get_extended(func_idx)
+            && ext.parent.is_some()
+            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            && matches!(
+                parent_node.kind,
+                tsz_parser::parser::syntax_kind_ext::ARROW_FUNCTION
+                    | tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
+                    | tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION
+                    | tsz_parser::parser::syntax_kind_ext::METHOD_DECLARATION
+            )
+        {
+            return None;
+        }
+
         // Try leading comments, then walk up the parent chain for
         // `const f = value => ...` where JSDoc is on the `const` line.
         self.try_jsdoc_with_ancestor_walk(func_idx, comments, source_text)
