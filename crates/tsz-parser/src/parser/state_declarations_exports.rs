@@ -1726,11 +1726,20 @@ impl ParserState {
 
         // For restricted productions (break), ASI applies immediately after line break
         // Use can_parse_semicolon_for_restricted_production() instead of can_parse_semicolon()
-        // Optional label
+        // Optional label — matching tsc's isIdentifier() which returns false for
+        // `await` in await/static-block context and `yield` in generator context.
+        // When the label would be a contextually reserved word (e.g., `break await;` in a
+        // static block), tsc's parseIdentifier emits TS1003 "Identifier expected".
         let label = if !self.can_parse_semicolon_for_restricted_production()
             && self.is_identifier_or_keyword()
         {
-            self.parse_identifier_name()
+            if self.is_contextually_reserved_label() {
+                // Emit TS1003 matching tsc's createIdentifier(false) behavior
+                self.error_identifier_expected();
+                NodeIndex::NONE
+            } else {
+                self.parse_identifier_name()
+            }
         } else {
             NodeIndex::NONE
         };
@@ -1753,11 +1762,17 @@ impl ParserState {
 
         // For restricted productions (continue), ASI applies immediately after line break
         // Use can_parse_semicolon_for_restricted_production() instead of can_parse_semicolon()
-        // Optional label
+        // Optional label — matching tsc's isIdentifier() which returns false for
+        // `await` in await/static-block context and `yield` in generator context.
         let label = if !self.can_parse_semicolon_for_restricted_production()
             && self.is_identifier_or_keyword()
         {
-            self.parse_identifier_name()
+            if self.is_contextually_reserved_label() {
+                self.error_identifier_expected();
+                NodeIndex::NONE
+            } else {
+                self.parse_identifier_name()
+            }
         } else {
             NodeIndex::NONE
         };
