@@ -500,11 +500,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         }
                         // When variance check fails but structural fallback is needed
                         // (mapped types with modifiers like Partial<T>, Required<T>),
-                        // evaluate both applications to their structural forms and
-                        // compare directly. This handles cases like Partial<{a}> vs
-                        // Partial<{a, b}> where both expand to all-optional objects
-                        // that are mutually assignable despite differing type arguments.
+                        // check if the rejection can be trusted based on direct usage.
+                        //
+                        // When a type parameter has DIRECT_USAGE (appears in non-mapped-type
+                        // positions like function params, return types, or properties), the
+                        // variance signal is reliable and the rejection is definitive. This
+                        // matches tsc's probe-based variance: interfaces with both call
+                        // signatures and mapped-type members get plain Invariant (not
+                        // Unmeasurable), so tsc trusts the rejection.
+                        //
+                        // Without direct usage, evaluate both applications to their
+                        // structural forms and compare directly. This handles cases like
+                        // Partial<{a}> vs Partial<{a, b}> where both expand to
+                        // all-optional objects that are mutually assignable despite
+                        // differing type arguments.
                         if any_checked && !all_ok && needs_structural_fallback {
+                            let has_reliable_rejection =
+                                variances.iter().any(|v| v.has_direct_usage());
+                            if has_reliable_rejection && !rejection_unreliable {
+                                return SubtypeResult::False;
+                            }
                             let s_eval = self.evaluate_type(source_type);
                             let t_eval = self.evaluate_type(target_type);
                             if s_eval != source_type || t_eval != target_type {
