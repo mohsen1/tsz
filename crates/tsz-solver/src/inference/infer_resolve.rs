@@ -708,6 +708,7 @@ impl<'a> InferenceContext<'a> {
         };
         if all_from_object_properties
             && !has_index_signature_candidates
+            && !is_const
             && let Some(TypeData::Union(member_list_id)) = self.interner.lookup(resolved)
         {
             let member_count = self.interner.type_list(member_list_id).len();

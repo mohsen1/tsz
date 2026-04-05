@@ -1965,33 +1965,44 @@ impl<'a> CheckerState<'a> {
 
     /// Extract `@template` type parameter names from a `JSDoc` comment.
     ///
+    /// Returns `(name, is_const)` pairs. The `is_const` flag is true when
+    /// the `const` modifier precedes the type parameter name (e.g.,
+    /// `@template const T`).
+    ///
     /// Supports simple forms like:
     /// - `@template T`
     /// - `@template T,U`
     /// - `@template T U`
-    pub(crate) fn jsdoc_template_type_params(jsdoc: &str) -> Vec<String> {
+    /// - `@template const T`
+    /// - `@template const T, U` (both T and U are const per tsc)
+    pub(crate) fn jsdoc_template_type_params(jsdoc: &str) -> Vec<(String, bool)> {
         let mut out = Vec::new();
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
             let Some(rest) = trimmed.strip_prefix("@template") else {
                 continue;
             };
+            // Track whether `const` modifier was seen on this @template line.
+            // In tsc, `@template const T, U` makes ALL type params on
+            // that line const.
+            let mut saw_const = false;
             for token in rest.split([',', ' ', '\t']) {
                 let name = token.trim();
                 if name.is_empty() {
                     continue;
                 }
-                // Skip `const` modifier keyword (e.g., `@template const T`).
+                // Track `const` modifier keyword (e.g., `@template const T`).
                 // tsc treats `const` as a type parameter modifier, not a name.
                 if name == "const" {
+                    saw_const = true;
                     continue;
                 }
                 if name
                     .chars()
                     .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-                    && !out.iter().any(|existing| existing == name)
+                    && !out.iter().any(|(existing, _)| existing == name)
                 {
-                    out.push(name.to_string());
+                    out.push((name.to_string(), saw_const));
                 }
             }
         }

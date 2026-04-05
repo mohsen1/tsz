@@ -55,7 +55,7 @@ impl CheckerState<'_> {
                     return template_types;
                 };
 
-                for name in Self::jsdoc_template_type_params(&jsdoc) {
+                for (name, is_const) in Self::jsdoc_template_type_params(&jsdoc) {
                     let atom = self.ctx.types.intern_string(&name);
                     template_types.entry(name).or_insert_with(|| {
                         self.ctx
@@ -65,7 +65,7 @@ impl CheckerState<'_> {
                                 name: atom,
                                 constraint: None,
                                 default: None,
-                                is_const: false,
+                                is_const,
                             })
                     });
                 }
@@ -115,7 +115,7 @@ impl CheckerState<'_> {
         let class_template_types = self.enclosing_jsdoc_class_template_types(parent_idx);
         let mut function_template_types = FxHashMap::default();
         if let Some(jsdoc) = jsdoc.as_ref() {
-            for name in Self::jsdoc_template_type_params(jsdoc) {
+            for (name, is_const) in Self::jsdoc_template_type_params(jsdoc) {
                 let atom = self.ctx.types.intern_string(&name);
                 function_template_types.entry(name).or_insert_with(|| {
                     self.ctx
@@ -125,7 +125,7 @@ impl CheckerState<'_> {
                             name: atom,
                             constraint: None,
                             default: None,
-                            is_const: false,
+                            is_const,
                         })
                 });
             }

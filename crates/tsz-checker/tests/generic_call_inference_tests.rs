@@ -650,6 +650,38 @@ const result = literal("hello");
     );
 }
 
+#[test]
+fn const_type_parameter_unions_across_object_properties() {
+    // When `const T` appears in multiple positions within an object type parameter,
+    // inference should create a union of all candidates rather than picking the first.
+    // Regression: previously the object-property fallback collapsed the union.
+    let source = r#"
+declare function f5<const T>(obj: { x: T, y: T }): T;
+const r1 = f5({ x: 1, y: 2 });
+const r2 = f5({ x: { a: 1, b: "x" }, y: { a: 2, b: "y" } });
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "const T in multiple object positions should union candidates. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_parameter_unions_across_tuple_positions() {
+    // Same as above but with tuple positions.
+    let source = r#"
+declare function f4<const T>(arr: [T, T]): T;
+const r1 = f4([1, 2]);
+const r2 = f4([{ a: 1 }, { a: 2 }]);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "const T in multiple tuple positions should union candidates. Diagnostics: {diags:#?}"
+    );
+}
+
 // ─── Multiple overload-like generic signatures ────────────────────────
 
 #[test]

@@ -1277,7 +1277,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut params = Vec::with_capacity(names.len());
-        for name in names {
+        for (name, is_const) in names {
             if name.is_empty() {
                 continue;
             }
@@ -1285,7 +1285,7 @@ impl<'a> CheckerState<'a> {
                 name: checker.ctx.types.intern_string(&name),
                 constraint: None,
                 default: None,
-                is_const: false,
+                is_const,
             });
         }
 
