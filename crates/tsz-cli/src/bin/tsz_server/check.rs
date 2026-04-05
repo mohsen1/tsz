@@ -871,7 +871,7 @@ impl Server {
             always_strict: options.always_strict.unwrap_or(options.strict),
             resolve_json_module: options.resolve_json_module,
             check_js: options.check_js,
-            allow_js: false,
+            allow_js: options.allow_js,
             no_resolve: options.no_resolve,
             isolated_declarations: false,
             emit_declarations: false,

@@ -636,6 +636,7 @@ fn directive_to_field_name(key: &str) -> Option<&'static str> {
         "module" => "module",
         "experimentaldecorators" => "experimentalDecorators",
         "noresolve" => "noResolve",
+        "allowjs" => "allowJs",
         "checkjs" => "checkJs",
         "resolvejsonmodule" => "resolveJsonModule",
         "nouncheckedsideeffectimports" => "noUncheckedSideEffectImports",
