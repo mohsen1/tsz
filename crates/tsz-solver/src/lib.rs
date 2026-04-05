@@ -240,6 +240,7 @@ pub use relations::subtype::{
     AnyPropagationMode, SubtypeChecker, SubtypeResult, TypeEnvironment, TypeResolver,
     are_types_structurally_identical, is_subtype_of, reset_subtype_thread_local_state,
 };
+pub use type_queries::is_const_type_variable;
 pub use types::{
     CallSignature, CallableShapeId, IntrinsicKind, LiteralValue, MappedModifier, ObjectShapeId,
     PropertyInfo, PropertyLookup, SymbolRef, TypeApplication, TypeApplicationId, TypeData, TypeId,
