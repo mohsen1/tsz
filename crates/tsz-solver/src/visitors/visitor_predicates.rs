@@ -652,31 +652,29 @@ pub fn constraint_references_type_param_in_resolution_path(
                     stack.push(member);
                 }
             }
-            // Mapped type: descend into the constraint (key source)
+            // Mapped type: descend into the constraint (key source) only.
+            // This catches `T extends { [P in T]: number }` (genuinely circular)
+            // while NOT false-positiving on `T extends { [K in keyof T]: V }`
+            // because we don't follow through KeyOf (see below).
             TypeData::Mapped(mapped_id) => {
                 let mapped = types.get_mapped(*mapped_id);
                 stack.push(mapped.constraint);
             }
-            // Conditional: descend into check and extends
-            TypeData::Conditional(cond_id) => {
-                let cond = types.get_conditional(*cond_id);
-                stack.push(cond.check_type);
-                stack.push(cond.extends_type);
-            }
-            // Index access: descend into object and index
+            // Index access: descend into object and index.
+            // Catches `T extends Foo | T["hello"]` (circular through index access).
             TypeData::IndexAccess(obj, idx) => {
                 stack.push(*obj);
                 stack.push(*idx);
             }
-            // KeyOf: do NOT descend into operand.
-            // `keyof X` resolves to `string | number | symbol` at the base-constraint
-            // level regardless of X. TSC's getBaseConstraint does not recurse through
-            // keyof, so `T extends { [K in keyof T]: V }` is not circular — the
-            // `keyof T` reference terminates the constraint resolution chain.
+            // KeyOf is opaque at the constraint-resolution level.
+            // `T extends { [K in keyof T]: V }` is NOT circular in tsc —
+            // `keyof T` is well-defined even for unconstrained type parameters.
             TypeData::KeyOf(_) => {}
-            // Everything else is a "type reference" or leaf — don't descend.
-            // Array<T>, Tuple, ReadonlyType, NoInfer, Application, Object,
-            // Function, Callable, etc. are opaque at the constraint resolution level.
+            // Conditional types are deferred and opaque for constraint resolution.
+            // `T extends null extends T ? any : never` is NOT circular in tsc.
+            TypeData::Conditional(_) => {}
+            // Everything else — Application, Object, Function, Array, Tuple,
+            // ReadonlyType, NoInfer, etc. — is opaque at the constraint level.
             _ => {}
         }
     }
