@@ -76,18 +76,19 @@ impl<'a> CheckerState<'a> {
         if let Some(node) = self.ctx.arena.get(idx) {
             // TS1228: "A type predicate is only allowed in return type position for
             // functions and methods." The parser restricts predicate parsing to return
-            // type positions, but some return types (constructors, getters, setters,
-            // construct signatures, constructor types) still parse predicates for error
-            // recovery. The checker must flag these, matching tsc's getTypePredicateParent.
+            // type positions, but some return types (getters, setters, construct
+            // signatures, constructor types) still parse predicates for error recovery.
+            // The checker flags these, matching tsc's getTypePredicateParent.
             if node.kind == syntax_kind_ext::TYPE_PREDICATE {
-                let parent_info = self
+                let parent_node = self
                     .ctx
                     .arena
                     .get_extended(idx)
                     .and_then(|ext| self.ctx.arena.get(ext.parent));
-                let is_valid = parent_info.is_some_and(|parent| {
+                let parent_kind = parent_node.map(|p| p.kind);
+                let is_valid = parent_kind.is_some_and(|kind| {
                     matches!(
-                        parent.kind,
+                        kind,
                         syntax_kind_ext::FUNCTION_DECLARATION
                             | syntax_kind_ext::FUNCTION_EXPRESSION
                             | syntax_kind_ext::METHOD_DECLARATION
@@ -97,19 +98,29 @@ impl<'a> CheckerState<'a> {
                             | syntax_kind_ext::FUNCTION_TYPE
                     )
                 });
-                // Suppress TS1228 when the parent is a get accessor with parameters.
-                // Getters cannot have parameters (TS1054), and tsc's parser doesn't
-                // produce a type predicate node in this error-recovery context. Our
-                // parser is more lenient, so we skip the redundant diagnostic here.
-                let suppress_for_getter_with_params = parent_info.is_some_and(|parent| {
-                    parent.kind == syntax_kind_ext::GET_ACCESSOR
-                        && self
-                            .ctx
-                            .arena
-                            .get_accessor(parent)
-                            .is_some_and(|acc| !acc.parameters.nodes.is_empty())
+                // Skip TS1228 for constructors — tsc handles constructor return type
+                // annotations via grammar checks and does not emit TS1228 for them.
+                let is_constructor = parent_kind == Some(syntax_kind_ext::CONSTRUCTOR);
+                // Skip TS1228 for getters/setters with invalid parameters — tsc
+                // only emits TS1228 for valid accessor signatures (e.g. getters with
+                // 0 params). When the accessor has parameter errors, those parser
+                // errors take precedence and tsc does not additionally emit TS1228.
+                let is_invalid_accessor = parent_node.is_some_and(|parent| {
+                    (parent.kind == syntax_kind_ext::GET_ACCESSOR
+                        || parent.kind == syntax_kind_ext::SET_ACCESSOR)
+                        && self.ctx.arena.get_accessor(parent).is_some_and(|acc| {
+                            let param_count = acc.parameters.nodes.len();
+                            // Getters should have 0 params, setters should have 1
+                            if parent.kind == syntax_kind_ext::GET_ACCESSOR {
+                                param_count > 0
+                            } else {
+                                // For setters, type predicates in return type are
+                                // always invalid but we check param count to match tsc
+                                param_count != 1
+                            }
+                        })
                 });
-                if !is_valid && !suppress_for_getter_with_params {
+                if !is_valid && !is_constructor && !is_invalid_accessor {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                         idx,
