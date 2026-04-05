@@ -203,6 +203,10 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     /// re-traversal on deeply nested type structures (e.g., long instantiation chains
     /// where each Application type references the previous one multiple times).
     pub(crate) contextual_sensitivity_cache: RefCell<FxHashMap<TypeId, bool>>,
+    /// Recursion depth for reverse mapped type inference through mapped type templates.
+    /// Used to detect recursive type alias patterns (e.g., `Deep<T> = { [K in keyof T]: Deep<T[K]> }`)
+    /// and short-circuit infinite expansion, matching tsc's lazy `ReverseMappedType` convergence.
+    pub(crate) reverse_mapped_depth: Cell<u32>,
 }
 
 #[derive(Clone, Copy)]
@@ -253,6 +257,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             last_instantiated_predicate: None,
             last_instantiated_params: None,
             contextual_sensitivity_cache: RefCell::new(FxHashMap::default()),
+            reverse_mapped_depth: Cell::new(0),
         }
     }
 

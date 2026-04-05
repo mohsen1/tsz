@@ -402,6 +402,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         template: TypeId,
         target_placeholder: TypeId,
     ) -> Option<TypeId> {
+        // Resolve Lazy(DefId) sources to their structural form so subsequent
+        // structural matching (Object, Function, Application) can operate on them.
+        if let Some(TypeData::Lazy(_)) = self.interner.lookup(source_value) {
+            let resolved = self.checker.evaluate_type(source_value);
+            if resolved != source_value {
+                return self.reverse_infer_through_template(resolved, template, target_placeholder);
+            }
+        }
+
         // Case 1: template is directly IndexAccess(T, key) → source IS the reversed value.
         // Also handles when target_placeholder is `T & {}` (from LowInfer<T> = T & {})
         // but the IndexAccess references the raw T — we check if T is a member of
@@ -704,10 +713,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     TypeData::Object(source_shape_id) | TypeData::ObjectWithIndex(source_shape_id),
                 ) = self.interner.lookup(source_value)
             {
+                // Detect recursive mapped type patterns (e.g., Deep<T> = { [K in keyof T]: Deep<T[K]> }).
+                // When we re-enter this case from an inner reverse_infer_through_template call,
+                // we're in a recursive expansion chain that would loop infinitely.
+                // Follow tsc's inferReversedType: for object sources against recursive homomorphic
+                // mapped types, the reversed type converges to the source itself.
+                let depth = self.reverse_mapped_depth.get();
+                if depth > 0 {
+                    return Some(source_value);
+                }
+
                 let source_obj = self.interner.object_shape(source_shape_id);
                 let source_props = source_obj.properties.clone();
                 let mut reverse_properties = Vec::new();
                 let mut any_reversed = false;
+
+                self.reverse_mapped_depth.set(depth + 1);
 
                 for prop in &source_props {
                     // Instantiate the mapped template with the concrete key
@@ -757,6 +778,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         is_string_named: false,
                     });
                 }
+
+                self.reverse_mapped_depth.set(depth);
 
                 if any_reversed {
                     return Some(self.interner.object(reverse_properties));

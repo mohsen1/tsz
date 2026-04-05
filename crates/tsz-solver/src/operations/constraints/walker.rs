@@ -392,6 +392,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return;
         }
 
+        // Resolve Lazy(DefId) types to their structural form before structural dispatch.
+        // Lazy types are opaque interface/type-alias references that the constraint walker
+        // can't match structurally. Without resolution, a Lazy source against a Mapped target
+        // would miss reverse-mapped inference because the Mapped handler requires Object sources.
+        // This mirrors infer_matching.rs which resolves Lazy types early.
+        let source_key = self.interner.lookup(source);
+        if let Some(TypeData::Lazy(_)) = source_key {
+            let resolved = self.checker.evaluate_type(source);
+            if resolved != source {
+                self.constrain_types(ctx, var_map, resolved, target, priority);
+                return;
+            }
+        }
+        let target_key = self.interner.lookup(target);
+        if let Some(TypeData::Lazy(_)) = target_key {
+            let resolved = self.checker.evaluate_type(target);
+            if resolved != target {
+                self.constrain_types(ctx, var_map, source, resolved, priority);
+                return;
+            }
+        }
+
         // Recurse structurally
         let source_key = self.interner.lookup(source);
         let target_key = self.interner.lookup(target);
