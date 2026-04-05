@@ -69,53 +69,75 @@ impl<'a> CheckerState<'a> {
                 })
                 .or(callable_symbol)
                 .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, expr_idx))
-        }?;
+        };
 
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        let value_decl = self
-            .checked_js_constructor_value_declaration(
-                sym_id,
-                symbol.value_declaration,
-                &symbol.declarations,
-            )
-            .unwrap_or(symbol.value_declaration);
-        let node = self.ctx.arena.get(value_decl)?;
+        // For anonymous function expressions (e.g., `exports.A = function() { this.x = 1; }`),
+        // no symbol may exist. Fall back to using the expression node directly as a function.
+        let (func, func_name_str) = if let Some(sym_id) = sym_id {
+            let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            let value_decl = self
+                .checked_js_constructor_value_declaration(
+                    sym_id,
+                    symbol.value_declaration,
+                    &symbol.declarations,
+                )
+                .unwrap_or(symbol.value_declaration);
+            let node = self.ctx.arena.get(value_decl)?;
 
-        // Only handle plain JS function constructors (not classes). This includes
-        // variable declarations whose initializer is a function expression.
-        if symbol.flags & symbol_flags::CLASS != 0
-            && !self.declaration_is_checked_js_constructor_value_declaration(sym_id, value_decl)
-        {
-            return None;
-        }
-
-        let (func, func_name_str) = if let Some(func) = self.ctx.arena.get_function(node) {
-            let func_name = self
-                .ctx
-                .arena
-                .get(func.name)
-                .and_then(|n| self.ctx.arena.get_identifier(n))
-                .map(|ident| ident.escaped_text.clone());
-            (func, func_name)
-        } else if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
-            let init_node = self.ctx.arena.get(var_decl.initializer)?;
-            if init_node.kind != tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION {
+            // Only handle plain JS function constructors (not classes).
+            if symbol.flags & symbol_flags::CLASS != 0
+                && !self.declaration_is_checked_js_constructor_value_declaration(sym_id, value_decl)
+            {
                 return None;
             }
-            let func = self.ctx.arena.get_function(init_node)?;
-            let func_name = self
-                .ctx
-                .arena
-                .get(func.name)
-                .and_then(|n| self.ctx.arena.get_identifier(n))
-                .map(|ident| ident.escaped_text.clone())
-                .or_else(|| {
+
+            if let Some(func) = self.ctx.arena.get_function(node) {
+                let func_name = self
+                    .ctx
+                    .arena
+                    .get(func.name)
+                    .and_then(|n| self.ctx.arena.get_identifier(n))
+                    .map(|ident| ident.escaped_text.clone());
+                (func, func_name)
+            } else if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
+                let init_node = self.ctx.arena.get(var_decl.initializer)?;
+                if init_node.kind != tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION {
+                    return None;
+                }
+                let func = self.ctx.arena.get_function(init_node)?;
+                let func_name = self
+                    .ctx
+                    .arena
+                    .get(func.name)
+                    .and_then(|n| self.ctx.arena.get_identifier(n))
+                    .map(|ident| ident.escaped_text.clone())
+                    .or_else(|| {
+                        self.ctx
+                            .arena
+                            .get(var_decl.name)
+                            .and_then(|n| self.ctx.arena.get_identifier(n))
+                            .map(|ident| ident.escaped_text.clone())
+                    });
+                (func, func_name)
+            } else {
+                return None;
+            }
+        } else if expr_kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
+            || expr_kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION
+        {
+            // Direct function expression/declaration without a symbol (e.g., anonymous
+            // function expression in `exports.X = function() { ... }`).
+            let func = self.ctx.arena.get_function(expr_node)?;
+            let func_name = func
+                .name
+                .into_option()
+                .and_then(|name_idx| {
                     self.ctx
                         .arena
-                        .get(var_decl.name)
+                        .get(name_idx)
                         .and_then(|n| self.ctx.arena.get_identifier(n))
-                        .map(|ident| ident.escaped_text.clone())
-                });
+                })
+                .map(|ident| ident.escaped_text.clone());
             (func, func_name)
         } else {
             return None;
@@ -177,7 +199,7 @@ impl<'a> CheckerState<'a> {
                 body_idx,
                 &param_type_map,
                 &mut properties,
-                Some(sym_id),
+                sym_id,
             );
 
             // Restore type_parameter_scope
@@ -190,12 +212,7 @@ impl<'a> CheckerState<'a> {
             }
         } else {
             // Non-generic: use standard property collection
-            self.collect_js_constructor_this_properties(
-                body_idx,
-                &mut properties,
-                Some(sym_id),
-                true,
-            );
+            self.collect_js_constructor_this_properties(body_idx, &mut properties, sym_id, true);
         }
 
         // Also scan Foo.prototype.m = ... patterns for:
@@ -203,37 +220,41 @@ impl<'a> CheckerState<'a> {
         // 2. this.prop assignments inside prototype methods (typed as T | undefined)
         let mut has_prototype_evidence = false;
         if let Some(ref func_name_s) = func_name_str {
-            let (method_bindings, this_props, prototype_evidence) =
-                self.collect_prototype_members_and_this_properties(value_decl, func_name_s, sym_id);
-            has_prototype_evidence = prototype_evidence;
+            if let Some(sym_id) = sym_id {
+                let symbol = self.ctx.binder.get_symbol(sym_id);
+                let value_decl = symbol.map(|s| s.value_declaration).unwrap_or(expr_idx);
+                let (method_bindings, this_props, prototype_evidence) = self
+                    .collect_prototype_members_and_this_properties(value_decl, func_name_s, sym_id);
+                has_prototype_evidence = prototype_evidence;
 
-            // Add prototype methods as instance properties
-            for (name, prop) in method_bindings {
-                properties.entry(name).or_insert(prop);
-            }
-
-            // Add this-properties from prototype methods (with | undefined)
-            for (name, mut prop) in this_props {
-                let factory = self.ctx.types.factory();
-                let widened_prop_type = factory.union2(prop.type_id, TypeId::UNDEFINED);
-                if let Some(existing) = properties.get_mut(&name) {
-                    if existing.write_type == TypeId::ANY {
-                        existing.type_id = factory.union2(existing.type_id, widened_prop_type);
-                    }
-                } else {
-                    prop.type_id = widened_prop_type;
-                    prop.write_type = prop.type_id;
-                    properties.insert(name, prop);
+                // Add prototype methods as instance properties
+                for (name, prop) in method_bindings {
+                    properties.entry(name).or_insert(prop);
                 }
-            }
 
-            for (name, prop) in self.collect_define_property_bindings_on_function_prototype(
-                value_decl,
-                func_name_s,
-                sym_id,
-            ) {
-                has_prototype_evidence = true;
-                properties.entry(name).or_insert(prop);
+                // Add this-properties from prototype methods (with | undefined)
+                for (name, mut prop) in this_props {
+                    let factory = self.ctx.types.factory();
+                    let widened_prop_type = factory.union2(prop.type_id, TypeId::UNDEFINED);
+                    if let Some(existing) = properties.get_mut(&name) {
+                        if existing.write_type == TypeId::ANY {
+                            existing.type_id = factory.union2(existing.type_id, widened_prop_type);
+                        }
+                    } else {
+                        prop.type_id = widened_prop_type;
+                        prop.write_type = prop.type_id;
+                        properties.insert(name, prop);
+                    }
+                }
+
+                for (name, prop) in self.collect_define_property_bindings_on_function_prototype(
+                    value_decl,
+                    func_name_s,
+                    sym_id,
+                ) {
+                    has_prototype_evidence = true;
+                    properties.entry(name).or_insert(prop);
+                }
             }
         }
 
@@ -247,26 +268,30 @@ impl<'a> CheckerState<'a> {
 
         if properties.is_empty() {
             if has_prototype_evidence {
-                let brand_name = self
-                    .ctx
-                    .types
-                    .intern_string(&format!("__js_ctor_brand_{}", sym_id.0));
-                properties.insert(
-                    brand_name,
-                    PropertyInfo {
-                        name: brand_name,
-                        type_id: TypeId::UNKNOWN,
-                        write_type: TypeId::UNKNOWN,
-                        optional: false,
-                        readonly: false,
-                        is_method: false,
-                        is_class_prototype: false,
-                        visibility: tsz_solver::Visibility::Public,
-                        parent_id: Some(sym_id),
-                        declaration_order: 0,
-                        is_string_named: false,
-                    },
-                );
+                if let Some(sym_id) = sym_id {
+                    let brand_name = self
+                        .ctx
+                        .types
+                        .intern_string(&format!("__js_ctor_brand_{}", sym_id.0));
+                    properties.insert(
+                        brand_name,
+                        PropertyInfo {
+                            name: brand_name,
+                            type_id: TypeId::UNKNOWN,
+                            write_type: TypeId::UNKNOWN,
+                            optional: false,
+                            readonly: false,
+                            is_method: false,
+                            is_class_prototype: false,
+                            visibility: tsz_solver::Visibility::Public,
+                            parent_id: Some(sym_id),
+                            declaration_order: 0,
+                            is_string_named: false,
+                        },
+                    );
+                } else {
+                    return None;
+                }
             } else {
                 return None;
             }
