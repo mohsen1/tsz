@@ -1880,15 +1880,33 @@ impl<'a> CheckerState<'a> {
                 // start rather than inside the body, so we also check for
                 // assignability errors anywhere in the function arg when the
                 // context is concrete.
-                let is_concrete_callback_assignability = is_function_arg_diag
-                    && is_assignability
-                    && !expected_is_unresolved
+                let has_concrete_expected_type = !expected_is_unresolved
                     && expected_type.is_some_and(|et| {
                         et != TypeId::UNKNOWN
                             && et != TypeId::ERROR
                             && et != TypeId::ANY
                             && !common::contains_type_parameters(self.ctx.types, et)
                     });
+                let is_concrete_callback_assignability = is_function_arg_diag
+                    && is_assignability
+                    && has_concrete_expected_type;
+                // When the callback's contextual type is fully concrete (no type
+                // parameters, no infer types), TS2339 (property does not exist)
+                // errors from inside the callback body are definitive — the
+                // parameter types are fully resolved and the later instantiated
+                // retry will not change them. Keep these diagnostics so that e.g.
+                // `make<A,B>(fn: (a:A)=>B): (s:A)=>B` with contextual type
+                // `(s:number)=>string` correctly reports TS2339 for
+                // `(x) => x.toUpperCase()` when x is inferred as number.
+                //
+                // Only apply this for expression-body arrows (where the body IS
+                // the expression that fails) — block-body callbacks may get
+                // stale TS2339 from speculative union-contextual passes that
+                // will be refined in the instantiated retry.
+                let is_concrete_callback_body_property_error =
+                    callback_body_start.is_some_and(|start| diag.start >= start)
+                        && diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                        && has_concrete_expected_type;
                 if expected_is_unresolved
                     && (is_function_arg_diag
                         || (is_object_literal_diag && is_provisional_implicit_any))
@@ -1908,8 +1926,8 @@ impl<'a> CheckerState<'a> {
                     && !is_nullish_callback_body_diag
                     && !is_direct_callback_body_assignability
                     && !is_concrete_callback_assignability
+                    && !is_concrete_callback_body_property_error
                 {
-                    // Don't filter out TS2339 errors - they should always be reported
                     return false;
                 }
                 // Keep implicit-any diagnostics (TS7006/TS7019/TS7031) from inside object
