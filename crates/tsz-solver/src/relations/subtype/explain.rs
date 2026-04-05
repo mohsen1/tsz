@@ -26,15 +26,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// all properties available for missing property checks.
     fn collect_source_properties(&self, source: TypeId) -> Vec<PropertyInfo> {
         use crate::type_queries::data::get_intersection_members;
-        
+
         let mut props = Vec::new();
-        
+
         // Get base shape properties
         if let Some(shape_id) = object_shape_id(self.interner, source) {
             let shape = self.interner.object_shape(shape_id);
             props.extend(shape.properties.iter().cloned());
         }
-        
+
         // Add properties from intersection members
         if let Some(members) = get_intersection_members(self.interner, source) {
             for member in members {
@@ -48,7 +48,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
         }
-        
+
         props
     }
 

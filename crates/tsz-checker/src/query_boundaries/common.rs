@@ -1049,12 +1049,12 @@ pub(crate) fn get_merged_object_shape_for_type(
 ) -> Option<ObjectShape> {
     // First, get the base shape if it exists
     let base_shape = tsz_solver::type_queries::get_object_shape(db, type_id)?;
-    
+
     // Collect properties from intersection members
     let mut merged_props: Vec<PropertyInfo> = base_shape.properties.iter().cloned().collect();
     let mut has_string_index = base_shape.string_index.is_some();
     let mut has_number_index = base_shape.number_index.is_some();
-    
+
     // Add properties from intersection members
     if let Some(members) = tsz_solver::type_queries::get_intersection_members(db, type_id) {
         for member in members {
@@ -1070,15 +1070,23 @@ pub(crate) fn get_merged_object_shape_for_type(
             }
         }
     }
-    
+
     // Sort properties by declaration order for consistent results
     merged_props.sort_by_key(|p| p.declaration_order);
-    
+
     Some(ObjectShape {
         flags: base_shape.flags,
         properties: merged_props,
-        string_index: if has_string_index { base_shape.string_index } else { None },
-        number_index: if has_number_index { base_shape.number_index } else { None },
+        string_index: if has_string_index {
+            base_shape.string_index
+        } else {
+            None
+        },
+        number_index: if has_number_index {
+            base_shape.number_index
+        } else {
+            None
+        },
         symbol: base_shape.symbol,
     })
 }
