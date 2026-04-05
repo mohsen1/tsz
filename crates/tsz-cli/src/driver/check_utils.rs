@@ -1349,6 +1349,7 @@ pub(super) const fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
         | 1139 // Can not use 'JSDoc' type in TS
         | 1196 // Catch clause variable type annotation
         | 1206 // Decorators are not valid here
+        | 8038 // Decorators may not appear after 'export' if they also appear before 'export'
         | 1210 // Code contained in a class is evaluated in strict mode
         | 1215 // Identifier expected; 'await' is a reserved word
         | 1223 // Constructor implementation is missing
