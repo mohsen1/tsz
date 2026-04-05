@@ -207,8 +207,13 @@ impl<'a> CheckerState<'a> {
                             .binder
                             .get_symbol_with_libs(sym_id, &lib_binders)
                             .is_some_and(|s| {
-                                // Skip symbols that are ONLY type parameters
-                                s.flags & tsz_binder::symbol_flags::VALUE != 0
+                                // Skip symbols that are ONLY type parameters.
+                                // Accept VALUE symbols and non-type-only ALIAS symbols
+                                // (e.g., `import * as E from "mod"` provides a runtime
+                                // namespace object).
+                                (s.flags & tsz_binder::symbol_flags::VALUE != 0)
+                                    || ((s.flags & tsz_binder::symbol_flags::ALIAS != 0)
+                                        && !s.is_type_only)
                             })
                     })
                     .is_some();
