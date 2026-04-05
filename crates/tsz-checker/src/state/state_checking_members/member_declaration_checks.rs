@@ -24,6 +24,39 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// TS1277: `const` modifier can only appear on a type parameter of a
+    /// function, method, or class. Interfaces and type aliases are rejected.
+    pub(crate) fn check_const_type_parameter_on_non_function(
+        &mut self,
+        type_params: Option<&tsz_parser::parser::NodeList>,
+    ) {
+        let Some(type_params) = type_params else {
+            return;
+        };
+        for &param_idx in &type_params.nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(tp) = self.ctx.arena.get_type_parameter(param_node) else {
+                continue;
+            };
+            if let Some(ref modifiers) = tp.modifiers {
+                for &mod_idx in &modifiers.nodes {
+                    let Some(mod_node) = self.ctx.arena.get(mod_idx) else {
+                        continue;
+                    };
+                    if mod_node.kind == tsz_scanner::SyntaxKind::ConstKeyword as u16 {
+                        self.error_at_node_msg(
+                            mod_idx,
+                            crate::diagnostics::diagnostic_codes::MODIFIER_CAN_ONLY_APPEAR_ON_A_TYPE_PARAMETER_OF_A_FUNCTION_METHOD_OR_CLASS,
+                            &["const"],
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     pub(crate) fn lookup_member_access_in_class(
         &self,
         class_idx: NodeIndex,

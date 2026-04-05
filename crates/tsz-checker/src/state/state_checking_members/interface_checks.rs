@@ -25,6 +25,9 @@ impl<'a> CheckerState<'a> {
         // TS1042: async modifier cannot be used on interface declarations
         self.check_async_modifier_on_declaration(&iface.modifiers);
 
+        // TS1277: 'const' modifier not allowed on interface type parameters
+        self.check_const_type_parameter_on_non_function(iface.type_parameters.as_ref());
+
         // Check for reserved interface names (error 2427)
         if iface.name.is_some()
             && let Some(name_node) = self.ctx.arena.get(iface.name)
