@@ -48,6 +48,35 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Returns `true` if the node at `idx` is a `void 0` expression or the identifier
+    /// `undefined`. These are sentinel "uninitialized" markers: tsc does NOT include them
+    /// as expando property types (it emits TS2339 instead of TS18048 when such a
+    /// property is later read or used in a binary expression).
+    fn is_void_zero_or_undefined_rhs_in_arena(arena: &NodeArena, idx: NodeIndex) -> bool {
+        let Some(node) = arena.get(idx) else {
+            return false;
+        };
+
+        // `undefined` identifier
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return arena
+                .get_identifier(node)
+                .is_some_and(|ident| ident.escaped_text == "undefined");
+        }
+
+        // `void <expr>` — most commonly `void 0`
+        if node.kind == syntax_kind_ext::VOID_EXPRESSION
+            || node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+        {
+            let Some(unary) = arena.get_unary_expr(node) else {
+                return false;
+            };
+            return unary.operator == SyntaxKind::VoidKeyword as u16;
+        }
+
+        false
+    }
+
     fn root_symbol_for_expando_read(&self, object_expr_idx: NodeIndex) -> Option<SymbolId> {
         self.resolve_identifier_symbol(object_expr_idx)
             .or_else(|| self.resolve_qualified_symbol(object_expr_idx))
@@ -182,6 +211,7 @@ impl<'a> CheckerState<'a> {
             && binary.operator_token == SyntaxKind::EqualsToken as u16
             && Self::expando_assignment_access_key_in_arena(arena, binary.left)
                 .is_some_and(|key| key == expected_key)
+            && !Self::is_void_zero_or_undefined_rhs_in_arena(arena, binary.right)
         {
             return true;
         }
@@ -889,6 +919,7 @@ impl<'a> CheckerState<'a> {
             && self
                 .expando_assignment_access_key(binary.left)
                 .is_some_and(|key| key == expected_key)
+            && !Self::is_void_zero_or_undefined_rhs_in_arena(self.ctx.arena, binary.right)
         {
             // In JS/Salsa files, `x.y = void 0` is a property declaration placeholder,
             // not a meaningful type assignment. Skip it so the property type doesn't
@@ -898,6 +929,7 @@ impl<'a> CheckerState<'a> {
                 let rhs_type = self.get_type_of_node(rhs_idx);
                 if rhs_type != TypeId::ANY
                     && rhs_type != TypeId::ERROR
+                    && rhs_type != TypeId::UNDEFINED
                     && best_match.is_none_or(|(best_pos, _)| node.pos >= best_pos)
                 {
                     *best_match = Some((node.pos, rhs_type));

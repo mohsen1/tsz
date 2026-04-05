@@ -731,6 +731,21 @@ impl ParserState {
         jsx_node
     }
 
+    /// Returns true if the current token is `<` and is immediately followed by `/`,
+    /// meaning this is the start of a closing JSX tag (`</`), not a type argument list.
+    /// Used to prevent consuming the `<` of a closing tag as a type argument opener.
+    fn is_less_than_slash_token(&self) -> bool {
+        if !self.is_token(SyntaxKind::LessThanToken) {
+            return false;
+        }
+        let pos = self.token_pos() as usize;
+        // Check the character immediately after `<`
+        self.get_source_text()
+            .get(pos + 1..)
+            .and_then(|s| s.bytes().next())
+            == Some(b'/')
+    }
+
     fn is_jsx_adjacent_sibling_candidate(&self) -> bool {
         if !self.is_token(SyntaxKind::LessThanToken) {
             return false;
@@ -829,7 +844,17 @@ impl ParserState {
 
         // Parse optional type arguments (not in JS files, matching tsc's
         // `(contextFlags & NodeFlags.JavaScriptFile) === 0 ? tryParseTypeArguments() : undefined`)
-        let type_arguments = if !self.is_js_file() && self.is_less_than_or_compound() {
+        //
+        // Guard: if the `<` is immediately followed by `/`, this is a closing tag (`</`),
+        // not a type argument. Consuming it as a type argument would strip the `<` from the
+        // closing tag and leave the scanner mid-tag, causing false TS1382 diagnostics when
+        // `re_scan_jsx_token` rescans from that position in JSX mode. This mirrors tsc's
+        // `abortParsingListOrMoveToNextToken` behavior: when the token belongs to an outer
+        // parsing context (JsxChildren), the inner list aborts without consuming it.
+        let type_arguments = if !self.is_js_file()
+            && self.is_less_than_or_compound()
+            && !self.is_less_than_slash_token()
+        {
             Some(self.parse_type_arguments())
         } else {
             None
@@ -945,7 +970,7 @@ impl ParserState {
         let start_pos = self.token_pos();
 
         // Error recovery: if the current token can't start a JSX element name,
-        // return a missing identifier to avoid crashes
+        // return a missing identifier to avoid crashes.
         if !self.is_token(SyntaxKind::Identifier)
             && !self.is_token(SyntaxKind::ThisKeyword)
             && !self.is_identifier_or_keyword()
@@ -1089,6 +1114,17 @@ impl ParserState {
             } else if self.is_identifier_or_keyword() {
                 // Regular attribute: name="value" or name={expr} or just name
                 properties.push(self.parse_jsx_attribute());
+            } else if self.is_token(SyntaxKind::LessThanToken) {
+                // A `<` in the attribute list means we've hit a JSX child or closing
+                // tag. This token belongs to an outer parsing context (JsxChildren),
+                // so abort without consuming it — mirroring tsc's
+                // `abortParsingListOrMoveToNextToken` which returns `true` (abort)
+                // when `isInSomeParsingContext()` detects the token is valid in an
+                // enclosing context. Consuming `<` here causes the scanner to be
+                // left mid-way through the closing tag text when `re_scan_jsx_token`
+                // is later called, which triggers a false TS1382.
+                self.error_identifier_expected();
+                break;
             } else {
                 // Match tsc's JSX-attribute list recovery: report an identifier
                 // at the unexpected token, consume one token, and keep parsing the
