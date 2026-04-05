@@ -329,9 +329,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         // 2.5. Seed contextual constraints from return type
-        // Skip `any` and `unknown` — they don't contribute useful inference constraints
-        if !has_context_sensitive_args
-            && let Some(ctx_type) = self.contextual_type
+        // Skip `any` and `unknown` — they don't contribute useful inference constraints.
+        // Seed even when there are context-sensitive args: for patterns like
+        //   assign<T>(fn: (x: T) => void): Action<T>
+        // called in a context expecting Action<"counter">, the return context is the
+        // only source of inference for T. Without seeding here, the Round 1 substitution
+        // is empty and callback parameters lose their contextual types.
+        if let Some(ctx_type) = self.contextual_type
             && ctx_type != TypeId::ANY
             && ctx_type != TypeId::UNKNOWN
         {
@@ -368,9 +372,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        let structural_return_subst = if has_context_sensitive_args {
-            TypeSubstitution::new()
-        } else {
+        let structural_return_subst = {
             // When the source function's return type is a bare type parameter
             // that also appears in its parameter list (like `f<T>(x: T): T`),
             // and the contextual type is a function (from
@@ -568,9 +570,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             });
             if let Some(resolved) = resolved {
                 let resolved = self.normalize_inferred_placeholder_type(resolved, &infer_subst);
-                let resolved = if !has_context_sensitive_args
-                    && let Some(contextual_ty) = structural_return_subst.get(tp.name)
-                {
+                let resolved = if let Some(contextual_ty) = structural_return_subst.get(tp.name) {
                     if self.can_apply_contextual_return_substitution(
                         &mut infer_ctx,
                         type_param_vars[i],
