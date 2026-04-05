@@ -1545,8 +1545,16 @@ impl<'a> CheckerState<'a> {
 
                 let constraint = if data.constraint != NodeIndex::NONE {
                     let constraint_type = self.get_type_from_type_node(data.constraint);
-                    let is_circular =
-                        if let Some(&param_type_id) = self.ctx.type_parameter_scope.get(&name) {
+                    // Skip circular constraint check for `typeof` expressions.
+                    // `T extends typeof a` where `a: T` resolves to `T extends T` but is
+                    // NOT considered circular by tsc — it's a valid pattern for type narrowing.
+                    // tsc's getConstraintOfTypeParameter defers typeof resolution.
+                    let is_typeof_constraint =
+                        self.ctx.arena.get(data.constraint).is_some_and(|n| {
+                            n.kind == tsz_parser::parser::syntax_kind_ext::TYPE_QUERY
+                        });
+                    let is_circular = !is_typeof_constraint
+                        && if let Some(&param_type_id) = self.ctx.type_parameter_scope.get(&name) {
                             self.is_same_type_parameter(constraint_type, param_type_id, &name)
                         } else {
                             false
