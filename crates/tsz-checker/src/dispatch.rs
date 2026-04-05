@@ -1162,6 +1162,21 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                             );
                                         }
                                     }
+                                    // Per-property comparable check: the solver's
+                                    // `types_are_comparable_for_assertion` can't resolve
+                                    // Lazy types (interface refs nested in properties).
+                                    // Resolve both sides and check per-property overlap
+                                    // at the checker level which CAN resolve Lazy types.
+                                    // This only applies to type assertions (TS2352), not
+                                    // to `is_type_comparable_to` which also serves
+                                    // comparison operators and equality narrowing.
+                                    if !have_overlap {
+                                        have_overlap =
+                                            self.checker.object_properties_are_comparable(
+                                                expr_type,
+                                                effective_asserted,
+                                            );
+                                    }
                                     if !have_overlap {
                                         // tsc anchors TS2352 at the full assertion node
                                         // (`<T>expr` / `expr as T`), not just the inner

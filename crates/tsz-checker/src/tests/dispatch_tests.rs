@@ -1640,3 +1640,44 @@ class Bar extends Foo {
         ts2416.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn ts2352_string_enum_comparable_in_nested_assertion() {
+    // Repro from comparableRelationBidirectional.ts:
+    // When asserting an object literal `as UserSettings` where a nested property
+    // has a string enum type, the comparable relation should recognize overlap
+    // between the string literal `""` and the string enum `AutomationMode` (which
+    // has NONE = ""). TS2352 should NOT fire because the types overlap at the
+    // property level even though direct assignability fails (string enums are
+    // nominally strict for assignments but comparable for type assertions).
+    let diags = check_source_diagnostics(
+        r#"
+enum AutomationMode {
+    NONE = "",
+    TIME = "time",
+    SYSTEM = "system",
+    LOCATION = "location",
+}
+interface Automation {
+    mode: AutomationMode;
+}
+interface UserSettings {
+    presets: string[];
+    automation: Automation;
+}
+const x = {
+    presets: [],
+    automation: {
+        mode: "",
+    },
+} as UserSettings;
+"#,
+    );
+    let ts2352: Vec<_> = diags.iter().filter(|d| d.code == 2352).collect();
+    assert_eq!(
+        ts2352.len(),
+        0,
+        "Expected no TS2352 for string enum comparable assertion, got: {:?}",
+        ts2352.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
