@@ -577,7 +577,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .find_map(|(tp, candidate_var)| (*candidate_var == var).then_some(tp.name))
             });
 
+            // Defer a bare-type-parameter argument when a later context-sensitive
+            // generic function-like argument depends on the same type parameter.
+            // Non-context-sensitive arguments (primitives, variable references) must
+            // NOT be deferred: Round 2 only processes context-sensitive arguments,
+            // so deferring a non-context-sensitive arg loses its constraint entirely,
+            // causing the type parameter to resolve to `unknown`.
             if let Some(type_param_name) = target_type_param_name
+                && self.is_contextually_sensitive(arg_type)
                 && self.later_generic_function_like_arg_depends_on_type_param(
                     func,
                     arg_types,
