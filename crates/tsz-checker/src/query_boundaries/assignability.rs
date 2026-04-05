@@ -648,9 +648,7 @@ pub(crate) fn classify_object_properties(
     source: TypeId,
     target: TypeId,
 ) -> Option<super::relation_types::PropertyClassification> {
-    use super::common::{
-        intersection_members, is_type_parameter_like, object_shape_for_type, union_members,
-    };
+    use super::common::{intersection_members, is_type_parameter_like, union_members};
     use super::relation_types::PropertyClassification;
 
     // Cannot classify if target is a type parameter.
@@ -798,7 +796,7 @@ fn collect_target_properties(
     db: &dyn TypeDatabase,
     target: TypeId,
 ) -> std::collections::HashMap<String, TypeId> {
-    use super::common::{intersection_members, object_shape_for_type, union_members};
+    use super::common::{intersection_members, union_members};
     let mut props = std::collections::HashMap::new();
 
     if let Some(shape) =
@@ -844,7 +842,7 @@ fn collect_target_property_names(
     db: &dyn TypeDatabase,
     target: TypeId,
 ) -> std::collections::HashSet<String> {
-    use super::common::{intersection_members, object_shape_for_type, union_members};
+    use super::common::{intersection_members, union_members};
     let mut names = std::collections::HashSet::new();
 
     if let Some(shape) =
