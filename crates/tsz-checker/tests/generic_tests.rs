@@ -751,3 +751,55 @@ interface ExplicitArgDefault<T = SelfRef<number>> {}
         "Expected only the raw circular-default case to trigger TS2716, got {ts2716_count}. All diagnostics: {all_errors:?}"
     );
 }
+
+/// Generic function references passed as callback arguments should be properly
+/// instantiated, not cause the earlier arguments to be deferred from inference.
+/// Regression test for: `map("", identity)` incorrectly inferred T as `unknown`
+/// instead of `string` because the deferral logic skipped the string argument.
+#[test]
+fn test_generic_function_ref_as_callback_does_not_defer_earlier_arg_inference() {
+    let source = r#"
+declare function map<T, U>(array: T, func: (x: T) => U): U;
+declare function identity<V>(y: V): V;
+var s: string;
+
+// All of these should be fine: T=string inferred from first arg,
+// identity instantiated as (y: string) => string, U=string.
+s = map("", identity);
+
+// Dotted access
+var dottedIdentity = { x: identity };
+s = map("", dottedIdentity.x);
+
+// Parenthesized
+s = map("", (identity));
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2345)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "Expected no TS2322/TS2345 errors for generic function ref as callback, got: {errors:?}"
+    );
+}
