@@ -507,11 +507,12 @@ impl ParserState {
         let question_token = self.parse_optional(SyntaxKind::QuestionToken);
 
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
-            // Allow type predicates in parameter type annotations (matching tsc).
-            // Type predicates in non-return positions are syntactically valid;
-            // the checker emits TS1228 "A type predicate is only allowed in
-            // return type position" when appropriate.
-            self.parse_type_with_predicates(true)
+            // Parameter type annotations do NOT allow type predicates (matching tsc).
+            // In tsc, parseParameterType() calls parseType(), not parseTypeOrTypePredicate().
+            // Type predicates are only valid in return type positions.
+            // `this is T` is still parsed as a type predicate here because
+            // parse_type() always allows `this is T` (tsc: parseThisTypeOrThisTypePredicate).
+            self.parse_type()
         } else {
             NodeIndex::NONE
         };
