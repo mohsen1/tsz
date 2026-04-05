@@ -1182,6 +1182,16 @@ impl<'a> CheckerState<'a> {
             type_predicate = Some(pred);
         }
 
+        // Inherit type predicate from contextual type when no explicit annotation exists.
+        // This handles cases like: `const fn: (v: any) => asserts v is string = (v) => { ... }`
+        // where the arrow function should inherit the assertion predicate from the declared type.
+        if type_predicate.is_none()
+            && let Some(ref ctx_shape) = contextual_signature_shape
+            && let Some(ref ctx_pred) = ctx_shape.type_predicate
+        {
+            type_predicate = Some(ctx_pred.clone());
+        }
+
         // Save the annotated return type before evaluation. evaluate_application_type()
         // expands Application types (like Promise<string>) into concrete object shapes,
         // which is useful for body checking but destroys type identity needed by callers
