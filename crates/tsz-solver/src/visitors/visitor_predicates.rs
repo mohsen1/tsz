@@ -610,7 +610,7 @@ pub fn references_any_type_param_named(
 /// - Mapped type constraint (the key source)
 /// - Conditional check/extends types
 /// - Index access object/index
-/// - KeyOf operand
+/// - `KeyOf` operand
 ///
 /// NOT descended into (these are type references/wrappers — tsc treats them as opaque):
 /// - Type application arguments (e.g. `Foo<T>`)
@@ -666,15 +666,10 @@ pub fn constraint_references_type_param_in_resolution_path(
                 stack.push(*obj);
                 stack.push(*idx);
             }
-            // KeyOf is opaque at the constraint-resolution level.
-            // `T extends { [K in keyof T]: V }` is NOT circular in tsc —
-            // `keyof T` is well-defined even for unconstrained type parameters.
-            TypeData::KeyOf(_) => {}
-            // Conditional types are deferred and opaque for constraint resolution.
-            // `T extends null extends T ? any : never` is NOT circular in tsc.
-            TypeData::Conditional(_) => {}
-            // Everything else — Application, Object, Function, Array, Tuple,
-            // ReadonlyType, NoInfer, etc. — is opaque at the constraint level.
+            // KeyOf, Conditional, and everything else (Application, Object,
+            // Function, Array, Tuple, ReadonlyType, NoInfer, etc.) are opaque
+            // at the constraint-resolution level. `T extends { [K in keyof T]: V }`
+            // is NOT circular in tsc, and neither is `T extends null extends T ? any : never`.
             _ => {}
         }
     }

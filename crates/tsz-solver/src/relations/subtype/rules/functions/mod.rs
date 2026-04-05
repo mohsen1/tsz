@@ -296,13 +296,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: &FunctionShape,
     ) -> bool {
         match (&source.type_predicate, &target.type_predicate) {
-            // No predicates in either function — compatible
-            (None, None) => true,
-
-            // Source has predicate, target doesn't — compatible.
-            // A function with a type predicate is callable where a plain
-            // boolean-returning function is expected.
-            (Some(_), None) => true,
+            // No predicates in either function, or source has predicate
+            // but target doesn't — compatible. A function with a type
+            // predicate is callable where a plain boolean-returning
+            // function is expected.
+            (None, None) | (Some(_), None) => true,
 
             // Target has predicate, source doesn't.
             // For type guards (`x is T`, `this is T`): NOT compatible.

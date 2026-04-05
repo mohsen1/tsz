@@ -45,10 +45,8 @@ fn has_nonpublic_property(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId, na
             }
             members.iter().all(|&m| has_nonpublic_property(db, m, name))
         }
-        TypeData::Intersection(_) => {
-            // tsc does not emit TS4105 for intersection constraints
-            false
-        }
+        // Intersection constraints and everything else — tsc does not
+        // emit TS4105 for these.
         _ => false,
     }
 }

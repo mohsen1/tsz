@@ -276,6 +276,7 @@ impl<'a> TypeFormatter<'a> {
     /// When `type_predicate` is `Some`, the return type is formatted as
     /// `asserts v is T` or `v is T` instead of the raw return type.
     /// This matches tsc's display for assertion/type guard functions.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn format_signature_with_predicate(
         &mut self,
         type_params: &[TypeParamInfo],
