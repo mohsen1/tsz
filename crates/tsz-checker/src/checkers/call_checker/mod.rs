@@ -370,17 +370,31 @@ impl<'a> CheckerState<'a> {
                 stable_call_recovery_return_type(self.ctx.types, refined_actual)
                     .zip(stable_call_recovery_return_type(self.ctx.types, expected))
                     .map(|(actual_return, expected_return)| {
+                        // For yield and return components, the actual type was computed
+                        // WITHOUT contextual typing, so literal types get widened
+                        // (e.g., `yield 10` produces `number` instead of `10`).
+                        // When the expected type comes from const type parameter
+                        // inference (e.g., `Generator<10>`), the narrow expected type
+                        // won't match the widened actual. To avoid false positives,
+                        // also check the reverse direction: if the expected (narrow)
+                        // type is assignable to the actual (widened) type, the
+                        // mismatch is just due to widening, not a real error.
                         let generator_component_mismatch = self
                             .get_generator_yield_type_argument(actual_return)
                             .zip(self.get_generator_yield_type_argument(expected_return))
                             .is_some_and(|(actual_yield, expected_yield)| {
                                 !self.is_assignable_to(actual_yield, expected_yield)
+                                    && !self.is_assignable_to(expected_yield, actual_yield)
                             })
                             || self
                                 .get_generator_return_type_argument(actual_return)
                                 .zip(self.get_generator_return_type_argument(expected_return))
                                 .is_some_and(|(actual_gen_return, expected_gen_return)| {
                                     !self.is_assignable_to(actual_gen_return, expected_gen_return)
+                                        && !self.is_assignable_to(
+                                            expected_gen_return,
+                                            actual_gen_return,
+                                        )
                                 })
                             || self
                                 .get_generator_next_type_argument(actual_return)

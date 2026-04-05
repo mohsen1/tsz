@@ -1804,6 +1804,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         priority,
                     );
                 }
+                // Symmetric case: source has MORE type args than target (target
+                // relies on default type parameters, e.g., Generator<10, void, any>
+                // vs Generator<T> where Generator has 3 type params but only 1 is
+                // specified). Match the overlapping prefix of type arguments.
+                else if !same_base_application
+                    && s_app.base == t_app.base
+                    && !t_app.args.is_empty()
+                    && t_app.args.len() < s_app.args.len()
+                    && t_app.args.iter().any(|arg| var_map.contains_key(arg))
+                {
+                    self.constrain_application_type_args(
+                        ctx,
+                        var_map,
+                        t_app.base,
+                        &s_app.args[..t_app.args.len()],
+                        &t_app.args,
+                        priority,
+                    );
+                }
                 let promise_like_arg_pair = if !same_base_application {
                     self.checker
                         .promise_like_type_argument(source)
