@@ -1538,12 +1538,6 @@ impl<'a> CheckerState<'a> {
                         inst
                     }
                 };
-                if is_sensitive && param_type != instantiated {
-                    eprintln!(
-                        "[DEBUG R2-final] i={i} param_type={:?} instantiated={:?}",
-                        param_type, instantiated
-                    );
-                }
                 let preserve_application_shape =
                     should_preserve_contextual_application_shape(self.ctx.types, instantiated);
                 let evaluated = if common::contains_type_parameters(self.ctx.types, instantiated)
@@ -1964,7 +1958,14 @@ impl<'a> CheckerState<'a> {
                         && object_literal_method_param_spans
                             .iter()
                             .any(|(start, end)| diag.start >= *start && diag.start < *end);
-                let keep = (!is_assignability && !is_provisional_implicit_any)
+                // TS2345 diagnostics from within object literals come from
+                // nested call argument checking, not speculative property
+                // assignment. They are definitive and should be preserved.
+                let is_nested_call_arg_error = is_object_literal_diag
+                    && diag.code
+                        == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE;
+                let keep = is_nested_call_arg_error
+                    || (!is_assignability && !is_provisional_implicit_any)
                     || (implicit_any_in_object_literal
                         && !implicit_any_in_object_literal_method)
                     || is_nullish_callback_body_diag
