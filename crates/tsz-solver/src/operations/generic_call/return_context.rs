@@ -480,6 +480,30 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return;
         }
 
+        // Object-Object: match properties by name and recurse into their types.
+        // This handles cases where applications are evaluated to structural object
+        // types (e.g., Box<void, B> → { a: void, b: B }).
+        if let (Some(TypeData::Object(s_shape_id)), Some(TypeData::Object(t_shape_id))) =
+            (self.interner.lookup(source), self.interner.lookup(target))
+        {
+            let s_shape = self.interner.object_shape(s_shape_id);
+            let t_shape = self.interner.object_shape(t_shape_id);
+            for s_prop in &s_shape.properties {
+                if let Some(t_prop) = t_shape.properties.iter().find(|p| p.name == s_prop.name) {
+                    self.collect_return_context_substitution(
+                        s_prop.type_id,
+                        t_prop.type_id,
+                        tracked_type_params,
+                        substitution,
+                        visited,
+                    );
+                }
+            }
+            if !substitution.is_empty() {
+                return;
+            }
+        }
+
         if let (Some(source_elem), Some(target_elem)) = (
             crate::type_queries::get_array_element_type(self.interner.as_type_database(), source),
             crate::type_queries::get_array_element_type(self.interner.as_type_database(), target),
@@ -548,6 +572,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         };
 
         if let Some(((source_base, source_args), (target_base, mut target_args))) = app_info {
+            // When same base but different arg counts (e.g., Box<void, B> vs Box<void>
+            // where B has a default), try to pad with defaults from type params first.
             if source_base == target_base
                 && source_args.len() > target_args.len()
                 && let Some(def_id) = crate::type_queries::get_lazy_def_id(
@@ -563,6 +589,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
                 target_args = filled;
             }
+            // Fallback: when padding didn't equalize lengths (defaults unavailable),
+            // evaluate both to structural form so Object-Object matching can find
+            // the type parameter mappings through properties.
+            if source_base == target_base && source_args.len() != target_args.len() {
+                let eval_source = self.checker.evaluate_type(source);
+                let eval_target = self.checker.evaluate_type(target);
+                if eval_source != source || eval_target != target {
+                    self.collect_return_context_substitution(
+                        eval_source,
+                        eval_target,
+                        tracked_type_params,
+                        substitution,
+                        visited,
+                    );
+                    if !substitution.is_empty() {
+                        return;
+                    }
+                }
+            }
 
             if source_args.len() == target_args.len() && source_base == target_base {
                 for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
@@ -576,10 +621,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
                 return;
             }
-            // When bases differ (e.g., AssignAction<TActor> vs ActionFunction<ConcreteType>),
-            // match type arguments positionally if any source arg is a tracked type parameter.
-            // This handles branded-property patterns where different interfaces share
-            // structural positions for their type parameters (e.g., _out_TActor?: TActor).
+            // When bases differ, match type arguments positionally if any source arg
+            // is a tracked type parameter.
             if source_args.len() == target_args.len() {
                 let has_tracked_source_arg = source_args.iter().any(|&arg| {
                     if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(arg) {
