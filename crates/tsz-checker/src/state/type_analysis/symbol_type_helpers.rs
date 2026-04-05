@@ -99,10 +99,15 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a constraint type is the same as a type parameter (circular constraint).
+    /// Check if a constraint type creates a circular constraint for a type parameter.
     ///
-    /// This detects cases like `T extends T` where the type parameter references itself
-    /// in its own constraint.
+    /// This detects:
+    /// - Direct self-reference: `T extends T`
+    /// - Structural self-reference along the constraint resolution path:
+    ///   `T extends { [P in T]: number }`, `T extends Foo | T["hello"]`, etc.
+    ///
+    /// But NOT safe type-argument references like `T extends Array<T>` or
+    /// `S extends Foo<S>`, which are valid in TypeScript.
     pub(crate) fn is_same_type_parameter(
         &self,
         constraint_type: TypeId,
@@ -116,14 +121,22 @@ impl<'a> CheckerState<'a> {
 
         // Check if constraint is a TypeParameter with the same name
         if let Some(info) = type_param_info(self.ctx.types, constraint_type) {
-            // Check if the type parameter name matches
             let name_str = self.ctx.types.resolve_atom(info.name);
             if name_str == param_name {
                 return true;
             }
         }
 
-        false
+        // Check if constraint references the type parameter along the base-constraint
+        // resolution path (e.g., mapped type key source, union/intersection members,
+        // conditional types, index access). This catches cases like
+        // `T extends { [P in T]: number }` without false-positiving on `T extends Array<T>`.
+        let atom = self.ctx.types.intern_string(param_name);
+        tsz_solver::constraint_references_type_param_in_resolution_path(
+            self.ctx.types,
+            constraint_type,
+            atom,
+        )
     }
 
     pub(crate) fn provisional_circular_function_symbol_type(
