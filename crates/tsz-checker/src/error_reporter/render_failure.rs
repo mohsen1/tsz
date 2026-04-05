@@ -1272,7 +1272,18 @@ impl<'a> CheckerState<'a> {
                     }
                 })
             };
-        if (source_has_string_index && target_has_string_index) || number_index_suppress {
+        // When the target is an array/tuple type, the missing properties (length, push,
+        // pop, etc.) are real named members, not artifacts of index signature comparison.
+        // Don't suppress TS2739/TS2740 in that case — tsc correctly emits them.
+        let is_array_target = matches!(
+            query_utils::classify_array_like(self.ctx.types, target_type),
+            query_utils::ArrayLikeKind::Array(_)
+                | query_utils::ArrayLikeKind::Tuple
+                | query_utils::ArrayLikeKind::Readonly(_)
+        );
+        if !is_array_target
+            && ((source_has_string_index && target_has_string_index) || number_index_suppress)
+        {
             let src_str = self.format_type_diagnostic(source);
             let tgt_str = self.format_type_diagnostic(target);
             let message = format_message(
@@ -1287,17 +1298,6 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
         }
-
-        // Filter out private brand properties and Object.prototype methods.
-        // For array-like targets, use a narrower filter that keeps `toString` and
-        // `toLocaleString` — Array types override these with their own signatures,
-        // so they should be counted as missing properties when the source lacks them.
-        let is_array_target = matches!(
-            query_utils::classify_array_like(self.ctx.types, target_type),
-            query_utils::ArrayLikeKind::Array(_)
-                | query_utils::ArrayLikeKind::Tuple
-                | query_utils::ArrayLikeKind::Readonly(_)
-        );
         let filtered_names: Vec<_> = property_names
             .iter()
             .filter(|name| {
