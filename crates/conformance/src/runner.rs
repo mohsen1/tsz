@@ -810,7 +810,10 @@ impl Runner {
                                 } else {
                                     Duration::ZERO
                                 };
-                                match pool.compile(&prepared.project_dir, timeout_dur).await? {
+                                match pool
+                                    .compile(&prepared.project_dir, timeout_dur, Some(&key))
+                                    .await?
+                                {
                                     BatchOutcome::Done(output) => tsz_wrapper::parse_batch_output(
                                         &output,
                                         prepared.temp_dir.path(),
@@ -1168,7 +1171,10 @@ impl Runner {
                         } else {
                             Duration::ZERO
                         };
-                        match pool.compile(&prepared.project_dir, timeout_dur).await? {
+                        match pool
+                            .compile(&prepared.project_dir, timeout_dur, Some(&key))
+                            .await?
+                        {
                             BatchOutcome::Done(output) => tsz_wrapper::parse_batch_output(
                                 &output,
                                 prepared.temp_dir.path(),
@@ -1370,7 +1376,10 @@ impl Runner {
                         } else {
                             Duration::ZERO
                         };
-                        match pool.compile(&prepared.project_dir, timeout_dur).await? {
+                        match pool
+                            .compile(&prepared.project_dir, timeout_dur, Some(&key))
+                            .await?
+                        {
                             BatchOutcome::Done(output) => tsz_wrapper::parse_batch_output(
                                 &output,
                                 prepared.temp_dir.path(),

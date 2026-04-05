@@ -269,9 +269,7 @@ fn post_process_checker_diagnostics(
             || test_path.contains("recursiveConditionalTypes")
             || test_path.contains("moduleAugmentationDoesNamespaceEnumMergeOfReexport")
             || test_path.contains("moduleAugmentationInAmbientModule5")
-            || test_path.contains("mergeSymbolReexportedTypeAliasInstantiation")
-            || test_path.contains("genericMemberFunction")
-            || test_path.contains("thisInOuterClassBody");
+            || test_path.contains("mergeSymbolReexportedTypeAliasInstantiation");
 
         if suppress {
             checker_diagnostics.retain(|diag| diag.code != 2339);

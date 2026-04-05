@@ -96,9 +96,13 @@ impl ProcessPool {
         &self,
         project_dir: &Path,
         timeout: Duration,
+        test_key: Option<&str>,
     ) -> anyhow::Result<BatchOutcome> {
-        // Get test name from env var if set
-        let test_name = std::env::var("TSZ_CONFORMANCE_TEST").ok();
+        // Use the caller-provided test key so per-test CLI suppressions work
+        // in batch mode. Fall back to the env var for backward compatibility.
+        let test_name = test_key
+            .map(|s| s.to_string())
+            .or_else(|| std::env::var("TSZ_CONFORMANCE_TEST").ok());
 
         // Acquire an available worker index
         let idx = {
