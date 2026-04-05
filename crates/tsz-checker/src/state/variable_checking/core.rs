@@ -130,11 +130,18 @@ impl<'a> CheckerState<'a> {
         ) else {
             return TypingRequest::NONE;
         };
+        // tsc does NOT propagate prior declaration types as contextual type for
+        // call/new expressions. Generic inference in call expressions must rely on
+        // argument types alone, not on the prior declaration's type. Providing
+        // contextual type here would cause inference to succeed (e.g., T=Function
+        // from contextual return type) when tsc would infer T=unknown, suppressing
+        // TS2403 and potentially masking TS2345 argument errors.
+        //
+        // Contextual typing from prior declarations only applies to contextually
+        // sensitive expressions (object/array literals, arrow/function expressions).
         let initializer_needs_context = matches!(
             init_node.kind,
-            k if k == syntax_kind_ext::CALL_EXPRESSION
-                || k == syntax_kind_ext::NEW_EXPRESSION
-                || k == syntax_kind_ext::ARROW_FUNCTION
+            k if k == syntax_kind_ext::ARROW_FUNCTION
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION
         ) || is_contextually_sensitive(self, initializer_idx);
         if !initializer_needs_context {
