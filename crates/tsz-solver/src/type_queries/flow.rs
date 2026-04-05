@@ -629,15 +629,15 @@ fn types_are_comparable_for_assertion_inner(
     }
 
     // Handle Lazy types (unresolved semantic references like interface names).
-    // Only assume comparable when BOTH are Lazy at depth > 0 — we can't
-    // structurally compare two opaque references so we conservatively assume
-    // overlap (avoids false TS2352). When only ONE side is Lazy, fall through
-    // to the structural property check. The Lazy type will have no extractable
-    // properties, so it correctly returns "not comparable" for cases like
-    // comparing `{z: any}` (concrete Object) with `T1` (empty interface ref).
-    let source_is_lazy = matches!(db.lookup(source), Some(TypeData::Lazy(_)));
-    let target_is_lazy = matches!(db.lookup(target), Some(TypeData::Lazy(_)));
-    if depth > 0 && source_is_lazy && target_is_lazy {
+    // At depth > 0, when either side is Lazy we can't structurally decompose
+    // it (no extractable properties), so assume comparable. This matches
+    // `types_are_comparable_inner` behavior and prevents false TS2352 errors
+    // on valid assertions involving interface-typed properties (e.g.,
+    // `{ mode: "" } as { mode: AutomationMode }` where the interface is Lazy).
+    if depth > 0
+        && (matches!(db.lookup(source), Some(TypeData::Lazy(_)))
+            || matches!(db.lookup(target), Some(TypeData::Lazy(_))))
+    {
         return true;
     }
 
@@ -661,6 +661,15 @@ fn types_are_comparable_for_assertion_inner(
         return members
             .iter()
             .any(|&m| types_are_comparable_for_assertion_inner(db, source, m, depth + 1));
+    }
+
+    // Enum comparability: unwrap to member type union, matching
+    // `types_are_comparable_inner` behavior.
+    if let Some(TypeData::Enum(_def_id, members_type_id)) = db.lookup(source) {
+        return types_are_comparable_for_assertion_inner(db, members_type_id, target, depth + 1);
+    }
+    if let Some(TypeData::Enum(_def_id, members_type_id)) = db.lookup(target) {
+        return types_are_comparable_for_assertion_inner(db, source, members_type_id, depth + 1);
     }
 
     // Check primitive ↔ literal comparability
