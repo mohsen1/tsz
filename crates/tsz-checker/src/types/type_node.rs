@@ -1485,6 +1485,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
         };
 
+        let lazy_type_params_resolver =
+            |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
         let mut lowering = TypeLowering::with_hybrid_resolver(
             self.ctx.arena,
             self.ctx.types,
@@ -1492,7 +1494,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             &def_id_resolver,
             &value_resolver,
         )
-        .with_strict_null_checks(self.ctx.strict_null_checks());
+        .with_strict_null_checks(self.ctx.strict_null_checks())
+        .with_lazy_type_params_resolver(&lazy_type_params_resolver);
         if !type_param_bindings.is_empty() {
             lowering = lowering.with_type_param_bindings(type_param_bindings);
         }

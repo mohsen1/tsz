@@ -608,7 +608,7 @@ impl<'a> TypeLowering<'a> {
             if let Some(args) = &data.type_arguments
                 && !args.nodes.is_empty()
             {
-                let type_args: Vec<TypeId> =
+                let mut type_args: Vec<TypeId> =
                     args.nodes.iter().map(|&idx| self.lower_type(idx)).collect();
                 let type_symbol = self.resolve_type_symbol(data.type_name);
                 let value_symbol = self.resolve_value_symbol(data.type_name);
@@ -621,6 +621,22 @@ impl<'a> TypeLowering<'a> {
                 } else {
                     base_type
                 };
+                // Fill in missing type arguments from defaults (tsc's
+                // fillMissingTypeArguments). When `Effect<void>` is written but
+                // `Effect` has 3 type params with defaults for the last 2, the
+                // Application should be `Application(Effect, [void, never, never])`.
+                if let Some(tsz_solver::TypeData::Lazy(def_id)) = self.interner.lookup(base_type)
+                    && let Some(resolve_params) = self.lazy_type_params_resolver
+                    && let Some(type_params) = resolve_params(def_id)
+                    && type_args.len() < type_params.len()
+                    && type_params[type_args.len()..]
+                        .iter()
+                        .all(|p| p.default.is_some())
+                {
+                    for param in &type_params[type_args.len()..] {
+                        type_args.push(param.default.unwrap());
+                    }
+                }
                 return self.interner.application(base_type, type_args);
             }
 
