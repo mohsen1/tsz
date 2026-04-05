@@ -280,6 +280,72 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Substitute `ThisType` in derived member types with the interface's self type.
+        // In tsc, `this` in an interface refers to the interface's declared type. When
+        // checking interface extension compatibility, derived member types containing
+        // `this` (e.g., `oninit?(vnode: Vnode<A, this>)`) must be compared against base
+        // member types where the type parameter has been concretized (e.g.,
+        // `oninit?(vnode: Vnode<A, ClassComponent<A>>)`). Without this substitution,
+        // the comparison fails because the solver has no constraint info for `ThisType`.
+        {
+            // Check if any derived member contains ThisType (fast path: skip if none do)
+            let any_has_this = derived_members
+                .iter()
+                .any(|(_, tid, _, _)| tsz_solver::contains_this_type(self.ctx.types, *tid));
+            if any_has_this {
+                // Compute the interface's self type as a named type reference
+                // (Lazy(DefId) or Application(Lazy(DefId), [type_params]))
+                let interface_self_type = self
+                    .ctx
+                    .binder
+                    .node_symbols
+                    .get(&_iface_idx.0)
+                    .copied()
+                    .and_then(|sym_id| {
+                        let def_id = self.ctx.get_or_create_def_id(sym_id);
+                        let lazy_type = self.ctx.types.factory().lazy(def_id);
+
+                        // Collect type parameter TypeIds from the current scope
+                        if let Some(ref tp_list) = iface_data.type_parameters {
+                            let mut tp_type_ids = Vec::new();
+                            for &tp_idx in &tp_list.nodes {
+                                if let Some(tp_node) = self.ctx.arena.get(tp_idx)
+                                    && let Some(tp_data) =
+                                        self.ctx.arena.get_type_parameter(tp_node)
+                                    && let Some(name_node) = self.ctx.arena.get(tp_data.name)
+                                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                                {
+                                    if let Some(&tp_type_id) =
+                                        self.ctx.type_parameter_scope.get(&ident.escaped_text)
+                                    {
+                                        tp_type_ids.push(tp_type_id);
+                                    }
+                                }
+                            }
+                            if tp_type_ids.is_empty() {
+                                Some(lazy_type)
+                            } else {
+                                Some(self.ctx.types.factory().application(lazy_type, tp_type_ids))
+                            }
+                        } else {
+                            Some(lazy_type)
+                        }
+                    });
+
+                if let Some(self_type) = interface_self_type {
+                    for member in &mut derived_members {
+                        if tsz_solver::contains_this_type(self.ctx.types, member.1) {
+                            member.1 = tsz_solver::substitute_this_type(
+                                self.ctx.types,
+                                member.1,
+                                self_type,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         // Collect derived interface index signatures across all declarations.
         // These are checked against base index signatures for TS2430 compatibility.
         let mut derived_string_index_type: Option<TypeId> = None;
