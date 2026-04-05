@@ -1076,12 +1076,25 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.get_type_of_symbol(sym_id)
             };
+            // In JS files, prefer non-JS cross-file global value types for
+            // variables that don't have an explicit JSDoc @type annotation.
+            // When a JSDoc @type annotation is present, it takes precedence
+            // (the user's explicit intent) and we must not override it.
+            let has_jsdoc_type_annotation = self.ctx.is_js_file()
+                && self.ctx.should_resolve_jsdoc()
+                && (flags
+                    & (symbol_flags::FUNCTION_SCOPED_VARIABLE
+                        | symbol_flags::BLOCK_SCOPED_VARIABLE))
+                    != 0
+                && value_decl.is_some()
+                && self.jsdoc_type_annotation_for_node(value_decl).is_some();
             let preferred_cross_file_type = if self.ctx.is_js_file()
                 && self.ctx.should_resolve_jsdoc()
                 && (flags
                     & (symbol_flags::FUNCTION_SCOPED_VARIABLE
                         | symbol_flags::BLOCK_SCOPED_VARIABLE))
                     != 0
+                && !has_jsdoc_type_annotation
             {
                 self.preferred_non_js_cross_file_global_value_type(name, sym_id)
             } else {
