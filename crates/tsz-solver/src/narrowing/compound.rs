@@ -612,6 +612,9 @@ impl<'a> NarrowingContext<'a> {
     /// - `narrow(string | number, "hello")` → `"hello"`
     /// - `narrow(T | null, undefined)` → `null` (filters out T)
     pub fn narrow(&self, type_id: TypeId, narrower: TypeId) -> TypeId {
+        let _span =
+            tracing::debug_span!("narrow", ty = type_id.0, narrower = narrower.0,).entered();
+
         // Fast path: already a subtype
         if is_subtype_of(self.db, type_id, narrower) {
             return type_id;

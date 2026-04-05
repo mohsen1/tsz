@@ -115,6 +115,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// recursive type checking. When depth/iteration limits are exceeded, we return
     /// `DepthExceeded` (conservative false) for soundness.
     pub fn check_subtype(&mut self, source: TypeId, target: TypeId) -> SubtypeResult {
+        let _span = tracing::trace_span!(
+            "check_subtype",
+            src = source.0,
+            tgt = target.0,
+            depth = self.guard.depth(),
+        )
+        .entered();
+
         // =========================================================================
         // Fast paths (no cycle tracking needed)
         // =========================================================================
