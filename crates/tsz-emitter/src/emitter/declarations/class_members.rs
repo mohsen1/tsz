@@ -129,9 +129,7 @@ impl<'a> Printer<'a> {
         // Skip comments inside the type parameter list
         if !self.ctx.flags.in_declaration_emit && method.type_parameters.is_some() {
             let tp_skip_start = if method.name.is_some() {
-                self.arena
-                    .get(method.name)
-                    .map_or(node.pos, |n| n.end)
+                self.arena.get(method.name).map_or(node.pos, |n| n.end)
             } else {
                 node.pos
             };
