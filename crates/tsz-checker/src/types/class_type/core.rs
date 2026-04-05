@@ -2150,13 +2150,13 @@ impl<'a> CheckerState<'a> {
         let mut type_params = Vec::with_capacity(template_names.len());
         let mut scope_updates = Vec::with_capacity(template_names.len());
         let factory = self.ctx.types.factory();
-        for name in template_names {
+        for (name, is_const) in template_names {
             let atom = self.ctx.types.intern_string(&name);
             let info = TypeParamInfo {
                 name: atom,
                 constraint: None,
                 default: None,
-                is_const: false,
+                is_const,
             };
             let ty = factory.type_param(info);
             type_params.push(info);

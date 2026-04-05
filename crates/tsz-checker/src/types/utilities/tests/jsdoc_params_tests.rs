@@ -484,39 +484,45 @@ fn jsdoc_extract_type_tag_expr_no_closing_brace() {
 // jsdoc_template_type_params
 // =========================================================================
 
+/// Helper to extract just names from template params (for backward-compat tests).
+fn names_only(params: &[(String, bool)]) -> Vec<&str> {
+    params.iter().map(|(n, _)| n.as_str()).collect()
+}
+
 #[test]
 fn jsdoc_template_single() {
     let jsdoc = "* @template T";
     let params = CheckerState::jsdoc_template_type_params(jsdoc);
-    assert_eq!(params, vec!["T"]);
+    assert_eq!(names_only(&params), vec!["T"]);
+    assert!(!params[0].1); // not const
 }
 
 #[test]
 fn jsdoc_template_multiple_comma() {
     let jsdoc = "* @template T, U";
     let params = CheckerState::jsdoc_template_type_params(jsdoc);
-    assert_eq!(params, vec!["T", "U"]);
+    assert_eq!(names_only(&params), vec!["T", "U"]);
 }
 
 #[test]
 fn jsdoc_template_multiple_space() {
     let jsdoc = "* @template T U";
     let params = CheckerState::jsdoc_template_type_params(jsdoc);
-    assert_eq!(params, vec!["T", "U"]);
+    assert_eq!(names_only(&params), vec!["T", "U"]);
 }
 
 #[test]
 fn jsdoc_template_multiple_lines() {
     let jsdoc = "* @template T\n* @template U";
     let params = CheckerState::jsdoc_template_type_params(jsdoc);
-    assert_eq!(params, vec!["T", "U"]);
+    assert_eq!(names_only(&params), vec!["T", "U"]);
 }
 
 #[test]
 fn jsdoc_template_no_duplicates() {
     let jsdoc = "* @template T\n* @template T";
     let params = CheckerState::jsdoc_template_type_params(jsdoc);
-    assert_eq!(params, vec!["T"]);
+    assert_eq!(names_only(&params), vec!["T"]);
 }
 
 #[test]
@@ -530,7 +536,7 @@ fn jsdoc_template_none() {
 fn jsdoc_template_with_underscores() {
     let jsdoc = "* @template _T, $U";
     let params = CheckerState::jsdoc_template_type_params(jsdoc);
-    assert_eq!(params, vec!["_T", "$U"]);
+    assert_eq!(names_only(&params), vec!["_T", "$U"]);
 }
 
 #[test]
@@ -538,6 +544,37 @@ fn jsdoc_template_ignores_brace_form_for_binding() {
     let jsdoc = "* @template {T}";
     let params = CheckerState::jsdoc_template_type_params(jsdoc);
     assert!(params.is_empty());
+}
+
+#[test]
+fn jsdoc_template_const_modifier() {
+    let jsdoc = "* @template const T";
+    let params = CheckerState::jsdoc_template_type_params(jsdoc);
+    assert_eq!(params.len(), 1);
+    assert_eq!(params[0].0, "T");
+    assert!(params[0].1); // is_const
+}
+
+#[test]
+fn jsdoc_template_const_modifier_multiple() {
+    // `@template const T, U` — both T and U are const per tsc
+    let jsdoc = "* @template const T, U";
+    let params = CheckerState::jsdoc_template_type_params(jsdoc);
+    assert_eq!(params.len(), 2);
+    assert_eq!(params[0].0, "T");
+    assert!(params[0].1); // const
+    assert_eq!(params[1].0, "U");
+    assert!(params[1].1); // const
+}
+
+#[test]
+fn jsdoc_template_const_on_separate_line_not_shared() {
+    // const on line 1 does NOT affect line 2
+    let jsdoc = "* @template const T\n* @template U";
+    let params = CheckerState::jsdoc_template_type_params(jsdoc);
+    assert_eq!(params.len(), 2);
+    assert!(params[0].1); // T is const
+    assert!(!params[1].1); // U is not const
 }
 
 // =========================================================================
