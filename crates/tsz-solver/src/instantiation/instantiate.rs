@@ -404,6 +404,9 @@ impl<'a> TypeInstantiator<'a> {
     /// Wrapped with `stacker::maybe_grow()` to handle deeply nested generic
     /// instantiation chains that would otherwise overflow the stack.
     pub fn instantiate(&mut self, type_id: TypeId) -> TypeId {
+        let _span =
+            tracing::trace_span!("instantiate", ty = type_id.0, depth = self.depth,).entered();
+
         // Fast path: intrinsic types don't need instantiation
         if type_id.is_intrinsic() {
             return type_id;
