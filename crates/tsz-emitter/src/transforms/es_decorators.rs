@@ -414,8 +414,8 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 let assign_expr = assign_parts.join(", ");
                 out.push_str(&format!("{i2}static {{ {assign_expr}; }}\n"));
             }
-            let defer_class_init_inner = has_class_decorators
-                && self.has_user_static_members(&class_data.members);
+            let defer_class_init_inner =
+                has_class_decorators && self.has_user_static_members(&class_data.members);
             out.push_str(&format!("{i2}static {{\n"));
             self.emit_decorator_application(
                 &decorated_members,
