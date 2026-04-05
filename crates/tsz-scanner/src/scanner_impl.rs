@@ -1671,7 +1671,7 @@ impl ScannerState {
 
     /// Scan continuation of a private identifier that starts with a regular char.
     /// Handles unicode escapes in the continuation (e.g., `#x\u0078`).
-    /// Returns true if any unicode escapes were found and token_value was set.
+    /// Returns true if any unicode escapes were found and `token_value` was set.
     fn scan_private_identifier_rest(&mut self) -> bool {
         // First, scan regular identifier parts
         while self.pos < self.end {

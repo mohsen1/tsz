@@ -24,8 +24,9 @@ use tracing_subscriber::layer::SubscriberExt;
 
 /// A captured tracing span.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CapturedSpan {
-    /// The span name (e.g., "check_subtype", "evaluate_type").
+    /// The span name (e.g., "`check_subtype`", "`evaluate_type`").
     pub name: String,
     /// The tracing level (TRACE, DEBUG, INFO, etc.).
     pub level: tracing::Level,
@@ -35,6 +36,7 @@ pub struct CapturedSpan {
 
 /// A captured tracing event.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CapturedEvent {
     /// The event message (from the `message` field).
     pub message: String,
@@ -61,11 +63,13 @@ impl TracingCapture {
     }
 
     /// Get all captured spans.
+    #[allow(dead_code)]
     pub fn spans(&self) -> Vec<CapturedSpan> {
         self.spans.lock().unwrap().clone()
     }
 
     /// Get all captured events.
+    #[allow(dead_code)]
     pub fn events(&self) -> Vec<CapturedEvent> {
         self.events.lock().unwrap().clone()
     }
