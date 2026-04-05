@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-04-05T20:15:20Z",
-  "git_sha": "24e71af2271ab3d634a2b9cbe89f53aede8d2d00",
+  "timestamp": "2026-04-05T20:26:20Z",
+  "git_sha": "7371bbd3b2ca9a48ecc44c0670b33a3a9019751c",
   "summary": {
     "total_tests": 12581,
-    "passed": 11731,
-    "failed": 850,
+    "passed": 11730,
+    "failed": 851,
     "pass_rate": 93.2
   },
   "areas_by_pass_rate": [
@@ -750,11 +750,11 @@
       "count": 1
     },
     {
-      "code": "TS2307",
+      "code": "TS9006",
       "count": 1
     },
     {
-      "code": "TS9006",
+      "code": "TS2307",
       "count": 1
     },
     {
@@ -900,7 +900,7 @@
       "count": 1
     },
     {
-      "code": "TS1177",
+      "code": "TS2457",
       "count": 1
     }
   ],
@@ -1092,11 +1092,11 @@
       "count": 1
     },
     {
-      "code": "TS2307",
+      "code": "TS9006",
       "count": 1
     },
     {
-      "code": "TS9006",
+      "code": "TS2307",
       "count": 1
     },
     {
@@ -1144,10 +1144,6 @@
       "count": 1
     },
     {
-      "code": "TS2740",
-      "count": 1
-    },
-    {
       "code": "TS4104",
       "count": 1
     },
@@ -1159,6 +1155,10 @@
   "one_extra_zero_missing": [
     {
       "code": "TS2694",
+      "count": 1
+    },
+    {
+      "code": "TS2747",
       "count": 1
     },
     {
@@ -1178,11 +1178,24 @@
       "count": 1
     },
     {
+      "code": "TS2339",
+      "count": 1
+    },
+    {
       "code": "TS2345",
       "count": 1
     }
   ],
-  "false_positive_codes": [],
+  "false_positive_codes": [
+    {
+      "code": "TS2747",
+      "count": 1
+    },
+    {
+      "code": "TS2339",
+      "count": 1
+    }
+  ],
   "top_missing_codes": [
     {
       "code": "TS1005",
@@ -1347,11 +1360,11 @@
   ],
   "top_extra_codes": [
     {
-      "code": "TS2322",
-      "count": 10
+      "code": "TS2339",
+      "count": 11
     },
     {
-      "code": "TS2339",
+      "code": "TS2322",
       "count": 10
     },
     {
@@ -1508,10 +1521,10 @@
     }
   ],
   "categories": {
-    "false_positive": 0,
+    "false_positive": 2,
     "all_missing": 44,
-    "wrong_code": 185,
+    "wrong_code": 184,
     "fingerprint_only": 621,
-    "close_to_passing": 104
+    "close_to_passing": 103
   }
 }
