@@ -480,7 +480,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     _ => false,
                 };
 
+                // Only defer the current arg when the later generic function arg
+                // is contextually sensitive (e.g., a lambda with untyped params).
+                // Non-contextually-sensitive generic function references (like
+                // `identity`) don't benefit from deferral — they get instantiated
+                // in Round 1 via instantiate_generic_function_argument_against_target.
+                // Deferring the current arg in that case prevents its type from
+                // being inferred, causing T to resolve to `unknown`.
                 arg_is_generic_function_like
+                    && self.is_contextually_sensitive(arg_type)
                     && self.function_like_type_param_appears_in_parameter_position(
                         param.type_id,
                         &tracked_type_params,
