@@ -1222,6 +1222,18 @@ impl<'a> CheckerState<'a> {
         });
 
         for (index, &cached_actual) in arg_types.iter().enumerate() {
+            // Skip spread marker tuples [...T] created by the checker for generic
+            // TypeParameter spreads. The solver already validated these against the
+            // full rest parameter type; re-checking here would incorrectly compare
+            // the spread marker against the rest element type (e.g., [...U] vs
+            // `string | number | boolean` instead of `(string | number | boolean)[]`).
+            if tsz_solver::type_queries::is_spread_marker_tuple(
+                self.ctx.types.as_type_database(),
+                cached_actual,
+            ) {
+                continue;
+            }
+
             let expected = expected_signature.and_then(|signature| {
                 self.contextual_parameter_type_for_call_with_env_from_expected(
                     signature,
