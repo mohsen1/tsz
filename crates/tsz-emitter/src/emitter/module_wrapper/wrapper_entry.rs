@@ -347,6 +347,8 @@ impl<'a> Printer<'a> {
         self.write_line();
         let dep_vars = self.collect_system_dependency_vars(dependencies, source);
         let mut hoisted_names = self.collect_system_hoisted_names(source);
+        let func_names_to_exclude = self.collect_system_hoisted_function_names(source);
+        hoisted_names.retain(|n| !func_names_to_exclude.contains(n));
         for dep in dependencies {
             if let Some(dep_var) = dep_vars.get(dep)
                 && !hoisted_names.iter().any(|n| n == dep_var)
@@ -362,6 +364,8 @@ impl<'a> Printer<'a> {
         }
         self.write("var __moduleName = context_1 && context_1.id;");
         self.write_line();
+
+        self.register_system_import_substitutions(source, &dep_vars);
 
         // Hoist exported function declarations to the outer module scope,
         // before the `return { setters, execute }` block.  TSC does the same:
@@ -409,6 +413,51 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.decrease_indent();
         self.write("});");
+    }
+
+    fn collect_system_hoisted_function_names(
+        &self,
+        source: &tsz_parser::parser::node::SourceFileData,
+    ) -> HashSet<String> {
+        let mut names = HashSet::new();
+        for &stmt_idx in &source.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
+                    continue;
+                };
+                if export_decl.module_specifier.is_some() {
+                    continue;
+                }
+                let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
+                    continue;
+                };
+                if clause_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                    continue;
+                }
+                if let Some(func_decl) = self.arena.get_function(clause_node) {
+                    let func_name = self.get_identifier_text_idx(func_decl.name);
+                    if func_name.is_empty() {
+                        if export_decl.is_default_export {
+                            names.insert("default_1".to_string());
+                        }
+                    } else {
+                        names.insert(func_name);
+                    }
+                }
+            }
+            if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                if let Some(func_decl) = self.arena.get_function(stmt_node) {
+                    let func_name = self.get_identifier_text_idx(func_decl.name);
+                    if !func_name.is_empty() {
+                        names.insert(func_name);
+                    }
+                }
+            }
+        }
+        names
     }
 
     /// Hoist exported function declarations out of `execute` into the outer
@@ -497,6 +546,64 @@ impl<'a> Printer<'a> {
                 // Emit the function at the outer scope
                 self.emit(stmt_idx);
                 self.write_line();
+                hoisted.insert(stmt_idx);
+            }
+        }
+
+        // Hoist `export { foo }` / `export { foo as bar }` where foo is a hoisted function
+        let hoisted_func_names = self.collect_system_hoisted_function_names(source);
+        for &stmt_idx in &source.statements.nodes {
+            if hoisted.contains(&stmt_idx) {
+                continue;
+            }
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export_decl.module_specifier.is_some() || export_decl.is_default_export {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                continue;
+            }
+            let Some(named_exports) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            let mut all_hoisted = true;
+            let mut specs = Vec::new();
+            for &spec_idx in &named_exports.elements.nodes {
+                let Some(spec) = self.arena.get_specifier_at(spec_idx) else {
+                    continue;
+                };
+                let local_name = if spec.property_name.is_some() {
+                    self.get_identifier_text_idx(spec.property_name)
+                } else {
+                    self.get_identifier_text_idx(spec.name)
+                };
+                let export_name = self.get_identifier_text_idx(spec.name);
+                if !hoisted_func_names.contains(&local_name) {
+                    all_hoisted = false;
+                    break;
+                }
+                specs.push((local_name, export_name));
+            }
+            if all_hoisted && !specs.is_empty() {
+                for (local_name, export_name) in &specs {
+                    self.write("exports_1(\"");
+                    self.write(export_name);
+                    self.write("\", ");
+                    self.write(local_name);
+                    self.write(");");
+                    self.write_line();
+                }
                 hoisted.insert(stmt_idx);
             }
         }

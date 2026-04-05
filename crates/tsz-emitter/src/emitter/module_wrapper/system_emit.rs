@@ -405,9 +405,14 @@ impl<'a> Printer<'a> {
                 self.emit(stmt_idx);
             }
 
-            if self.writer.len() > before_len
-                && stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION
-            {
+            let skip_newline = stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                || (stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                    && self
+                        .arena
+                        .get_export_decl(stmt_node)
+                        .and_then(|ed| self.arena.get(ed.export_clause))
+                        .is_some_and(|cn| cn.kind == syntax_kind_ext::MODULE_DECLARATION));
+            if self.writer.len() > before_len && !skip_newline {
                 self.write_line();
             }
         }
@@ -1276,7 +1281,9 @@ impl<'a> Printer<'a> {
         self.writer.truncate(start_pos);
         let from = format!("({ns_name} || ({ns_name} = {{}}))");
         let to = format!("({ns_name} || (exports_1(\"{export_name}\", {ns_name} = {{}})))");
-        self.write(&output.replacen(&from, &to, 1));
+        let replaced = output.replacen(&from, &to, 1);
+        self.write(replaced.trim_end_matches('\n'));
+        self.write_line();
     }
 
     pub(super) fn system_module_specifier_text(&self, specifier: NodeIndex) -> Option<String> {
