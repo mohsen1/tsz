@@ -259,7 +259,8 @@ impl<'a> CheckerState<'a> {
         // it cannot serve as a namespace (no exports). In tsc, type parameters
         // do NOT shadow namespace imports in qualified name positions like
         // `E.Whatever` — the import `* as E` takes precedence.
-        // Fall back to binder-based resolution which skips type parameters.
+        // Fall back to file_locals lookup which bypasses the scope chain
+        // (where the type parameter lives) and finds file-level imports directly.
         let lib_binders = self.get_lib_binders();
         if self
             .ctx
@@ -268,25 +269,25 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|s| (s.flags & symbol_flags::TYPE_PARAMETER) != 0)
         {
             // The left side is a type parameter — try to find a namespace/module
-            // import with the same name via binder scope resolution.
+            // import with the same name in file_locals (bypasses scope chain).
             if let Some(left_node) = self.ctx.arena.get(qn.left)
                 && left_node.kind == SyntaxKind::Identifier as u16
+                && let Some(ident) = self.ctx.arena.get_identifier(left_node)
             {
-                if let Some(binder_sym) =
-                    self.ctx.binder.resolve_identifier(self.ctx.arena, qn.left)
-                {
-                    let resolved_binder = self
-                        .resolve_alias_symbol(binder_sym, visited_aliases)
-                        .unwrap_or(binder_sym);
-                    // Only use the binder result if it's NOT a type parameter
+                let name = ident.escaped_text.as_str();
+                if let Some(file_sym) = self.ctx.binder.file_locals.get(name) {
+                    let resolved_file = self
+                        .resolve_alias_symbol(file_sym, visited_aliases)
+                        .unwrap_or(file_sym);
+                    // Only use the file_locals result if it's NOT a type parameter
                     // (i.e. it's an import/namespace/module).
                     if !self
                         .ctx
                         .binder
-                        .get_symbol_with_libs(resolved_binder, &lib_binders)
+                        .get_symbol_with_libs(resolved_file, &lib_binders)
                         .is_some_and(|s| (s.flags & symbol_flags::TYPE_PARAMETER) != 0)
                     {
-                        left_sym = resolved_binder;
+                        left_sym = resolved_file;
                     }
                 }
             }
