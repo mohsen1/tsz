@@ -368,6 +368,13 @@ pub struct Printer<'a> {
     /// the closing: `(N || (exports.N = N = {}))` instead of `(N || (N = {}))`.
     pub(crate) pending_cjs_namespace_export_fold: bool,
 
+    /// When true, the next namespace IIFE should use the plain `N || (N = {})`
+    /// closing even if the name is in `default_exported_func_names`. This is set
+    /// when an `export namespace N` merges with `export default function N` —
+    /// the export binding is already handled by the function, so the namespace
+    /// just augments the local binding.
+    pub(crate) suppress_default_export_merge_iife: bool,
+
     /// For CommonJS class exports, emit `exports.X = X;` immediately after class
     /// declaration and before post-class lowered statements (static fields/blocks).
     pub(crate) pending_commonjs_class_export_name: Option<String>,
@@ -714,6 +721,7 @@ impl<'a> Printer<'a> {
             metadata_class_type_params: None,
             pending_block_comment_space: false,
             pending_cjs_namespace_export_fold: false,
+            suppress_default_export_merge_iife: false,
             pending_commonjs_class_export_name: None,
             declared_namespace_names: FxHashSet::default(),
             namespace_iife_param_counter: FxHashMap::default(),

@@ -189,6 +189,16 @@ impl<'a> Printer<'a> {
             false
         };
 
+        // Capture and consume: when an exported namespace merges with a
+        // default-exported function, the IIFE closing uses the plain pattern.
+        let suppress_default_merge = if parent_name.is_none() {
+            let v = self.suppress_default_export_merge_iife;
+            self.suppress_default_export_merge_iife = false;
+            v
+        } else {
+            false
+        };
+
         // Determine if we should emit a variable declaration for this namespace.
         // Skip if name already declared by class/function/enum (both at top level and
         // inside namespace IIFEs - e.g., merged class+namespace doesn't need extra let).
@@ -303,13 +313,16 @@ impl<'a> Printer<'a> {
                 self.write(&name);
                 self.write(" = {}));");
             }
-        } else if self.ctx.is_commonjs()
+        } else if !suppress_default_merge
+            && self.ctx.is_commonjs()
             && self
                 .ctx
                 .module_state
                 .default_exported_func_names
                 .contains(&name)
         {
+            // Non-exported namespace merging with default-exported function:
+            // (exports.Foo || (exports.Foo = {}))
             self.write("exports.");
             self.write(&name);
             self.write(" || (exports.");
