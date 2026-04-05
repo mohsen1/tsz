@@ -637,11 +637,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let s_app = self.interner.type_application(s_app_id);
         let t_app = self.interner.type_application(t_app_id);
 
-        // Arity must match for variance comparison
-        if s_app.args.len() != t_app.args.len() {
-            return None;
-        }
-
         // Must be the same base type (same generic definition)
         let same_base = s_app.base == t_app.base
             || self
@@ -659,6 +654,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let def_id = variance_def_id?;
 
+        // Arity normalization: when both applications share the same base but have
+        // different arg counts (e.g., Generator<T, void, any> vs Generator<T>),
+        // fill in type parameter defaults to normalize both to the same arity.
+        // Without this, the variance fast path bails out and types get structurally
+        // expanded, which can fail for complex recursive interfaces like Generator.
+        let (s_args, t_args) = if s_app.args.len() != t_app.args.len() {
+            let type_params = self.resolver.get_lazy_type_params(def_id)?;
+            let s_norm = fill_application_defaults(self.interner, &s_app.args, &type_params)?;
+            let t_norm = fill_application_defaults(self.interner, &t_app.args, &type_params)?;
+            if s_norm.len() != t_norm.len() {
+                return None;
+            }
+            (s_norm, t_norm)
+        } else {
+            (s_app.args.clone(), t_app.args.clone())
+        };
+
         use crate::caches::db::QueryDatabase;
         let variances = self
             .query_db
@@ -673,7 +685,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             });
         let variances = variances?;
 
-        if variances.len() != s_app.args.len() {
+        if variances.len() != s_args.len() {
             return None;
         }
 
@@ -682,8 +694,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let mut any_checked = false;
 
         for (i, variance) in variances.iter().enumerate() {
-            let s_arg = s_app.args[i];
-            let t_arg = t_app.args[i];
+            let s_arg = s_args[i];
+            let t_arg = t_args[i];
 
             if variance.is_invariant() {
                 any_checked = true;
@@ -727,8 +739,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // definitive: incompatible type args means incompatible generic types.
         let rejection_unreliable = variances.iter().any(|v| v.rejection_unreliable());
         if any_checked && !all_ok && !needs_structural_fallback && !rejection_unreliable {
-            let source_has_type_param = s_app
-                .args
+            let source_has_type_param = s_args
                 .iter()
                 .any(|arg| crate::contains_type_parameters(self.interner, *arg));
             if !source_has_type_param {
