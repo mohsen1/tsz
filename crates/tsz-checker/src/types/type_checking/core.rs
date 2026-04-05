@@ -619,6 +619,39 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check that type parameters do not use `const` modifier on interface or type alias
+    /// declarations (TS1277). The `const` modifier is only valid on function, method, or class
+    /// type parameters.
+    pub(crate) fn check_const_modifier_on_type_parameters(
+        &mut self,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+    ) {
+        let Some(list) = type_parameters else {
+            return;
+        };
+        for &param_idx in &list.nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                continue;
+            };
+            if let Some(ref mods) = param.modifiers {
+                for &mod_idx in &mods.nodes {
+                    if let Some(mod_node) = self.ctx.arena.get(mod_idx)
+                        && mod_node.kind == SyntaxKind::ConstKeyword as u16
+                    {
+                        self.error_at_node_msg(
+                            mod_idx,
+                            crate::diagnostics::diagnostic_codes::MODIFIER_CAN_ONLY_APPEAR_ON_A_TYPE_PARAMETER_OF_A_FUNCTION_METHOD_OR_CLASS,
+                            &["const"],
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// Check a single type parameter node for missing type names.
     ///
     /// Validates that the constraint and default type of a type parameter

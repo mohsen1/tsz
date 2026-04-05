@@ -63,6 +63,9 @@ impl<'a> CheckerState<'a> {
         // Check for duplicate type parameters
         self.check_duplicate_type_parameters(&iface.type_parameters);
 
+        // TS1277: `const` modifier can only appear on function/method/class type parameters
+        self.check_const_modifier_on_type_parameters(&iface.type_parameters);
+
         // Check type parameter defaults for ordering (TS2706), forward references (TS2744),
         // and circular defaults (TS2716)
         let iface_name_str = self

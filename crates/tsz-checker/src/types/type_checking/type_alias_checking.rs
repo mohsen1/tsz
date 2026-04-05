@@ -111,6 +111,9 @@ impl<'a> CheckerState<'a> {
         // `type Pair<A extends B, B>` can reference sibling type parameters.
         let updates = self.push_missing_name_type_parameters(&alias.type_parameters);
 
+        // TS1277: `const` modifier can only appear on function/method/class type parameters
+        self.check_const_modifier_on_type_parameters(&alias.type_parameters);
+
         if let Some(ref name) = alias_name_str {
             self.check_type_parameters_for_missing_names_with_enclosing(
                 &alias.type_parameters,

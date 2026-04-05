@@ -80,24 +80,32 @@ impl<'a> CheckerState<'a> {
             // construct signatures, constructor types) still parse predicates for error
             // recovery. The checker must flag these, matching tsc's getTypePredicateParent.
             if node.kind == syntax_kind_ext::TYPE_PREDICATE {
-                let is_valid = self
+                let parent_kind = self
                     .ctx
                     .arena
                     .get_extended(idx)
                     .and_then(|ext| self.ctx.arena.get(ext.parent))
-                    .is_some_and(|parent| {
-                        matches!(
-                            parent.kind,
-                            syntax_kind_ext::FUNCTION_DECLARATION
-                                | syntax_kind_ext::FUNCTION_EXPRESSION
-                                | syntax_kind_ext::METHOD_DECLARATION
-                                | syntax_kind_ext::METHOD_SIGNATURE
-                                | syntax_kind_ext::CALL_SIGNATURE
-                                | syntax_kind_ext::ARROW_FUNCTION
-                                | syntax_kind_ext::FUNCTION_TYPE
-                        )
-                    });
-                if !is_valid {
+                    .map(|parent| parent.kind);
+                let is_valid = parent_kind.is_some_and(|kind| {
+                    matches!(
+                        kind,
+                        syntax_kind_ext::FUNCTION_DECLARATION
+                            | syntax_kind_ext::FUNCTION_EXPRESSION
+                            | syntax_kind_ext::METHOD_DECLARATION
+                            | syntax_kind_ext::METHOD_SIGNATURE
+                            | syntax_kind_ext::CALL_SIGNATURE
+                            | syntax_kind_ext::ARROW_FUNCTION
+                            | syntax_kind_ext::FUNCTION_TYPE
+                            | syntax_kind_ext::GET_ACCESSOR
+                    )
+                });
+                // Suppress TS1228 when the type predicate was parsed inside a parameter
+                // type position — the parser already produces errors for this case (e.g.
+                // TS1005 "',' expected") matching tsc behavior, which never emits TS1228
+                // for parameter-position predicates.
+                let in_parameter =
+                    parent_kind.is_some_and(|kind| kind == syntax_kind_ext::PARAMETER);
+                if !is_valid && !in_parameter {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                         idx,
