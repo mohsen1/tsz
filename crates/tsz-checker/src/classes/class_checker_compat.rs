@@ -1019,36 +1019,48 @@ impl<'a> CheckerState<'a> {
                             });
 
                             if let Some(base_index_val) = base_num_index_value {
-                                for (
-                                    member_name,
-                                    member_type,
-                                    _derived_member_idx,
-                                    _derived_kind,
-                                ) in &derived_members
-                                {
-                                    // Extract the derived property's raw type
-                                    let derived_prop_type =
-                                        tsz_solver::type_queries::find_property_in_type_by_str(
-                                            self.ctx.types,
-                                            *member_type,
-                                            member_name,
-                                        )
-                                        .map(|p| p.type_id)
-                                        .unwrap_or(*member_type);
+                                // Skip the index signature check when the base index value type
+                                // contains type parameters (e.g., `Array<E>` has `[index: number]: E`).
+                                // When the base is generic, property compatibility depends on the
+                                // actual instantiation and should be deferred.
+                                let base_index_is_generic =
+                                    crate::query_boundaries::common::contains_type_parameters(
+                                        self.ctx.types.as_type_database(),
+                                        base_index_val,
+                                    );
+                                if !base_index_is_generic {
+                                    for (
+                                        member_name,
+                                        member_type,
+                                        _derived_member_idx,
+                                        _derived_kind,
+                                    ) in &derived_members
+                                    {
+                                        // Extract the derived property's raw type
+                                        let derived_prop_type =
+                                            tsz_solver::type_queries::find_property_in_type_by_str(
+                                                self.ctx.types,
+                                                *member_type,
+                                                member_name,
+                                            )
+                                            .map(|p| p.type_id)
+                                            .unwrap_or(*member_type);
 
-                                    // Check if property type is assignable to base index value type
-                                    if !self.is_assignable_to(derived_prop_type, base_index_val) {
-                                        self.error_at_node(
+                                        // Check if property type is assignable to base index value type
+                                        if !self.is_assignable_to(derived_prop_type, base_index_val)
+                                        {
+                                            self.error_at_node(
                                             iface_data.name,
                                             &format!(
                                                 "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
                                             ),
                                             diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                                         );
-                                        // Don't return — continue checking other bases
-                                        break;
+                                            // Don't return — continue checking other bases
+                                            break;
+                                        }
                                     }
-                                }
+                                } // end if !base_index_is_generic
                             }
                         }
 
