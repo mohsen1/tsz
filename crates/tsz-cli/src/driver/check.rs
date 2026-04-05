@@ -268,7 +268,6 @@ fn post_process_checker_diagnostics(
         let suppress = test_path.contains("inferTypePredicates")
             || test_path.contains("recursiveConditionalTypes")
             || test_path.contains("moduleAugmentationDoesNamespaceEnumMergeOfReexport")
-            || test_path.contains("moduleAugmentationInAmbientModule5")
             || test_path.contains("mergeSymbolReexportedTypeAliasInstantiation");
 
         if suppress {
