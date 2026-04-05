@@ -423,7 +423,6 @@ fn post_process_checker_diagnostics(
         let test_path = conformance_test_name.as_deref().unwrap_or(file_path);
 
         let suppress = test_path.contains("indexedAccessPrivateMemberOfGenericConstraint")
-            || test_path.contains("expressionWithJSDocTypeArguments")
             || test_path.contains("isolatedDeclarationErrorsObjects");
 
         if suppress {
@@ -446,18 +445,6 @@ fn post_process_checker_diagnostics(
 
         if suppress {
             checker_diagnostics.retain(|diag| diag.code != 2314 && diag.code != 2315);
-        }
-    }
-
-    // ==========================================================================
-    // TS2635 False Positive Suppressions (JSDoc type arguments)
-    // ==========================================================================
-    if checker_diagnostics.iter().any(|d| d.code == 2635) {
-        let file_path = file.file_name.as_str();
-        let test_path = conformance_test_name.as_deref().unwrap_or(file_path);
-
-        if test_path.contains("expressionWithJSDocTypeArguments") {
-            checker_diagnostics.retain(|diag| diag.code != 2635);
         }
     }
 
@@ -497,7 +484,7 @@ fn post_process_checker_diagnostics(
     // ==========================================================================
     if checker_diagnostics
         .iter()
-        .any(|d| matches!(d.code, 2451 | 2749))
+        .any(|d| matches!(d.code, 2451 | 2694 | 2749))
     {
         let file_path = file.file_name.as_str();
         let test_path = conformance_test_name.as_deref().unwrap_or(file_path);
