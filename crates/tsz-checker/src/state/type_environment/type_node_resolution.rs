@@ -77,14 +77,9 @@ impl<'a> CheckerState<'a> {
             // TS1228: "A type predicate is only allowed in return type position for
             // functions and methods." The parser restricts predicate parsing to return
             // type positions, but some return types (constructors, getters, setters,
-            // construct signatures, constructor types) still parse predicates for error
-            // recovery. tsc's getTypePredicateParent only allows the function-like
-            // kinds below; constructors/getters/setters are excluded. However, tsc's
-            // checkTypePredicate is only called via checkSourceElement, and when the
-            // parser produces errors for malformed getters/setters/constructors, the
-            // AST structure prevents checkTypePredicate from being reached. We must
-            // suppress TS1228 for those parents to avoid false positives, since those
-            // positions already produce parser-level errors (TS1005, TS1054, etc.).
+            // construct signatures) still parse predicates for error recovery.
+            // tsc's checkTypePredicate is not reached for those parents since the
+            // parser already emits errors. Suppress TS1228 to match tsc 6.0 behavior.
             if node.kind == syntax_kind_ext::TYPE_PREDICATE {
                 let parent_kind = self
                     .ctx
@@ -109,6 +104,7 @@ impl<'a> CheckerState<'a> {
                             | syntax_kind_ext::CONSTRUCTOR
                             | syntax_kind_ext::GET_ACCESSOR
                             | syntax_kind_ext::SET_ACCESSOR
+                            | syntax_kind_ext::CONSTRUCT_SIGNATURE
                     )
                 });
                 if !is_valid_or_parser_error {
