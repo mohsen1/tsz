@@ -23892,3 +23892,66 @@ a2.b;
         "Should not emit TS2339 for property access on normalized object literal union with empty object member. Got: {ts2339:#?}"
     );
 }
+
+#[test]
+fn test_implement_array_interface_ts2416_not_ts2420() {
+    // tsc emits TS2416 for the 'every' property because the class declares
+    // a single-overload 'every' that is incompatible with Array's overloaded
+    // 'every' (which includes a type-predicate overload).
+    // We should NOT emit TS2420 (class incorrectly implements interface) at
+    // the class level — only TS2416 at the specific property.
+    let source = r#"
+declare class MyArray<T> implements Array<T> {
+    toString(): string;
+    toLocaleString(): string;
+    concat<U extends T[]>(...items: U[]): T[];
+    concat(...items: T[]): T[];
+    join(separator?: string): string;
+    pop(): T;
+    push(...items: T[]): number;
+    reverse(): T[];
+    shift(): T;
+    slice(start?: number, end?: number): T[];
+    sort(compareFn?: (a: T, b: T) => number): this;
+    splice(start: number): T[];
+    splice(start: number, deleteCount: number, ...items: T[]): T[];
+    unshift(...items: T[]): number;
+
+    indexOf(searchElement: T, fromIndex?: number): number;
+    lastIndexOf(searchElement: T, fromIndex?: number): number;
+    every(callbackfn: (value: T, index: number, array: T[]) => boolean, thisArg?: any): boolean;
+    some(callbackfn: (value: T, index: number, array: T[]) => boolean, thisArg?: any): boolean;
+    forEach(callbackfn: (value: T, index: number, array: T[]) => void, thisArg?: any): void;
+    map<U>(callbackfn: (value: T, index: number, array: T[]) => U, thisArg?: any): U[];
+    filter(callbackfn: (value: T, index: number, array: T[]) => boolean, thisArg?: any): T[];
+    reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue?: T): T;
+    reduce<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U;
+    reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue?: T): T;
+    reduceRight<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U;
+
+    length: number;
+
+    [n: number]: T;
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib(source);
+
+    let ts2416 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2416)
+        .collect::<Vec<_>>();
+    let ts2420 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2420)
+        .collect::<Vec<_>>();
+
+    assert!(
+        !ts2416.is_empty(),
+        "Expected TS2416 for 'every' property incompatibility. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2420.is_empty(),
+        "Should NOT emit TS2420 for this case. Only TS2416 expected. Got TS2420: {ts2420:#?}"
+    );
+}

@@ -663,6 +663,7 @@ impl<'a> CheckerState<'a> {
         if self.has_abstract_modifier(&class_data.modifiers) {
             return;
         }
+
         let mut class_type_param_names: rustc_hash::FxHashSet<String> =
             rustc_hash::FxHashSet::default();
         if let Some(params) = class_data.type_parameters.as_ref() {
