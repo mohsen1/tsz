@@ -3618,7 +3618,6 @@ fn compile_with_project_dir_resolves_package_exported_tsconfig_extends() {
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
 fn compile_with_project_dir_preserves_invariant_generic_error_elaboration_ts2322() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

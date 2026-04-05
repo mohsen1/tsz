@@ -2838,7 +2838,6 @@ type Recurse2 = {
     }
 
     #[test]
-    #[ignore = "pre-existing: remote merge regression"]
     fn test_collect_diagnostics_preserves_invariant_generic_error_elaboration_ts2322() {
         let dir = tempfile::TempDir::new().expect("temp dir");
         let file_path = dir.path().join("main.ts");
