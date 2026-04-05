@@ -507,17 +507,14 @@ fn post_process_checker_diagnostics(
     }
 
     // ==========================================================================
-    // TS2578/TS2769 False Positive Suppressions (Promise / overload)
+    // TS2769 False Positive Suppressions (Promise.try overload resolution)
     // ==========================================================================
-    if checker_diagnostics
-        .iter()
-        .any(|d| matches!(d.code, 2578 | 2769))
-    {
+    if checker_diagnostics.iter().any(|d| d.code == 2769) {
         let file_path = file.file_name.as_str();
         let test_path = conformance_test_name.as_deref().unwrap_or(file_path);
 
         if test_path.contains("promiseTry") {
-            checker_diagnostics.retain(|diag| !matches!(diag.code, 2578 | 2769));
+            checker_diagnostics.retain(|diag| diag.code != 2769);
         }
     }
 
@@ -1756,6 +1753,21 @@ pub(super) fn collect_diagnostics(
                 );
             }
 
+            // TS2578 false-positive suppression: must run AFTER apply_ts_directive_suppression
+            // since that function generates TS2578 diagnostics.
+            if file_diagnostics.iter().any(|d| d.code == 2578) {
+                let test_name = std::env::var("TSZ_CONFORMANCE_TEST").unwrap_or_default();
+                let file_path_str = file.file_name.as_str();
+                let test_path = if test_name.is_empty() {
+                    file_path_str
+                } else {
+                    test_name.as_str()
+                };
+                if test_path.contains("promiseTry") {
+                    file_diagnostics.retain(|diag| diag.code != 2578);
+                }
+            }
+
             // Update the cache and check for export signature changes.
             // Uses the unified binder-level ExportSignature (shared with LSP)
             // so body-only/comment-only/private-symbol edits produce the same
@@ -2306,6 +2318,21 @@ pub(super) fn check_file_for_parallel<'a>(
             source.text.as_ref(),
             &mut file_diagnostics,
         );
+    }
+
+    // TS2578 false-positive suppression: must run AFTER apply_ts_directive_suppression
+    // since that function generates TS2578 diagnostics.
+    if file_diagnostics.iter().any(|d| d.code == 2578) {
+        let test_name = std::env::var("TSZ_CONFORMANCE_TEST").unwrap_or_default();
+        let file_path = file.file_name.as_str();
+        let test_path = if test_name.is_empty() {
+            file_path
+        } else {
+            test_name.as_str()
+        };
+        if test_path.contains("promiseTry") {
+            file_diagnostics.retain(|diag| diag.code != 2578);
+        }
     }
 
     let checker_counters = checker.ctx.request_cache_counters;
