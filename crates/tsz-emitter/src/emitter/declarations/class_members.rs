@@ -108,18 +108,6 @@ impl<'a> Printer<'a> {
             self.emit(method.name);
         }
 
-        // Skip comments inside type parameter list (e.g., `<T, U /*extends T*/>`)
-        // since type parameters are stripped in JS output — mirrors emit_function_declaration.
-        if !self.ctx.flags.in_declaration_emit
-            && let Some(ref type_params) = method.type_parameters
-        {
-            for &tp_idx in &type_params.nodes {
-                if let Some(tp_node) = self.arena.get(tp_idx) {
-                    self.skip_comments_in_range(tp_node.pos, tp_node.end);
-                }
-            }
-        }
-
         // Map opening `(` to its source position
         let open_paren_pos = {
             let search_start = if let Some(ref tp) = method.type_parameters {
@@ -138,6 +126,17 @@ impl<'a> Printer<'a> {
                 .map(|source_pos| source_pos.pos)
                 .unwrap_or(search_start)
         };
+        // Skip comments inside the type parameter list
+        if !self.ctx.flags.in_declaration_emit && method.type_parameters.is_some() {
+            let tp_skip_start = if method.name.is_some() {
+                self.arena
+                    .get(method.name)
+                    .map_or(node.pos, |n| n.end)
+            } else {
+                node.pos
+            };
+            self.skip_comments_in_range(tp_skip_start, open_paren_pos);
+        }
         self.write("(");
         let search_start = method
             .parameters
