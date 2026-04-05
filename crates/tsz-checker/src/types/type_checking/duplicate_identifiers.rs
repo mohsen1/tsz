@@ -672,6 +672,10 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                             let common_spaces = exported_spaces & non_exported_spaces;
+                            eprintln!(
+                                "[TS2395 DEBUG] exported_spaces={}, non_exported_spaces={}, common_spaces={}",
+                                exported_spaces, non_exported_spaces, common_spaces
+                            );
                             if common_spaces != 0 {
                                 has_ts2395 = true;
                                 for &(decl_idx, _, space, _) in group {
