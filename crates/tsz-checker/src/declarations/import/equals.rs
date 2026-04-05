@@ -734,14 +734,24 @@ impl<'a> CheckerState<'a> {
         // tsc does not also emit TS1202.
         // Exception: When the import is inside a function body,
         // TS1232 takes priority and tsc does not emit TS1202.
+        // Exception: `.cts`/`.cjs` files have an explicit CJS format regardless of the
+        // global module setting — `import = require()` is the standard CJS import syntax.
+        // Exception: `.mts`/`.mjs` files have an explicit ESM format, but tsc uses the
+        // per-file emit module kind which can differ from the global module setting
+        // (e.g., with moduleResolution: bundler). tsc does not emit TS1202 for these files.
         let is_ambient_context = self.is_ambient_declaration(stmt_idx);
         let in_function = self.is_inside_function_body(stmt_idx);
+        let is_explicit_format_extension = self.ctx.file_name.ends_with(".cts")
+            || self.ctx.file_name.ends_with(".cjs")
+            || self.ctx.file_name.ends_with(".mts")
+            || self.ctx.file_name.ends_with(".mjs");
         if self.ctx.compiler_options.module.is_es_module()
             && self.ctx.compiler_options.module != ModuleKind::Preserve
             && !is_ambient_context
             && !import.is_type_only
             && !inside_namespace
             && !in_function
+            && !is_explicit_format_extension
         {
             self.error_at_node(
                 stmt_idx,
