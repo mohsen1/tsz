@@ -1195,17 +1195,30 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Recursively search a type node for `infer <name>` patterns in positions
-    /// with implicit constraints:
+    /// with implicit or explicit constraints:
+    /// - `infer <name> extends <constraint>` (explicit extends constraint)
     /// - `...infer <name>` (rest position → implicit array constraint)
     /// - `` `...${infer <name>}...` `` (template literal → implicit `string` constraint)
     ///
-    /// Returns true if a matching infer with an implicit constraint is found.
+    /// Returns true if a matching infer with a constraint is found.
     fn extends_clause_has_constrained_infer_named(&self, node_idx: NodeIndex, name: &str) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
         let Some(node) = self.ctx.arena.get(node_idx) else {
             return false;
         };
+
+        // Check if this is an INFER_TYPE with an explicit `extends` constraint
+        // e.g., `infer Head extends DistributedKeyOf<ObjT>`
+        if node.kind == syntax_kind_ext::INFER_TYPE
+            && let Some(infer_data) = self.ctx.arena.get_infer_type(node)
+            && self.infer_type_param_has_name(infer_data, name)
+            && let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter)
+            && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
+            && tp_data.constraint != NodeIndex::NONE
+        {
+            return true;
+        }
 
         // Check if this is a REST_TYPE wrapping an INFER_TYPE
         if node.kind == syntax_kind_ext::REST_TYPE
@@ -1255,13 +1268,99 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Recurse into wrapped types (parenthesized, optional)
+        // Recurse into wrapped types (parenthesized, optional, rest)
         if (node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
-            || node.kind == syntax_kind_ext::OPTIONAL_TYPE)
+            || node.kind == syntax_kind_ext::OPTIONAL_TYPE
+            || node.kind == syntax_kind_ext::REST_TYPE)
             && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
             && self.extends_clause_has_constrained_infer_named(wrapped.type_node, name)
         {
             return true;
+        }
+
+        // Recurse into type operators (readonly T)
+        if node.kind == syntax_kind_ext::TYPE_OPERATOR
+            && let Some(op) = self.ctx.arena.get_type_operator(node)
+            && self.extends_clause_has_constrained_infer_named(op.type_node, name)
+        {
+            return true;
+        }
+
+        // Recurse into type reference type arguments (Foo<infer T extends X>)
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+            && let Some(ref args) = type_ref.type_arguments
+        {
+            for &arg_idx in &args.nodes {
+                if self.extends_clause_has_constrained_infer_named(arg_idx, name) {
+                    return true;
+                }
+            }
+        }
+
+        // Recurse into union/intersection types
+        if (node.kind == syntax_kind_ext::UNION_TYPE
+            || node.kind == syntax_kind_ext::INTERSECTION_TYPE)
+            && let Some(composite) = self.ctx.arena.get_composite_type(node)
+        {
+            for &member_idx in &composite.types.nodes {
+                if self.extends_clause_has_constrained_infer_named(member_idx, name) {
+                    return true;
+                }
+            }
+        }
+
+        // Recurse into function/constructor types (parameters and return type)
+        if (node.kind == syntax_kind_ext::FUNCTION_TYPE
+            || node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE)
+            && let Some(func_type) = self.ctx.arena.get_function_type(node)
+        {
+            for &param_idx in &func_type.parameters.nodes {
+                if let Some(param_node) = self.ctx.arena.get(param_idx)
+                    && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                    && param.type_annotation != NodeIndex::NONE
+                    && self.extends_clause_has_constrained_infer_named(param.type_annotation, name)
+                {
+                    return true;
+                }
+            }
+            if func_type.type_annotation.is_some()
+                && self.extends_clause_has_constrained_infer_named(func_type.type_annotation, name)
+            {
+                return true;
+            }
+        }
+
+        // Recurse into object/type literal members
+        if node.kind == syntax_kind_ext::TYPE_LITERAL
+            && let Some(type_lit) = self.ctx.arena.get_type_literal(node)
+        {
+            for &member_idx in &type_lit.members.nodes {
+                if self.extends_clause_has_constrained_infer_named(member_idx, name) {
+                    return true;
+                }
+            }
+        }
+
+        // Recurse into array types
+        if node.kind == syntax_kind_ext::ARRAY_TYPE
+            && let Some(array_type) = self.ctx.arena.get_array_type(node)
+            && self.extends_clause_has_constrained_infer_named(array_type.element_type, name)
+        {
+            return true;
+        }
+
+        // Recurse into conditional types
+        if node.kind == syntax_kind_ext::CONDITIONAL_TYPE
+            && let Some(cond) = self.ctx.arena.get_conditional_type(node)
+        {
+            if self.extends_clause_has_constrained_infer_named(cond.check_type, name)
+                || self.extends_clause_has_constrained_infer_named(cond.extends_type, name)
+                || self.extends_clause_has_constrained_infer_named(cond.true_type, name)
+                || self.extends_clause_has_constrained_infer_named(cond.false_type, name)
+            {
+                return true;
+            }
         }
 
         false
