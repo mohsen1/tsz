@@ -661,7 +661,15 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|target_sym| self.ctx.circular_type_aliases.contains(&target_sym))
             })
         };
-        if constraint_refs_circular_alias {
+
+        // Skip TS2313 for valid mapped type key patterns like `keyof T` where T
+        // is the type parameter being constrained.
+        let is_keyof_parent_type_param =
+            tsz_solver::keyof_inner_type(self.ctx.types, constraint_type).is_some_and(|inner| {
+                tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, inner)
+                    .is_some_and(|info| info.name == atom)
+            });
+        if constraint_refs_circular_alias && !is_keyof_parent_type_param {
             let message = format!("Type parameter '{name}' has a circular constraint.");
             self.ctx.error(
                 constraint_pos,
