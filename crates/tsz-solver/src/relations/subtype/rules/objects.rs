@@ -659,12 +659,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     // against the target string index (implicit index signature path).
                 }
 
-                // Class and interface instance types must declare an explicit index
-                // signature. Namespace-like value objects can still satisfy the
-                // target structurally through their exported members.
-                if source.number_index.is_none()
-                    && self.requires_explicit_declared_index_signature(source)
-                {
+                // Class and interface instance types must declare an explicit
+                // **string** index signature to satisfy a target that requires
+                // one.  Having only a number index is NOT sufficient — a number
+                // index constrains only numeric keys but says nothing about
+                // arbitrary string keys.  tsc reports TS2345 with the message
+                // "Index signature for type 'string' is missing in type …"
+                // when e.g. `NumberMap<Function>` (only `[n: number]: Function`)
+                // is passed where `StringMap<T>` (requires `[s: string]: T`)
+                // is expected.
+                //
+                // Namespace-like value objects and anonymous types can still
+                // satisfy the target structurally through their exported members.
+                if self.requires_explicit_declared_index_signature(source) {
                     return SubtypeResult::False;
                 }
 

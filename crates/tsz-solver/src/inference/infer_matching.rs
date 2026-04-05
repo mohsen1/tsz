@@ -383,21 +383,36 @@ impl<'a> InferenceContext<'a> {
                 )?;
             } else {
                 // Source has no explicit string index. Collect contributions from:
-                // 1. Number index (JS converts numeric keys to strings, so a number
-                //    index implies string-indexability)
+                // 1. Number index (for anonymous/enum types only — named
+                //    class/interface types must declare an explicit string index)
                 // 2. Named properties (implicit index signature)
                 //
                 // This matches tsc's behavior where `typeof E1` (numeric enum with
                 // number index + named members) infers T from all value types when
                 // matched against `{ [x: string]: T }`.
+                //
+                // Named class/interface types (e.g. `NumberMap<Function>`) are
+                // excluded from implicit inference: having only
+                // `[index: number]: T` does NOT let tsc infer T for a target's
+                // string index parameter.
+                let has_implicit_index = source_shape.symbol.is_none()
+                    || source_shape
+                        .flags
+                        .contains(crate::types::ObjectFlags::ENUM_NAMESPACE);
+
                 let mut implicit_parts: Vec<TypeId> = Vec::new();
 
                 // Contribution from number index: in JS, numeric keys are converted
-                // to strings, so a source number index contributes to string index
-                // inference. E.g., enum namespace `typeof E1` has `[n: number]: string`
-                // for reverse mappings.
-                if let Some(s_number_idx) = &source_shape.number_index {
-                    implicit_parts.push(s_number_idx.value_type);
+                // to strings, so for anonymous/enum types a source number index
+                // contributes to string index inference. E.g., enum namespace
+                // `typeof E1` has `[n: number]: string` for reverse mappings.
+                //
+                // For named class/interface types this is skipped — they must
+                // declare an explicit string index to participate in inference.
+                if has_implicit_index {
+                    if let Some(s_number_idx) = &source_shape.number_index {
+                        implicit_parts.push(s_number_idx.value_type);
+                    }
                 }
 
                 // Contribution from named properties (implicit index signature).
@@ -408,23 +423,17 @@ impl<'a> InferenceContext<'a> {
                 //
                 // Named class/interface instance types are excluded — they must
                 // declare an explicit index signature.
-                if !source_shape.properties.is_empty() {
-                    let has_implicit_index = source_shape.symbol.is_none()
-                        || source_shape
-                            .flags
-                            .contains(crate::types::ObjectFlags::ENUM_NAMESPACE);
-                    if has_implicit_index {
-                        for p in &source_shape.properties {
-                            // For optional properties, strip `undefined` from optionality.
-                            // tsc: `{ a: string, b?: number }` infers T as `string | number`
-                            // (not `string | number | undefined`).
-                            let prop_type = if p.optional {
-                                crate::narrowing::utils::remove_undefined(self.interner, p.type_id)
-                            } else {
-                                p.type_id
-                            };
-                            implicit_parts.push(prop_type);
-                        }
+                if has_implicit_index && !source_shape.properties.is_empty() {
+                    for p in &source_shape.properties {
+                        // For optional properties, strip `undefined` from optionality.
+                        // tsc: `{ a: string, b?: number }` infers T as `string | number`
+                        // (not `string | number | undefined`).
+                        let prop_type = if p.optional {
+                            crate::narrowing::utils::remove_undefined(self.interner, p.type_id)
+                        } else {
+                            p.type_id
+                        };
+                        implicit_parts.push(prop_type);
                     }
                 }
 
