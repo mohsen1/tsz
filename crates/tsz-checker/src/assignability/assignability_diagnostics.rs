@@ -887,6 +887,79 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if two object types have comparable properties.
+    ///
+    /// Resolves both types to their concrete shapes and checks if every common
+    /// property's type is comparable (assignable in at least one direction).
+    /// This implements the property-level threading of tsc's `comparableRelation`,
+    /// handling cases where whole-object bidirectional assignability fails but
+    /// individual property types overlap.
+    pub(crate) fn object_properties_are_comparable(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        use crate::query_boundaries::assignability::object_shape_for_type;
+        use tsz_common::Visibility;
+
+        // Skip when either type involves type parameters. Type parameter
+        // constraints overlap structurally with many types, but tsc's
+        // comparable relation for generics is stricter than per-property
+        // bidirectional assignability.
+        if crate::query_boundaries::assignability::contains_type_parameters(self.ctx.types, source)
+            || crate::query_boundaries::assignability::contains_type_parameters(
+                self.ctx.types,
+                target,
+            )
+        {
+            return false;
+        }
+
+        let source_resolved = self.evaluate_type_with_resolution(source);
+        let target_resolved = self.evaluate_type_with_resolution(target);
+
+        let Some(source_shape) = object_shape_for_type(self.ctx.types, source_resolved) else {
+            return false;
+        };
+        let Some(target_shape) = object_shape_for_type(self.ctx.types, target_resolved) else {
+            return false;
+        };
+
+        // Skip for types with private/protected members. Classes with private
+        // properties use nominal checking — the comparable relation requires
+        // matching declarations, not just structural overlap.
+        let has_non_public = source_shape
+            .properties
+            .iter()
+            .chain(target_shape.properties.iter())
+            .any(|p| p.visibility != Visibility::Public);
+        if has_non_public {
+            return false;
+        }
+
+        // Need at least one common property
+        let mut found_common = false;
+
+        for target_prop in &target_shape.properties {
+            if let Some(source_prop) = source_shape
+                .properties
+                .iter()
+                .find(|p| p.name == target_prop.name)
+            {
+                found_common = true;
+                // Property types must be comparable (assignable in at least one direction)
+                let prop_comparable = self
+                    .is_assignable_to(source_prop.type_id, target_prop.type_id)
+                    || self.is_assignable_to(target_prop.type_id, source_prop.type_id);
+                if !prop_comparable {
+                    return false;
+                }
+            }
+        }
+
+        found_common
+    }
+
     /// Check if source object literal has properties that don't exist in target.
     ///
     pub(crate) fn analyze_assignability_failure(
