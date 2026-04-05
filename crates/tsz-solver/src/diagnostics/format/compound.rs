@@ -259,6 +259,34 @@ impl<'a> TypeFormatter<'a> {
         is_abstract: bool,
         separator: &str,
     ) -> String {
+        self.format_signature_with_predicate(
+            type_params,
+            params,
+            this_type,
+            return_type,
+            None,
+            is_construct,
+            is_abstract,
+            separator,
+        )
+    }
+
+    /// Format a signature including an optional type predicate in the return type.
+    ///
+    /// When `type_predicate` is `Some`, the return type is formatted as
+    /// `asserts v is T` or `v is T` instead of the raw return type.
+    /// This matches tsc's display for assertion/type guard functions.
+    pub(super) fn format_signature_with_predicate(
+        &mut self,
+        type_params: &[TypeParamInfo],
+        params: &[ParamInfo],
+        this_type: Option<TypeId>,
+        return_type: TypeId,
+        type_predicate: Option<&crate::types::TypePredicate>,
+        is_construct: bool,
+        is_abstract: bool,
+        separator: &str,
+    ) -> String {
         let prefix = if is_construct && is_abstract {
             "abstract new "
         } else if is_construct {
@@ -268,7 +296,22 @@ impl<'a> TypeFormatter<'a> {
         };
         let type_params = self.format_type_params(type_params);
         let params = self.format_params(params, this_type);
-        let return_str: Cow<'static, str> = if is_construct && return_type == TypeId::UNKNOWN {
+        let return_str: Cow<'static, str> = if let Some(pred) = type_predicate {
+            let target_name = match pred.target {
+                crate::types::TypePredicateTarget::This => "this".to_string(),
+                crate::types::TypePredicateTarget::Identifier(atom) => self.atom(atom).to_string(),
+            };
+            let type_part = pred.type_id.map(|tid| format!(" is {}", self.format(tid)));
+            if pred.asserts {
+                Cow::Owned(format!(
+                    "asserts {}{}",
+                    target_name,
+                    type_part.unwrap_or_default()
+                ))
+            } else {
+                Cow::Owned(format!("{}{}", target_name, type_part.unwrap_or_default()))
+            }
+        } else if is_construct && return_type == TypeId::UNKNOWN {
             Cow::Borrowed("any")
         } else {
             self.format(return_type)
@@ -832,11 +875,12 @@ impl<'a> TypeFormatter<'a> {
     }
 
     pub(super) fn format_function(&mut self, shape: &FunctionShape) -> String {
-        self.format_signature(
+        self.format_signature_with_predicate(
             &shape.type_params,
             &shape.params,
             shape.this_type,
             shape.return_type,
+            shape.type_predicate.as_ref(),
             shape.is_constructor,
             false,
             " =>",
@@ -868,11 +912,12 @@ impl<'a> TypeFormatter<'a> {
         if !has_index && shape.properties.is_empty() {
             if shape.call_signatures.len() == 1 && shape.construct_signatures.is_empty() {
                 let sig = &shape.call_signatures[0];
-                return self.format_signature(
+                return self.format_signature_with_predicate(
                     &sig.type_params,
                     &sig.params,
                     sig.this_type,
                     sig.return_type,
+                    sig.type_predicate.as_ref(),
                     false,
                     false,
                     " =>",
@@ -959,11 +1004,12 @@ impl<'a> TypeFormatter<'a> {
         is_construct: bool,
         is_abstract: bool,
     ) -> String {
-        self.format_signature(
+        self.format_signature_with_predicate(
             &sig.type_params,
             &sig.params,
             sig.this_type,
             sig.return_type,
+            sig.type_predicate.as_ref(),
             is_construct,
             is_abstract,
             ":",
