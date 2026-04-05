@@ -322,8 +322,11 @@ impl<'a> CheckerState<'a> {
             }
 
             // Check property type compatibility with base (TS2416)
+            // Only check if the member actually exists in the base type —
+            // otherwise there's no override to be incompatible with.
             if let Some(base_type_id) = base_instance_type
                 && !info.is_static
+                && base_member_names.contains(&info.name)
             {
                 let member_type = info.type_id;
                 // Skip if either type is ANY
