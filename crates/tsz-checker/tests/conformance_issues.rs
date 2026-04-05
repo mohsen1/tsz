@@ -23984,3 +23984,49 @@ declare class MyArray<T> implements Array<T> {
         "Should NOT emit TS2420 for this case. Only TS2416 expected. Got TS2420: {ts2420:#?}"
     );
 }
+
+/// Regression test: when an object literal property uses `this` as the value
+/// and the `this` type is not assignable to the expected property type, the
+/// elaboration should emit TS2322 ("Type X is not assignable to type Y"),
+/// not TS2741 ("Property X is missing..."). This matches tsc behavior in
+/// `elaborateElementwise` for `this` keyword expressions.
+///
+/// Based on conformance test `fuzzy.ts`.
+#[test]
+fn test_elaboration_emits_ts2322_not_ts2741_for_this_keyword_property() {
+    let source = r#"
+interface I {
+    a(): void;
+    b(): void;
+}
+interface R {
+    oneI: I;
+}
+class C implements I {
+    a(): void {}
+    doesntWork(): R {
+        return { oneI: this };
+    }
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+
+    assert!(
+        has_error(&diagnostics, 2420),
+        "Expected TS2420 for class incorrectly implementing interface. Got: {diagnostics:#?}"
+    );
+
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for property type mismatch in object literal elaboration. Got: {diagnostics:#?}"
+    );
+
+    let ts2741 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2741)
+        .collect::<Vec<_>>();
+    assert!(
+        ts2741.is_empty(),
+        "Should NOT emit TS2741 for `this` keyword in elaboration — tsc uses TS2322. Got: {ts2741:#?}"
+    );
+}

@@ -367,19 +367,60 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) {
+        self.error_type_not_assignable_at_with_anchor_elaboration_inner(
+            source, target, anchor_idx, false,
+        );
+    }
+
+    /// Like `error_type_not_assignable_at_with_anchor_elaboration`, but when
+    /// `downgrade_missing_to_2322` is true, converts TS2741/TS2739/TS2740
+    /// (missing-property) diagnostics to TS2322 ("Type X is not assignable to
+    /// type Y"). tsc's `elaborateElementwise` uses TS2322 for `this` keyword
+    /// property values instead of the more specific missing-property codes.
+    pub fn error_type_not_assignable_at_with_anchor_elaboration_inner(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+        downgrade_missing_to_2322: bool,
+    ) {
         let anchor_idx =
             self.resolve_diagnostic_anchor_node(anchor_idx, DiagnosticAnchorKind::Exact);
-        let _diag_count_before = self.ctx.diagnostics.len();
+        let diag_count_before = self.ctx.diagnostics.len();
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
 
-        // The diagnose_assignment_failure_with_anchor call above has already generated
-        // the appropriate diagnostic. For missing property errors, it generates TS2741;
-        // for type mismatches, it generates TS2322. We should NOT downgrade TS2741 to TS2322
-        // because TS2741 provides more specific information about what's wrong.
-        //
-        // Previously this function had logic to "downgrade" TS2741 to TS2322 for
-        // "elaboration contexts", but that was incorrect - missing property errors
-        // should always be reported as TS2741/TS2739/TS2740, never downgraded to TS2322.
+        if !downgrade_missing_to_2322 {
+            return;
+        }
+
+        use crate::diagnostics::diagnostic_codes;
+        let needs_downgrade = self.ctx.diagnostics[diag_count_before..].iter().any(|d| {
+            matches!(
+                d.code,
+                diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                    | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                    | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+            )
+        });
+        if needs_downgrade {
+            let src_str = self.format_type_for_assignability_message(source);
+            let tgt_str = self.format_type_for_assignability_message(target);
+            let new_message = crate::diagnostics::format_message(
+                crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&src_str, &tgt_str],
+            );
+            for diag in &mut self.ctx.diagnostics[diag_count_before..] {
+                if matches!(
+                    diag.code,
+                    diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                        | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                        | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+                ) {
+                    diag.code = diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE;
+                    diag.message_text = new_message.clone();
+                }
+            }
+        }
     }
     pub fn error_type_does_not_satisfy_the_expected_type(
         &mut self,
