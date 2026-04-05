@@ -1151,6 +1151,42 @@ impl<'a> CheckerState<'a> {
 
         if let Some(sym_id) = self.ctx.binder.get_node_symbol(decl_idx) {
             self.push_symbol_dependency(sym_id, true);
+
+            // When a `var` redeclares a constructor parameter (e.g., `constructor(options?: number) { var options = ... }`),
+            // the parameter and var share the same symbol. If the var's initializer references
+            // the variable (e.g., `var options = (options || 0)`), the symbol resolution detects
+            // circularity and returns ERROR. To match tsc behavior, pre-seed the symbol type
+            // cache with the parameter's declared type before computing the var's type. This
+            // ensures the initializer resolves the identifier to the parameter's type.
+            if !self.ctx.symbol_types.contains_key(&sym_id) && var_decl.initializer.is_some() {
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    for &other_decl in &symbol.declarations {
+                        if other_decl == decl_idx {
+                            break;
+                        }
+                        if other_decl.is_some()
+                            && let Some(other_node) = self.ctx.arena.get(other_decl)
+                            && other_node.kind == syntax_kind_ext::PARAMETER
+                            && let Some(param) = self.ctx.arena.get_parameter(other_node)
+                        {
+                            let mut param_type = if param.type_annotation.is_some() {
+                                self.get_type_from_type_node(param.type_annotation)
+                            } else {
+                                TypeId::ANY
+                            };
+                            if param.dot_dot_dot_token {
+                                param_type = self.ctx.types.array(param_type);
+                            }
+                            if param.question_token && param_type != TypeId::ANY {
+                                param_type = self.ctx.types.union2(param_type, TypeId::UNDEFINED);
+                            }
+                            self.ctx.symbol_types.insert(sym_id, param_type);
+                            break;
+                        }
+                    }
+                }
+            }
+
             // Snapshot whether symbol was already cached BEFORE compute_final_type.
             // If it was, any ERROR in the cache is from earlier resolution (e.g., use-before-def),
             // not from circular detection during this declaration's initializer processing.
