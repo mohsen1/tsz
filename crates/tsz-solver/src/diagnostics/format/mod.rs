@@ -3,6 +3,8 @@
 
 mod compound;
 #[cfg(test)]
+pub mod test_tracing;
+#[cfg(test)]
 mod tests;
 pub mod tracing_helpers;
 
