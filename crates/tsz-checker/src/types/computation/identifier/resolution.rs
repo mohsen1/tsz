@@ -600,7 +600,6 @@ impl<'a> CheckerState<'a> {
             {
                 continue;
             }
-
             let candidate_decl = symbol
                 .declarations
                 .iter()
