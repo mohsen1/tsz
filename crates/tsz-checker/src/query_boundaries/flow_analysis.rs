@@ -28,6 +28,8 @@ pub(crate) fn are_types_mutually_subtype(
 }
 
 pub(crate) fn is_assignable(db: &dyn TypeDatabase, source: TypeId, target: TypeId) -> bool {
+    let _span = tracing::trace_span!("flow_assignable", src = source.0, tgt = target.0,).entered();
+
     tsz_solver::query_relation(
         db,
         source,
