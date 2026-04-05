@@ -932,6 +932,14 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
+                // When the spread type contains type parameters (e.g., `{...props}`
+                // where `props: T`), we can't enumerate the properties it provides.
+                // Mark spread_covers_all so missing-required-property checks (TS2741)
+                // don't fire — the generic spread could provide any property.
+                if tsz_solver::contains_type_parameters(self.ctx.types, spread_type) {
+                    spread_covers_all = true;
+                }
+
                 // Defer TS2322 spread checking until after attribute override tracking.
                 if !skip_prop_checks {
                     spread_entries.push((spread_type, spread_expr_idx, attr_i));
@@ -1089,6 +1097,13 @@ impl<'a> CheckerState<'a> {
             && !spread_covers_all
             && !skip_prop_checks
             && needs_special_attr_object_assignability
+            // When props have unresolved type parameters, the synthesized attrs type
+            // is incomplete — generic spread contributions (e.g., `{...props}` where
+            // `props: T`) are not captured by get_object_shape, so the object built
+            // from provided_attrs is missing those properties. Checking it against
+            // the full props type produces false TS2322. TSC skips this path for
+            // generic components.
+            && !props_has_type_params
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
             if !self.is_assignable_to(attrs_type, props_type) {
