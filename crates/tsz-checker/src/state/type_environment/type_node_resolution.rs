@@ -78,26 +78,40 @@ impl<'a> CheckerState<'a> {
             // functions and methods." The parser restricts predicate parsing to return
             // type positions, but some return types (constructors, getters, setters,
             // construct signatures, constructor types) still parse predicates for error
-            // recovery. The checker must flag these, matching tsc's getTypePredicateParent.
+            // recovery. tsc's getTypePredicateParent only allows the function-like
+            // kinds below; constructors/getters/setters are excluded. However, tsc's
+            // checkTypePredicate is only called via checkSourceElement, and when the
+            // parser produces errors for malformed getters/setters/constructors, the
+            // AST structure prevents checkTypePredicate from being reached. We must
+            // suppress TS1228 for those parents to avoid false positives, since those
+            // positions already produce parser-level errors (TS1005, TS1054, etc.).
             if node.kind == syntax_kind_ext::TYPE_PREDICATE {
-                let is_valid = self
+                let parent_kind = self
                     .ctx
                     .arena
                     .get_extended(idx)
                     .and_then(|ext| self.ctx.arena.get(ext.parent))
-                    .is_some_and(|parent| {
-                        matches!(
-                            parent.kind,
-                            syntax_kind_ext::FUNCTION_DECLARATION
-                                | syntax_kind_ext::FUNCTION_EXPRESSION
-                                | syntax_kind_ext::METHOD_DECLARATION
-                                | syntax_kind_ext::METHOD_SIGNATURE
-                                | syntax_kind_ext::CALL_SIGNATURE
-                                | syntax_kind_ext::ARROW_FUNCTION
-                                | syntax_kind_ext::FUNCTION_TYPE
-                        )
-                    });
-                if !is_valid {
+                    .map(|parent| parent.kind);
+                let is_valid_or_parser_error = parent_kind.is_some_and(|kind| {
+                    matches!(
+                        kind,
+                        // Valid type predicate parents (tsc's getTypePredicateParent)
+                        syntax_kind_ext::FUNCTION_DECLARATION
+                            | syntax_kind_ext::FUNCTION_EXPRESSION
+                            | syntax_kind_ext::METHOD_DECLARATION
+                            | syntax_kind_ext::METHOD_SIGNATURE
+                            | syntax_kind_ext::CALL_SIGNATURE
+                            | syntax_kind_ext::ARROW_FUNCTION
+                            | syntax_kind_ext::FUNCTION_TYPE
+                            // Parser-error parents: predicates parsed for error recovery;
+                            // tsc never reaches checkTypePredicate for these since the
+                            // parser already emits errors. Suppress TS1228 to match tsc.
+                            | syntax_kind_ext::CONSTRUCTOR
+                            | syntax_kind_ext::GET_ACCESSOR
+                            | syntax_kind_ext::SET_ACCESSOR
+                    )
+                });
+                if !is_valid_or_parser_error {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                         idx,
