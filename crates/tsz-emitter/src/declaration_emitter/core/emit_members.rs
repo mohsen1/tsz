@@ -189,6 +189,11 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(": ");
             self.emit_type(method.type_annotation);
         } else if !is_private
+            && let Some(return_type_text) = self.jsdoc_return_type_text_for_node(method_idx)
+        {
+            self.write(": ");
+            self.write(&return_type_text);
+        } else if !is_private
             && let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache)
         {
             let method_type_id = cache
