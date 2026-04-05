@@ -1043,6 +1043,12 @@ impl<'a> DeclarationEmitter<'a> {
             element_types.push(elem_type);
         }
 
+        // If any element type is `any`, the whole union collapses to `any`
+        // (matches tsc: T | any = any for all T).
+        if element_types.iter().any(|t| t == "any") {
+            return Some("any[]".to_string());
+        }
+
         let mut distinct = Vec::new();
         for ty in element_types {
             if !distinct.iter().any(|existing| existing == &ty) {
