@@ -400,6 +400,19 @@ impl<'a> CheckerState<'a> {
         arg_idx: NodeIndex,
         param_type: TypeId,
     ) -> bool {
+        self.try_elaborate_object_literal_arg_error_with_source(arg_idx, param_type, None)
+    }
+
+    /// Like `try_elaborate_object_literal_arg_error`, but accepts an optional
+    /// `source_type_override` for cases where `get_type_of_node` returns a
+    /// contextually-typed version that doesn't reflect the actual mismatch
+    /// (e.g., method declarations in object literals passed as generic call arguments).
+    pub fn try_elaborate_object_literal_arg_error_with_source(
+        &mut self,
+        arg_idx: NodeIndex,
+        param_type: TypeId,
+        source_type_override: Option<TypeId>,
+    ) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
         let arg_node = match self.ctx.arena.get(arg_idx) {
@@ -408,9 +421,12 @@ impl<'a> CheckerState<'a> {
         };
 
         match arg_node.kind {
-            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
-                self.try_elaborate_object_literal_properties(arg_idx, param_type)
-            }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => self
+                .try_elaborate_object_literal_properties_with_source(
+                    arg_idx,
+                    param_type,
+                    source_type_override,
+                ),
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 self.try_elaborate_array_literal_elements(arg_idx, param_type)
             }
@@ -680,12 +696,22 @@ impl<'a> CheckerState<'a> {
         arg_idx: NodeIndex,
         param_type: TypeId,
     ) -> bool {
+        self.try_elaborate_object_literal_properties_with_source(arg_idx, param_type, None)
+    }
+
+    fn try_elaborate_object_literal_properties_with_source(
+        &mut self,
+        arg_idx: NodeIndex,
+        param_type: TypeId,
+        source_type_override: Option<TypeId>,
+    ) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
         // When exactOptionalPropertyTypes is enabled and the failure is due to
         // exact optional property mismatch, don't elaborate per-property errors.
         // The caller will emit a top-level TS2375 instead.
-        let source_type = self.get_type_of_node(arg_idx);
+        let node_source_type = self.get_type_of_node(arg_idx);
+        let source_type = source_type_override.unwrap_or(node_source_type);
         if self.has_exact_optional_property_mismatch(source_type, param_type) {
             return false;
         }
@@ -756,7 +782,8 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Only elaborate regular property assignments and shorthand properties
+            // Only elaborate regular property assignments, shorthand properties,
+            // and method declarations
             let (prop_name_idx, prop_value_idx) = match elem_node.kind {
                 k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
                     match self.ctx.arena.get_property_assignment(elem_node) {
@@ -767,6 +794,12 @@ impl<'a> CheckerState<'a> {
                 k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
                     match self.ctx.arena.get_shorthand_property(elem_node) {
                         Some(prop) => (prop.name, prop.name),
+                        None => continue,
+                    }
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    match self.ctx.arena.get_method_decl(elem_node) {
+                        Some(method) => (method.name, elem_idx),
                         None => continue,
                     }
                 }
@@ -816,10 +849,30 @@ impl<'a> CheckerState<'a> {
             let is_function_value = self.ctx.arena.get(prop_value_idx).is_some_and(|node| {
                 matches!(
                     node.kind,
-                    syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
+                    syntax_kind_ext::ARROW_FUNCTION
+                        | syntax_kind_ext::FUNCTION_EXPRESSION
+                        | syntax_kind_ext::METHOD_DECLARATION
                 )
             });
             let cached_prop_type = self.get_type_of_node(prop_value_idx);
+            // For function-valued properties (especially method declarations),
+            // get_type_of_node returns the contextually-typed version which may
+            // already incorporate the target's return type. Use the property type
+            // from the source object type instead, which reflects the actual
+            // (non-contextual) type as seen at the argument level.
+            let source_obj_prop_type = if is_function_value {
+                if let tsz_solver::operations::property::PropertyAccessResult::Success {
+                    type_id,
+                    ..
+                } = self.resolve_property_access_with_env(source_type, &prop_name)
+                {
+                    Some(type_id)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
             let source_prop_type = if !is_function_value
                 && cached_prop_type != TypeId::ERROR
                 && cached_prop_type != TypeId::ANY
@@ -845,15 +898,19 @@ impl<'a> CheckerState<'a> {
 
             // For function values, emit TS2322 at the property level when there's a type mismatch.
             // This applies to both optional and required function properties.
+            // Use the source object property type (from the argument-level type) if available,
+            // since get_type_of_node on method declarations may return the contextually-typed
+            // version that doesn't reflect the actual mismatch.
+            let effective_source_prop = source_obj_prop_type.unwrap_or(source_prop_type);
             if is_function_value
-                && source_prop_type != TypeId::ERROR
-                && source_prop_type != TypeId::ANY
+                && effective_source_prop != TypeId::ERROR
+                && effective_source_prop != TypeId::ANY
                 && target_prop_type != TypeId::ERROR
                 && target_prop_type != TypeId::ANY
-                && !self.is_assignable_to(source_prop_type, target_prop_type)
+                && !self.is_assignable_to(effective_source_prop, target_prop_type)
             {
                 let source_prop_type_for_diagnostic =
-                    self.widen_function_like_call_source(source_prop_type);
+                    self.widen_function_like_call_source(effective_source_prop);
                 // Use the diagnostic target type if available (for optional properties),
                 // otherwise use the effective target type
                 let target_for_diag = if target_prop_type != target_prop_type_for_diagnostic {
@@ -861,11 +918,35 @@ impl<'a> CheckerState<'a> {
                 } else {
                     target_prop_type
                 };
-                self.error_type_not_assignable_at_with_anchor(
-                    source_prop_type_for_diagnostic,
-                    target_for_diag,
-                    prop_name_idx,
-                );
+                // For method declarations, emit TS2322 directly to avoid triggering
+                // name resolution on the method name identifier (which would cause
+                // a spurious TS2552 "Cannot find name" error). The anchor-based
+                // diagnosis path calls get_type_of_node on the anchor which for
+                // method name identifiers triggers scope lookup.
+                let is_method = self
+                    .ctx
+                    .arena
+                    .get(prop_value_idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::METHOD_DECLARATION);
+                if is_method {
+                    let source_str = self.format_type_diagnostic(source_prop_type_for_diagnostic);
+                    let target_str = self.format_type_diagnostic(target_for_diag);
+                    let message = crate::diagnostics::format_message(
+                        crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&source_str, &target_str],
+                    );
+                    self.error_at_node(
+                        prop_name_idx,
+                        &message,
+                        crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                } else {
+                    self.error_type_not_assignable_at_with_anchor(
+                        source_prop_type_for_diagnostic,
+                        target_for_diag,
+                        prop_name_idx,
+                    );
+                }
                 elaborated = true;
                 continue;
             }
@@ -1123,6 +1204,9 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
                 self.ctx.arena.get_shorthand_property(elem_node)?.name
+            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                self.ctx.arena.get_method_decl(elem_node)?.name
             }
             _ => return None,
         };

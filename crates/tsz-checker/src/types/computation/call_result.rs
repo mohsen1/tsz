@@ -501,7 +501,11 @@ impl<'a> CheckerState<'a> {
                             actual,
                         )
                     {
-                        elaborated = self.try_elaborate_object_literal_arg_error(arg_idx, expected);
+                        elaborated = self.try_elaborate_object_literal_arg_error_with_source(
+                            arg_idx,
+                            expected,
+                            Some(actual),
+                        );
                     }
                     // When a callback has explicitly-typed parameters that conflict with the
                     // expected parameter types, TSC reports TS2345 at the argument level
@@ -602,8 +606,11 @@ impl<'a> CheckerState<'a> {
                             actual,
                         )
                     {
-                        elaborated =
-                            self.try_elaborate_object_literal_arg_error(last_arg, expected);
+                        elaborated = self.try_elaborate_object_literal_arg_error_with_source(
+                            last_arg,
+                            expected,
+                            Some(actual),
+                        );
                     }
                     if !elaborated
                         && allow_contextual_mismatch_deferral
