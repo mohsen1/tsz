@@ -52,6 +52,17 @@ impl<'a> Printer<'a> {
 
         let has_trailing_comma = self.has_trailing_comma_in_source(node, &pattern.elements.nodes);
         self.write("[");
+        // Emit any inline comments between `[` and the first element
+        // (e.g., `[/*comment*/ a]` in catch destructuring)
+        if let Some(&first_elem) = pattern.elements.nodes.first() {
+            if let Some(elem_node) = self.arena.get(first_elem) {
+                self.emit_comments_before_pos(elem_node.pos);
+                if self.pending_block_comment_space {
+                    self.write_space();
+                    self.pending_block_comment_space = false;
+                }
+            }
+        }
         self.emit_comma_separated(&pattern.elements.nodes);
         if has_trailing_comma {
             self.write(",");

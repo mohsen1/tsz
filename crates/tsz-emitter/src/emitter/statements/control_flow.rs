@@ -587,6 +587,19 @@ impl<'a> Printer<'a> {
             // Map the `(` to its source position
             self.map_token_after(node.pos, node.end, b'(');
             self.write("(");
+            // Emit any inline comments between `(` and the variable declaration
+            // (e.g., `catch (/*comment*/[a])`). tsc places the space before the
+            // comment: `( /*comment*/[a]` rather than after: `(/*comment*/ [a]`.
+            if let Some(var_node) = self.arena.get(catch.variable_declaration) {
+                if self.has_pending_comment_before(var_node.pos) {
+                    self.write_space();
+                }
+                self.emit_comments_before_pos(var_node.pos);
+                // Suppress the trailing space that emit_comments_before_pos sets
+                // for block comments — tsc does not insert a space between the
+                // comment and the binding pattern in catch clauses.
+                self.pending_block_comment_space = false;
+            }
             self.emit(catch.variable_declaration);
             self.write(")");
         } else if self.ctx.needs_es2019_lowering {
