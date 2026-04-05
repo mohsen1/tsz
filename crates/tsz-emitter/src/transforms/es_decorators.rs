@@ -414,6 +414,8 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 let assign_expr = assign_parts.join(", ");
                 out.push_str(&format!("{i2}static {{ {assign_expr}; }}\n"));
             }
+            let defer_class_init_inner = has_class_decorators
+                && self.has_user_static_members(&class_data.members);
             out.push_str(&format!("{i2}static {{\n"));
             self.emit_decorator_application(
                 &decorated_members,
@@ -427,9 +429,14 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 class_data,
                 &i3,
                 &mut out,
+                defer_class_init_inner,
             );
             out.push_str(&format!("{i2}}}\n"));
         }
+
+        let defer_class_init = self.use_static_blocks
+            && has_class_decorators
+            && self.has_user_static_members(&class_data.members);
 
         // --- Emit class members ---
         // At ES2022, class is at indent+1, so members at indent+2.
@@ -453,6 +460,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             member_indent,
             member_inner_indent,
             &mut out,
+            defer_class_init,
         );
 
         if self.use_static_blocks {
@@ -487,6 +495,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 class_data,
                 &i2,
                 &mut out,
+                false,
             );
             out.push_str(&format!("{i1}}})();\n"));
 
@@ -523,6 +532,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 class_data,
                 &i3,
                 &mut out,
+                false,
             );
             out.push_str(&format!("{i2}}})(),\n"));
 
@@ -566,6 +576,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         class_data: &tsz_parser::parser::node::ClassData,
         indent: &str,
         out: &mut String,
+        defer_class_extra_init: bool,
     ) {
         // Metadata
         let has_class_decorators = !class_decorators.is_empty();
@@ -661,8 +672,8 @@ impl<'a> TC39DecoratorEmitter<'a> {
             ));
         }
 
-        // Class extra initializers (when class decorators exist)
-        if !class_decorators.is_empty() {
+        // Class extra initializers: deferred when user static members exist.
+        if !class_decorators.is_empty() && !defer_class_extra_init {
             out.push_str(&format!(
                 "{indent}{run_initializers}({ctor_ref}, _classExtraInitializers);\n"
             ));
@@ -686,6 +697,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         indent: &str,
         inner_indent: &str,
         out: &mut String,
+        defer_class_extra_init: bool,
     ) -> (Vec<String>, Vec<String>) {
         let run_init = self.helper("__runInitializers");
         let fields_in_class_body = self.use_static_blocks && self.use_define_for_class_fields;
@@ -985,6 +997,13 @@ impl<'a> TC39DecoratorEmitter<'a> {
             }
         }
 
+        // ES2022 + class decorators: deferred __runInitializers static block
+        if defer_class_extra_init {
+            out.push_str(&format!(
+                "{indent}static {{\n{inner_indent}{run_init}(_classThis, _classExtraInitializers);\n{indent}}}\n"
+            ));
+        }
+
         // Constructor
         let source_ctor = self.get_constructor_info(class_data);
         let has_instance_fields = field_infos
@@ -1099,6 +1118,28 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
 
         (external_assignments, post_iife_assignments)
+    }
+
+    fn has_user_static_members(&self, members: &NodeList) -> bool {
+        for &idx in &members.nodes {
+            let Some(node) = self.arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                return true;
+            }
+            if node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                if let Some(prop) = self.arena.get_property_decl(node) {
+                    if self
+                        .arena
+                        .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     /// Find the position of the class closing brace by scanning forward from the
@@ -1645,9 +1686,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
         let is_field_like = matches!(member.kind, MemberKind::Field | MemberKind::Accessor);
 
-        // For methods/getters/setters, first arg is the class reference.
-        // For fields/accessors, first arg is always null.
-        let ctor_arg = if is_field_like || member.is_private {
+        // For methods/getters/setters/accessors/private, first arg is the class ref.
+        // For plain fields, first arg is null.
+        let ctor_arg = if member.kind == MemberKind::Field {
             "null".to_string()
         } else {
             class_alias.to_string()
