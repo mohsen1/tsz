@@ -525,6 +525,19 @@ pub fn get_base_type_for_comparison(db: &dyn crate::TypeDatabase, type_id: TypeI
         // Template literals and string intrinsics (Uppercase<T>, etc.) → string
         Some(TypeData::TemplateLiteral(_) | TypeData::StringIntrinsic { .. }) => TypeId::STRING,
 
+        // Type parameters: resolve through constraint to determine comparison family.
+        // This ensures that e.g. `T extends "a" | "b"` has comparison base `string`,
+        // matching the base of literal `"x"`, so the TS2367 display preserves
+        // literal detail for same-family comparisons (tsc shows `T` and `"x"`,
+        // not `T` and `string`).
+        Some(TypeData::TypeParameter(ref info)) => {
+            if let Some(constraint) = info.constraint {
+                get_base_type_for_comparison(db, constraint)
+            } else {
+                type_id
+            }
+        }
+
         // Unions: recursively map all members
         Some(TypeData::Union(list_id)) => {
             let members = db.type_list(list_id);
