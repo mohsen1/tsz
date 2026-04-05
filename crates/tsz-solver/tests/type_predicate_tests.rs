@@ -467,6 +467,95 @@ fn test_bare_asserts_compatibility() {
     // would be assignable to bare assertion since typed is more specific.
 }
 
+#[test]
+fn test_no_predicate_compatible_with_assertion_target() {
+    // In tsc, a function without a type predicate IS compatible with an assertion
+    // function target. This is because assertion predicates are call-site narrowing
+    // annotations — the source function just needs to return void.
+    // Example: `const f: (x: any) => asserts x is string = (x) => { ... }`
+    // tsc accepts this without error.
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let param_v = interner.intern_string("v");
+
+    // Source: (v: any) => void (no predicate, like an arrow function)
+    let source_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::required(param_v, TypeId::ANY)],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Target: (v: any) => asserts v is string
+    let target_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::required(param_v, TypeId::ANY)],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: Some(TypePredicate {
+            parameter_index: None,
+            asserts: true,
+            target: TypePredicateTarget::Identifier(param_v),
+            type_id: Some(TypeId::STRING),
+        }),
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Source (no predicate) should be assignable to target (assertion predicate)
+    assert!(
+        checker.is_subtype_of(source_fn, target_fn),
+        "Function without predicate should be assignable to assertion function target"
+    );
+}
+
+#[test]
+fn test_no_predicate_not_compatible_with_type_guard_target() {
+    // A function without a predicate is NOT compatible with a type guard target.
+    // Only assertion predicates allow the source to omit the predicate.
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let param_v = interner.intern_string("v");
+
+    // Source: (v: any) => boolean (no predicate)
+    let source_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::required(param_v, TypeId::ANY)],
+        this_type: None,
+        return_type: TypeId::BOOLEAN,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Target: (v: any) => v is string (type guard, NOT asserts)
+    let target_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::required(param_v, TypeId::ANY)],
+        this_type: None,
+        return_type: TypeId::BOOLEAN,
+        type_predicate: Some(TypePredicate {
+            parameter_index: None,
+            asserts: false,
+            target: TypePredicateTarget::Identifier(param_v),
+            type_id: Some(TypeId::STRING),
+        }),
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Source (no predicate) should NOT be assignable to type guard target
+    assert!(
+        !checker.is_subtype_of(source_fn, target_fn),
+        "Function without predicate should NOT be assignable to type guard function target"
+    );
+}
+
 // =============================================================================
 // Integration Tests
 // =============================================================================

@@ -287,7 +287,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Rules:
     /// - No predicate vs no predicate: compatible
     /// - Source has predicate, target doesn't: compatible (source is more specific)
-    /// - Target has predicate, source doesn't: compatible (more lenient)
+    /// - Target has type guard, source doesn't: NOT compatible (caller expects narrowing)
+    /// - Target has assertion predicate, source doesn't: compatible (assertion is call-site annotation)
     /// - Both have predicates: check if predicates are compatible
     pub(crate) fn are_type_predicates_compatible(
         &mut self,
@@ -303,10 +304,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // boolean-returning function is expected.
             (Some(_), None) => true,
 
-            // Target has predicate, source doesn't — NOT compatible.
+            // Target has predicate, source doesn't.
+            // For type guards (`x is T`, `this is T`): NOT compatible.
             // A plain boolean-returning function cannot satisfy a type
             // predicate contract (the caller expects narrowing).
-            (None, Some(_)) => false,
+            // For assertion predicates (`asserts x`, `asserts x is T`):
+            // compatible — tsc allows assigning a plain void-returning
+            // function to an assertion function slot. The assertion
+            // predicate is a call-site narrowing annotation, not a
+            // runtime contract that the implementation must satisfy.
+            (None, Some(target_pred)) => target_pred.asserts,
 
             // Both have predicates — check compatibility
             (Some(source_pred), Some(target_pred)) => {
