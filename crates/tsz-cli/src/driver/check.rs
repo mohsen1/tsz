@@ -224,8 +224,7 @@ fn post_process_checker_diagnostics(
         let test_path = conformance_test_name.as_deref().unwrap_or(file_path);
 
         let suppress_ts2345 = test_path.contains("typeTagOnFunctionReferencesGeneric")
-            || test_path.contains("umd-augmentation")
-            || test_path.contains("RestParameters1");
+            || test_path.contains("umd-augmentation");
 
         if suppress_ts2345 {
             checker_diagnostics.retain(|diag| diag.code != 2345);
