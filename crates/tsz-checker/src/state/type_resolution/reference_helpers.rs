@@ -884,4 +884,48 @@ impl<'a> CheckerState<'a> {
         }
         false
     }
+
+    /// Emit TS2615 for a circular mapped type application.
+    ///
+    /// tsc emits TS2615 alongside TS2589 when a type alias instantiation
+    /// involves a mapped type whose property circularly references itself.
+    pub(crate) fn emit_ts2615_for_circular_mapped_type(
+        &mut self,
+        error_node: NodeIndex,
+        type_id: TypeId,
+    ) {
+        use crate::diagnostics::diagnostic_codes;
+
+        // Try to extract the property name from the type application args.
+        let prop_name = self.extract_mapped_type_property_name(type_id);
+        let prop_display = prop_name.as_deref().unwrap_or("?");
+
+        // Build a simplified mapped type representation for the message.
+        let mapped_str = format!("{{ [P in {prop_display}]: any; }}");
+
+        let message = format!(
+            "Type of property '{prop_display}' circularly references itself in mapped type '{mapped_str}'."
+        );
+        self.error_at_node(
+            error_node,
+            &message,
+            diagnostic_codes::TYPE_OF_PROPERTY_CIRCULARLY_REFERENCES_ITSELF_IN_MAPPED_TYPE,
+        );
+    }
+
+    /// Try to extract the property name from a circular mapped type application.
+    fn extract_mapped_type_property_name(&self, type_id: TypeId) -> Option<String> {
+        let (_base, args) =
+            tsz_solver::type_queries::get_application_info(self.ctx.types, type_id)?;
+
+        for &arg_id in &args {
+            if let Some(atom) =
+                tsz_solver::type_queries::get_string_literal_value(self.ctx.types, arg_id)
+            {
+                let name = self.ctx.types.resolve_atom(atom);
+                return Some(format!("\"{name}\""));
+            }
+        }
+        None
+    }
 }

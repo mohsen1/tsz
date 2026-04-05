@@ -336,17 +336,45 @@ impl<'a> CheckerState<'a> {
                                 // Special case: when the type argument is Application(TypeQuery(sym), args)
                                 // — i.e., `typeof fn<Args>` — the base constraint resolved to the
                                 // underlying function type by evaluating through the TypeQuery. But
-                                // the instantiation expression may have wrong arity (TS2635), meaning
-                                // the Application is NOT a valid instantiation. In this case, the
-                                // base's callability should not be used to satisfy the constraint.
-                                // tsc treats failed instantiation expressions as errorType which is
-                                // not callable.
-                                let is_typeof_instantiation = query::is_application_of_type_query(
+                                // Special case: when the type argument is `typeof fn<Args>` (an
+                                // instantiation expression), check if the type arguments match
+                                // any signature's arity. If they don't (TS2635), the instantiation
+                                // failed and the result is NOT callable — tsc treats it as errorType.
+                                // The base constraint resolves to the underlying function type which
+                                // IS callable, but that's misleading since the Application itself
+                                // is invalid.
+                                let is_failed_instantiation = query::typeof_instantiation_arg_count(
                                     self.ctx.types.as_type_database(),
                                     type_arg,
-                                );
+                                )
+                                .is_some_and(|num_args| {
+                                    // Check if the base (resolved function type) has any signature
+                                    // with matching arity.
+                                    let call_sigs =
+                                        crate::query_boundaries::common::call_signatures_for_type(
+                                            db, base,
+                                        );
+                                    let construct_sigs =
+                                        crate::query_boundaries::common::construct_signatures_for_type(
+                                            db, base,
+                                        );
+                                    let mut has_match = false;
+                                    if let Some(sigs) = &call_sigs {
+                                        has_match = sigs
+                                            .iter()
+                                            .any(|sig| sig.type_params.len() == num_args);
+                                    }
+                                    if !has_match {
+                                        if let Some(sigs) = &construct_sigs {
+                                            has_match = sigs
+                                                .iter()
+                                                .any(|sig| sig.type_params.len() == num_args);
+                                        }
+                                    }
+                                    !has_match
+                                });
                                 let base_is_callable =
-                                    query::is_callable_type(db, base) && !is_typeof_instantiation;
+                                    query::is_callable_type(db, base) && !is_failed_instantiation;
                                 if base_is_callable {
                                     // Base is callable even with type params — satisfied.
                                     continue;
