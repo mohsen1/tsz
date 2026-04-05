@@ -231,7 +231,109 @@ pub(crate) fn should_report_own_member_type_mismatch(
     if is_coinductive_return_type_cycle(checker, source, target) {
         return false;
     }
+    // Suppress TS2416 when the only incompatibility is a type predicate that tsc
+    // would infer.  tsc infers type predicates for methods without explicit return
+    // type annotations whose bodies consist of narrowing expressions (e.g.
+    // `typeof x === 'number'`).  We don't implement type predicate inference, so
+    // a class method returning `boolean` appears incompatible with an interface
+    // method returning `x is T`.  Suppress the diagnostic when:
+    //   1. The target (interface) function has a type predicate.
+    //   2. The source (class method) has no type predicate and returns `boolean`.
+    //   3. The class member AST node has no explicit return type annotation.
+    //   4. The parameter types are compatible (the only difference is the predicate).
+    if is_type_predicate_inference_suppressed(checker, source, target, node_idx) {
+        return false;
+    }
     true
+}
+
+/// Check if a TS2416 incompatibility is caused solely by a missing type predicate
+/// that tsc would infer from the method body.
+///
+/// tsc infers type predicates for methods without explicit return type annotations.
+/// Since we don't support type predicate inference, suppress the diagnostic when the
+/// only difference between the source and target signatures is the type predicate.
+fn is_type_predicate_inference_suppressed(
+    checker: &CheckerState<'_>,
+    source: TypeId,
+    target: TypeId,
+    node_idx: NodeIndex,
+) -> bool {
+    // Get target function shape and check for type predicate
+    let target_has_predicate = get_type_predicate_from_signature(checker, target).is_some();
+    if !target_has_predicate {
+        return false;
+    }
+
+    // Source must NOT have a type predicate (it returns plain boolean)
+    let source_has_predicate = get_type_predicate_from_signature(checker, source).is_some();
+    if source_has_predicate {
+        return false;
+    }
+
+    // Source must return boolean
+    let source_returns_boolean = tsz_solver::function_shape_id(checker.ctx.types, source)
+        .map(|id| checker.ctx.types.function_shape(id).return_type)
+        .or_else(|| {
+            tsz_solver::callable_shape_id(checker.ctx.types, source).and_then(|id| {
+                checker
+                    .ctx
+                    .types
+                    .callable_shape(id)
+                    .call_signatures
+                    .first()
+                    .map(|s| s.return_type)
+            })
+        })
+        .is_some_and(|ret| ret == TypeId::BOOLEAN);
+    if !source_returns_boolean {
+        return false;
+    }
+
+    // The class member must not have an explicit return type annotation.
+    // If the developer wrote `: boolean` explicitly, tsc won't infer a predicate.
+    let node = checker.ctx.arena.get(node_idx);
+    let has_explicit_return_type = node
+        .and_then(|n| {
+            checker
+                .ctx
+                .arena
+                .get_method_decl(n)
+                .map(|m| m.type_annotation.is_some())
+                .or_else(|| {
+                    checker
+                        .ctx
+                        .arena
+                        .get_function(n)
+                        .map(|f| f.type_annotation.is_some())
+                })
+        })
+        .unwrap_or(true); // If we can't determine, assume explicit (don't suppress)
+    if has_explicit_return_type {
+        return false;
+    }
+
+    true
+}
+
+/// Extract a type predicate from a function or callable type's signature.
+fn get_type_predicate_from_signature(
+    checker: &CheckerState<'_>,
+    type_id: TypeId,
+) -> Option<tsz_solver::types::TypePredicate> {
+    tsz_solver::function_shape_id(checker.ctx.types, type_id)
+        .and_then(|id| checker.ctx.types.function_shape(id).type_predicate)
+        .or_else(|| {
+            tsz_solver::callable_shape_id(checker.ctx.types, type_id).and_then(|id| {
+                checker
+                    .ctx
+                    .types
+                    .callable_shape(id)
+                    .call_signatures
+                    .first()
+                    .and_then(|s| s.type_predicate)
+            })
+        })
 }
 
 /// Check if two function types differ only in return types that form a coinductive
