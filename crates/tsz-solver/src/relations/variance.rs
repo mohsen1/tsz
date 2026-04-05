@@ -807,9 +807,22 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         self.visit_with_polarity(key_type, current_polarity);
         self.suppress_method_bivariance = saved_smb;
         // If the target parameter was found inside this indexed access,
-        // the variance shortcut is unreliable — require structural fallback.
+        // the variance shortcut may be unreliable — require structural fallback.
+        //
+        // However, for simple literal-key indexed accesses like A['witness'],
+        // the access is a straightforward property projection that preserves
+        // variance reliability. The variance of A['key'] directly follows from
+        // A's variance for that property. Only non-literal keys (type params,
+        // keyof, unions, etc.) can cause non-obvious normalization that makes
+        // the variance shortcut unreliable.
         if self.result != before {
-            self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
+            let is_literal_key = matches!(
+                self.computer.db.lookup(key_type),
+                Some(TypeData::Literal(_))
+            );
+            if !is_literal_key {
+                self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
+            }
         }
     }
 
