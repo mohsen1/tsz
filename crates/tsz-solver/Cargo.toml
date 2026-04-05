@@ -28,6 +28,7 @@ stacker = "0.1.23"
 
 [dev-dependencies]
 rayon = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true
