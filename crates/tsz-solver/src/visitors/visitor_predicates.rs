@@ -601,6 +601,86 @@ pub fn references_any_type_param_named(
     )
 }
 
+/// Check if a constraint type references a type parameter along the base-constraint
+/// resolution path. This mimics tsc's `getBaseConstraint` recursion, which only
+/// follows certain structural paths:
+///
+/// Descended into (these require resolving sub-constraints):
+/// - Union/intersection members
+/// - Mapped type constraint (the key source)
+/// - Conditional check/extends types
+/// - Index access object/index
+/// - KeyOf operand
+///
+/// NOT descended into (these are type references/wrappers — tsc treats them as opaque):
+/// - Type application arguments (e.g. `Foo<T>`)
+/// - Array/Tuple/ReadonlyType/NoInfer inner types (these are effectively type references)
+/// - Object property types
+/// - Function parameter/return types
+///
+/// This avoids false positives: `T extends Array<T>` is NOT circular,
+/// but `T extends { [P in T]: number }` IS circular.
+pub fn constraint_references_type_param_in_resolution_path(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+    param_name: Atom,
+) -> bool {
+    use rustc_hash::FxHashSet;
+
+    let mut visited = FxHashSet::default();
+    let mut stack = vec![type_id];
+
+    while let Some(current) = stack.pop() {
+        if current.is_intrinsic() || !visited.insert(current) {
+            continue;
+        }
+
+        let Some(data) = types.lookup(current) else {
+            continue;
+        };
+
+        // Found the type parameter we're looking for
+        if matches!(&data, TypeData::TypeParameter(info) if info.name == param_name) {
+            return true;
+        }
+
+        // Follow only resolution-path children (not type reference args)
+        match &data {
+            // Union/intersection: descend into all members
+            TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
+                for &member in types.type_list(*list_id).iter() {
+                    stack.push(member);
+                }
+            }
+            // Mapped type: descend into the constraint (key source)
+            TypeData::Mapped(mapped_id) => {
+                let mapped = types.get_mapped(*mapped_id);
+                stack.push(mapped.constraint);
+            }
+            // Conditional: descend into check and extends
+            TypeData::Conditional(cond_id) => {
+                let cond = types.get_conditional(*cond_id);
+                stack.push(cond.check_type);
+                stack.push(cond.extends_type);
+            }
+            // Index access: descend into object and index
+            TypeData::IndexAccess(obj, idx) => {
+                stack.push(*obj);
+                stack.push(*idx);
+            }
+            // KeyOf: descend into operand
+            TypeData::KeyOf(inner) => {
+                stack.push(*inner);
+            }
+            // Everything else is a "type reference" or leaf — don't descend.
+            // Array<T>, Tuple, ReadonlyType, NoInfer, Application, Object,
+            // Function, Callable, etc. are opaque at the constraint resolution level.
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Check if a type transitively contains a specific `TypeId`.
 ///
 /// This is more efficient than `collect_referenced_types(…).contains(&target)`

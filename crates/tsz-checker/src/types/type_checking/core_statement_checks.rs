@@ -622,7 +622,15 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types.resolve_atom(info.name).as_str() == name.as_str()
                 })
         };
-        if is_direct_self_constraint {
+        // Also check if the constraint is a type parameter whose own constraint is
+        // circular (set to UNKNOWN). This handles mapped types like `{ [P in T]: number }`
+        // where T has been detected as having a circular constraint. In tsc, resolving
+        // P's base constraint would recurse into T and detect the same circularity.
+        let constraint_is_circular_type_param = !is_direct_self_constraint
+            && tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, constraint_type)
+                .is_some_and(|info| info.constraint == Some(TypeId::UNKNOWN));
+
+        if is_direct_self_constraint || constraint_is_circular_type_param {
             let message = format!("Type parameter '{name}' has a circular constraint.");
             self.ctx.error(
                 constraint_pos,
