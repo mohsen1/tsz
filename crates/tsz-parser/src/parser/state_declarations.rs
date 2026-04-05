@@ -1494,6 +1494,18 @@ impl ParserState {
                         // `declare export module "..."` or `declare export namespace Foo`
                         self.parse_module_declaration_with_modifiers(start_pos, Some(modifiers))
                     }
+                    SyntaxKind::InterfaceKeyword => {
+                        // `declare export interface X { ... }`
+                        self.parse_interface_declaration_with_modifiers(start_pos, Some(modifiers))
+                    }
+                    SyntaxKind::TypeKeyword => {
+                        // `declare export type X = ...`
+                        self.parse_type_alias_declaration_with_modifiers(start_pos, Some(modifiers))
+                    }
+                    SyntaxKind::EnumKeyword => {
+                        // `declare export enum X { ... }`
+                        self.parse_enum_declaration_with_modifiers(start_pos, Some(modifiers))
+                    }
                     _ => {
                         self.error_declaration_expected();
                         self.parse_expression_statement()
