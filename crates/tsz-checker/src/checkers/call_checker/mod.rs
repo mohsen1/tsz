@@ -370,24 +370,38 @@ impl<'a> CheckerState<'a> {
                 stable_call_recovery_return_type(self.ctx.types, refined_actual)
                     .zip(stable_call_recovery_return_type(self.ctx.types, expected))
                     .map(|(actual_return, expected_return)| {
-                        let generator_component_mismatch = self
-                            .get_generator_yield_type_argument(actual_return)
-                            .zip(self.get_generator_yield_type_argument(expected_return))
-                            .is_some_and(|(actual_yield, expected_yield)| {
-                                !self.is_assignable_to(actual_yield, expected_yield)
-                            })
-                            || self
-                                .get_generator_return_type_argument(actual_return)
-                                .zip(self.get_generator_return_type_argument(expected_return))
-                                .is_some_and(|(actual_gen_return, expected_gen_return)| {
-                                    !self.is_assignable_to(actual_gen_return, expected_gen_return)
+                        // When the expected return type is a union (e.g.,
+                        // `Generator<R,T,S> | AsyncGenerator<R,T,S>`), component-wise
+                        // generator checks (yield/return/next) are unreliable because
+                        // `get_generator_yield_type_argument` may extract from the
+                        // wrong union member. Skip component checks and rely on the
+                        // overall return type assignability instead.
+                        let expected_is_union = tsz_solver::type_queries::is_union_type(
+                            self.ctx.types,
+                            expected_return,
+                        );
+                        let generator_component_mismatch = !expected_is_union
+                            && (self
+                                .get_generator_yield_type_argument(actual_return)
+                                .zip(self.get_generator_yield_type_argument(expected_return))
+                                .is_some_and(|(actual_yield, expected_yield)| {
+                                    !self.is_assignable_to(actual_yield, expected_yield)
                                 })
-                            || self
-                                .get_generator_next_type_argument(actual_return)
-                                .zip(self.get_generator_next_type_argument(expected_return))
-                                .is_some_and(|(actual_next, expected_next)| {
-                                    !self.is_assignable_to(expected_next, actual_next)
-                                });
+                                || self
+                                    .get_generator_return_type_argument(actual_return)
+                                    .zip(self.get_generator_return_type_argument(expected_return))
+                                    .is_some_and(|(actual_gen_return, expected_gen_return)| {
+                                        !self.is_assignable_to(
+                                            actual_gen_return,
+                                            expected_gen_return,
+                                        )
+                                    })
+                                || self
+                                    .get_generator_next_type_argument(actual_return)
+                                    .zip(self.get_generator_next_type_argument(expected_return))
+                                    .is_some_and(|(actual_next, expected_next)| {
+                                        !self.is_assignable_to(expected_next, actual_next)
+                                    }));
 
                         // When the expected return type is `void`, there is never
                         // a return type mismatch — void return means "ignore the
