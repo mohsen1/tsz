@@ -45,7 +45,10 @@ impl<'a> CheckerState<'a> {
             // the inner expression (e.g. `1` in `(1)`), not the outer parens.
             let anchor_idx = self.ctx.arena.skip_parenthesized(branch_idx);
 
-            let _ = self.check_assignable_or_report_at(
+            // Use exact anchor to prevent assignment_anchor_node from
+            // walking up to the enclosing arrow/function expression.
+            // TSC reports branch-level TS2322 at the specific branch node.
+            let _ = self.check_assignable_or_report_at_exact_anchor(
                 branch_type,
                 expected_type,
                 anchor_idx,

@@ -1364,6 +1364,18 @@ impl<'a> CheckerState<'a> {
             if ext.parent.is_none() {
                 break;
             }
+
+            // Expression body of an arrow function is an implicit return.
+            // e.g. `(x: string): string => expr` — `expr` is the return value.
+            if let Some(parent_node) = self.ctx.arena.get(ext.parent)
+                && parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                && let Some(func) = self.ctx.arena.get_function(parent_node)
+                && func.body == current
+                && node.kind != syntax_kind_ext::BLOCK
+            {
+                return true;
+            }
+
             current = ext.parent;
         }
 
