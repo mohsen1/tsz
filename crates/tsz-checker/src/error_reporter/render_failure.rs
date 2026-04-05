@@ -1840,7 +1840,27 @@ impl<'a> CheckerState<'a> {
         file_name: String,
     ) -> Diagnostic {
         let source_str = if depth == 0 {
-            self.format_assignment_source_type_for_diagnostic(source, target, idx)
+            let display = self.format_assignment_source_type_for_diagnostic(source, target, idx);
+            // tsc preserves literal union structure (e.g., `"c" | "d"`) in error
+            // messages. If format_assignment_source_type_for_diagnostic widened the
+            // union to a primitive (e.g., `string`), fall back to the TypeFormatter
+            // which correctly displays literal union members.
+            if crate::query_boundaries::common::union_members(self.ctx.types, source).is_some_and(
+                |members| {
+                    !members.is_empty()
+                        && members.iter().all(|&m| {
+                            tsz_solver::literal_value(self.ctx.types, m).is_some()
+                                || m == TypeId::BOOLEAN_TRUE
+                                || m == TypeId::BOOLEAN_FALSE
+                        })
+                },
+            ) && tsz_solver::is_primitive_type(self.ctx.types, source) == false
+                && (display == "string" || display == "number" || display == "bigint")
+            {
+                self.format_type_diagnostic(source)
+            } else {
+                display
+            }
         } else {
             self.format_nested_assignment_source_type_for_diagnostic(source, target, idx)
         };
