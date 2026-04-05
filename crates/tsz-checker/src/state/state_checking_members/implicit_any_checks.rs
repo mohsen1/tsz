@@ -352,37 +352,69 @@ impl<'a> CheckerState<'a> {
         let Some(parent_node) = self.ctx.arena.get(function_parent) else {
             return false;
         };
-        if parent_node.kind != syntax_kind_ext::JSX_EXPRESSION {
-            return false;
-        }
 
-        let Some(jsx_parent) = self
-            .ctx
-            .arena
-            .get_extended(function_parent)
-            .map(|ext| ext.parent)
-        else {
-            return false;
-        };
-        let Some(jsx_parent_node) = self.ctx.arena.get(jsx_parent) else {
-            return false;
-        };
-
-        if jsx_parent_node.kind != syntax_kind_ext::JSX_ATTRIBUTE {
-            return false;
-        }
-
-        // Do not suppress for data-* and aria-* attributes -- these are untyped
-        // HTML custom data attributes that don't provide contextual types.
-        if let Some(attr_data) = self.ctx.arena.get_jsx_attribute(jsx_parent_node) {
-            if let Some(name_node) = self.ctx.arena.get(attr_data.name)
-                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-            {
-                let name = ident.escaped_text.as_str();
-                if name.starts_with("data-") || name.starts_with("aria-") {
-                    return false;
+        // Case 1: Direct JSX attribute callback: <Comp onClick={(k) => {}} />
+        //   ArrowFunction → JsxExpression → JsxAttribute
+        if parent_node.kind == syntax_kind_ext::JSX_EXPRESSION {
+            let Some(jsx_parent) = self
+                .ctx
+                .arena
+                .get_extended(function_parent)
+                .map(|ext| ext.parent)
+            else {
+                return false;
+            };
+            let Some(jsx_parent_node) = self.ctx.arena.get(jsx_parent) else {
+                return false;
+            };
+            if jsx_parent_node.kind != syntax_kind_ext::JSX_ATTRIBUTE {
+                return false;
+            }
+            // Do not suppress for data-* and aria-* attributes -- these are untyped
+            // HTML custom data attributes that don't provide contextual types.
+            if let Some(attr_data) = self.ctx.arena.get_jsx_attribute(jsx_parent_node) {
+                if let Some(name_node) = self.ctx.arena.get(attr_data.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                {
+                    let name = ident.escaped_text.as_str();
+                    if name.starts_with("data-") || name.starts_with("aria-") {
+                        return false;
+                    }
                 }
             }
+        } else if parent_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+            // Case 2: Spread attribute callback: <Comp {...{onClick: (k) => {}}} />
+            //   ArrowFunction → PropertyAssignment → ObjectLiteralExpression → JsxSpreadAttribute
+            let Some(obj_parent) = self
+                .ctx
+                .arena
+                .get_extended(function_parent)
+                .map(|ext| ext.parent)
+            else {
+                return false;
+            };
+            let Some(obj_node) = self.ctx.arena.get(obj_parent) else {
+                return false;
+            };
+            if obj_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                return false;
+            }
+            let Some(spread_parent) = self
+                .ctx
+                .arena
+                .get_extended(obj_parent)
+                .map(|ext| ext.parent)
+            else {
+                return false;
+            };
+            let Some(spread_node) = self.ctx.arena.get(spread_parent) else {
+                return false;
+            };
+            if spread_node.kind != syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
+                return false;
+            }
+        } else {
+            return false;
         }
 
         true
