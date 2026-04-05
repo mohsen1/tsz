@@ -1135,8 +1135,15 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "query_boundaries/assignability failure analysis should route through solver relation-query helpers"
     );
 
-    let generic_checker_src = fs::read_to_string("src/checkers/generic_checker.rs")
-        .expect("failed to read src/checkers/generic_checker.rs for architecture guard");
+    let generic_checker_src = {
+        let mut s = fs::read_to_string("src/checkers/generic_checker/mod.rs")
+            .expect("failed to read src/checkers/generic_checker/mod.rs for architecture guard");
+        s.push_str(
+            &fs::read_to_string("src/checkers/generic_checker/constraint_validation.rs")
+                .expect("failed to read src/checkers/generic_checker/constraint_validation.rs"),
+        );
+        s
+    };
     assert!(
         !generic_checker_src.contains("self.ensure_refs_resolved(type_arg);")
             && !generic_checker_src.contains("self.ensure_refs_resolved(instantiated_constraint);"),
