@@ -4,7 +4,7 @@ use crate::inference::infer::InferenceContext;
 use crate::inference::infer::InferenceVar;
 use crate::instantiation::instantiate::TypeSubstitution;
 use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
-use crate::types::{FunctionShape, TypeData, TypeId};
+use crate::types::{FunctionShape, TupleElement, TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
@@ -350,7 +350,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         };
 
         if let Some((source_fn, target_fn)) = function_info
-            && source_fn.params.len() <= target_fn.params.len()
+            && (source_fn.params.len() <= target_fn.params.len()
+                || source_fn.params.iter().any(|p| p.rest))
         {
             // When the target function is generic (e.g., `<A>(x: A) => Box<A>`),
             // directly insert mappings for source type parameters that appear in
@@ -416,16 +417,40 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     );
                 }
             } else {
-                for (source_param, target_param) in
-                    source_fn.params.iter().zip(target_fn.params.iter())
-                {
-                    self.collect_return_context_substitution(
-                        source_param.type_id,
-                        target_param.type_id,
-                        tracked_type_params,
-                        substitution,
-                        visited,
-                    );
+                for (i, source_param) in source_fn.params.iter().enumerate() {
+                    if source_param.rest {
+                        // Source has a rest parameter — collect remaining target
+                        // params into a tuple so `Args` infers as e.g. `[string]`
+                        // instead of `string`.
+                        let remaining: Vec<TupleElement> = target_fn.params[i..]
+                            .iter()
+                            .map(|p| TupleElement {
+                                type_id: p.type_id,
+                                name: p.name,
+                                optional: p.optional,
+                                rest: false,
+                            })
+                            .collect();
+                        if !remaining.is_empty() {
+                            let tuple_type = self.interner.tuple(remaining);
+                            self.collect_return_context_substitution(
+                                source_param.type_id,
+                                tuple_type,
+                                tracked_type_params,
+                                substitution,
+                                visited,
+                            );
+                        }
+                        break;
+                    } else if let Some(target_param) = target_fn.params.get(i) {
+                        self.collect_return_context_substitution(
+                            source_param.type_id,
+                            target_param.type_id,
+                            tracked_type_params,
+                            substitution,
+                            visited,
+                        );
+                    }
                 }
                 self.collect_return_context_substitution(
                     source_fn.return_type,
@@ -522,10 +547,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             },
         };
 
-        if let Some(((source_base, source_args), (target_base, target_args))) = app_info
-            && source_args.len() == target_args.len()
-        {
-            if source_base == target_base {
+        if let Some(((source_base, source_args), (target_base, mut target_args))) = app_info {
+            if source_base == target_base
+                && source_args.len() > target_args.len()
+                && let Some(def_id) = crate::type_queries::get_lazy_def_id(
+                    self.interner.as_type_database(),
+                    source_base,
+                )
+                && let Some(type_params) = self.interner.get_lazy_type_params(def_id)
+                && type_params.len() == source_args.len()
+            {
+                let mut filled = target_args.clone();
+                for param in &type_params[filled.len()..] {
+                    filled.push(param.default.unwrap_or(TypeId::UNKNOWN));
+                }
+                target_args = filled;
+            }
+
+            if source_args.len() == target_args.len() && source_base == target_base {
                 for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
                     self.collect_return_context_substitution(
                         *source_arg,
@@ -541,25 +580,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // match type arguments positionally if any source arg is a tracked type parameter.
             // This handles branded-property patterns where different interfaces share
             // structural positions for their type parameters (e.g., _out_TActor?: TActor).
-            let has_tracked_source_arg = source_args.iter().any(|&arg| {
-                if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(arg) {
-                    tracked_type_params.contains(&tp.name)
-                } else {
-                    false
-                }
-            });
-            if has_tracked_source_arg {
-                for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
-                    self.collect_return_context_substitution(
-                        *source_arg,
-                        *target_arg,
-                        tracked_type_params,
-                        substitution,
-                        visited,
-                    );
-                }
-                if !substitution.is_empty() {
-                    return;
+            if source_args.len() == target_args.len() {
+                let has_tracked_source_arg = source_args.iter().any(|&arg| {
+                    if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(arg) {
+                        tracked_type_params.contains(&tp.name)
+                    } else {
+                        false
+                    }
+                });
+                if has_tracked_source_arg {
+                    for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
+                        self.collect_return_context_substitution(
+                            *source_arg,
+                            *target_arg,
+                            tracked_type_params,
+                            substitution,
+                            visited,
+                        );
+                    }
+                    if !substitution.is_empty() {
+                        return;
+                    }
                 }
             }
         }

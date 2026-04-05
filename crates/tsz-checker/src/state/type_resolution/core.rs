@@ -612,6 +612,8 @@ impl<'a> CheckerState<'a> {
                     |node_idx: NodeIndex| self.resolve_def_id_for_lowering(node_idx);
                 let value_resolver =
                     |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+                let lazy_type_params_resolver =
+                    |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
                 let lowering = tsz_lowering::TypeLowering::with_hybrid_resolver(
                     self.ctx.arena,
                     self.ctx.types,
@@ -619,7 +621,8 @@ impl<'a> CheckerState<'a> {
                     &def_id_resolver,
                     &value_resolver,
                 )
-                .with_type_param_bindings(type_param_bindings);
+                .with_type_param_bindings(type_param_bindings)
+                .with_lazy_type_params_resolver(&lazy_type_params_resolver);
                 let mut result = lowering.lower_type(idx);
 
                 // Ensure Application types from lib types have their base DefId
