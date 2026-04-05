@@ -580,6 +580,15 @@ impl<'a> CheckerState<'a> {
 
             let prev_preserve_literals2 = self.ctx.preserve_literal_types;
             self.ctx.preserve_literal_types = true;
+            // When the signature has `const` type parameters (e.g., `<const T>`
+            // or JSDoc `@template const T`), set const-assertion context so that
+            // argument expressions get readonly tuple / readonly object / literal
+            // inference — matching tsc's behavior for const type parameters.
+            let has_const_type_params = sig.type_params.iter().any(|tp| tp.is_const);
+            let prev_in_const_assertion = self.ctx.in_const_assertion;
+            if has_const_type_params {
+                self.ctx.in_const_assertion = true;
+            }
             let mut sig_arg_types = if should_preinfer_candidate {
                 let round1_arg_types = self.collect_call_argument_types_with_context(
                     args,
@@ -709,6 +718,7 @@ impl<'a> CheckerState<'a> {
                 )
             };
             self.ctx.preserve_literal_types = prev_preserve_literals2;
+            self.ctx.in_const_assertion = prev_in_const_assertion;
 
             self.ensure_relation_input_ready(func_type);
 

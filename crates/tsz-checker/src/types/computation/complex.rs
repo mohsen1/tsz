@@ -592,8 +592,19 @@ impl<'a> CheckerState<'a> {
         // `[1, 2]` is typed as a tuple (not widened to `number[]`), enabling
         // correct const type parameter inference (e.g., `@template const T`).
         let prev_preserve_literals = self.ctx.preserve_literal_types;
+        let prev_in_const_assertion = self.ctx.in_const_assertion;
         if is_generic_new {
             self.ctx.preserve_literal_types = true;
+            // When the constructor has `const` type parameters (e.g., JSDoc
+            // `@template const T`), set const-assertion context so argument
+            // expressions produce readonly tuples and readonly objects with
+            // literal property types — matching tsc's const type param behavior.
+            if constructor_shape
+                .as_ref()
+                .is_some_and(|s| s.type_params.iter().any(|tp| tp.is_const))
+            {
+                self.ctx.in_const_assertion = true;
+            }
         }
 
         let arg_types = if is_generic_new {
@@ -1016,6 +1027,7 @@ impl<'a> CheckerState<'a> {
         };
         self.ctx.generic_excess_skip = prev_generic_excess_skip;
         self.ctx.preserve_literal_types = prev_preserve_literals;
+        self.ctx.in_const_assertion = prev_in_const_assertion;
 
         self.ensure_relation_input_ready(constructor_type);
         self.ensure_relation_inputs_ready(&arg_types);

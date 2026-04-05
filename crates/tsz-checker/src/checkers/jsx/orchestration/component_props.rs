@@ -170,6 +170,12 @@ impl<'a> CheckerState<'a> {
             for member in members {
                 if let Some(element_type) = self.jsx_multiple_children_element_type(member) {
                     element_types.push(element_type);
+                } else {
+                    // Non-array union members (like `{}` in ReactFragment) should be
+                    // included directly as valid target types for individual child
+                    // assignability. `{}` accepts any non-nullish value including
+                    // functions, so omitting it causes false TS2322 for function children.
+                    element_types.push(member);
                 }
             }
             return match element_types.as_slice() {
