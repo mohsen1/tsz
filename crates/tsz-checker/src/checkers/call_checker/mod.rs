@@ -1204,8 +1204,24 @@ impl<'a> CheckerState<'a> {
             } else {
                 TypingRequest::NONE
             };
+            // When the expected parameter type references a const type variable,
+            // enable const assertion mode so array/object literals in the argument
+            // are inferred as readonly tuples/readonly objects. This matches tsc's
+            // behavior where `const` type parameter context flows into argument
+            // expressions. Without this, the argument type is computed as a regular
+            // array/object, but the inferred const type parameter expects a readonly
+            // tuple/object, causing a false TS2322.
+            let prev_const_assertion = self.ctx.in_const_assertion;
+            if !self.ctx.in_const_assertion {
+                if let Some(et) = expected_type {
+                    if Self::type_references_const_type_param(self.ctx.types, et) {
+                        self.ctx.in_const_assertion = true;
+                    }
+                }
+            }
             let arg_snap = self.ctx.snapshot_diagnostics();
             let arg_type = self.get_type_of_node_with_request(arg_idx, &request);
+            self.ctx.in_const_assertion = prev_const_assertion;
 
             let is_direct_function_arg = self.ctx.arena.get(arg_idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::ARROW_FUNCTION
@@ -1411,6 +1427,28 @@ impl<'a> CheckerState<'a> {
         }
 
         arg_types
+    }
+
+    /// Check if a type is or references a const type parameter.
+    /// Used to propagate const assertion context into call argument expressions.
+    fn type_references_const_type_param(
+        db: &dyn tsz_solver::TypeDatabase,
+        type_id: TypeId,
+    ) -> bool {
+        use crate::query_boundaries::common;
+
+        // Direct check: is the type itself a const type parameter?
+        if let Some(tp_info) = common::type_param_info(db, type_id)
+            && tp_info.is_const
+        {
+            return true;
+        }
+
+        // General check: does the type reference any const type parameter?
+        let referenced = common::collect_referenced_types(db, type_id);
+        referenced
+            .into_iter()
+            .any(|ty| common::type_param_info(db, ty).is_some_and(|info| info.is_const))
     }
 
     /// Check excess properties on call arguments that are object literals.
