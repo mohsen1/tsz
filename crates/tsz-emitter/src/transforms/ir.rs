@@ -483,8 +483,6 @@ pub enum IRNode {
         /// being indented as regular statements. This prevents double-indentation when a
         /// namespace IIFE follows a class/enum/function in a parent namespace body.
         skip_sequence_indent: bool,
-        /// Whether this namespace IIFE merges with a default export function of the same name.
-        default_export_merge: bool,
     },
 
     /// Namespace export: `NS.foo = ...;`
