@@ -255,6 +255,13 @@ pub(crate) fn is_assignable_with_overrides<R: tsz_solver::TypeResolver>(
     inputs: &AssignabilityQueryInputs<'_, R>,
     overrides: &dyn tsz_solver::AssignabilityOverrideProvider,
 ) -> tsz_solver::RelationResult {
+    let _span = tracing::debug_span!(
+        "is_assignable",
+        src = inputs.source.0,
+        tgt = inputs.target.0,
+    )
+    .entered();
+
     let AssignabilityQueryInputs {
         db,
         resolver,
@@ -511,6 +518,14 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
     ctx: Option<&crate::context::CheckerContext<'_>>,
     sound_mode: bool,
 ) -> RelationOutcome {
+    let _span = tracing::debug_span!(
+        "execute_relation",
+        src = request.source.0,
+        tgt = request.target.0,
+        kind = ?request.kind,
+    )
+    .entered();
+
     let inputs = AssignabilityQueryInputs {
         db,
         resolver,
