@@ -81,8 +81,8 @@ impl<'a> Printer<'a> {
             if let Some(ref setter) = i.setter_ref {
                 self.write(", ");
                 self.write(setter);
-            } else if kind == "a" {
-                // Accessor with no setter - omit
+            } else if kind == "a" || kind == "m" {
+                // Accessor with no setter or method (read-only) -- omit fn_ref for SET
             } else if let Some(ref fn_ref) = i.fn_ref {
                 self.write(", ");
                 self.write(fn_ref);
@@ -343,8 +343,8 @@ impl<'a> Printer<'a> {
                     if let Some(ref setter) = info.setter_ref {
                         self.write(", ");
                         self.write(setter);
-                    } else if info.kind == "a" {
-                        // Accessor with no setter - omit the fn ref
+                    } else if info.kind == "a" || info.kind == "m" {
+                        // Accessor with no setter or method (read-only) -- omit fn_ref for SET
                     } else if let Some(ref fn_ref) = info.fn_ref {
                         self.write(", ");
                         self.write(fn_ref);
