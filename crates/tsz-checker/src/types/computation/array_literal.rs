@@ -641,6 +641,38 @@ impl<'a> CheckerState<'a> {
         }
 
         if tuple_context.is_some() || force_tuple_for_union_context {
+            // Check excess properties on object literal elements within tuple-typed array literals.
+            // When an array literal is contextually typed as a tuple (e.g., `[{x1: 10}, ""]` as
+            // `[ObjType, string]`), each element that is an object literal must be checked for
+            // excess properties against the expected tuple element type. This mirrors the array
+            // context path (below) but uses per-position tuple element types.
+            if let Some(ref helper) = ctx_helper {
+                let elem_count = array.elements.nodes.iter().filter(|n| n.is_some()).count();
+                let mut tuple_index = 0usize;
+                for &elem_idx in &array.elements.nodes {
+                    if elem_idx.is_none() {
+                        continue;
+                    }
+                    if let Some(elem_node) = self.ctx.arena.get(elem_idx) {
+                        if elem_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                            if let Some(expected_type) =
+                                helper.get_tuple_element_type_with_count(tuple_index, elem_count)
+                            {
+                                let elem_type = tuple_elements
+                                    .get(tuple_index)
+                                    .map(|te| te.type_id)
+                                    .unwrap_or(TypeId::ERROR);
+                                self.check_object_literal_excess_properties(
+                                    elem_type,
+                                    expected_type,
+                                    elem_idx,
+                                );
+                            }
+                        }
+                    }
+                    tuple_index += 1;
+                }
+            }
             return factory.tuple(tuple_elements);
         }
 
