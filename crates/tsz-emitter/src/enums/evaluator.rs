@@ -89,6 +89,8 @@ pub struct EnumEvaluator<'a> {
     member_values: FxHashMap<String, EnumValue>,
     /// The current enum name (for self-references like `E.A`)
     current_enum_name: Option<String>,
+    /// The fully qualified name for the current enum (e.g., `"A.B.C.E"`).
+    current_qualified_name: Option<String>,
     /// The source file currently being evaluated, for resolving top-level const bindings.
     current_source_file: Option<NodeIndex>,
     /// Accumulated enum values from all previously-evaluated enums.
@@ -104,6 +106,7 @@ impl<'a> EnumEvaluator<'a> {
             arena,
             member_values: FxHashMap::default(),
             current_enum_name: None,
+            current_qualified_name: None,
             current_source_file: None,
             all_enum_values: FxHashMap::default(),
         }
@@ -119,6 +122,7 @@ impl<'a> EnumEvaluator<'a> {
             arena,
             member_values: FxHashMap::default(),
             current_enum_name: None,
+            current_qualified_name: None,
             current_source_file: None,
             all_enum_values: prior,
         }
@@ -127,6 +131,25 @@ impl<'a> EnumEvaluator<'a> {
     /// Return the accumulated enum values (for persisting across evaluations).
     pub fn take_all_enum_values(self) -> FxHashMap<String, FxHashMap<String, EnumValue>> {
         self.all_enum_values
+    }
+
+    /// Set the current enum's qualified name for resolving self-references
+    /// via namespace paths.
+    pub fn set_current_qualified_name(&mut self, qualified_name: &str) {
+        self.current_qualified_name = Some(qualified_name.to_string());
+    }
+
+    /// Register enum values under an additional qualified name (e.g., `"A.B.C.E"`).
+    pub fn register_qualified_enum_values(
+        &mut self,
+        qualified_name: &str,
+        values: &FxHashMap<String, EnumValue>,
+    ) {
+        let entry = self
+            .all_enum_values
+            .entry(qualified_name.to_string())
+            .or_default();
+        entry.extend(values.iter().map(|(k, v)| (k.clone(), v.clone())));
     }
 
     /// Set the current enum name for resolving self-references
@@ -143,6 +166,7 @@ impl<'a> EnumEvaluator<'a> {
     pub fn clear(&mut self) {
         self.member_values.clear();
         self.current_enum_name = None;
+        self.current_qualified_name = None;
         self.current_source_file = None;
     }
 
@@ -154,7 +178,9 @@ impl<'a> EnumEvaluator<'a> {
     /// Evaluate all members of an enum declaration
     /// Returns a map of member name to evaluated value
     pub fn evaluate_enum(&mut self, enum_idx: NodeIndex) -> FxHashMap<String, EnumValue> {
+        let saved_qualified = self.current_qualified_name.take();
         self.clear();
+        self.current_qualified_name = saved_qualified;
 
         let Some(enum_node) = self.arena.get(enum_idx) else {
             return FxHashMap::default();
@@ -646,27 +672,35 @@ impl<'a> EnumEvaluator<'a> {
         }
     }
 
-    /// Evaluate a property access expression (E.A)
+    /// Build a dotted path string from a chain of property access expressions.
+    fn build_property_chain(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return Some(self.arena.get_identifier(node)?.escaped_text.clone());
+        }
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(node)?;
+            let left = self.build_property_chain(access.expression)?;
+            let right_node = self.arena.get(access.name_or_argument)?;
+            if right_node.kind != SyntaxKind::Identifier as u16 {
+                return None;
+            }
+            let right = &self.arena.get_identifier(right_node)?.escaped_text;
+            return Some(format!("{left}.{right}"));
+        }
+        None
+    }
+
+    /// Evaluate a property access expression (E.A or A.B.C.E.V1)
     fn evaluate_property_access(&self, obj: NodeIndex, prop: NodeIndex) -> EnumValue {
-        // Get the object name
-        let Some(obj_node) = self.arena.get(obj) else {
-            return EnumValue::Computed;
-        };
-
-        let obj_name = if let Some(ident) = self.arena.get_identifier(obj_node) {
-            ident.escaped_text.clone()
-        } else {
-            return EnumValue::Computed;
-        };
-
-        // Get the property name
         let Some(prop_node) = self.arena.get(prop) else {
             return EnumValue::Computed;
         };
 
         let prop_name = if let Some(ident) = self.arena.get_identifier(prop_node) {
             ident.escaped_text.clone()
-        } else if prop_node.kind == SyntaxKind::StringLiteral as u16
+        } else if (prop_node.kind == SyntaxKind::StringLiteral as u16
+            || prop_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
             && let Some(lit) = self.arena.get_literal(prop_node)
         {
             lit.text.clone()
@@ -674,16 +708,36 @@ impl<'a> EnumEvaluator<'a> {
             return EnumValue::Computed;
         };
 
-        // Check if this is a self-reference (E.A within enum E)
-        if let Some(ref current_enum) = self.current_enum_name
-            && &obj_name == current_enum
-            && let Some(value) = self.member_values.get(&prop_name)
-        {
-            return value.clone();
+        // Build the full dotted path of the object expression (handles chains like A.B.C.E)
+        let Some(obj_path) = self.build_property_chain(obj) else {
+            return EnumValue::Computed;
+        };
+
+        // Check if this is a self-reference: either by simple name (E.A)
+        // or by qualified name (A.B.C.E.V1 within namespace A.B.C { enum E })
+        let is_self_ref = self
+            .current_enum_name
+            .as_ref()
+            .is_some_and(|n| n == &obj_path)
+            || self
+                .current_qualified_name
+                .as_ref()
+                .is_some_and(|q| q == &obj_path);
+        if is_self_ref {
+            if let Some(value) = self.member_values.get(&prop_name) {
+                return value.clone();
+            }
+            // Also check prior blocks of a merged enum
+            if let Some(ref enum_name) = self.current_enum_name
+                && let Some(prior) = self.all_enum_values.get(enum_name)
+                && let Some(value) = prior.get(&prop_name)
+            {
+                return value.clone();
+            }
         }
 
-        // Check cross-enum references (Foo.A from within enum Bar)
-        if let Some(enum_members) = self.all_enum_values.get(&obj_name)
+        // Check cross-enum references by full path (e.g., "A.B.C.E" or "Foo")
+        if let Some(enum_members) = self.all_enum_values.get(&obj_path)
             && let Some(value) = enum_members.get(&prop_name)
         {
             return value.clone();
