@@ -1292,21 +1292,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
 
         // Null/undefined in non-strict null check mode.
-        // Exception: nullish values are NOT assignable to type parameters even
-        // without strictNullChecks. In tsc, type parameters are opaque —
-        // `null` cannot be assigned to `T` because `T` could be instantiated
-        // as `never` or any non-nullable type. The structural subtype check
-        // at core.rs:830-889 correctly rejects concrete <: TypeParam, so we
-        // must not short-circuit here.
-        // Additionally, `null` is not assignable to `void` even without
-        // strictNullChecks — only `undefined` is (via the intrinsic rule).
+        // Without strictNullChecks, null/undefined are assignable to all types
+        // including type parameters. In tsc, the non-strict mode treats null
+        // and undefined as being in the domain of every type.
+        // Exception: `null` is not assignable to `void` — only `undefined` is.
         if !self.strict_null_checks && source.is_nullish() {
-            let target_is_type_param = matches!(
-                self.interner.lookup(target),
-                Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
-            );
             let null_to_void = source == TypeId::NULL && target == TypeId::VOID;
-            if !target_is_type_param && !null_to_void {
+            if !null_to_void {
                 return Some(true);
             }
         }
@@ -1367,14 +1359,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return true;
         }
         // Without strictNullChecks, null/undefined are assignable to all types
-        // EXCEPT type parameters and null-to-void (only undefined <: void).
+        // including type parameters. Exception: `null` is not assignable to
+        // `void` — only `undefined` is.
         if !self.strict_null_checks && source.is_nullish() {
-            let target_is_type_param = matches!(
-                self.interner.lookup(target),
-                Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
-            );
             let null_to_void = source == TypeId::NULL && target == TypeId::VOID;
-            if !target_is_type_param && !null_to_void {
+            if !null_to_void {
                 return true;
             }
         }
@@ -1430,13 +1419,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if target == TypeId::UNKNOWN {
             return None;
         }
+        // Without strictNullChecks, null/undefined are assignable to all types
+        // including type parameters. Exception: `null` is not assignable to `void`.
         if !self.strict_null_checks && source.is_nullish() {
-            let target_is_type_param = matches!(
-                self.interner.lookup(target),
-                Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
-            );
             let null_to_void = source == TypeId::NULL && target == TypeId::VOID;
-            if !target_is_type_param && !null_to_void {
+            if !null_to_void {
                 return None;
             }
         }

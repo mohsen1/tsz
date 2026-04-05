@@ -165,3 +165,100 @@ x.prop;
         "Expected no errors with any type, got {error_count}"
     );
 }
+
+/// Without strictNullChecks, null is assignable to type parameters.
+/// In tsc, non-strict mode treats null/undefined as part of every type's
+/// domain, including type parameters.
+///
+/// Regression test: previously the solver incorrectly rejected null→T
+/// even when strictNullChecks was off, because type parameters were
+/// excluded from the "null assignable to all types" fast path.
+#[test]
+fn test_null_assignable_to_type_parameter_without_strict_null_checks() {
+    let source = r"
+function foo<T>(x: T) {}
+class C<T> {
+    test() {
+        foo<T>(null);
+    }
+}
+function bar<U>() {
+    foo<U>(null);
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = crate::context::CheckerOptions {
+        strict_null_checks: false,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    // Without strictNullChecks, null should be assignable to type parameters.
+    // Filter out TS2318 (missing lib.d.ts globals) which are unrelated.
+    let ts2345_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2345)
+        .count();
+    assert_eq!(
+        ts2345_count, 0,
+        "Expected no TS2345 errors (null should be assignable to T without strictNullChecks), got {ts2345_count}"
+    );
+}
+
+/// With strictNullChecks ON, null should NOT be assignable to type parameters.
+#[test]
+fn test_null_not_assignable_to_type_parameter_with_strict_null_checks() {
+    let source = r"
+function foo<T>(x: T) {}
+function bar<U>() {
+    foo<U>(null);
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let ts2345_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2345)
+        .count();
+    assert!(
+        ts2345_count >= 1,
+        "Expected at least 1 TS2345 error (null should NOT be assignable to T with strictNullChecks), got {ts2345_count}"
+    );
+}
