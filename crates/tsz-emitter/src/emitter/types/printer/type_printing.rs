@@ -1,4 +1,4 @@
-//! Composite type printing (unions, intersections, callables, etc.) for the TypePrinter.
+//! Composite type printing (unions, intersections, callables, etc.) for the `TypePrinter`.
 
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
@@ -702,6 +702,34 @@ impl<'a> TypePrinter<'a> {
             parts.push(self.print_call_signature(sig, true, callable.is_abstract));
         }
 
+        // Add index signatures (tsc emits these before properties)
+        if let Some(ref idx) = callable.string_index {
+            let readonly = if idx.readonly { "readonly " } else { "" };
+            let param = idx
+                .param_name
+                .map(|a| self.resolve_atom(a))
+                .unwrap_or_else(|| "x".to_string());
+            parts.push(format!(
+                "{}[{}: string]: {}",
+                readonly,
+                param,
+                self.print_type(idx.value_type)
+            ));
+        }
+        if let Some(ref idx) = callable.number_index {
+            let readonly = if idx.readonly { "readonly " } else { "" };
+            let param = idx
+                .param_name
+                .map(|a| self.resolve_atom(a))
+                .unwrap_or_else(|| "x".to_string());
+            parts.push(format!(
+                "{}[{}: number]: {}",
+                readonly,
+                param,
+                self.print_type(idx.value_type)
+            ));
+        }
+
         // Add properties (filter out internal props tsc strips from .d.ts)
         for prop in &callable.properties {
             let name = self.resolve_atom(prop.name);
@@ -746,34 +774,6 @@ impl<'a> TypePrinter<'a> {
                 quoted_name,
                 optional,
                 self.print_type(prop.type_id)
-            ));
-        }
-
-        // Add index signatures
-        if let Some(ref idx) = callable.string_index {
-            let readonly = if idx.readonly { "readonly " } else { "" };
-            let param = idx
-                .param_name
-                .map(|a| self.resolve_atom(a))
-                .unwrap_or_else(|| "x".to_string());
-            parts.push(format!(
-                "{}[{}: string]: {}",
-                readonly,
-                param,
-                self.print_type(idx.value_type)
-            ));
-        }
-        if let Some(ref idx) = callable.number_index {
-            let readonly = if idx.readonly { "readonly " } else { "" };
-            let param = idx
-                .param_name
-                .map(|a| self.resolve_atom(a))
-                .unwrap_or_else(|| "x".to_string());
-            parts.push(format!(
-                "{}[{}: number]: {}",
-                readonly,
-                param,
-                self.print_type(idx.value_type)
             ));
         }
 

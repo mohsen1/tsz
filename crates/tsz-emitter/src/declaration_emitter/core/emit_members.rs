@@ -218,6 +218,12 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     self.write(": ");
                     self.write(&type_text);
+                } else if return_type_id == tsz_solver::types::TypeId::UNKNOWN
+                    && method.type_annotation.is_none()
+                    && method_body.is_none()
+                {
+                    // Ambient methods without explicit return type: tsc emits `any`
+                    self.write(": any");
                 } else {
                     self.write(": ");
                     self.write(&self.print_type_id(return_type_id));
