@@ -462,6 +462,16 @@ impl ParserState {
                 && self.current_token as u16 <= SyntaxKind::DeferKeyword as u16)
     }
 
+    /// Returns true if the current token is contextually reserved and cannot be used
+    /// as a break/continue label in the current context. Matches tsc's `isIdentifier()`
+    /// which returns false for `await` in await context and `yield` in yield context.
+    #[inline]
+    pub(crate) fn is_contextually_reserved_label(&self) -> bool {
+        (self.is_token(SyntaxKind::AwaitKeyword)
+            && (self.in_static_block_context() || self.in_async_context()))
+            || (self.is_token(SyntaxKind::YieldKeyword) && self.in_generator_context())
+    }
+
     /// Check if current token is a future reserved word (strict mode reserved).
     /// These are: implements, interface, let, package, private, protected, public, static, yield.
     /// In strict mode contexts these cannot be used as identifiers.
