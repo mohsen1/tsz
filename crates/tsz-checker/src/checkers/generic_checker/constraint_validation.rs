@@ -332,7 +332,21 @@ impl<'a> CheckerState<'a> {
                                 // If base still has type params and is not callable, emit TS2344.
                                 // Also try evaluating the base (e.g., mapped type indexed access
                                 // like `FunctionsObj<T>[keyof T]` → `() => unknown`).
-                                let base_is_callable = query::is_callable_type(db, base);
+                                //
+                                // Special case: when the type argument is Application(TypeQuery(sym), args)
+                                // — i.e., `typeof fn<Args>` — the base constraint resolved to the
+                                // underlying function type by evaluating through the TypeQuery. But
+                                // the instantiation expression may have wrong arity (TS2635), meaning
+                                // the Application is NOT a valid instantiation. In this case, the
+                                // base's callability should not be used to satisfy the constraint.
+                                // tsc treats failed instantiation expressions as errorType which is
+                                // not callable.
+                                let is_typeof_instantiation = query::is_application_of_type_query(
+                                    self.ctx.types.as_type_database(),
+                                    type_arg,
+                                );
+                                let base_is_callable =
+                                    query::is_callable_type(db, base) && !is_typeof_instantiation;
                                 if base_is_callable {
                                     // Base is callable even with type params — satisfied.
                                     continue;
