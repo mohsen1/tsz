@@ -210,18 +210,32 @@ impl<'a> Printer<'a> {
         } else {
             format!("{ns_prefix}.{simple_name}")
         };
+        // Set qualified name so self-references via full path are resolved.
+        if !ns_prefix.is_empty() {
+            evaluator.set_current_qualified_name(&qualified_key);
+        }
         let values = evaluator.evaluate_enum(enum_idx);
         if !values.is_empty() {
+            // Register qualified name in evaluator for cross-namespace resolution.
+            if !ns_prefix.is_empty() {
+                evaluator.register_qualified_enum_values(&qualified_key, &values);
+            }
+
             use crate::emitter::core::ScopedConstEnum;
-            let entry = ScopedConstEnum {
-                scope_start,
-                scope_end,
-                values,
-            };
-            self.const_enum_values
-                .entry(qualified_key)
-                .or_default()
-                .push(entry);
+            // Merge into existing entry at the same scope (merged enums).
+            let entries = self.const_enum_values.entry(qualified_key).or_default();
+            if let Some(existing) = entries
+                .iter_mut()
+                .find(|e| e.scope_start == scope_start && e.scope_end == scope_end)
+            {
+                existing.values.extend(values);
+            } else {
+                entries.push(ScopedConstEnum {
+                    scope_start,
+                    scope_end,
+                    values,
+                });
+            }
         }
     }
 

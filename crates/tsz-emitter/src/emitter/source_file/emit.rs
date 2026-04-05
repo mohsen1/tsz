@@ -884,6 +884,20 @@ impl<'a> Printer<'a> {
             // Track function exports so `export { f }` clauses can skip
             // duplicate inline emission (already handled in preamble).
             self.ctx.module_state.hoisted_func_exports = func_exports.clone();
+            // Populate default_exported_func_names early so it's available for
+            // namespace merge detection during emit.
+            for name in &default_func_exports {
+                self.ctx
+                    .module_state
+                    .default_exported_func_names
+                    .insert(name.clone());
+            }
+            // When an `export namespace X` merges with `export default function X`,
+            // tsc does NOT emit `exports.X = void 0;` — the function declaration
+            // provides the binding. Filter those names out before void 0 emission.
+            if !default_func_exports.is_empty() {
+                other_exports.retain(|name| !default_func_exports.contains(name));
+            }
             // Emit other exports: exports.X = exports.Y = void 0;
             // tsc chunks into groups of 50 and reverses each chunk (reduceLeft).
             // Names that are not valid JS identifiers use bracket notation.
@@ -995,12 +1009,6 @@ impl<'a> Printer<'a> {
                 }
             }
             self.ctx.module_state.default_func_export_hoisted = !default_func_exports.is_empty();
-            for name in &default_func_exports {
-                self.ctx
-                    .module_state
-                    .default_exported_func_names
-                    .insert(name.clone());
-            }
 
             // Emit CJS JSX runtime require() after exports preamble
             if let Some(ref jsx_import) = jsx_import_text {
