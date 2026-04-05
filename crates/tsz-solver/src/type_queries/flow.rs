@@ -629,15 +629,19 @@ fn types_are_comparable_for_assertion_inner(
     }
 
     // Handle Lazy types (unresolved semantic references like interface names).
-    // At depth > 0, when either side is Lazy we can't structurally decompose
-    // it (no extractable properties), so assume comparable. This matches
-    // `types_are_comparable_inner` behavior and prevents false TS2352 errors
-    // on valid assertions involving interface-typed properties (e.g.,
-    // `{ mode: "" } as { mode: AutomationMode }` where the interface is Lazy).
-    if depth > 0
-        && (matches!(db.lookup(source), Some(TypeData::Lazy(_)))
-            || matches!(db.lookup(target), Some(TypeData::Lazy(_))))
-    {
+    // Only assume comparable when BOTH are Lazy at depth > 0 — we can't
+    // structurally compare two opaque references so we conservatively assume
+    // overlap (avoids false TS2352). When only ONE side is Lazy, fall through
+    // to the structural property check. The Lazy type will have no extractable
+    // properties, so it correctly returns "not comparable" for cases like
+    // comparing `{z: any}` (concrete Object) with `T1` (empty interface ref).
+    //
+    // NOTE: callers should pre-resolve Lazy types (via checker evaluation) before
+    // invoking this function to avoid false TS2352 on assertions like
+    // `{mode: ""} as UserSettings` where a nested interface property stays Lazy.
+    let source_is_lazy = matches!(db.lookup(source), Some(TypeData::Lazy(_)));
+    let target_is_lazy = matches!(db.lookup(target), Some(TypeData::Lazy(_)));
+    if depth > 0 && source_is_lazy && target_is_lazy {
         return true;
     }
 
@@ -1043,6 +1047,21 @@ fn signatures_are_comparable(
 
 /// Check if a base primitive type is comparable to a literal or other form of that primitive.
 fn is_primitive_comparable(db: &dyn TypeDatabase, base: TypeId, other: TypeId) -> bool {
+    // Decompose union types: a union is primitive-comparable if any member is.
+    // This is needed for enum structural types which are stored as unions of
+    // member literals (e.g., `"" | "time" | "system" | "location"`).
+    if let Some(TypeData::Union(list_id)) = db.lookup(base) {
+        let members = db.type_list(list_id);
+        return members
+            .iter()
+            .any(|&m| is_primitive_comparable(db, m, other));
+    }
+    if let Some(TypeData::Union(list_id)) = db.lookup(other) {
+        let members = db.type_list(list_id);
+        return members
+            .iter()
+            .any(|&m| is_primitive_comparable(db, base, m));
+    }
     // string is comparable to string literals
     if base == TypeId::STRING {
         if let Some(TypeData::Literal(lit)) = db.lookup(other) {
@@ -1640,5 +1659,142 @@ mod tests {
 
         // Non-function type → None
         assert!(super::extract_predicate_signature(&interner, TypeId::STRING).is_none());
+    }
+
+    /// Verify that when object property types are Lazy (unresolved), the
+    /// solver's comparable check correctly returns false (not comparable),
+    /// because Lazy types have no extractable properties for structural
+    /// comparison.  The CHECKER is responsible for resolving Lazy types
+    /// before calling this function (via `deep_evaluate_object_properties`).
+    #[test]
+    fn assertion_comparable_object_with_lazy_property_not_resolved_by_solver() {
+        use crate::def::DefId;
+        use crate::types::{PropertyInfo, Visibility};
+
+        let db = TypeInterner::new();
+
+        let mode_name = db.intern_string("mode");
+        let source = db.object(vec![PropertyInfo {
+            name: mode_name,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+            is_string_named: false,
+        }]);
+
+        // Target has Lazy property type — solver cannot resolve it
+        let lazy_ref = db.lazy(DefId(9999));
+        let target = db.object(vec![PropertyInfo {
+            name: mode_name,
+            type_id: lazy_ref,
+            write_type: lazy_ref,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+            is_string_named: false,
+        }]);
+
+        // Solver returns false because Lazy types are opaque here.
+        // The checker resolves Lazy types before calling this function.
+        assert!(
+            !types_are_comparable_for_assertion(&db, source, target),
+            "Unresolved Lazy property should not be comparable at solver level"
+        );
+    }
+
+    /// When property types are both concrete (no Lazy), objects with a
+    /// matching property whose types are comparable should be comparable.
+    #[test]
+    fn assertion_comparable_objects_with_resolved_enum_property() {
+        use crate::def::DefId;
+        use crate::types::{PropertyInfo, Visibility};
+
+        let db = TypeInterner::new();
+
+        let mode_name = db.intern_string("mode");
+        // Source: { mode: string }
+        let source = db.object(vec![PropertyInfo {
+            name: mode_name,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+            is_string_named: false,
+        }]);
+
+        // Target: { mode: AutomationMode } (enum with string members)
+        let structural_union = db.union(vec![
+            db.literal_string(""),
+            db.literal_string("time"),
+            db.literal_string("system"),
+        ]);
+        let enum_type = db.enum_type(DefId(8888), structural_union);
+        let target = db.object(vec![PropertyInfo {
+            name: mode_name,
+            type_id: enum_type,
+            write_type: enum_type,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+            is_string_named: false,
+        }]);
+
+        // When both sides are resolved, the comparable check succeeds
+        // because string is comparable to a string enum.
+        assert!(
+            types_are_comparable_for_assertion(&db, source, target),
+            "Object with string property should be comparable to object with string enum property"
+        );
+    }
+
+    /// Verify that enum structural union types are comparable to their
+    /// base primitive type via is_primitive_comparable union decomposition.
+    #[test]
+    fn enum_structural_union_comparable_to_base_primitive() {
+        use crate::def::DefId;
+
+        let db = TypeInterner::new();
+
+        // Create enum structural type: "" | "time" | "system"
+        let lit_empty = db.literal_string("");
+        let lit_time = db.literal_string("time");
+        let lit_system = db.literal_string("system");
+        let structural_union = db.union(vec![lit_empty, lit_time, lit_system]);
+
+        // Create the enum type
+        let enum_type = db.enum_type(DefId(8888), structural_union);
+
+        // string should be comparable to the enum
+        assert!(
+            is_primitive_comparable(&db, TypeId::STRING, enum_type)
+                || is_primitive_comparable(&db, enum_type, TypeId::STRING),
+            "string should be primitive-comparable to a string enum"
+        );
+
+        // A string literal should also be comparable to the enum
+        assert!(
+            is_primitive_comparable(&db, lit_empty, enum_type)
+                || is_primitive_comparable(&db, enum_type, lit_empty),
+            "string literal should be primitive-comparable to a string enum containing it"
+        );
     }
 }

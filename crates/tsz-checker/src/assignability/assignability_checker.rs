@@ -1298,6 +1298,77 @@ impl<'a> CheckerState<'a> {
         evaluated
     }
 
+    /// Recursively evaluate Lazy property types within an Object type so that
+    /// the solver's `types_are_comparable_for_assertion` sees concrete types
+    /// instead of opaque `Lazy(DefId)` references.
+    ///
+    /// Recurses up to `max_depth` levels into nested Object types whose
+    /// properties are Lazy.  Returns the original type unchanged if it is not
+    /// an object or has no Lazy property types.
+    pub(crate) fn deep_evaluate_object_properties(&mut self, type_id: TypeId) -> TypeId {
+        self.deep_evaluate_object_properties_inner(type_id, 0)
+    }
+
+    fn deep_evaluate_object_properties_inner(&mut self, type_id: TypeId, depth: u32) -> TypeId {
+        const MAX_DEPTH: u32 = 3;
+        if depth >= MAX_DEPTH {
+            return type_id;
+        }
+
+        let db = self.ctx.types.as_type_database();
+        // Use solver query API to get the shape id (handles Object and ObjectWithIndex)
+        let shape_id = match tsz_solver::type_queries::get_object_shape_id(db, type_id) {
+            Some(sid) => sid,
+            None => return type_id,
+        };
+
+        let shape = db.object_shape(shape_id);
+        let mut any_changed = false;
+        let new_props: Vec<tsz_solver::PropertyInfo> = shape
+            .properties
+            .iter()
+            .map(|p| {
+                let mut eval_ty = p.type_id;
+                // Resolve Lazy references (interface/type alias names)
+                if tsz_solver::is_lazy_type(self.ctx.types.as_type_database(), eval_ty) {
+                    let resolved = self.evaluate_type_for_assignability(eval_ty);
+                    if resolved != eval_ty {
+                        any_changed = true;
+                        eval_ty = resolved;
+                    }
+                }
+                // Recurse into resolved Object types to resolve their properties too
+                let deep = self.deep_evaluate_object_properties_inner(eval_ty, depth + 1);
+                if deep != eval_ty {
+                    any_changed = true;
+                    eval_ty = deep;
+                }
+
+                let mut eval_write = p.write_type;
+                if tsz_solver::is_lazy_type(self.ctx.types.as_type_database(), eval_write) {
+                    let resolved = self.evaluate_type_for_assignability(eval_write);
+                    if resolved != eval_write {
+                        any_changed = true;
+                        eval_write = resolved;
+                    }
+                }
+
+                tsz_solver::PropertyInfo {
+                    type_id: eval_ty,
+                    write_type: eval_write,
+                    ..*p
+                }
+            })
+            .collect();
+
+        if !any_changed {
+            return type_id;
+        }
+
+        // Re-intern the object with resolved property types
+        self.ctx.types.as_type_database().object(new_props)
+    }
+
     /// Resolve a deferred Mapped type by pre-resolving its constraint's Applications.
     ///
     /// When evaluation produces a deferred Mapped type (e.g., from Omit/Pick where

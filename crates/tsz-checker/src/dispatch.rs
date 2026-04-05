@@ -1127,21 +1127,38 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                         let evaluated_asserted = self
                                             .checker
                                             .evaluate_type_for_assignability(effective_asserted);
+
+                                        // Deep-evaluate object property types so the
+                                        // solver's comparable check sees concrete types
+                                        // instead of Lazy(DefId) references.  Without
+                                        // this, nested interface properties (e.g.,
+                                        // `automation: Automation` inside `UserSettings`)
+                                        // appear as opaque Lazy refs that the solver
+                                        // cannot structurally compare, causing false
+                                        // TS2352 on valid assertions like
+                                        // `{mode: ""} as UserSettings`.
+                                        let deep_expr = self
+                                            .checker
+                                            .deep_evaluate_object_properties(evaluated_expr);
+                                        let deep_asserted = self
+                                            .checker
+                                            .deep_evaluate_object_properties(evaluated_asserted);
+
                                         let both_callable = tsz_solver::callable_shape_id(
                                             self.checker.ctx.types,
-                                            evaluated_expr,
+                                            deep_expr,
                                         )
                                         .is_some()
                                             && tsz_solver::callable_shape_id(
                                                 self.checker.ctx.types,
-                                                evaluated_asserted,
+                                                deep_asserted,
                                             )
                                             .is_some();
                                         if !both_callable {
                                             have_overlap = tsz_solver::type_queries::flow::types_are_comparable_for_assertion(
                                                 self.checker.ctx.types,
-                                                evaluated_expr,
-                                                evaluated_asserted,
+                                                deep_expr,
+                                                deep_asserted,
                                             );
                                         }
                                     }
