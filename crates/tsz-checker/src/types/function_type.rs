@@ -1945,9 +1945,13 @@ impl<'a> CheckerState<'a> {
                                 ));
                         }
                     } else {
-                        // For expression-bodied arrows/functions with conditional
-                        // bodies, use source elaboration so that TS2322 is reported
-                        // at the specific failing branch, not the whole body.
+                        // For expression-bodied arrows/functions, use exact anchoring
+                        // to prevent assignment_anchor_node from walking up to the
+                        // enclosing arrow function. TSC reports the error at the body
+                        // expression (e.g. `'foo'` in `(): number => 'foo'`), not at
+                        // the arrow function itself.
+                        // For conditional bodies, use source elaboration so TS2322 is
+                        // reported at the specific failing branch.
                         let body_is_conditional = self
                             .ctx
                             .arena
@@ -1961,7 +1965,7 @@ impl<'a> CheckerState<'a> {
                                 body,
                             )
                         } else {
-                            self.check_assignable_or_report_at_without_source_elaboration(
+                            self.check_assignable_or_report_at_exact_anchor(
                                 actual_return,
                                 expected_return_type,
                                 body,
