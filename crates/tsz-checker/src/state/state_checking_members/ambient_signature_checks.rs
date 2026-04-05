@@ -1282,6 +1282,12 @@ impl<'a> CheckerState<'a> {
             self.push_return_type(instance_type);
             let body_request = request.read().contextual_opt(None);
             self.clear_type_cache_recursive(ctor.body);
+            // Re-cache parameter types after clearing: clear_type_cache_recursive
+            // removes symbol_types for all VARIABLE_DECLARATION nodes in the body.
+            // When a `var` re-declares a constructor parameter (sharing the same
+            // SymbolId), the parameter type cached earlier gets erased. Re-caching
+            // ensures the parameter type is available for initializer evaluation.
+            self.cache_parameter_types(&ctor.parameters.nodes, None);
             self.check_statement_with_request(ctor.body, &body_request);
             self.pop_return_type();
 

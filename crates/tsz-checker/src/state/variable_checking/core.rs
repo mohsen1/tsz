@@ -82,34 +82,43 @@ impl<'a> CheckerState<'a> {
             .arena
             .get(decl_idx)
             .map_or(u32::MAX, |node| node.pos);
-        let mut saw_current = false;
-        for &other in &symbol.declarations {
-            if other == decl_idx {
-                saw_current = true;
-                break;
-            }
-            if !other.is_some() {
-                continue;
-            }
-            if let Some(other_node) = self.ctx.arena.get(other)
-                && other_node.pos < current_pos
-            {
-                return true;
-            }
-        }
-
-        if saw_current {
-            return false;
-        }
-
+        // Use source position to find prior declarations rather than
+        // relying on declaration-list order. Hoisted `var` declarations
+        // appear first in the list (before parameters) even though the
+        // parameter appears earlier in source. Source-position ordering
+        // correctly identifies the parameter as a prior declaration.
+        //
+        // Exclude block-scoped (let/const) declarations: when a `const`
+        // precedes a `var` of the same name, they occupy different scoping
+        // realms and the const should not be treated as a "prior value
+        // declaration" for the var (that case is TS2451, not TS2403).
         symbol.declarations.iter().any(|&other| {
-            other != decl_idx
-                && other.is_some()
-                && self
-                    .ctx
-                    .arena
-                    .get(other)
-                    .is_some_and(|node| node.pos < current_pos)
+            if other == decl_idx || !other.is_some() {
+                return false;
+            }
+            let has_earlier_pos = self
+                .ctx
+                .arena
+                .get(other)
+                .is_some_and(|node| node.pos < current_pos);
+            if !has_earlier_pos {
+                return false;
+            }
+            // Filter out block-scoped prior declarations (let/const/using).
+            // These don't establish a prior value type for function-scoped vars.
+            if let Some(other_node) = self.ctx.arena.get(other)
+                && other_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                && let Some(other_ext) = self.ctx.arena.get_extended(other)
+                && let Some(other_parent) = self.ctx.arena.get(other_ext.parent)
+                && other_parent.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            {
+                let flags = other_parent.flags as u32;
+                use tsz_parser::parser::node_flags;
+                if (flags & (node_flags::LET | node_flags::CONST | node_flags::USING)) != 0 {
+                    return false;
+                }
+            }
+            true
         })
     }
 
@@ -1842,10 +1851,40 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     // 2. Check local declarations (in case of intra-file redeclaration)
+                    // Use source position to determine which declarations are "prior"
+                    // rather than relying on declaration-list order. Hoisted `var`
+                    // declarations are added to the symbol before parameters during
+                    // binding, which means a simple break-at-self misses parameter
+                    // declarations that appear earlier in source (but later in the list).
+                    let this_pos = self.ctx.arena.get(decl_idx).map_or(0, |n| n.pos);
                     if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                         for &other_decl in &symbol.declarations {
                             if other_decl == decl_idx {
-                                break;
+                                continue;
+                            }
+                            // Only check declarations that appear before us in source order.
+                            let other_pos =
+                                self.ctx.arena.get(other_decl).map_or(u32::MAX, |n| n.pos);
+                            if other_pos >= this_pos {
+                                continue;
+                            }
+                            // Skip block-scoped (let/const/using) prior declarations.
+                            // When const/let and var share a name (TS2451), they occupy
+                            // different scoping realms and should not trigger TS2403.
+                            if let Some(other_node) = self.ctx.arena.get(other_decl)
+                                && other_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                                && let Some(other_ext) = self.ctx.arena.get_extended(other_decl)
+                                && let Some(other_parent) = self.ctx.arena.get(other_ext.parent)
+                                && other_parent.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                            {
+                                let flags = other_parent.flags as u32;
+                                use tsz_parser::parser::node_flags;
+                                if (flags
+                                    & (node_flags::LET | node_flags::CONST | node_flags::USING))
+                                    != 0
+                                {
+                                    continue;
+                                }
                             }
                             if other_decl.is_some() {
                                 // For merged global symbols, the declarations list may

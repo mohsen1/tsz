@@ -24112,3 +24112,52 @@ var v1 = stringMapToArray(numberMap);
         "Expected TS2403 for var redeclaration type mismatch (string[] vs unknown[]). Got: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_ts2403_optional_param_var_redeclaration_in_constructor() {
+    let source = r#"
+class C {
+    constructor(options?: number) {
+        var options = (options || 0);
+    }
+}
+"#;
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "test.ts",
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2403),
+        "Expected TS2403 for var re-declaring optional parameter with different type.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2403_param_var_redeclaration_inferred_type_constructor() {
+    // Inferred type in constructor (the actual failing conformance test)
+    let source = r#"
+class C {
+    constructor(options?: number) {
+        var options = (options || 0);
+    }
+}
+"#;
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "test.ts",
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2403),
+        "Expected TS2403 for var with inferred type re-declaring optional parameter in constructor.\nActual: {diagnostics:#?}"
+    );
+}
