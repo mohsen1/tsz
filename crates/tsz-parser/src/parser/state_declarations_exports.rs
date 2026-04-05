@@ -142,17 +142,17 @@ impl ParserState {
                 // Decorators after `export` when decorators also appeared before `export`:
                 // @dec export @dec class Foo {}
                 let post_decorators = self.parse_decorators();
-                if decorators.is_some() {
-                    if let Some(ref post_decs) = post_decorators {
-                        for &dec_node in &post_decs.nodes {
-                            if let Some(node) = self.arena.get(dec_node) {
-                                self.parse_error_at(
-                                    node.pos,
-                                    node.end - node.pos,
-                                    "Decorators may not appear after 'export' or 'export default' if they also appear before 'export'.",
-                                    diagnostic_codes::DECORATORS_MAY_NOT_APPEAR_AFTER_EXPORT_OR_EXPORT_DEFAULT_IF_THEY_ALSO_APPEAR_BEF,
-                                );
-                            }
+                if decorators.is_some()
+                    && let Some(ref post_decs) = post_decorators
+                {
+                    for &dec_node in &post_decs.nodes {
+                        if let Some(node) = self.arena.get(dec_node) {
+                            self.parse_error_at(
+                                node.pos,
+                                node.end - node.pos,
+                                "Decorators may not appear after 'export' or 'export default' if they also appear before 'export'.",
+                                diagnostic_codes::DECORATORS_MAY_NOT_APPEAR_AFTER_EXPORT_OR_EXPORT_DEFAULT_IF_THEY_ALSO_APPEAR_BEF,
+                            );
                         }
                     }
                 }
@@ -214,17 +214,17 @@ impl ParserState {
                 // Decorators after `export default` when decorators also appeared before `export`:
                 // @dec export default @dec class Foo {}
                 let post_decorators = self.parse_decorators();
-                if decorators.is_some() {
-                    if let Some(ref post_decs) = post_decorators {
-                        for &dec_node in &post_decs.nodes {
-                            if let Some(node) = self.arena.get(dec_node) {
-                                self.parse_error_at(
-                                    node.pos,
-                                    node.end - node.pos,
-                                    "Decorators may not appear after 'export' or 'export default' if they also appear before 'export'.",
-                                    diagnostic_codes::DECORATORS_MAY_NOT_APPEAR_AFTER_EXPORT_OR_EXPORT_DEFAULT_IF_THEY_ALSO_APPEAR_BEF,
-                                );
-                            }
+                if decorators.is_some()
+                    && let Some(ref post_decs) = post_decorators
+                {
+                    for &dec_node in &post_decs.nodes {
+                        if let Some(node) = self.arena.get(dec_node) {
+                            self.parse_error_at(
+                                node.pos,
+                                node.end - node.pos,
+                                "Decorators may not appear after 'export' or 'export default' if they also appear before 'export'.",
+                                diagnostic_codes::DECORATORS_MAY_NOT_APPEAR_AFTER_EXPORT_OR_EXPORT_DEFAULT_IF_THEY_ALSO_APPEAR_BEF,
+                            );
                         }
                     }
                 }
