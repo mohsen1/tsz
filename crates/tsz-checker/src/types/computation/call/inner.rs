@@ -995,7 +995,15 @@ impl<'a> CheckerState<'a> {
 
                             let should_update = match round2_substitution.get(name) {
                                 None => true,
-                                Some(existing) if existing == ty => false,
+                                Some(existing) if existing == ty => {
+                                    // The Round 1 solver already inferred the same
+                                    // value (e.g., from return-context seeding in
+                                    // compute_contextual_types). Mark as return-context
+                                    // so the post-inference retry is suppressed — the
+                                    // callback arguments were already correctly typed.
+                                    had_return_context_substitution = true;
+                                    false
+                                }
                                 Some(existing) => {
                                     existing == TypeId::UNKNOWN
                                         || existing == TypeId::ERROR
