@@ -810,11 +810,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         self.checker.ctx.in_const_assertion = prev_in_const_assertion;
                         if k == syntax_kind_ext::SATISFIES_EXPRESSION {
                             // TS8037: Type satisfaction expressions can only be used in TypeScript files
+                            // tsc points the error at the type node, not the keyword.
                             if self.checker.is_js_file() {
                                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                                self.checker.error_at_position(
-                                    assertion.keyword_pos,
-                                    9, // "satisfies".len()
+                                self.checker.error_at_node(
+                                    assertion.type_node,
                                     diagnostic_messages::TYPE_SATISFACTION_EXPRESSIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                                     diagnostic_codes::TYPE_SATISFACTION_EXPRESSIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                                 );
