@@ -408,7 +408,6 @@ fn post_process_checker_diagnostics(
 
         let suppress = test_path.contains("quickIntersectionCheckCorrectlyCachesErrors")
             || test_path.contains("fuzzy")
-            || test_path.contains("errorMessageOnObjectLiteralType")
             || test_path.contains("inferenceExactOptionalProperties2")
             || test_path.contains("inferTypePredicates")
             || test_path.contains("expandoFunctionSymbolPropertyJs");
