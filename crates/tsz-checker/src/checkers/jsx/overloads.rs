@@ -140,6 +140,12 @@ impl<'a> CheckerState<'a> {
         // No overload matched — roll back speculative diagnostics and emit TS2769.
         // tsc anchors JSX TS2769 at the tag name.
         guard.rollback(&mut self.ctx);
+
+        // TS2786: When no overload matches, also check if the component's return
+        // type is compatible with JSX.Element. tsc emits TS2786 alongside TS2769
+        // when none of the overloads return a valid JSX element type.
+        self.check_jsx_component_return_type(component_type, tag_name_idx);
+
         use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
         self.error_at_node(
             tag_name_idx,
