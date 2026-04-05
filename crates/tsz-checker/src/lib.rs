@@ -19,7 +19,6 @@
 #![allow(clippy::let_and_return)]
 #![allow(clippy::missing_const_for_fn)]
 #![allow(clippy::needless_return)]
-#![allow(clippy::print_stderr)]
 #![allow(clippy::question_mark)]
 #![allow(clippy::redundant_clone)]
 #![allow(clippy::uninlined_format_args)]
