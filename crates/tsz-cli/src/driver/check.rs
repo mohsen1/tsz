@@ -246,8 +246,7 @@ fn post_process_checker_diagnostics(
 
         let suppress = test_path.contains("arrayFrom")
             || test_path.contains("expandoFunctionSymbolPropertyJs")
-            || test_path.contains("returnTypePredicateIsInstantiateInContextOfTarget")
-            || test_path.contains("expressionWithJSDocTypeArguments");
+            || test_path.contains("returnTypePredicateIsInstantiateInContextOfTarget");
 
         if suppress {
             checker_diagnostics.retain(|diag| diag.code != 2769);
