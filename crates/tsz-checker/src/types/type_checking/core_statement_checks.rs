@@ -729,13 +729,22 @@ impl<'a> CheckerState<'a> {
                     })
                 });
 
-        // Check if the constraint contains a self-reference to the mapped type parameter.
+        // Check if the constraint contains a self-reference to the type parameter.
         // Use a shallow check that does NOT walk into other type parameters' constraints,
-        // because those constraints are separate scopes. For example, in
-        // `T extends { [K in keyof T]: T[K] }`, `K`'s constraint is `keyof T`.
-        // Although `T`'s own constraint contains `K`, that doesn't make `K`'s constraint
-        // circular — `keyof T` itself doesn't contain `K` at the surface level.
-        if tsz_solver::contains_type_parameter_named_shallow(self.ctx.types, constraint_type, atom)
+        // because those constraints are separate scopes.
+        //
+        // Skip this check for mapped type constraints like `T extends { [K in keyof T]: T[K] }`.
+        // In tsc, a mapped type constraint that references T via keyof T (or in property types)
+        // is NOT circular — it means "T must conform to this mapped shape". This is a common
+        // and valid TypeScript pattern.
+        let constraint_is_mapped = tsz_solver::is_mapped_type(self.ctx.types, constraint_type)
+            || tsz_solver::is_mapped_type(self.ctx.types, evaluated);
+        if !constraint_is_mapped
+            && tsz_solver::contains_type_parameter_named_shallow(
+                self.ctx.types,
+                constraint_type,
+                atom,
+            )
         {
             let message = format!("Type parameter '{name}' has a circular constraint.");
             self.ctx.error(
