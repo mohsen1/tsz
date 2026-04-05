@@ -1578,7 +1578,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if the target module is a pure ESM module (from a package with
     /// `"type": "module"` or using `.mjs`/`.mts` extension).
-    fn module_is_esm(&self, module_specifier: &str) -> bool {
+    pub(crate) fn module_is_esm(&self, module_specifier: &str) -> bool {
         let Some(target_idx) = self.ctx.resolve_import_target(module_specifier) else {
             return false;
         };
