@@ -1078,15 +1078,22 @@ impl<'a> CheckerState<'a> {
                         };
                     let source_prop_type_for_diagnostic =
                         self.widen_function_like_call_source(source_prop_type_for_diagnostic);
-                    // TSC's elaborateElementwise reports TS2322 at the property
-                    // name for property-value type mismatches, not TS2741/TS2739.
-                    // Use full failure analysis for accurate message formatting
-                    // (e.g., union best-match), but downgrade TS2741 to TS2322
-                    // since this is a nested elaboration context.
-                    self.error_type_not_assignable_at_with_anchor_elaboration(
+                    // TSC's elaborateElementwise uses TS2322 ("Type X is not
+                    // assignable to type Y") for `this` keyword property values
+                    // instead of the more specific TS2741 missing-property code.
+                    // The `this` type represents the class instance which may have
+                    // extra members beyond the target interface, making the general
+                    // TS2322 message more appropriate than enumerating missing props.
+                    let value_is_this_keyword = self
+                        .ctx
+                        .arena
+                        .get(prop_value_idx)
+                        .is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16);
+                    self.error_type_not_assignable_at_with_anchor_elaboration_inner(
                         source_prop_type_for_diagnostic,
                         target_prop_type_for_diagnostic,
                         prop_name_idx,
+                        value_is_this_keyword,
                     );
                 }
                 elaborated = true;

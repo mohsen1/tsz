@@ -370,9 +370,6 @@ fn post_process_checker_diagnostics(
         if test_path.contains("expandoFunctionSymbolPropertyJs") {
             checker_diagnostics
                 .retain(|diag| !matches!(diag.code, 2345 | 2352 | 2551 | 2741 | 2740));
-        } else if test_path.contains("fuzzy") {
-            // fuzzy expects TS2352 — only suppress the false positives
-            checker_diagnostics.retain(|diag| !matches!(diag.code, 2345 | 2551 | 2741 | 2740));
         }
     }
 
