@@ -996,14 +996,38 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
                 match value {
                     None => {
-                        // TS2474: const enum member initializer is not a constant expression
-                        if let Some(init_node) = self.ctx.arena.get(member_data.initializer) {
-                            self.ctx.error(
-                                init_node.pos,
-                                init_node.end - init_node.pos,
-                                diagnostic_messages::CONST_ENUM_MEMBER_INITIALIZERS_MUST_BE_CONSTANT_EXPRESSIONS.to_string(),
-                                diagnostic_codes::CONST_ENUM_MEMBER_INITIALIZERS_MUST_BE_CONSTANT_EXPRESSIONS,
-                            );
+                        // TS2474: const enum member initializer is not a constant expression.
+                        // Skip if the initializer references a const variable — tsc treats
+                        // const variable references as valid constant expressions even though
+                        // our syntax-only evaluator can't resolve them.
+                        let is_const_var_ref = self
+                            .ctx
+                            .arena
+                            .get(member_data.initializer)
+                            .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16)
+                            && self
+                                .ctx
+                                .binder
+                                .resolve_identifier(self.ctx.arena, member_data.initializer)
+                                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                                .is_some_and(|sym| {
+                                    (sym.flags & tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE
+                                        != 0)
+                                        && sym.value_declaration.is_some()
+                                        && self
+                                            .ctx
+                                            .arena
+                                            .is_const_variable_declaration(sym.value_declaration)
+                                });
+                        if !is_const_var_ref {
+                            if let Some(init_node) = self.ctx.arena.get(member_data.initializer) {
+                                self.ctx.error(
+                                    init_node.pos,
+                                    init_node.end - init_node.pos,
+                                    diagnostic_messages::CONST_ENUM_MEMBER_INITIALIZERS_MUST_BE_CONSTANT_EXPRESSIONS.to_string(),
+                                    diagnostic_codes::CONST_ENUM_MEMBER_INITIALIZERS_MUST_BE_CONSTANT_EXPRESSIONS,
+                                );
+                            }
                         }
                     }
                     Some(v) if f64::is_nan(v) => {
