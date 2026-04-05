@@ -580,6 +580,20 @@ impl<'a> CheckerState<'a> {
             if !has_type_annotation
                 && let Some(jsdoc_type) = checker.jsdoc_type_annotation_for_node(decl_idx)
             {
+                // TS1196: Catch clause variable type annotation must be 'any' or 'unknown'
+                // This also applies to JSDoc @type annotations on catch variables in JS files.
+                if is_catch_variable
+                    && jsdoc_type != TypeId::ANY
+                    && jsdoc_type != TypeId::UNKNOWN
+                    && !checker.type_contains_error(jsdoc_type)
+                {
+                    use crate::diagnostics::diagnostic_codes;
+                    checker.error_at_node(
+                        decl_idx,
+                        "Catch clause variable type annotation must be 'any' or 'unknown' if specified.",
+                        diagnostic_codes::CATCH_CLAUSE_VARIABLE_TYPE_ANNOTATION_MUST_BE_ANY_OR_UNKNOWN_IF_SPECIFIED,
+                    );
+                }
                 declared_type = jsdoc_type;
                 jsdoc_declared_type = Some(jsdoc_type);
                 has_type_annotation = true;
