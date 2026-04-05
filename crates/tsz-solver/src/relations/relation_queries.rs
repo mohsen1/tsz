@@ -228,6 +228,14 @@ pub fn query_relation_with_overrides<
         overrides,
     }: RelationQueryInputs<'a, R, P>,
 ) -> RelationResult {
+    let _span = tracing::debug_span!(
+        "query_relation",
+        src = source.0,
+        tgt = target.0,
+        kind = ?kind,
+    )
+    .entered();
+
     let (related, depth_exceeded) = match kind {
         RelationKind::Assignable => {
             let mut checker = configured_compat_checker(interner, resolver, policy, context);
@@ -257,6 +265,8 @@ pub fn query_relation_with_overrides<
             )
         }
     };
+
+    tracing::debug!(related, depth_exceeded, "query_relation result");
 
     RelationResult {
         kind,

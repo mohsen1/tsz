@@ -441,6 +441,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     fn evaluate_guarded_inner(&mut self, type_id: TypeId) -> TypeId {
         use crate::recursion::RecursionResult;
 
+        let _span =
+            tracing::trace_span!("evaluate_type", ty = type_id.0, depth = self.guard.depth(),)
+                .entered();
+
         if let Some(&cached) = self.cache.get(&type_id) {
             return cached;
         }

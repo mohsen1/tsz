@@ -22,6 +22,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         func: &FunctionShape,
         arg_types: &[TypeId],
     ) -> CallResult {
+        let _span = tracing::debug_span!(
+            "resolve_generic_call",
+            params = func.params.len(),
+            args = arg_types.len(),
+            type_params = func.type_params.len(),
+        )
+        .entered();
+
         let actual_this_type = self.actual_this_type;
         let has_context_sensitive_args = arg_types
             .iter()
