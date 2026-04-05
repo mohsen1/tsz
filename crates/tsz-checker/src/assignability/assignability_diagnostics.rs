@@ -691,6 +691,12 @@ impl<'a> CheckerState<'a> {
         // In these cases, strict contravariant checking reports TS2345 even when the
         // concrete expected callback type is assignable to the narrowed callback.
         // tsc defers this mismatch.
+        //
+        // Only suppress when the source's parameter types contain type parameters
+        // in an intersection with concrete types (indicating narrowing), not when
+        // the parameters are standalone type parameters from an enclosing scope.
+        // Without this restriction, `(x: T) => void` would be incorrectly accepted
+        // for `(x: unknown) => void` just because `T <: unknown` holds in reverse.
         if crate::query_boundaries::assignability::contains_type_parameters(self.ctx.types, source)
             && !crate::query_boundaries::assignability::contains_type_parameters(
                 self.ctx.types,
@@ -700,6 +706,7 @@ impl<'a> CheckerState<'a> {
             && tsz_solver::type_queries::is_callable_type(self.ctx.types, target)
             && !self.callable_has_own_generic_signatures(source)
             && self.ctx.types.is_assignable_to(target, source)
+            && self.callable_params_contain_type_param_intersection(source)
         {
             return true;
         }
