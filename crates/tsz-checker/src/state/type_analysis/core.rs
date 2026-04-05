@@ -1038,6 +1038,80 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     }
+                    // Handle `export { A }` and `export { A as B }` — named export
+                    // specifiers that re-export symbols from the enclosing scope.
+                    syntax_kind_ext::NAMED_EXPORTS => {
+                        let Some(named) = self.ctx.arena.get_named_imports(clause_node) else {
+                            continue;
+                        };
+                        for &spec_idx in &named.elements.nodes {
+                            let Some(spec_node) = self.ctx.arena.get(spec_idx) else {
+                                continue;
+                            };
+                            let Some(spec) = self.ctx.arena.get_specifier(spec_node) else {
+                                continue;
+                            };
+                            // The exported name: for `export { A }`, name is "A";
+                            // for `export { A as B }`, name is "B".
+                            let exported_name = self
+                                .ctx
+                                .arena
+                                .get(spec.name)
+                                .and_then(|n| self.ctx.arena.get_identifier(n))
+                                .map(|id| id.escaped_text.as_str());
+                            let Some(exported) = exported_name else {
+                                continue;
+                            };
+                            if exported != member_name {
+                                continue;
+                            }
+                            // The local name: for `export { A }`, local is "A";
+                            // for `export { A as B }`, local is "A" (property_name).
+                            let local_name_idx = if spec.property_name.is_some() {
+                                spec.property_name
+                            } else {
+                                spec.name
+                            };
+                            let local_name = self
+                                .ctx
+                                .arena
+                                .get(local_name_idx)
+                                .and_then(|n| self.ctx.arena.get_identifier(n))
+                                .map(|id| id.escaped_text.as_str());
+                            let Some(local) = local_name else {
+                                continue;
+                            };
+                            // Resolve the local name: try the module body scope first,
+                            // then walk up to parent scopes and file locals.
+                            if let Some(&scope_id) =
+                                self.ctx.binder.node_scope_ids.get(&module.body.0)
+                            {
+                                // Check the module scope itself
+                                if let Some(scope) = self.ctx.binder.scopes.get(scope_id.0 as usize)
+                                    && let Some(sym_id) = scope.table.get(local)
+                                {
+                                    return Some(sym_id);
+                                }
+                                // Walk parent scopes
+                                let mut current_scope_id = scope_id;
+                                while let Some(scope) =
+                                    self.ctx.binder.scopes.get(current_scope_id.0 as usize)
+                                {
+                                    if let Some(sym_id) = scope.table.get(local) {
+                                        return Some(sym_id);
+                                    }
+                                    if current_scope_id == scope.parent {
+                                        break; // root scope
+                                    }
+                                    current_scope_id = scope.parent;
+                                }
+                            }
+                            // Fall back to file locals
+                            if let Some(sym_id) = self.ctx.binder.file_locals.get(local) {
+                                return Some(sym_id);
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
