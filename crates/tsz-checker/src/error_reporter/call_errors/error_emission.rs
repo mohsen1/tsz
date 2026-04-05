@@ -304,8 +304,13 @@ impl<'a> CheckerState<'a> {
         });
         let all_failures_are_argument_mismatches = !failures.is_empty()
             && failures.iter().all(|failure| {
-                failure.code
-                    == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+                matches!(
+                    failure.code,
+                    diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+                        | diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
+                        | diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID
+                        | diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                )
             });
         let anchor_argument_from_mixed_failures = shared_argument_anchor.is_some()
             && !remaining_failures.is_empty()
