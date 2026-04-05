@@ -323,14 +323,14 @@ pub(crate) fn is_application_type(db: &dyn TypeDatabase, type_id: TypeId) -> boo
     tsz_solver::type_queries::is_generic_type(db, type_id)
 }
 
-/// Check if a type is an Application whose base is a TypeQuery.
-/// This represents `typeof fn<Args>` — an instantiation expression in type position.
-/// When the type arguments don't match any signature's arity (TS2635), the
-/// Application is invalid and should NOT be treated as callable for TS2344 purposes.
-pub(crate) fn is_application_of_type_query(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    if let Some(base) = tsz_solver::type_queries::extended::get_application_base(db, type_id) {
-        tsz_solver::visitor::type_query_symbol(db, base).is_some()
-    } else {
-        false
-    }
+/// Check if a type is Application(TypeQuery(sym), args) — i.e., an instantiation
+/// expression `typeof fn<Args>` in type position. Returns the number of type
+/// arguments, or None if this is not such a type.
+pub(crate) fn typeof_instantiation_arg_count(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<usize> {
+    let (base, args) = tsz_solver::type_queries::extended::get_application_info(db, type_id)?;
+    tsz_solver::visitor::type_query_symbol(db, base)?;
+    Some(args.len())
 }
