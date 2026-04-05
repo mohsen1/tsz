@@ -229,11 +229,7 @@ fn post_process_checker_diagnostics(
         let test_path = conformance_test_name.as_deref().unwrap_or(file_path);
 
         let suppress_ts2345 = test_path.contains("typeTagOnFunctionReferencesGeneric")
-            || test_path.contains("inferFromGenericFunctionReturnTypes2")
             || test_path.contains("umd-augmentation")
-            || test_path.contains("genericRestParameters1")
-            || test_path.contains("augmentation-2")
-            || test_path.contains("augmentation-4")
             || test_path.contains("RestParameters1");
 
         if suppress_ts2345 {
