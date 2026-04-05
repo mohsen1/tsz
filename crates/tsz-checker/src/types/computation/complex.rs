@@ -1011,11 +1011,9 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_input_ready(constructor_type);
         self.ensure_relation_inputs_ready(&arg_types);
 
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "[new_expr] constructor_type={:?}, data={:?}",
-            constructor_type,
-            self.ctx.types.lookup(constructor_type)
+        tracing::debug!(
+            constructor_type = constructor_type.0,
+            "new_expr constructor resolution"
         );
 
         // Delegate to Solver for constructor resolution, passing contextual type
