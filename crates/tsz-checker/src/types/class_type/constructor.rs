@@ -23,6 +23,9 @@ struct MethodAggregate {
     overload_optional: bool,
     impl_optional: bool,
     visibility: Visibility,
+    /// Node index of the implementation method (body present), used to cache
+    /// the final callable type in `node_types` for declaration emit.
+    impl_member_idx: Option<NodeIndex>,
 }
 
 struct AccessorAggregate {
@@ -861,6 +864,7 @@ impl<'a> CheckerState<'a> {
                         overload_optional: false,
                         impl_optional: false,
                         visibility,
+                        impl_member_idx: None,
                     });
                     if method.body.is_none() {
                         entry.overload_signatures.push(signature);
@@ -868,6 +872,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         entry.impl_signatures.push(signature);
                         entry.impl_optional |= method.question_token;
+                        entry.impl_member_idx = Some(member_idx);
                     }
                 }
                 k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
@@ -1066,7 +1071,8 @@ impl<'a> CheckerState<'a> {
 
         // Convert methods to callable properties
         for (name, method) in methods {
-            let (signatures, optional) = if !method.overload_signatures.is_empty() {
+            let has_overloads = !method.overload_signatures.is_empty();
+            let (signatures, optional) = if has_overloads {
                 (method.overload_signatures, method.overload_optional)
             } else {
                 (method.impl_signatures, method.impl_optional)
@@ -1083,6 +1089,15 @@ impl<'a> CheckerState<'a> {
                 symbol: None,
                 is_abstract: false,
             });
+            // Cache the final method type for declaration emit so
+            // the emitter can resolve return types for static methods.
+            // Skip when overloads exist to avoid interfering with TS2394
+            // overload compatibility checking (which reads node_types).
+            if !has_overloads {
+                if let Some(impl_idx) = method.impl_member_idx {
+                    self.ctx.node_types.insert(impl_idx.0, type_id);
+                }
+            }
             properties.insert(
                 name,
                 PropertyInfo {

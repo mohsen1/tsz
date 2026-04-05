@@ -1328,6 +1328,11 @@ impl<'a> CheckerState<'a> {
                 symbol: None,
                 is_abstract: false,
             });
+            // Note: we intentionally do NOT cache instance method types in
+            // node_types here. Instance methods go through deferred processing
+            // where the return type may be rewritten (e.g., `this` returns).
+            // Caching the final merged type can cause DTS emit regressions
+            // when the type differs from what the emitter's fallback expects.
             properties.insert(
                 name,
                 PropertyInfo {
