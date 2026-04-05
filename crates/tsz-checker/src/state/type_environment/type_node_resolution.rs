@@ -77,20 +77,17 @@ impl<'a> CheckerState<'a> {
             // TS1228: "A type predicate is only allowed in return type position for
             // functions and methods." The parser restricts predicate parsing to return
             // type positions, but some return types (constructors, getters, setters,
-            // construct signatures) still parse predicates for error recovery.
-            // tsc's checkTypePredicate is not reached for those parents since the
-            // parser already emits errors. Suppress TS1228 to match tsc 6.0 behavior.
+            // construct signatures, constructor types) still parse predicates for error
+            // recovery. The checker must flag these, matching tsc's getTypePredicateParent.
             if node.kind == syntax_kind_ext::TYPE_PREDICATE {
-                let parent_kind = self
+                let parent_info = self
                     .ctx
                     .arena
                     .get_extended(idx)
-                    .and_then(|ext| self.ctx.arena.get(ext.parent))
-                    .map(|parent| parent.kind);
-                let is_valid_or_parser_error = parent_kind.is_some_and(|kind| {
+                    .and_then(|ext| self.ctx.arena.get(ext.parent));
+                let is_valid = parent_info.is_some_and(|parent| {
                     matches!(
-                        kind,
-                        // Valid type predicate parents (tsc's getTypePredicateParent)
+                        parent.kind,
                         syntax_kind_ext::FUNCTION_DECLARATION
                             | syntax_kind_ext::FUNCTION_EXPRESSION
                             | syntax_kind_ext::METHOD_DECLARATION
@@ -98,17 +95,21 @@ impl<'a> CheckerState<'a> {
                             | syntax_kind_ext::CALL_SIGNATURE
                             | syntax_kind_ext::ARROW_FUNCTION
                             | syntax_kind_ext::FUNCTION_TYPE
-                            // Parser-error parents: predicates parsed for error recovery;
-                            // tsc never reaches checkTypePredicate for these since the
-                            // parser already emits errors. Suppress TS1228 to match tsc.
-                            | syntax_kind_ext::CONSTRUCTOR
-                            | syntax_kind_ext::GET_ACCESSOR
-                            | syntax_kind_ext::SET_ACCESSOR
-                            | syntax_kind_ext::CONSTRUCT_SIGNATURE
-                            | syntax_kind_ext::CONSTRUCTOR_TYPE
                     )
                 });
-                if !is_valid_or_parser_error {
+                // Suppress TS1228 when the parent is a get accessor with parameters.
+                // Getters cannot have parameters (TS1054), and tsc's parser doesn't
+                // produce a type predicate node in this error-recovery context. Our
+                // parser is more lenient, so we skip the redundant diagnostic here.
+                let suppress_for_getter_with_params = parent_info.is_some_and(|parent| {
+                    parent.kind == syntax_kind_ext::GET_ACCESSOR
+                        && self
+                            .ctx
+                            .arena
+                            .get_accessor(parent)
+                            .is_some_and(|acc| !acc.parameters.nodes.is_empty())
+                });
+                if !is_valid && !suppress_for_getter_with_params {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                         idx,
