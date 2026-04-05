@@ -21702,8 +21702,8 @@ fn test_objectish_any_produces_index_signature_object_not_any() {
     // tsc rule: identity homomorphic mapped type `{ [K in keyof T]: T[K] }` with T=any
     // and non-array constraint produces `{ [x: string]: any; [x: number]: any }`, NOT `any`.
     // This ensures `Objectish<any>` is not assignable to `any[]`.
-    // The object construction is handled in the solver's Application evaluation,
-    // not checker-local code.
+    // With full lib.d.ts (CLI/conformance), this emits TS2740; in unit tests without
+    // lib.d.ts the Array interface isn't available so it falls back to TS2322.
     let diagnostics = compile_and_get_diagnostics(
         r#"
 type Objectish<T extends unknown> = { [K in keyof T]: T[K] };
@@ -21715,9 +21715,38 @@ const arr: any[] = r;
         "#,
     );
     assert!(
-        has_error(&diagnostics, 2322),
-        "Objectish<any> should produce an object with index signatures, not `any`. \
-         Assigning to any[] should emit TS2322.\nActual diagnostics: {diagnostics:#?}"
+        has_error(&diagnostics, 2322) || has_error(&diagnostics, 2740),
+        "Objectish<any> assigned to any[] should emit TS2322 or TS2740 (not pass silently). \
+         Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+/// TS2740: Object types with index signatures should not be silently assignable
+/// to array types. With full lib.d.ts this emits TS2740 (missing array properties);
+/// in unit tests without lib.d.ts it falls back to TS2322.
+#[test]
+fn test_ts2740_index_signature_object_to_array() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Objectish<T extends unknown> = { [K in keyof T]: T[K] };
+type IndirectArrayish<U extends unknown[]> = Objectish<U>;
+
+function bar(objectish: Objectish<any>, indirectArrayish: IndirectArrayish<any>) {
+    let arr: any[];
+    arr = objectish;
+    arr = indirectArrayish;
+}
+        "#,
+    );
+    let error_count = diagnostics
+        .iter()
+        .filter(|d| d.0 == 2322 || d.0 == 2740)
+        .count();
+    assert_eq!(
+        error_count, 2,
+        "Expected two assignability errors (one for objectish, one for indirectArrayish). \
+         Both are object types with index signatures assigned to any[].\n\
+         Actual diagnostics: {diagnostics:#?}"
     );
 }
 
