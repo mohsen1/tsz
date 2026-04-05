@@ -128,6 +128,10 @@ impl<'a> NamespaceES5Emitter<'a> {
         self.transformer.set_prior_exported_vars(vars);
     }
 
+    pub fn set_default_exported_func_names(&mut self, names: std::collections::HashSet<String>) {
+        self.transformer.set_default_exported_func_names(names);
+    }
+
     /// Collect exported variable names from a namespace declaration without emitting.
     pub fn collect_exported_var_names(
         &self,

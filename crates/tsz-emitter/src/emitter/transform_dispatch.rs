@@ -352,6 +352,16 @@ impl<'a> Printer<'a> {
                     ns_emitter.set_source_text(text);
                 }
                 ns_emitter.set_should_declare_var(should_declare_var);
+                if !self.ctx.module_state.default_exported_func_names.is_empty() {
+                    ns_emitter.set_default_exported_func_names(
+                        self.ctx
+                            .module_state
+                            .default_exported_func_names
+                            .iter()
+                            .cloned()
+                            .collect(),
+                    );
+                }
                 let output = if use_cjs {
                     ns_emitter.emit_exported_namespace(namespace_node)
                 } else {

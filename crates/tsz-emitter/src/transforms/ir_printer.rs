@@ -39,6 +39,7 @@ struct NamespaceIifeContext<'a> {
     is_exported: bool,
     attach_to_exports: bool,
     should_declare_var: bool,
+    default_export_merge: bool,
     parent_name: Option<&'a str>,
     param_name: Option<&'a str>,
 }
@@ -1832,6 +1833,7 @@ impl<'a> IRPrinter<'a> {
                 should_declare_var,
                 parent_name,
                 param_name,
+                default_export_merge,
                 skip_sequence_indent: _,
             } => {
                 self.emit_namespace_iife(
@@ -1842,6 +1844,7 @@ impl<'a> IRPrinter<'a> {
                         is_exported: *is_exported,
                         attach_to_exports: *attach_to_exports,
                         should_declare_var: *should_declare_var,
+                        default_export_merge: *default_export_merge,
                         parent_name: parent_name.as_deref(),
                         param_name: param_name.as_deref(),
                     },
@@ -2020,6 +2023,7 @@ impl<'a> IRPrinter<'a> {
                     is_exported: context.is_exported,
                     attach_to_exports: context.attach_to_exports,
                     should_declare_var: true,
+                    default_export_merge: false,
                     parent_name: None,
                     param_name: context.param_name,
                 },
@@ -2050,6 +2054,12 @@ impl<'a> IRPrinter<'a> {
                 self.write(" || (exports.");
                 self.write(current_name);
                 self.write(" = ");
+                self.write(current_name);
+                self.write(" = {})");
+            } else if context.default_export_merge {
+                self.write("exports.");
+                self.write(current_name);
+                self.write(" || (exports.");
                 self.write(current_name);
                 self.write(" = {})");
             } else {
