@@ -294,9 +294,7 @@ fn post_process_checker_diagnostics(
         let file_path = file.file_name.as_str();
         let test_path = conformance_test_name.as_deref().unwrap_or(file_path);
 
-        let suppress = test_path.contains("inferTypeConstraintInstantiationCircularity")
-            || test_path.contains("ramdaToolsNoInfinite2")
-            || test_path.contains("genericRecursiveImplicitConstructorErrors3");
+        let suppress = test_path.contains("genericRecursiveImplicitConstructorErrors3");
 
         if suppress {
             checker_diagnostics.retain(|diag| diag.code != 2536 && diag.code != 2532);
