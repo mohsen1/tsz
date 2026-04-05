@@ -21,6 +21,37 @@ use crate::visitor::{
 };
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    /// Collect source properties including those from intersection members.
+    /// This ensures merged types (e.g., `{ a: string } & { b: number }`) have
+    /// all properties available for missing property checks.
+    fn collect_source_properties(&self, source: TypeId) -> Vec<PropertyInfo> {
+        use crate::type_queries::data::get_intersection_members;
+        
+        let mut props = Vec::new();
+        
+        // Get base shape properties
+        if let Some(shape_id) = object_shape_id(self.interner, source) {
+            let shape = self.interner.object_shape(shape_id);
+            props.extend(shape.properties.iter().cloned());
+        }
+        
+        // Add properties from intersection members
+        if let Some(members) = get_intersection_members(self.interner, source) {
+            for member in members {
+                if let Some(shape_id) = object_shape_id(self.interner, member) {
+                    let shape = self.interner.object_shape(shape_id);
+                    for prop in shape.properties.iter() {
+                        if !props.iter().any(|p| p.name == prop.name) {
+                            props.push(prop.clone());
+                        }
+                    }
+                }
+            }
+        }
+        
+        props
+    }
+
     fn is_late_bound_symbol_property_name(&self, name: tsz_common::interner::Atom) -> bool {
         let name = self.interner.resolve_atom_ref(name);
         name.starts_with("[Symbol.") || name.starts_with("__@")
@@ -234,12 +265,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             object_shape_id(self.interner, resolved_source),
             object_shape_id(self.interner, resolved_target),
         ) {
-            let s_shape = self.interner.object_shape(s_shape_id);
+            let s_props = self.collect_source_properties(resolved_source);
             let t_shape = self.interner.object_shape(t_shape_id);
             return self.explain_object_failure(
                 source,
                 target,
-                &s_shape.properties,
+                &s_props,
                 Some(s_shape_id),
                 &t_shape.properties,
             );
