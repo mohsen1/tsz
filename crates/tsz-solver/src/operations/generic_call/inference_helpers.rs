@@ -983,10 +983,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Suppress contextual type when source type params are fully determined by params.
         // This prevents return type from incorrectly constraining T when T already comes
         // from param positions (e.g., `identity<T>(v:T)=>T` vs `Iterator<S, boolean>`).
+        //
+        // When source type params are NOT fully determined by params, use the target
+        // function's RETURN TYPE as the contextual type — not the whole target function.
+        // compute_contextual_types (step 2.5) constrains the source function's return
+        // type against the contextual type. If the contextual type is the whole target
+        // function, return-only type params get incorrectly matched against the target's
+        // parameter types instead of its return type. For example:
+        //   pair: <T, S>(x: T) => (y: S) => { x: T; y: S }
+        //   target: (x: T_zw) => (y: S_zw) => U_zw
+        // Without this fix, pair's return `(y: S) => ...` would be matched against
+        // the whole target `(x: T_zw) => ...`, causing S to be inferred from T_zw
+        // instead of S_zw.
         self.contextual_type = if source_type_params_fully_determined_by_params {
             None
         } else {
-            Some(target_ty)
+            Some(target_fn.return_type)
         };
         let instantiated =
             self.instantiate_function_shape_from_argument_types(&source_fn, &target_param_types);
