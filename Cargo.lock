@@ -1736,6 +1736,7 @@ dependencies = [
  "smallvec",
  "stacker",
  "tracing",
+ "tracing-subscriber",
  "tsz-binder",
  "tsz-common",
  "tsz-scanner",
