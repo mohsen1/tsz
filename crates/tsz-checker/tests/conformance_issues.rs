@@ -10320,6 +10320,54 @@ namespace myModule {
 }
 
 #[test]
+fn test_import_equals_in_namespace_no_ts1147_for_ambient_module() {
+    // When the required module is an ambient module (declared with `declare module "..."`),
+    // TS1147 should NOT be emitted — the import is a valid reference to a global ambient module.
+    // See: privacyImportParseErrors.ts
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        module: ModuleKind::CommonJS,
+        ..CheckerOptions::default()
+    };
+    let source = r#"
+export namespace m1 {
+    export declare module "m1_M3_public" {
+        export function f1(): void;
+    }
+    import m1_im3 = require("m1_M3_public");
+}
+        "#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        opts,
+    );
+    checker.ctx.report_unresolved_imports = true;
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    assert!(
+        !has_error(&diagnostics, 1147),
+        "TS1147 should not be emitted when import = require references an ambient module. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_import_aliases_in_global_augmentation_emit_ts2667_and_ts2591() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
