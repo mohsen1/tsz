@@ -15,6 +15,31 @@ impl BinderState {
     /// Check if `idx` is nested inside an ambient module (one with `declare` or
     /// a string-literal name). Walks up through `MODULE_BLOCK` / `MODULE_DECLARATION`
     /// ancestors until it finds one that is ambient or reaches the source file.
+    /// Check if the given node is inside a namespace (identifier-named ModuleDeclaration),
+    /// as opposed to an ambient module (string-literal-named ModuleDeclaration) or at the
+    /// file top level.
+    fn is_inside_namespace(arena: &NodeArena, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..32 {
+            let Some(ext) = arena.get_extended(current) else {
+                return false;
+            };
+            let parent_idx = ext.parent;
+            let Some(parent_node) = arena.get(parent_idx) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(parent_module) = arena.get_module(parent_node)
+                && let Some(name_node) = arena.get(parent_module.name)
+            {
+                // Identifier name = namespace, StringLiteral name = ambient module
+                return name_node.kind == SyntaxKind::Identifier as u16;
+            }
+            current = parent_idx;
+        }
+        false
+    }
+
     fn is_inside_ambient_module(arena: &NodeArena, idx: NodeIndex) -> bool {
         let mut current = idx;
         // Walk up through the AST looking for an ambient ancestor
@@ -119,7 +144,17 @@ impl BinderState {
                         && self.is_potential_module_augmentation(&module_specifier);
 
                     if is_augmentation {
-                        // Track as module augmentation - bind body with augmentation context
+                        // Track as module augmentation - bind body with augmentation context.
+                        // When the augmentation is inside a namespace (identifier-named module),
+                        // also add to declared_modules so the checker can suppress TS1147
+                        // for `import = require("mod")` in the same namespace. This is because
+                        // `declare module "X"` inside a namespace creates a valid ambient module
+                        // target even in an external module file (tsc 6.0 behavior).
+                        // Don't do this for top-level augmentations — those are true augmentations
+                        // that need TS2664 if the target module doesn't exist.
+                        if Self::is_inside_namespace(arena, idx) {
+                            self.declared_modules.insert(module_specifier.clone());
+                        }
                         if module.body.is_none() {
                             // Shorthand ambient module: `declare module "*.json";` (no body)
                             // Even when classified as augmentation, a bodyless declaration

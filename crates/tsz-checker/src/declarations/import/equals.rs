@@ -299,12 +299,27 @@ impl<'a> CheckerState<'a> {
 
             // TS1147: Import declarations in a namespace cannot reference a module.
             // tsc emits only TS1147 (not TS2307) when the import is inside a namespace.
+            // Exception: when the required module is an ambient module (declared with
+            // `declare module "..."` in any file), the import is valid — it's a reference
+            // to a global ambient module, not an external file. tsc 6.0 does not emit
+            // TS1147 in this case (e.g. privacyImportParseErrors.ts).
             if inside_namespace {
-                self.error_at_node(
-                    import.module_specifier,
-                    diagnostic_messages::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
-                    diagnostic_codes::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
-                );
+                let module_is_ambient = require_module_specifier.as_deref().is_some_and(|spec| {
+                    // Check current file's declared ambient modules
+                    self.ctx.binder.declared_modules.contains(spec)
+                            // Check cross-file ambient modules via global index
+                            || self
+                                .ctx
+                                .files_for_module_specifier(spec)
+                                .is_some_and(|files| !files.is_empty())
+                });
+                if !module_is_ambient {
+                    self.error_at_node(
+                        import.module_specifier,
+                        diagnostic_messages::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
+                        diagnostic_codes::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
+                    );
+                }
             }
 
             let import_alias_sym_id = self.ctx.binder.node_symbols.get(&stmt_idx.0).copied();

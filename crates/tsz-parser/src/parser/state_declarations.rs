@@ -1425,9 +1425,13 @@ impl ParserState {
                 // Also skip in block context: tsc emits TS1029 via grammarErrorOnNode
                 // in the checker, which is suppressed by hasParseDiagnostics when
                 // TS1184 (Modifiers cannot appear here) is already emitted.
+                // Also skip for `declare export module/namespace` — tsc 6.0 accepts this
+                // form without TS1029 for ambient module/namespace declarations.
                 if !self.in_block_context()
                     && !self.is_token(SyntaxKind::AsKeyword)
                     && !self.is_token(SyntaxKind::EqualsToken)
+                    && !self.is_token(SyntaxKind::ModuleKeyword)
+                    && !self.is_token(SyntaxKind::NamespaceKeyword)
                     && (saved_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) == 0
                 {
                     self.parse_error_at(
@@ -1485,6 +1489,10 @@ impl ParserState {
                         } else {
                             self.parse_import_declaration_with_modifiers(start_pos, Some(modifiers))
                         }
+                    }
+                    SyntaxKind::ModuleKeyword | SyntaxKind::NamespaceKeyword => {
+                        // `declare export module "..."` or `declare export namespace Foo`
+                        self.parse_module_declaration_with_modifiers(start_pos, Some(modifiers))
                     }
                     _ => {
                         self.error_declaration_expected();
