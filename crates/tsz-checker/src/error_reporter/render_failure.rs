@@ -1232,33 +1232,6 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // TSC emits TS2322 instead of TS2739/TS2740 when the source is an intersection type.
-        if tsz_solver::is_intersection_type(self.ctx.types, source)
-            || tsz_solver::is_intersection_type(self.ctx.types, source_type)
-        {
-            let src_str = if depth == 0 {
-                self.format_assignment_source_type_for_diagnostic(source, target, idx)
-            } else {
-                self.format_type_diagnostic(source_type)
-            };
-            let tgt_str = if depth == 0 {
-                self.format_assignability_type_for_message(target, source)
-            } else {
-                self.format_type_diagnostic(target_type)
-            };
-            let message = format_message(
-                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                &[&src_str, &tgt_str],
-            );
-            return Diagnostic::error(
-                file_name,
-                start,
-                length,
-                message,
-                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            );
-        }
-
         // TSC emits TS2322 instead of TS2739/TS2740 when both source and target have
         // string index signatures. For number index signatures, suppress only when the
         // target has no explicit named properties (i.e., it's purely an index-signature
