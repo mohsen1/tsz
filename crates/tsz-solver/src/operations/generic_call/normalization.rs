@@ -231,7 +231,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         arg_types: &[TypeId],
     ) -> TypeSubstitution {
         use crate::types::InferencePriority;
-        let has_context_sensitive_args = arg_types
+        let _has_context_sensitive_args = arg_types
             .iter()
             .copied()
             .any(|arg| self.is_contextually_sensitive(arg));

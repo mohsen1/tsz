@@ -10,45 +10,9 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 /// Check if a property with the given name is private or protected on the given type.
-/// Handles objects, callables, unions (all members must have non-public property),
-/// and intersections (any member having non-public property counts).
-/// Returns `true` if the property exists and is non-public on the type.
+/// Delegates to the solver's type query via query_boundaries.
 fn has_nonpublic_property(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId, name: &str) -> bool {
-    use tsz_common::Visibility;
-    use tsz_solver::types::TypeData;
-
-    let Some(data) = db.lookup(type_id) else {
-        return false;
-    };
-
-    match data {
-        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-            let shape = db.object_shape(shape_id);
-            shape.properties.iter().any(|p| {
-                db.resolve_atom_ref(p.name).as_ref() == name
-                    && matches!(p.visibility, Visibility::Private | Visibility::Protected)
-            })
-        }
-        TypeData::Callable(shape_id) => {
-            let shape = db.callable_shape(shape_id);
-            shape.properties.iter().any(|p| {
-                db.resolve_atom_ref(p.name).as_ref() == name
-                    && matches!(p.visibility, Visibility::Private | Visibility::Protected)
-            })
-        }
-        TypeData::Union(list_id) => {
-            // For unions, the property must be non-public in ALL members
-            // (if any member is public or missing the property, no TS4105).
-            let members = db.type_list(list_id);
-            if members.is_empty() {
-                return false;
-            }
-            members.iter().all(|&m| has_nonpublic_property(db, m, name))
-        }
-        // Intersection constraints and everything else — tsc does not
-        // emit TS4105 for these.
-        _ => false,
-    }
+    crate::query_boundaries::common::has_nonpublic_property(db, type_id, name)
 }
 
 fn is_broad_index_type(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
