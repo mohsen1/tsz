@@ -1355,6 +1355,21 @@ impl<'a> CheckerState<'a> {
 
                     if let Some(exports_table) = self.resolve_effective_module_exports(module_name)
                     {
+                        // When the CJS module has `export =`, the default import
+                        // in Node ESM/CJS interop gets the `export =` value
+                        // directly (module.exports). This preserves call/construct
+                        // signatures when the `export =` target is a function or
+                        // class. Without this, we'd wrap it in a plain object
+                        // type that loses callability.
+                        if is_node_esm_importing_cjs
+                            && exports_table.has("export=")
+                            && let Some(export_eq_sym) = exports_table.get("export=")
+                        {
+                            let export_eq_type = self.get_type_of_symbol(export_eq_sym);
+                            self.ctx.module_namespace_resolution_set.remove(module_name);
+                            return (export_eq_type, Vec::new());
+                        }
+
                         use tsz_solver::PropertyInfo;
                         let mut props: Vec<PropertyInfo> = Vec::new();
                         for (name, &export_sym_id) in exports_table.iter() {

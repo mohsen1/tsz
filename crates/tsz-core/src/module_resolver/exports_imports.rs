@@ -37,7 +37,22 @@ impl ModuleResolver {
                 if let Some((target, resolved_using_ts_extension)) =
                     self.resolve_imports_subpath(imports, specifier, &conditions)
                 {
-                    // Resolve the target path
+                    // Per Node.js PACKAGE_IMPORTS_RESOLVE spec:
+                    // If the target is a bare specifier (not starting with "./" or "/"),
+                    // it should be resolved as a package (PACKAGE_RESOLVE), not as a
+                    // relative path. This supports self-referencing imports like
+                    // "#type": "package" where the imports field maps to a package name.
+                    if !target.starts_with("./") && !target.starts_with('/') {
+                        return self.resolve_bare_specifier(
+                            &target,
+                            &current,
+                            containing_file,
+                            specifier_span,
+                            importing_module_kind,
+                        );
+                    }
+
+                    // Resolve the target as a relative path
                     let resolved_path = current.join(target.trim_start_matches("./"));
 
                     if let Some(resolved) = self.try_file_or_directory(&resolved_path) {
