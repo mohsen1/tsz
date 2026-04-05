@@ -251,7 +251,13 @@ impl<'a> CheckerState<'a> {
     /// Parse a JSDoc-style `@type` expression into a concrete type.
     pub(crate) fn jsdoc_type_from_expression(&mut self, type_expr: &str) -> Option<TypeId> {
         let type_expr = type_expr.trim();
-        if let Some(parts) = Self::split_top_level_binary(type_expr, '|') {
+        // Skip union/intersection splitting for `function(...)` types, since the
+        // return type (after `:`) may contain `|`/`&` that would be incorrectly
+        // split at the top level. e.g., `function("a"|"b"): 3|4` must not become
+        // `function(...): 3` | `4`.
+        let starts_with_function =
+            type_expr.starts_with("function") && type_expr[8..].trim_start().starts_with('(');
+        if !starts_with_function && let Some(parts) = Self::split_top_level_binary(type_expr, '|') {
             let mut members = Vec::new();
             for part in &parts {
                 members.push(self.resolve_jsdoc_type_str(part.trim())?);
@@ -263,7 +269,7 @@ impl<'a> CheckerState<'a> {
                 Some(factory.union(members))
             };
         }
-        if let Some(parts) = Self::split_top_level_binary(type_expr, '&') {
+        if !starts_with_function && let Some(parts) = Self::split_top_level_binary(type_expr, '&') {
             let mut members = Vec::new();
             for part in &parts {
                 members.push(self.resolve_jsdoc_type_str(part.trim())?);
@@ -524,7 +530,7 @@ impl<'a> CheckerState<'a> {
                         let mut constructor_return = None;
                         if !params_inner.is_empty() {
                             let mut arg_index = 0u32;
-                            for p in params_inner.split(',') {
+                            for p in Self::split_top_level_params(params_inner) {
                                 let p = p.trim();
                                 if let Some(new_ret) = p.strip_prefix("new:") {
                                     is_constructor = true;
