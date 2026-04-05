@@ -37,6 +37,23 @@ pub fn is_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     )
 }
 
+/// Check if a type is or contains a const type variable.
+///
+/// Matches tsc's `isConstTypeVariable`: returns true when the type is a type
+/// parameter with the `const` modifier, or a union/intersection containing one.
+/// This is used to trigger const-like inference (tuple inference for array
+/// literals, readonly properties for object literals, literal preservation).
+pub fn is_const_type_variable(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeData::TypeParameter(info)) => info.is_const,
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            members.iter().any(|&m| is_const_type_variable(db, m))
+        }
+        _ => false,
+    }
+}
+
 /// Get the constraint of a type parameter.
 ///
 /// Returns None if not a type parameter or has no constraint.
