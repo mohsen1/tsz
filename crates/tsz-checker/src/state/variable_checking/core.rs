@@ -2129,7 +2129,16 @@ impl<'a> CheckerState<'a> {
                 }
             }
         } else {
-            compute_final_type(self);
+            // Destructuring declarations have no symbol on the VariableDeclaration
+            // node itself, but we still need to cache the computed type so the
+            // declaration emitter can find it via node_types for DTS output.
+            let final_type = compute_final_type(self);
+            if final_type != TypeId::ANY && final_type != TypeId::ERROR {
+                self.ctx.node_types.insert(decl_idx.0, final_type);
+                if var_decl.name.is_some() {
+                    self.ctx.node_types.insert(var_decl.name.0, final_type);
+                }
+            }
         }
 
         // If the variable name is a binding pattern, check binding element default values
