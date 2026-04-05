@@ -455,7 +455,20 @@ impl<'a> CheckerState<'a> {
             // `const ns: ns.Foo`), the binder's value_declaration may point to the
             // ModuleDeclaration node instead of the VariableDeclaration. Fall back to
             // searching declarations[] for the actual variable declaration.
+            //
+            // IMPORTANT: Skip this fallback when resolved_value_decl was deliberately
+            // set to a PARAMETER node (by the redeclaration fix above). When a `var`
+            // redeclares a constructor parameter property (e.g., `constructor(public p: number)
+            // { var p: string; }`), the parameter's type annotation is the canonical type
+            // for the symbol. Without this guard, the fallback finds the `var` declaration
+            // and uses its (incompatible) type annotation instead.
+            let is_parameter_node = self
+                .ctx
+                .arena
+                .get(resolved_value_decl)
+                .is_some_and(|node| node.kind == syntax_kind_ext::PARAMETER);
             if resolved_value_decl.is_some()
+                && !is_parameter_node
                 && self
                     .ctx
                     .arena
