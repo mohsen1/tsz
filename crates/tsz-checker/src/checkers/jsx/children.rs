@@ -148,6 +148,7 @@ impl<'a> CheckerState<'a> {
                     self.check_jsx_multiple_children_assignable(
                         attributes_idx,
                         multiple_children_type,
+                        children_type,
                         tag_name_idx,
                     );
                     return;
@@ -512,12 +513,14 @@ impl<'a> CheckerState<'a> {
         &mut self,
         attributes_idx: NodeIndex,
         children_type: TypeId,
+        original_children_type: TypeId,
         tag_name_idx: NodeIndex,
     ) {
         if let Some(expected_child_type) = self.jsx_multiple_children_element_type(children_type)
             && self.report_jsx_multiple_children_individual_assignability(
                 attributes_idx,
                 expected_child_type,
+                original_children_type,
             )
         {
             return;
@@ -617,6 +620,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         attributes_idx: NodeIndex,
         expected_child_type: TypeId,
+        original_children_type: TypeId,
     ) -> bool {
         let Some(child_nodes) = self.get_jsx_body_child_nodes(attributes_idx) else {
             return false;
@@ -652,6 +656,13 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if self.is_assignable_to(actual_child_type, expected_child_type) {
+                continue;
+            }
+            // Fallback: when a child doesn't match the extracted array element type,
+            // also check against the original (unfiltered) children type. This handles
+            // cases where the children type is a union including non-array members like
+            // `{}` (from ReactFragment) that subsume the child type.
+            if self.is_assignable_to(actual_child_type, original_children_type) {
                 continue;
             }
 
