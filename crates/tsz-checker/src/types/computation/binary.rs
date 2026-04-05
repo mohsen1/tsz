@@ -1146,18 +1146,10 @@ impl<'a> CheckerState<'a> {
                         None => right_type,
                         Some(non_nullish) => {
                             if non_nullish == right_type
-                                || tsz_solver::is_subtype_of(
-                                    self.ctx.types.as_type_database(),
-                                    right_type,
-                                    non_nullish,
-                                )
+                                || self.is_subtype_of(right_type, non_nullish)
                             {
                                 non_nullish
-                            } else if tsz_solver::is_subtype_of(
-                                self.ctx.types.as_type_database(),
-                                non_nullish,
-                                right_type,
-                            ) {
+                            } else if self.is_subtype_of(non_nullish, right_type) {
                                 right_type
                             } else {
                                 factory.union2(non_nullish, right_type)
