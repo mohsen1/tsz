@@ -194,3 +194,59 @@ fn test_jsx_attribute_comma_expression_emits_ts18007() {
         "Expected one TS18007 for JSX attribute comma expression, got codes: {codes:?}"
     );
 }
+
+#[test]
+fn test_no_ts1382_in_unclosed_recovery_patterns() {
+    // These patterns appear in jsxUnclosedParserRecovery.ts and must NOT emit TS1382.
+    // TS1382 = "Unexpected token. Did you mean `{'>'}` or `&gt;`?" (bare > in JSX text)
+    // That error is only valid for a literal `>` appearing inside JSX text content.
+    let patterns = vec![
+        ("noClose", "var d = <div>\n    <diddy\n</div>;"),
+        (
+            "noCloseTypeArg",
+            "var d = <div>\n    <diddy<boolean>\n</div>;",
+        ),
+        (
+            "noCloseTypeArgAttrs",
+            "var d = <div>\n    <diddy<boolean> bananas=\"please\"\n</div>;",
+        ),
+        ("noCloseBracket", "var d = <div>\n    <diddy/\n</div>;"),
+        (
+            "noCloseBracketTypeArgAttrs",
+            "var d = <div>\n    <diddy<boolean> bananas=\"please\"/\n</div>;",
+        ),
+        (
+            "noSelfcloseTypeArgAttrs",
+            "var d = <div>\n    <diddy<boolean> bananas=\"please\">\n</div>;",
+        ),
+        (
+            "noCloseTypeArgTrailingTag",
+            "var d = <div>\n    <diddy<boolean>\n    <diddy/>\n</div>;",
+        ),
+        (
+            "noCloseBracketTypeArgAttrsTrailingTag",
+            "var d = <div>\n    <diddy<boolean> bananas=\"please\"/\n    <diddy/>\n</div>;",
+        ),
+        (
+            "noCloseTypeArgTrailingText",
+            "var d = <div>\n    <diddy<boolean>\n    Cranky Wrinkly Funky\n</div>;",
+        ),
+        (
+            "noCloseBracketTypeArgAttrsTrailingText",
+            "var d = <div>\n    <diddy<boolean> bananas=\"please\"/\n    Cranky Wrinkly Funky\n</div>;",
+        ),
+    ];
+
+    let mut found = vec![];
+    for (name, src) in &patterns {
+        let codes = get_parser_error_codes(src, "test.tsx");
+        if codes.contains(&1382) {
+            found.push(format!("{name}: {codes:?}"));
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "Unexpected TS1382 in recovery patterns:\n{}",
+        found.join("\n")
+    );
+}
