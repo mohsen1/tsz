@@ -222,9 +222,10 @@ impl<'a> CheckerState<'a> {
         if node.kind == syntax_kind_ext::SATISFIES_EXPRESSION
             && let Some(assertion) = self.ctx.arena.get_type_assertion(node)
         {
-            self.error_at_position(
-                assertion.keyword_pos,
-                9, // "satisfies".len()
+            // tsc points TS8037 at the type node (the type after `satisfies`),
+            // not at the `satisfies` keyword itself.
+            self.error_at_node(
+                assertion.type_node,
                 diagnostic_messages::TYPE_SATISFACTION_EXPRESSIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                 diagnostic_codes::TYPE_SATISFACTION_EXPRESSIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
             );
