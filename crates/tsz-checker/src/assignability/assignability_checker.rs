@@ -44,6 +44,41 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a callable type's parameters contain type parameters within intersections.
+    /// This distinguishes narrowed callback parameters (e.g., `(x: number & T) => void`)
+    /// from callbacks with standalone enclosing-scope type parameters (e.g., `(x: T) => void`).
+    pub(crate) fn callable_params_contain_type_param_intersection(&self, type_id: TypeId) -> bool {
+        let params = if let Some(shape) =
+            tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id)
+        {
+            shape.params.iter().map(|p| p.type_id).collect::<Vec<_>>()
+        } else if let Some(shape) =
+            tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id)
+        {
+            shape
+                .call_signatures
+                .iter()
+                .flat_map(|sig| sig.params.iter().map(|p| p.type_id))
+                .collect::<Vec<_>>()
+        } else {
+            return false;
+        };
+        params.iter().any(|&param_type| {
+            if let Some(members) =
+                tsz_solver::type_queries::get_intersection_members(self.ctx.types, param_type)
+            {
+                members.iter().any(|&m| {
+                    crate::query_boundaries::assignability::contains_type_parameters(
+                        self.ctx.types,
+                        m,
+                    )
+                })
+            } else {
+                false
+            }
+        })
+    }
+
     /// Check if an argument node is a callback (arrow function or function expression)
     /// with unannotated parameters that rely on contextual typing.
     pub(crate) fn arg_is_callback_with_unannotated_params(&self, arg_idx: NodeIndex) -> bool {

@@ -798,12 +798,13 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
         }
-        if callable_mismatch
-            && (assign_query::contains_type_parameters(self.ctx.types, actual)
-                || assign_query::contains_type_parameters(self.ctx.types, expected)
-                || actual_has_generic_signatures
-                || expected_has_generic_signatures)
-        {
+        // Defer callable mismatches only when the actual or expected has its own generic
+        // signatures (e.g., `<T>(x: T) => T`), which indicates the mismatch may be resolved
+        // by higher-order generic inference. Don't defer just because the callable references
+        // type parameters from an enclosing scope (e.g., `(x: T) => void` where T is from
+        // the outer function). Those type parameters are permanent — deferral won't resolve
+        // them, and suppressing the error causes false negatives (missing TS2345).
+        if callable_mismatch && (actual_has_generic_signatures || expected_has_generic_signatures) {
             return true;
         }
         if !callable_mismatch
