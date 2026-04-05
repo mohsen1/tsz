@@ -379,6 +379,8 @@ struct CheckOptions {
     #[serde(default)]
     no_resolve: bool,
     #[serde(default)]
+    allow_js: bool,
+    #[serde(default)]
     check_js: bool,
     #[serde(default)]
     resolve_json_module: bool,
