@@ -349,12 +349,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // range, NOT an actual string index signature on the type. Reject these so
         // property access on mapped types with unconstrained keys correctly reports
         // TS2339 (property does not exist).
-        if let Some(TypeData::KeyOf(operand)) = self.interner().lookup(constraint) {
-            if let Some(TypeData::TypeParameter(info)) = self.interner().lookup(operand) {
-                if info.constraint.is_none() {
-                    return false;
-                }
-            }
+        if let Some(TypeData::KeyOf(operand)) = self.interner().lookup(constraint)
+            && let Some(TypeData::TypeParameter(info)) = self.interner().lookup(operand)
+            && info.constraint.is_none()
+        {
+            return false;
         }
 
         // Evaluate keyof if needed

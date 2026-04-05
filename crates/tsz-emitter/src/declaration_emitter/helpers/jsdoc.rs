@@ -452,9 +452,7 @@ impl<'a> DeclarationEmitter<'a> {
             match ch {
                 '(' | '<' | '{' | '[' => depth += 1,
                 ')' | '>' | '}' | ']' => {
-                    if depth > 0 {
-                        depth -= 1;
-                    }
+                    depth = depth.saturating_sub(1);
                 }
                 ',' if depth == 0 => {
                     result.push(&s[start..i]);

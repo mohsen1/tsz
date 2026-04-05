@@ -1671,11 +1671,11 @@ impl<'a> CheckerState<'a> {
                     if crate::query_boundaries::state::checking::is_type_parameter_like(
                         self.ctx.types,
                         object_type_for_access,
-                    ) && !crate::query_boundaries::common::type_parameter_constraint(
+                    ) && crate::query_boundaries::common::type_parameter_constraint(
                         self.ctx.types,
                         object_type_for_access,
                     )
-                    .is_some()
+                    .is_none()
                     {
                         // Unconstrained type parameter - emit TS2339
                         if !property_name.starts_with('#') && !accessibility_error_emitted {
