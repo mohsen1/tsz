@@ -33,7 +33,7 @@ impl<'a> Printer<'a> {
                 self.emit_amd_wrapper(dependencies, source_node, source_idx);
             }
             crate::context::transform::ModuleFormat::UMD => {
-                self.emit_umd_wrapper(source_node, source_idx);
+                self.emit_umd_wrapper(dependencies, source_node, source_idx);
             }
             crate::context::transform::ModuleFormat::System => {
                 self.emit_system_wrapper(dependencies, source_node, source_idx);
@@ -260,15 +260,30 @@ impl<'a> Printer<'a> {
 
     pub(super) fn emit_umd_wrapper(
         &mut self,
+        dependencies: &[String],
         source_node: &tsz_parser::parser::node::Node,
         source_idx: NodeIndex,
     ) {
         let restore_decorate_helper = self.hoist_decorate_helper_before_wrapper();
+        let amd_name = self.extract_amd_module_name();
+        let amd_deps = self.extract_amd_dependencies();
+        let Some(source) = self.arena.get_source_file(source_node) else {
+            return;
+        };
+        let (value_deps, side_effect_deps, _dep_vars) =
+            self.collect_amd_dependency_groups(dependencies, source);
+
         // Emit `/// <reference .../>` directives before the UMD wrapper.
         for directive in &self.extract_reference_directives() {
             self.write(directive);
             self.write_line();
         }
+        // Emit `/// <amd-dependency .../>` comments before the UMD wrapper.
+        for (_, _, original_line) in &amd_deps {
+            self.write(original_line);
+            self.write_line();
+        }
+
         self.write("(function (factory) {");
         self.write_line();
         self.increase_indent();
@@ -285,25 +300,72 @@ impl<'a> Printer<'a> {
         self.write("else if (typeof define === \"function\" && define.amd) {");
         self.write_line();
         self.increase_indent();
-        let amd_name = self.extract_amd_module_name();
         self.write("define(");
         if let Some(name) = &amd_name {
             self.write("\"");
             self.write(name);
             self.write("\", ");
         }
-        self.write("[\"require\", \"exports\"], factory);");
+        self.write("[\"require\", \"exports\"");
+
+        // Named AMD deps come first, then unnamed, then import deps —
+        // same ordering as the AMD wrapper.
+        let named_deps: Vec<_> = amd_deps
+            .iter()
+            .filter(|(_, name, _)| name.is_some())
+            .collect();
+        let unnamed_deps: Vec<_> = amd_deps
+            .iter()
+            .filter(|(_, name, _)| name.is_none())
+            .collect();
+
+        // UMD ordering: named amd-deps, unnamed amd-deps, import deps,
+        // side-effect deps. This differs from AMD where import deps come
+        // before unnamed amd-deps.
+        for (path, _, _) in &named_deps {
+            self.write(", \"");
+            self.write(path);
+            self.write("\"");
+        }
+        for (path, _, _) in &unnamed_deps {
+            self.write(", \"");
+            self.write(path);
+            self.write("\"");
+        }
+        for dep in &value_deps {
+            self.write(", \"");
+            self.write(dep);
+            self.write("\"");
+        }
+        for dep in &side_effect_deps {
+            self.write(", \"");
+            self.write(dep);
+            self.write("\"");
+        }
+
+        self.write("], factory);");
         self.write_line();
         self.decrease_indent();
         self.write("}");
         self.write_line();
         self.decrease_indent();
-        self.write("})(function (require, exports) {");
+
+        // Factory function signature: named amd-dependency params appear after
+        // `require, exports`.
+        self.write("})(function (require, exports");
+        for (_, name, _) in &named_deps {
+            if let Some(n) = name {
+                self.write(", ");
+                self.write(n);
+            }
+        }
+        self.write(") {");
         self.write_line();
         self.increase_indent();
 
         // UMD modules get "use strict" inside the factory callback, matching tsc.
-        if let Some(source) = self.arena.get_source_file(source_node)
+        let source = self.arena.get_source_file(source_node);
+        if let Some(source) = source
             && self.file_is_module(&source.statements)
         {
             self.write("\"use strict\";");
