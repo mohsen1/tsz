@@ -403,23 +403,10 @@ fn post_process_checker_diagnostics(
         let file_path = file.file_name.as_str();
         let test_path = conformance_test_name.as_deref().unwrap_or(file_path);
 
-        let suppress = test_path.contains("jsdocArrayObjectPromiseNoImplicitAny")
-            || test_path.contains("mergeSymbolReexportedTypeAliasInstantiation");
+        let suppress = test_path.contains("mergeSymbolReexportedTypeAliasInstantiation");
 
         if suppress {
             checker_diagnostics.retain(|diag| diag.code != 2314 && diag.code != 2315);
-        }
-    }
-
-    // ==========================================================================
-    // TS2591 False Positive Suppressions (Ambient module triple-slash reference)
-    // ==========================================================================
-    if checker_diagnostics.iter().any(|d| d.code == 2591) {
-        let file_path = file.file_name.as_str();
-        let test_path = conformance_test_name.as_deref().unwrap_or(file_path);
-
-        if test_path.contains("declarationEmitTripleSlashReferenceAmbientModule") {
-            checker_diagnostics.retain(|diag| diag.code != 2591);
         }
     }
 
