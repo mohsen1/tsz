@@ -587,6 +587,14 @@ impl<'a> CheckerState<'a> {
         };
         let check_excess_properties = true;
         let prev_generic_excess_skip = self.ctx.generic_excess_skip.take();
+        // Preserve literal types in array literals during generic constructor
+        // argument collection — mirroring the function call path. This ensures
+        // `[1, 2]` is typed as a tuple (not widened to `number[]`), enabling
+        // correct const type parameter inference (e.g., `@template const T`).
+        let prev_preserve_literals = self.ctx.preserve_literal_types;
+        if is_generic_new {
+            self.ctx.preserve_literal_types = true;
+        }
 
         let arg_types = if is_generic_new {
             if let Some(shape) = constructor_shape {
@@ -1007,6 +1015,7 @@ impl<'a> CheckerState<'a> {
             )
         };
         self.ctx.generic_excess_skip = prev_generic_excess_skip;
+        self.ctx.preserve_literal_types = prev_preserve_literals;
 
         self.ensure_relation_input_ready(constructor_type);
         self.ensure_relation_inputs_ready(&arg_types);
