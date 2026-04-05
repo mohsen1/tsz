@@ -393,3 +393,23 @@ class Broken extends BaseClass {}
         "Should emit TS2515 when non-abstract class doesn't implement abstract member"
     );
 }
+
+#[test]
+fn ts2395_for_mixed_export_local_type_aliases() {
+    // TSC emits TS2395 (not TS2300) when a type alias has both exported and
+    // non-exported declarations in the same scope.
+    let source = r#"export type A = {}
+type A = {}"#;
+    let diags = get_diagnostics(source);
+    let codes: Vec<u32> = diags.iter().map(|d| d.0).collect();
+    assert!(
+        codes.contains(&2395),
+        "Should emit TS2395 (not TS2300) when type alias has mixed export/local: got {:?}",
+        codes
+    );
+    assert!(
+        !codes.contains(&2300),
+        "Should NOT emit TS2300 when TS2395 is emitted: got {:?}",
+        codes
+    );
+}

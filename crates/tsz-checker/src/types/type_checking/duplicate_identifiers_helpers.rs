@@ -145,26 +145,33 @@ impl<'a> CheckerState<'a> {
     /// declarations must be all exported or all local" check inside pure ambient
     /// namespaces but still emits it inside ambient module declarations.
     pub(super) fn is_in_ambient_namespace_not_module(&self, decl_idx: NodeIndex) -> bool {
-        if !self.ctx.arena.is_in_ambient_context(decl_idx) {
+        // Interfaces and type aliases are implicitly "ambient" (no runtime code),
+        // but for TS2395 they should NOT be treated as "in ambient namespace" when
+        // they are at module scope. We need to check if the declaration is ACTUALLY
+        // inside a `declare namespace` (not just implicitly ambient due to its kind).
+        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        let is_implicitly_ambient = decl_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+            || decl_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION;
+        if !is_implicitly_ambient && !self.ctx.arena.is_in_ambient_context(decl_idx) {
             return false;
         }
-        // Walk up to find the enclosing MODULE_DECLARATION and check if its
-        // name is a string literal (declare module "...") or identifier
-        // (declare namespace X).
+        // Walk up to find an enclosing `declare namespace` (identifier-named).
+        // If we only find SOURCE_FILE or `declare module "..."`, the declaration
+        // is NOT in a pure ambient namespace.
         let mut current = decl_idx;
+        let mut found_ambient_namespace = false;
         loop {
             let Some(ext) = self.ctx.arena.get_extended(current) else {
-                // Reached top without finding a module declaration -- if we're
-                // in ambient context it's because of a .d.ts file, which is
-                // equivalent to a namespace context.
-                return true;
+                break;
             };
             let parent = ext.parent;
             if parent.is_none() {
-                return true;
+                break;
             }
             let Some(parent_node) = self.ctx.arena.get(parent) else {
-                return true;
+                break;
             };
             if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
                 // Check if the module name is a string literal
@@ -176,13 +183,23 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-                // Identifier-named module declaration (namespace) -- keep
-                // walking up in case there's a string-literal module above.
+                // Found an identifier-named module declaration (namespace)
+                found_ambient_namespace = true;
             }
             if parent_node.kind == syntax_kind_ext::SOURCE_FILE {
-                return true;
+                break;
             }
             current = parent;
+        }
+        // For implicitly ambient declarations (interfaces/type aliases),
+        // only return true if actually inside an ambient namespace.
+        // For explicitly ambient declarations (.d.ts, declare keyword),
+        // reaching the source file without finding a string-literal module
+        // means we're in ambient/namespace context.
+        if is_implicitly_ambient {
+            found_ambient_namespace
+        } else {
+            true
         }
     }
 
