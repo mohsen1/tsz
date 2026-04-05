@@ -335,9 +335,49 @@ impl<'a> CheckerState<'a> {
             let sym_res = if left_node.kind == syntax_kind_ext::QUALIFIED_NAME {
                 self.resolve_qualified_symbol_in_type_position(qn.left)
             } else if left_node.kind == SyntaxKind::Identifier as u16 {
-                self.resolve_identifier_symbol_as_qualified_type_anchor(qn.left)
+                let initial = self
+                    .resolve_identifier_symbol_as_qualified_type_anchor(qn.left)
                     .map(TypeSymbolResolution::Type)
-                    .unwrap_or_else(|| self.resolve_identifier_symbol_in_type_position(qn.left))
+                    .unwrap_or_else(|| self.resolve_identifier_symbol_in_type_position(qn.left));
+
+                // When the left side of a qualified name resolves to a type parameter,
+                // it cannot serve as a namespace (no exports). In tsc, type parameters
+                // do NOT shadow namespace imports in qualified name positions like
+                // `E.Whatever` — the import `* as E` takes precedence over the type
+                // parameter `E`.  Fall back to file_locals lookup which finds imports
+                // and top-level declarations without type parameter shadowing.
+                let lib_binders = self.get_lib_binders();
+                if let TypeSymbolResolution::Type(sym_id) = initial {
+                    if self
+                        .ctx
+                        .binder
+                        .get_symbol_with_libs(sym_id, &lib_binders)
+                        .is_some_and(|s| (s.flags & symbol_flags::TYPE_PARAMETER) != 0)
+                    {
+                        if let Some(file_sym) = self.ctx.binder.file_locals.get(&left_name) {
+                            let mut visited = Vec::new();
+                            let resolved = self
+                                .resolve_alias_symbol(file_sym, &mut visited)
+                                .unwrap_or(file_sym);
+                            if !self
+                                .ctx
+                                .binder
+                                .get_symbol_with_libs(resolved, &lib_binders)
+                                .is_some_and(|s| (s.flags & symbol_flags::TYPE_PARAMETER) != 0)
+                            {
+                                TypeSymbolResolution::Type(resolved)
+                            } else {
+                                initial
+                            }
+                        } else {
+                            initial
+                        }
+                    } else {
+                        initial
+                    }
+                } else {
+                    initial
+                }
             } else {
                 TypeSymbolResolution::NotFound
             };

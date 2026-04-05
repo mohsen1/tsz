@@ -243,7 +243,7 @@ impl<'a> CheckerState<'a> {
             Some(qn) => qn,
             None => return TypeSymbolResolution::NotFound,
         };
-        let left_sym = match self.resolve_qualified_symbol_inner_in_type_position(
+        let mut left_sym = match self.resolve_qualified_symbol_inner_in_type_position(
             qn.left,
             visited_aliases,
             depth + 1,
@@ -251,9 +251,47 @@ impl<'a> CheckerState<'a> {
             TypeSymbolResolution::Type(sym_id) => sym_id,
             other => return other,
         };
-        let left_sym = self
+        left_sym = self
             .resolve_alias_symbol(left_sym, visited_aliases)
             .unwrap_or(left_sym);
+
+        // When the left side of a qualified name resolves to a type parameter,
+        // it cannot serve as a namespace (no exports). In tsc, type parameters
+        // do NOT shadow namespace imports in qualified name positions like
+        // `E.Whatever` — the import `* as E` takes precedence.
+        // Fall back to binder-based resolution which skips type parameters.
+        let lib_binders = self.get_lib_binders();
+        if self
+            .ctx
+            .binder
+            .get_symbol_with_libs(left_sym, &lib_binders)
+            .is_some_and(|s| (s.flags & symbol_flags::TYPE_PARAMETER) != 0)
+        {
+            // The left side is a type parameter — try to find a namespace/module
+            // import with the same name via binder scope resolution.
+            if let Some(left_node) = self.ctx.arena.get(qn.left)
+                && left_node.kind == SyntaxKind::Identifier as u16
+            {
+                if let Some(binder_sym) =
+                    self.ctx.binder.resolve_identifier(self.ctx.arena, qn.left)
+                {
+                    let resolved_binder = self
+                        .resolve_alias_symbol(binder_sym, visited_aliases)
+                        .unwrap_or(binder_sym);
+                    // Only use the binder result if it's NOT a type parameter
+                    // (i.e. it's an import/namespace/module).
+                    if !self
+                        .ctx
+                        .binder
+                        .get_symbol_with_libs(resolved_binder, &lib_binders)
+                        .is_some_and(|s| (s.flags & symbol_flags::TYPE_PARAMETER) != 0)
+                    {
+                        left_sym = resolved_binder;
+                    }
+                }
+            }
+        }
+
         let right_name = match self
             .ctx
             .arena
@@ -266,7 +304,6 @@ impl<'a> CheckerState<'a> {
         };
 
         // Look up the symbol across binders (file + libs)
-        let lib_binders = self.get_lib_binders();
         let Some(left_symbol) = self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders) else {
             return TypeSymbolResolution::NotFound;
         };
