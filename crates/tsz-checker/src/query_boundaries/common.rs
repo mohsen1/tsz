@@ -1032,3 +1032,53 @@ pub(crate) fn type_is_conditional_type_result_with_unresolved_inference(
 
     false
 }
+
+// ── Merged object shape query ──
+
+use tsz_solver::PropertyInfo;
+
+/// Get the fully merged object shape for a type, including properties from
+/// intersection members, union members, and merged declarations.
+///
+/// This is the canonical boundary for property-level analysis that needs
+/// to account for merged types (e.g., `{ a: string } & { b: number }` should
+/// have both `a` and `b` properties available).
+pub(crate) fn get_merged_object_shape_for_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<ObjectShape> {
+    // First, get the base shape if it exists
+    let base_shape = tsz_solver::type_queries::get_object_shape(db, type_id)?;
+    
+    // Collect properties from intersection members
+    let mut merged_props: Vec<PropertyInfo> = base_shape.properties.iter().cloned().collect();
+    let mut has_string_index = base_shape.string_index.is_some();
+    let mut has_number_index = base_shape.number_index.is_some();
+    
+    // Add properties from intersection members
+    if let Some(members) = tsz_solver::type_queries::get_intersection_members(db, type_id) {
+        for member in members {
+            if let Some(member_shape) = tsz_solver::type_queries::get_object_shape(db, member) {
+                for prop in member_shape.properties.iter() {
+                    // Check if property already exists
+                    if !merged_props.iter().any(|p| p.name == prop.name) {
+                        merged_props.push(prop.clone());
+                    }
+                }
+                has_string_index = has_string_index || member_shape.string_index.is_some();
+                has_number_index = has_number_index || member_shape.number_index.is_some();
+            }
+        }
+    }
+    
+    // Sort properties by declaration order for consistent results
+    merged_props.sort_by_key(|p| p.declaration_order);
+    
+    Some(ObjectShape {
+        flags: base_shape.flags,
+        properties: merged_props,
+        string_index: if has_string_index { base_shape.string_index } else { None },
+        number_index: if has_number_index { base_shape.number_index } else { None },
+        symbol: base_shape.symbol,
+    })
+}
