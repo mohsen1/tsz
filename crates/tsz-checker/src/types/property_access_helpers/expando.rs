@@ -890,13 +890,18 @@ impl<'a> CheckerState<'a> {
                 .expando_assignment_access_key(binary.left)
                 .is_some_and(|key| key == expected_key)
         {
-            let rhs_idx = self.ctx.arena.skip_parenthesized(binary.right);
-            let rhs_type = self.get_type_of_node(rhs_idx);
-            if rhs_type != TypeId::ANY
-                && rhs_type != TypeId::ERROR
-                && best_match.is_none_or(|(best_pos, _)| node.pos >= best_pos)
-            {
-                *best_match = Some((node.pos, rhs_type));
+            // In JS/Salsa files, `x.y = void 0` is a property declaration placeholder,
+            // not a meaningful type assignment. Skip it so the property type doesn't
+            // become `undefined`, which would cause spurious TS18048 diagnostics.
+            if !self.js_assignment_rhs_is_void_zero(binary.right) {
+                let rhs_idx = self.ctx.arena.skip_parenthesized(binary.right);
+                let rhs_type = self.get_type_of_node(rhs_idx);
+                if rhs_type != TypeId::ANY
+                    && rhs_type != TypeId::ERROR
+                    && best_match.is_none_or(|(best_pos, _)| node.pos >= best_pos)
+                {
+                    *best_match = Some((node.pos, rhs_type));
+                }
             }
         }
 
