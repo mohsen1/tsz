@@ -324,9 +324,11 @@ impl<'a> Printer<'a> {
         };
 
         let Some(clause_node) = self.arena.get(import.import_clause) else {
+            // AMD and System bind imports via wrapper parameters/setters.
+            // UMD uses require() in the body, so don't suppress.
             if matches!(
                 self.ctx.original_module_kind,
-                Some(ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
+                Some(ModuleKind::AMD | ModuleKind::System)
             ) {
                 return;
             }
@@ -369,10 +371,11 @@ impl<'a> Printer<'a> {
                 });
 
         if empty_named_import_preserves_side_effects {
-            // Wrapped module formats handle imports via wrapper parameters/setters.
+            // AMD and System handle imports via wrapper parameters/setters.
+            // UMD uses require() in the body, so don't suppress.
             if matches!(
                 self.ctx.original_module_kind,
-                Some(ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
+                Some(ModuleKind::AMD | ModuleKind::System)
             ) {
                 return;
             }
@@ -416,11 +419,12 @@ impl<'a> Printer<'a> {
         };
         let module_spec = self.rewrite_module_spec(&module_spec);
 
-        // Wrapped module formats bind imports via wrapper parameters/setters.
+        // AMD and System bind imports via wrapper parameters/setters.
         // Suppress per-statement CommonJS `require(...)` emission in the body.
+        // UMD uses require() in the body, so don't suppress.
         if matches!(
             self.ctx.original_module_kind,
-            Some(ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
+            Some(ModuleKind::AMD | ModuleKind::System)
         ) {
             return;
         }
@@ -715,12 +719,14 @@ impl<'a> Printer<'a> {
         let is_external = module_node.kind == SyntaxKind::StringLiteral as u16
             || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE;
 
-        // Wrapped module formats (AMD/UMD/System) bind external imports via wrapper
-        // parameters/setters, so we must not emit a duplicate runtime require here.
+        // AMD and System bind external imports via wrapper parameters/setters,
+        // so we must not emit a duplicate runtime require here.
+        // UMD is NOT included because UMD's factory body uses require() calls
+        // just like CJS — the define() deps list is only for the AMD branch.
         if is_external
             && matches!(
                 self.ctx.original_module_kind,
-                Some(ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
+                Some(ModuleKind::AMD | ModuleKind::System)
             )
         {
             return;
