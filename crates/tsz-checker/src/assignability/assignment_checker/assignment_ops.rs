@@ -1758,8 +1758,11 @@ impl<'a> CheckerState<'a> {
         // tsc anchors some void-assignment diagnostics to the function identifier on
         // the RHS when the assignment target is `void` and the RHS is a function
         // symbol reference (e.g. `function f<T>(a: T) { ... }; x = f;`).
+        // Use `has_call_signatures` instead of `is_callable_type` to exclude class
+        // constructor types (which only have construct/new signatures). TSC anchors
+        // class assignments (`x = C;`) at the LHS, not the RHS.
         if target_type == TypeId::VOID
-            && crate::query_boundaries::common::is_callable_type(self.ctx.types, source_type)
+            && tsz_solver::type_queries::has_call_signatures(self.ctx.types, source_type)
             && self.is_identifier_rhs(right_idx)
         {
             let _ = self.check_assignable_or_report_at_exact_anchor(

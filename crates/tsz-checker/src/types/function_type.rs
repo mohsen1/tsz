@@ -1945,13 +1945,29 @@ impl<'a> CheckerState<'a> {
                                 ));
                         }
                     } else {
-                        let assignability_ok = self
-                            .check_assignable_or_report_at_without_source_elaboration(
+                        // For expression-bodied arrows/functions with conditional
+                        // bodies, use source elaboration so that TS2322 is reported
+                        // at the specific failing branch, not the whole body.
+                        let body_is_conditional = self
+                            .ctx
+                            .arena
+                            .get(body)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION);
+                        let assignability_ok = if body_is_conditional {
+                            self.check_assignable_or_report_at(
                                 actual_return,
                                 expected_return_type,
                                 body,
                                 body,
-                            );
+                            )
+                        } else {
+                            self.check_assignable_or_report_at_without_source_elaboration(
+                                actual_return,
+                                expected_return_type,
+                                body,
+                                body,
+                            )
+                        };
                         if !assignability_ok {
                             // Find and store any new TS2322 diagnostics from this check
                             for diag in self.ctx.diagnostics.iter().rev() {
