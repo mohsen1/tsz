@@ -273,18 +273,40 @@ impl<'a> CheckerState<'a> {
         comments: &[tsz_common::comments::CommentRange],
         source_text: &str,
     ) {
-        let Some(angle_idx) = Self::find_top_level_char(type_expr, '<') else {
-            return;
-        };
-        if !type_expr.ends_with('>') {
-            return;
-        }
-        let base_name = type_expr[..angle_idx].trim();
-        let args_str = &type_expr[angle_idx + 1..type_expr.len() - 1];
-        let arg_strs = Self::split_type_args_respecting_nesting(args_str);
-        if arg_strs.is_empty() {
-            return;
-        }
+        // Handle both cases: with type args (e.g., `Array<number>`) and without (e.g., `Array`).
+        let (base_name, arg_strs, angle_idx) =
+            if let Some(angle_idx) = Self::find_top_level_char(type_expr, '<') {
+                if !type_expr.ends_with('>') {
+                    return;
+                }
+                let base = type_expr[..angle_idx].trim();
+                let args_str = &type_expr[angle_idx + 1..type_expr.len() - 1];
+                let args = Self::split_type_args_respecting_nesting(args_str);
+                if args.is_empty() {
+                    return;
+                }
+                (base, args, Some(angle_idx))
+            } else {
+                // No angle brackets: zero type arguments provided.
+                // In JSDoc, bare `Array`/`Promise`/`Object` resolve to `X<any>`.
+                // TSC only reports TS2314 when noImplicitAny is enabled.
+                if !self.ctx.compiler_options.no_implicit_any {
+                    return;
+                }
+                let base = type_expr.trim();
+                // Only check simple identifiers (skip union, intersection, array, etc.)
+                if base.is_empty()
+                    || base.contains('|')
+                    || base.contains('&')
+                    || base.contains('[')
+                    || base.contains('(')
+                    || base.contains('.')
+                    || base.contains(' ')
+                {
+                    return;
+                }
+                (base, Vec::new(), None)
+            };
         let symbol_constraints = self
             .ctx
             .binder
@@ -375,6 +397,9 @@ impl<'a> CheckerState<'a> {
             );
             return;
         }
+        let Some(angle_idx) = angle_idx else {
+            return;
+        };
         let mut arg_search_offset = angle_idx + 1;
         for (arg_str, param) in arg_strs.iter().zip(type_params.iter()) {
             let Some(constraint) = param.constraint else {
