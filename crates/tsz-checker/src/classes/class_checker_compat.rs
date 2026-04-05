@@ -301,7 +301,7 @@ impl<'a> CheckerState<'a> {
                     .node_symbols
                     .get(&_iface_idx.0)
                     .copied()
-                    .and_then(|sym_id| {
+                    .map(|sym_id| {
                         let def_id = self.ctx.get_or_create_def_id(sym_id);
                         let lazy_type = self.ctx.types.factory().lazy(def_id);
 
@@ -323,12 +323,12 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                             if tp_type_ids.is_empty() {
-                                Some(lazy_type)
+                                lazy_type
                             } else {
-                                Some(self.ctx.types.factory().application(lazy_type, tp_type_ids))
+                                self.ctx.types.factory().application(lazy_type, tp_type_ids)
                             }
                         } else {
-                            Some(lazy_type)
+                            lazy_type
                         }
                     });
 

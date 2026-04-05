@@ -15,6 +15,7 @@ impl<'a> CheckerState<'a> {
     /// variable, and alias symbol kinds.
     ///
     /// This is a pure code-motion split -- no logic changes.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn compute_type_of_symbol_type_alias_variable_alias(
         &mut self,
         sym_id: SymbolId,
@@ -293,7 +294,7 @@ impl<'a> CheckerState<'a> {
                         let name = escaped_name;
                         let message = format_message(
                             diagnostic_messages::TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF,
-                            &[&name],
+                            &[name],
                         );
                         // Point at the type alias name, not the entire declaration
                         self.error_at_node(
@@ -502,7 +503,7 @@ impl<'a> CheckerState<'a> {
                         {
                             let literal_type = if self.ctx.is_js_file() {
                                 self.augment_object_type_with_define_properties(
-                                    &escaped_name,
+                                    escaped_name,
                                     literal_type,
                                 )
                             } else {
@@ -538,13 +539,13 @@ impl<'a> CheckerState<'a> {
                             inferred_type = self.evaluate_application_type(inferred_type);
                         }
                         inferred_type = self.augment_callable_type_with_expandos(
-                            &escaped_name,
+                            escaped_name,
                             sym_id,
                             inferred_type,
                         );
                         if self.ctx.is_js_file() {
                             inferred_type = self.augment_object_type_with_define_properties(
-                                &escaped_name,
+                                escaped_name,
                                 inferred_type,
                             );
                         }
@@ -677,16 +678,14 @@ impl<'a> CheckerState<'a> {
             if resolved_value_decl.is_some()
                 && let Some(t) = self.resolve_binding_element_from_variable_initializer(
                     resolved_value_decl,
-                    &escaped_name,
+                    escaped_name,
                 )
             {
                 return (t, Vec::new());
             }
             if resolved_value_decl.is_some()
-                && let Some(t) = self.resolve_binding_element_from_annotated_param(
-                    resolved_value_decl,
-                    &escaped_name,
-                )
+                && let Some(t) = self
+                    .resolve_binding_element_from_annotated_param(resolved_value_decl, escaped_name)
             {
                 return (t, Vec::new());
             }

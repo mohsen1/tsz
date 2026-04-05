@@ -32,8 +32,7 @@ fn read_checker_source_file(path: &str) -> String {
         return combined;
     }
     // Try stripping .rs extension and treating as directory
-    if path.ends_with(".rs") {
-        let dir_path = &path[..path.len() - 3];
+    if let Some(dir_path) = path.strip_suffix(".rs") {
         if Path::new(dir_path).is_dir() {
             return read_checker_source_file(dir_path);
         }
