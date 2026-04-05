@@ -821,9 +821,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                 }
                 None => {
-                    if source_shape.number_index.is_none()
-                        && self.requires_explicit_declared_index_signature(source_shape)
-                    {
+                    // Class/interface types must have an explicit string index
+                    // signature — a number index alone is not enough (see
+                    // check_string_index_compatibility for the full rationale).
+                    if self.requires_explicit_declared_index_signature(source_shape) {
                         return Some(SubtypeFailureReason::MissingIndexSignature {
                             index_kind: "string",
                         });

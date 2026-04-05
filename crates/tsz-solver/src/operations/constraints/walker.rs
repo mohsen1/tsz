@@ -1567,30 +1567,45 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         priority,
                     );
                 }
-                if let (Some(s_idx), Some(t_idx)) = (&s_shape.number_index, &t_shape.string_index) {
-                    // Use MappedType priority for number-to-string cross inference so
-                    // candidates combine with property-to-index candidates via union.
-                    // Without this, the number index contribution (e.g., `string` from
-                    // enum reverse mapping) would use a higher priority than property
-                    // contributions, causing the resolver to pick only the number index
-                    // type instead of the union of all candidates.
-                    let idx_priority = crate::types::InferencePriority::MappedType;
-                    if let Some(&var) = var_map.get(&t_idx.value_type) {
-                        ctx.add_index_signature_candidate_with_index(
-                            var,
-                            s_idx.value_type,
-                            idx_priority,
-                            u32::MAX, // sentinel index for number-index cross inference
-                            false,
-                        );
-                    } else {
-                        self.constrain_types(
-                            ctx,
-                            var_map,
-                            s_idx.value_type,
-                            t_idx.value_type,
-                            idx_priority,
-                        );
+                // Number-to-string index cross-inference: only for anonymous and
+                // enum-namespace types.  Named class/interface types must declare
+                // an explicit string index signature — having only a number index
+                // does not imply string-indexability for inference purposes.
+                // Without this guard, `NumberMap<Function>` (only `[n: number]: Function`)
+                // would incorrectly infer T = Function against `StringMap<T>` (requires
+                // `[s: string]: T`), whereas tsc infers T = unknown.
+                let source_has_implicit_index = s_shape.symbol.is_none()
+                    || s_shape
+                        .flags
+                        .contains(crate::types::ObjectFlags::ENUM_NAMESPACE);
+                if source_has_implicit_index {
+                    if let (Some(s_idx), Some(t_idx)) =
+                        (&s_shape.number_index, &t_shape.string_index)
+                    {
+                        // Use MappedType priority for number-to-string cross inference so
+                        // candidates combine with property-to-index candidates via union.
+                        // Without this, the number index contribution (e.g., `string` from
+                        // enum reverse mapping) would use a higher priority than property
+                        // contributions, causing the resolver to pick only the number index
+                        // type instead of the union of all candidates.
+                        let idx_priority = crate::types::InferencePriority::MappedType;
+                        if let Some(&var) = var_map.get(&t_idx.value_type) {
+                            ctx.add_index_signature_candidate_with_index(
+                                var,
+                                s_idx.value_type,
+                                idx_priority,
+                                u32::MAX, // sentinel index for number-index cross inference
+                                false,
+                            );
+                        } else {
+                            self.constrain_types(
+                                ctx,
+                                var_map,
+                                s_idx.value_type,
+                                t_idx.value_type,
+                                idx_priority,
+                            );
+                        }
                     }
                 }
                 if let (Some(s_idx), Some(t_idx)) = (&s_shape.string_index, &t_shape.number_index) {
@@ -1767,6 +1782,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if !same_base_application
                     && s_app.args.len() == t_app.args.len()
                     && t_app.args.iter().any(|arg| var_map.contains_key(arg))
+                    // Only do cross-base direct arg matching when the bases are
+                    // related through inheritance.  Without this guard, completely
+                    // unrelated generic types with the same arity (e.g.,
+                    // `NumberMap<T>` vs `StringMap<T>`) would incorrectly match
+                    // their type arguments positionally, causing tsc-divergent
+                    // inference (T = Function instead of T = unknown).
+                    //
+                    // Check: the evaluated source base is assignable to the
+                    // evaluated target base, indicating an inheritance chain like
+                    // `DoNothingAlias<T,U> extends MyPromise<T,U>`.
+                    && self.checker.is_assignable_to(evaluated_source, evaluated_target)
                 {
                     // Use the TARGET base variance for direct arg matching.
                     // When the target type alias is contravariant (e.g., Func2<T> = ((x: T) => void) | undefined),
