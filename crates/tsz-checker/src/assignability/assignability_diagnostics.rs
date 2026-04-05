@@ -721,6 +721,13 @@ impl<'a> CheckerState<'a> {
         if self.arg_is_callback_with_unannotated_params(arg_idx) {
             return true;
         }
+        // Before emitting TS2345 on the whole argument, try to elaborate
+        // the error down to specific properties (TS2322) for object/array
+        // literal arguments. tsc reports TS2322 on specific mismatched
+        // properties rather than TS2345 on the whole argument.
+        if self.try_elaborate_assignment_source_error(arg_idx, target) {
+            return false;
+        }
         self.error_argument_not_assignable_at(source, target, arg_idx);
         false
     }
