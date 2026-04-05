@@ -16553,7 +16553,6 @@ declare const t: TupleCheck;
 /// Tests the [T] extends [U] pattern used to disable distributivity.
 /// The `is_distributive` flag detection is verified in `solver/lower_tests.rs`.
 #[test]
-#[ignore = "regression from remote commits"]
 fn test_tuple_wrapped_conditional_pattern() {
     use crate::parser::ParserState;
 
