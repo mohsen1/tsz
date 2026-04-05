@@ -98,9 +98,17 @@ impl<'a> CheckerState<'a> {
                             | syntax_kind_ext::FUNCTION_TYPE
                     )
                 });
-                // Skip TS1228 for constructors — tsc handles constructor return type
-                // annotations via grammar checks and does not emit TS1228 for them.
-                let is_constructor = parent_kind == Some(syntax_kind_ext::CONSTRUCTOR);
+                // Skip TS1228 for error-recovery positions — tsc handles these
+                // with different errors at the parser/grammar level and does NOT
+                // emit TS1228 for constructors, construct signatures, or constructor types.
+                let is_error_recovery_position = parent_kind.is_some_and(|kind| {
+                    matches!(
+                        kind,
+                        syntax_kind_ext::CONSTRUCTOR
+                            | syntax_kind_ext::CONSTRUCT_SIGNATURE
+                            | syntax_kind_ext::CONSTRUCTOR_TYPE
+                    )
+                });
                 // Skip TS1228 for getters/setters with invalid parameters — tsc
                 // only emits TS1228 for valid accessor signatures (e.g. getters with
                 // 0 params). When the accessor has parameter errors, those parser
@@ -120,7 +128,7 @@ impl<'a> CheckerState<'a> {
                             }
                         })
                 });
-                if !is_valid && !is_constructor && !is_invalid_accessor {
+                if !is_valid && !is_error_recovery_position && !is_invalid_accessor {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                         idx,
