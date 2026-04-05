@@ -611,10 +611,6 @@ impl<'a> Printer<'a> {
                                 .default_exported_func_names
                                 .contains(n)
                         });
-                        eprintln!(
-                            "DEBUG: ns_name={ns_name:?}, default_names={:?}, merges={merges_with_default_func}",
-                            self.ctx.module_state.default_exported_func_names
-                        );
                         if !merges_with_default_func {
                             // Fold exports.Name into the IIFE tail:
                             // (N || (exports.N = N = {})) instead of separate

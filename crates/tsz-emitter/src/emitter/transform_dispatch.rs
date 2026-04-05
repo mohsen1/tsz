@@ -429,10 +429,27 @@ impl<'a> Printer<'a> {
 
                 if !skip {
                     if node.kind == syntax_kind_ext::MODULE_DECLARATION && !is_default {
+                        // When a namespace merges with a default-exported function
+                        // of the same name, tsc does NOT create an exports.Name
+                        // binding — the function is the primary binding.
+                        let merges_with_default_func = self
+                            .arena
+                            .get_module(node)
+                            .and_then(|m| {
+                                crate::transforms::emit_utils::identifier_text(self.arena, m.name)
+                            })
+                            .is_some_and(|n| {
+                                self.ctx
+                                    .module_state
+                                    .default_exported_func_names
+                                    .contains(&n)
+                            });
                         if self.ctx.target_es5 {
-                            // ES5: use the IR-based ES5 namespace emitter (only emits var)
-                            let mut ns_emitter =
-                                NamespaceES5Emitter::with_commonjs(self.arena, true);
+                            // ES5: use the IR-based ES5 namespace emitter
+                            let mut ns_emitter = NamespaceES5Emitter::with_commonjs(
+                                self.arena,
+                                !merges_with_default_func,
+                            );
                             // Cross-block export sharing
                             if let Some(module_decl) = self.arena.get_module(node) {
                                 let ns_name = self.get_identifier_text_idx(module_decl.name);
@@ -452,10 +469,24 @@ impl<'a> Printer<'a> {
                             if let Some(text) = self.source_text_for_map() {
                                 ns_emitter.set_source_text(text);
                             }
-                            if let Some(should_declare_var) =
+                            if merges_with_default_func {
+                                // Merging with default-exported function: suppress var
+                                // since the function declaration provides the binding.
+                                ns_emitter.set_should_declare_var(false);
+                            } else if let Some(should_declare_var) =
                                 Self::namespace_var_flag_from_directive(inner.as_ref())
                             {
                                 ns_emitter.set_should_declare_var(should_declare_var);
+                            }
+                            if !self.ctx.module_state.default_exported_func_names.is_empty() {
+                                ns_emitter.set_default_exported_func_names(
+                                    self.ctx
+                                        .module_state
+                                        .default_exported_func_names
+                                        .iter()
+                                        .cloned()
+                                        .collect(),
+                                );
                             }
                             // Record the name so `export { N }` re-export handler
                             // skips the now-redundant `exports.N = N;`.
@@ -465,14 +496,24 @@ impl<'a> Printer<'a> {
                                     self.ctx.module_state.iife_exported_names.insert(ns_name);
                                 }
                             }
-                            let output = ns_emitter.emit_exported_namespace(idx);
+                            let output = if merges_with_default_func {
+                                ns_emitter.emit_namespace(idx)
+                            } else {
+                                ns_emitter.emit_exported_namespace(idx)
+                            };
                             self.write(output.trim_end_matches('\n'));
                             self.skip_comments_for_erased_node(node);
                             return;
                         }
                         // ES2015+: use the regular IIFE path which preserves let/const.
-                        // Set flag so the IIFE tail folds exports.N into the closing.
-                        self.pending_cjs_namespace_export_fold = true;
+                        if !merges_with_default_func {
+                            // Set flag so the IIFE tail folds exports.N into the closing.
+                            self.pending_cjs_namespace_export_fold = true;
+                        } else {
+                            // Suppress the default_export_merge IIFE pattern —
+                            // the exported namespace just augments the local binding.
+                            self.suppress_default_export_merge_iife = true;
+                        }
                         // Record the name so `export { N }` re-export handler
                         // skips the now-redundant `exports.N = N;`.
                         if let Some(module_decl) = self.arena.get_module(node) {
