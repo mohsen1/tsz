@@ -161,8 +161,11 @@ impl<'a> CheckerState<'a> {
         };
 
         // TS1209: Invalid optional chain from new expression
+        // tsc extracts just the root identifier (e.g., `A` from `A?.b()`)
+        // and points the error at the expression node.
         if super::access::is_optional_chain(self.ctx.arena, new_expr.expression) {
-            let expr_text = self.get_source_text_for_node(new_expr.expression);
+            let root_expr = super::access::optional_chain_root(self.ctx.arena, new_expr.expression);
+            let expr_text = self.get_source_text_for_node(root_expr);
             self.error_at_node_msg(
                 new_expr.expression,
                 diagnostic_codes::INVALID_OPTIONAL_CHAIN_FROM_NEW_EXPRESSION_DID_YOU_MEAN_TO_CALL,
