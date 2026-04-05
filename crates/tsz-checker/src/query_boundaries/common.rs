@@ -109,6 +109,10 @@ pub(crate) fn has_property_by_str(db: &dyn TypeDatabase, type_id: TypeId, name: 
     tsz_solver::type_queries::type_has_property_by_str(db, type_id, name)
 }
 
+pub(crate) fn has_nonpublic_property(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
+    tsz_solver::type_queries::has_nonpublic_property(db, type_id, name)
+}
+
 pub(crate) fn contains_error_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::contains_error_type_db(db, type_id)
 }

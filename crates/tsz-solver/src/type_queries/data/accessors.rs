@@ -906,6 +906,47 @@ pub fn type_has_property_by_str(db: &dyn TypeDatabase, type_id: TypeId, name: &s
     }
 }
 
+/// Check if a property with the given name is private or protected on the given type.
+///
+/// For object/callable types, checks if the property exists and has non-public visibility.
+/// For union types, returns `true` only if ALL members have the non-public property
+/// (matching tsc's behavior).
+/// For intersections, returns `true` if ANY member has the non-public property.
+pub fn has_nonpublic_property(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
+    use crate::Visibility;
+
+    fn check_shape_properties(
+        db: &dyn TypeDatabase,
+        properties: &[crate::types::PropertyInfo],
+        name: &str,
+    ) -> bool {
+        properties.iter().any(|p| {
+            db.resolve_atom_ref(p.name).as_ref() == name
+                && matches!(p.visibility, Visibility::Private | Visibility::Protected)
+        })
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            check_shape_properties(db, &shape.properties, name)
+        }
+        Some(TypeData::Callable(shape_id)) => {
+            let shape = db.callable_shape(shape_id);
+            check_shape_properties(db, &shape.properties, name)
+        }
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id).to_vec();
+            if members.is_empty() {
+                return false;
+            }
+            members.iter().all(|&m| has_nonpublic_property(db, m, name))
+        }
+        // For intersections and everything else, tsc does not emit TS4105.
+        _ => false,
+    }
+}
+
 /// Get the inner type of a `ReadonlyType` wrapper.
 ///
 /// Returns `Some(inner)` if the type is `ReadonlyType(inner)`, otherwise `None`.
