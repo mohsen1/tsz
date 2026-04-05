@@ -439,14 +439,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Types are already evaluated in check_subtype, so no need to re-evaluate here
 
         // Without strictNullChecks, null/undefined are assignable to all types
-        // EXCEPT type parameters and null-to-void (only undefined <: void).
+        // including type parameters. Exception: `null` is not assignable to
+        // `void` — only `undefined` is.
         if !self.strict_null_checks && source.is_nullish() {
-            let target_is_type_param = matches!(
-                self.interner.lookup(target),
-                Some(crate::types::TypeData::TypeParameter(_) | crate::types::TypeData::Infer(_))
-            );
             let null_to_void = source == TypeId::NULL && target == TypeId::VOID;
-            if !target_is_type_param && !null_to_void {
+            if !null_to_void {
                 return SubtypeResult::True;
             }
         }

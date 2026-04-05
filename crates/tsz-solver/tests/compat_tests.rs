@@ -5535,10 +5535,11 @@ fn test_explain_prefers_named_missing_property_over_late_bound_symbols() {
 }
 
 /// tsc rejects `null` and `undefined` as arguments to type parameter `T` even
-/// without strictNullChecks.  The compat fast path must not short-circuit
-/// nullish sources when the target is a type parameter.
+/// Without strictNullChecks, null/undefined are assignable to ALL types
+/// including type parameters.  In tsc, non-strict mode treats null and
+/// undefined as being in the domain of every type.
 #[test]
-fn test_null_not_assignable_to_unconstrained_type_param() {
+fn test_null_assignable_to_unconstrained_type_param_without_strict() {
     let interner = TypeInterner::new();
     let t_name = interner.intern_string("T");
     let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
@@ -5560,18 +5561,18 @@ fn test_null_not_assignable_to_unconstrained_type_param() {
         "undefined should not be assignable to T with strictNullChecks"
     );
 
-    // Without strictNullChecks: null/undefined must still NOT be assignable
-    // to a type parameter. In tsc, type parameters are opaque — `null` cannot
-    // be assigned to `T` because `T` could be instantiated as any type.
+    // Without strictNullChecks: null/undefined ARE assignable to type
+    // parameters, matching tsc behavior where non-strict mode treats
+    // null/undefined as part of every type's domain.
     let mut non_strict_checker = CompatChecker::new(&interner);
     non_strict_checker.set_strict_null_checks(false);
     assert!(
-        !non_strict_checker.is_assignable(TypeId::NULL, t_param),
-        "null should not be assignable to T even without strictNullChecks"
+        non_strict_checker.is_assignable(TypeId::NULL, t_param),
+        "null should be assignable to T without strictNullChecks"
     );
     assert!(
-        !non_strict_checker.is_assignable(TypeId::UNDEFINED, t_param),
-        "undefined should not be assignable to T even without strictNullChecks"
+        non_strict_checker.is_assignable(TypeId::UNDEFINED, t_param),
+        "undefined should be assignable to T without strictNullChecks"
     );
 
     // Sanity: null IS still assignable to concrete types without strictNullChecks
