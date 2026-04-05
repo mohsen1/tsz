@@ -125,6 +125,83 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
+    /// Constrain parameter lists with proper rest parameter handling.
+    ///
+    /// When the target has a rest parameter typed as a type parameter (inference
+    /// placeholder), this collects all remaining source params into a tuple and
+    /// infers the tuple against the rest param type variable.
+    ///
+    /// Example: source `(a: string, b: number)` vs target `(...args: T)` where
+    /// T is an inference variable → infers T = [string, number].
+    fn constrain_params_with_rest(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source_params: &[ParamInfo],
+        target_params: &[ParamInfo],
+        priority: crate::types::InferencePriority,
+    ) {
+        use crate::type_queries::unpack_tuple_rest_parameter;
+
+        let s_params: Vec<ParamInfo> = source_params
+            .iter()
+            .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
+            .collect();
+        let t_params: Vec<ParamInfo> = target_params
+            .iter()
+            .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
+            .collect();
+
+        // Match non-rest params 1-to-1, stopping at the first rest param
+        let mut matched = 0;
+        for (s_p, t_p) in s_params.iter().zip(t_params.iter()) {
+            if s_p.rest || t_p.rest {
+                break;
+            }
+            self.constrain_parameter_types(ctx, var_map, s_p.type_id, t_p.type_id, priority);
+            matched += 1;
+        }
+
+        // If target has a rest param typed as an inference variable, collect
+        // remaining source params into a tuple and infer against the variable.
+        if let Some(t_last) = t_params.last()
+            && t_last.rest
+            && var_map.contains_key(&t_last.type_id)
+        {
+            let target_fixed_count = t_params.len().saturating_sub(1);
+            if s_params.len() > target_fixed_count {
+                let tuple_elements: Vec<TupleElement> = s_params[target_fixed_count..]
+                    .iter()
+                    .map(|p| TupleElement {
+                        type_id: p.type_id,
+                        name: p.name,
+                        optional: p.optional,
+                        rest: p.rest,
+                    })
+                    .collect();
+                let source_tuple = self.interner.tuple(tuple_elements);
+                if let Some(&var) = var_map.get(&t_last.type_id) {
+                    ctx.add_candidate(
+                        var,
+                        source_tuple,
+                        crate::types::InferencePriority::NakedTypeVariable,
+                    );
+                }
+            }
+        } else if let Some(s_last) = s_params.last()
+            && s_last.rest
+        {
+            // Source has rest param, target doesn't — infer each remaining
+            // target param against the source rest element type.
+            for t_p in t_params.iter().skip(matched) {
+                if t_p.rest {
+                    break;
+                }
+                self.constrain_parameter_types(ctx, var_map, s_last.type_id, t_p.type_id, priority);
+            }
+        }
+    }
+
     pub(super) fn constrain_function_to_call_signature(
         &mut self,
         ctx: &mut InferenceContext,
@@ -133,9 +210,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         target: &CallSignature,
         priority: crate::types::InferencePriority,
     ) {
-        for (s_p, t_p) in source.params.iter().zip(target.params.iter()) {
-            self.constrain_parameter_types(ctx, var_map, s_p.type_id, t_p.type_id, priority);
-        }
+        self.constrain_params_with_rest(ctx, var_map, &source.params, &target.params, priority);
         if let (Some(s_this), Some(t_this)) = (source.this_type, target.this_type) {
             self.constrain_parameter_types(ctx, var_map, s_this, t_this, priority);
         }
@@ -179,9 +254,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         target: &FunctionShape,
         priority: crate::types::InferencePriority,
     ) {
-        for (s_p, t_p) in source.params.iter().zip(target.params.iter()) {
-            self.constrain_parameter_types(ctx, var_map, s_p.type_id, t_p.type_id, priority);
-        }
+        self.constrain_params_with_rest(ctx, var_map, &source.params, &target.params, priority);
         if let (Some(s_this), Some(t_this)) = (source.this_type, target.this_type) {
             self.constrain_parameter_types(ctx, var_map, s_this, t_this, priority);
         }
@@ -208,9 +281,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         target: &CallSignature,
         priority: crate::types::InferencePriority,
     ) {
-        for (s_p, t_p) in source.params.iter().zip(target.params.iter()) {
-            self.constrain_parameter_types(ctx, var_map, s_p.type_id, t_p.type_id, priority);
-        }
+        self.constrain_params_with_rest(ctx, var_map, &source.params, &target.params, priority);
         if let (Some(s_this), Some(t_this)) = (source.this_type, target.this_type) {
             self.constrain_parameter_types(ctx, var_map, s_this, t_this, priority);
         }
