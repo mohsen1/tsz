@@ -1738,7 +1738,6 @@ fn export_conditions(options: &ResolvedCompilerOptions) -> Vec<&'static str> {
         ModuleResolutionKind::Bundler => {
             push_condition(&mut conditions, "import");
             push_condition(&mut conditions, "require");
-            push_condition(&mut conditions, "node");
         }
         ModuleResolutionKind::Classic
         | ModuleResolutionKind::Node

@@ -227,8 +227,9 @@ impl ModuleResolver {
     pub(super) fn try_export_target(&self, path: &Path) -> Option<PathBuf> {
         if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
             if split_path_extension(path).is_some() {
-                // For JS export targets, try declaration substitution FIRST.
-                // TypeScript prefers .d.ts/.ts/.tsx over .js when resolving exports.
+                // For JS export targets, try declaration substitution first.
+                // tsc always prefers .d.ts/.ts/.tsx over .js when resolving
+                // conditional export targets (output-to-source remapping).
                 if let Some(rewritten) = node16_extension_substitution(path, extension) {
                     for candidate in &rewritten {
                         if candidate.is_file() {
