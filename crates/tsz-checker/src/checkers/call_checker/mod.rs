@@ -1308,11 +1308,37 @@ impl<'a> CheckerState<'a> {
                         // If the same pass has already established TS2353 for an excess key,
                         // preserve the callback's implicit-any diagnostics because there is
                         // no later contextual refresh that can make that member valid.
-                        !is_object_literal_diag
-                            || (is_provisional_implicit_any
-                                && !is_provisional_assignability
-                                && (!is_object_literal_function_param_implicit_any
-                                    || object_literal_has_excess_property_diag))
+                        //
+                        // TS2345 (argument not assignable to parameter) diagnostics within
+                        // the object literal come from nested call argument checking (e.g.,
+                        // `{ entry: wrap((spawn) => { spawn("alarm") }) }` where `wrap`
+                        // is a contextually-typed generic call). These are definitive
+                        // errors from the inner call's own type checking, not speculative
+                        // property-assignment errors that change with contextual types.
+                        let is_nested_call_assignability = is_object_literal_diag
+                            && diag.code
+                                == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE;
+                        if is_nested_call_assignability {
+                            true
+                        } else {
+                            !is_object_literal_diag
+                                || (is_provisional_implicit_any
+                                    && !is_provisional_assignability
+                                    && (!is_object_literal_function_param_implicit_any
+                                        || object_literal_has_excess_property_diag))
+                        }
+                    } else if arg_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                        || arg_node.kind == syntax_kind_ext::NEW_EXPRESSION
+                    {
+                        // For call/new expression arguments, diagnostics produced
+                        // within the inner call are definitive (the inner call's
+                        // own type checking has already resolved types via its
+                        // own two-pass mechanism). Preserve all diagnostics
+                        // including assignability errors like TS2345, which occur
+                        // when a contextually-typed generic call infers parameter
+                        // types from the outer expected return type and then
+                        // validates callback arguments against those types.
+                        true
                     } else {
                         // For array literals and other contextually-sensitive args,
                         // keep implicit-any diagnostics (TS7006/TS7019).
