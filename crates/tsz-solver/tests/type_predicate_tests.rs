@@ -199,10 +199,12 @@ fn test_no_predicate_compatible_with_type_guard_matching_return() {
         is_method: false,
     });
 
-    // Source (without predicate, returns string) should be subtype of target (with predicate, returns string)
+    // Source (without predicate) is NOT assignable to target (with predicate).
+    // A plain function cannot satisfy a type predicate contract — the caller
+    // expects narrowing behavior that the source doesn't provide.
     assert!(
-        checker.is_subtype_of(source_fn, target_fn),
-        "Function returning string should be assignable to function with type guard returning string"
+        !checker.is_subtype_of(source_fn, target_fn),
+        "Function without type predicate should NOT be assignable to function with type predicate"
     );
 }
 
@@ -513,9 +515,10 @@ fn test_type_guard_in_overloads() {
         "Type guard function IS assignable to regular function (structural compatibility)"
     );
 
-    // Regular function IS assignable to type guard function
+    // Regular function is NOT assignable to type guard function.
+    // The type predicate provides narrowing guarantees the regular function can't.
     assert!(
-        checker.is_subtype_of(regular_fn, type_guard_fn),
-        "Regular function should be assignable to type guard function"
+        !checker.is_subtype_of(regular_fn, type_guard_fn),
+        "Regular function should NOT be assignable to type guard function"
     );
 }
