@@ -1500,29 +1500,48 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             let type_param_name = self.interner.resolve_atom(tp.name);
             let ty = if let Some(contextual_ty) = structural_return_subst.get(tp.name) {
-                let can_apply = self.can_apply_contextual_return_substitution(
-                    &mut infer_ctx,
-                    var,
-                    ty,
-                    &var_map,
-                );
-                let should_use =
-                    self.should_use_contextual_return_substitution(ty, contextual_ty, &var_map);
-                // When the variable was NOT inferred from a direct parameter match
-                // (i.e., it was inferred structurally from e.g. callback return types),
-                // allow the contextual return substitution to override even when
-                // can_apply would normally block it. This handles cases like:
-                //   let xx: 0 | 1 | 2 = invoke(() => 1);
-                // where T gets NakedTypeVariable candidate `number` from the lambda
-                // return type, but the contextual type `0 | 1 | 2` is strictly narrower
-                // and should take priority. Direct parameter vars (e.g., `foo<T>(x: T)`)
-                // are excluded because their inference is authoritative.
-                let indirect_narrowing_override =
-                    !direct_param_vars.contains(&var) && should_use && !can_apply;
-                if (can_apply && should_use) || indirect_narrowing_override {
-                    contextual_ty
-                } else {
+                // When a type parameter had NO inference candidates at all
+                // (has_constraints=false) and defaulted to `unknown`, AND the type
+                // parameter was referenced in a non-deferred argument position
+                // (direct_param_vars contains it), the contextual return substitution
+                // must NOT override it. The `unknown` result means the argument types
+                // genuinely provide no inference information for this type parameter
+                // (e.g., `NumberMap<Function>` passed to `StringMap<T>` where number
+                // index doesn't satisfy string index). Overriding with the contextual
+                // type (e.g., `Function` from `var v1: Function[]`) would mask the
+                // type mismatch that should produce TS2403 for redeclarations.
+                //
+                // However, when the type parameter was NOT in a direct parameter
+                // position (only in deferred/context-sensitive args), the `unknown`
+                // is a placeholder that SHOULD be replaced by the contextual return
+                // type to enable proper contextual typing of callbacks.
+                if !has_constraints && ty == TypeId::UNKNOWN && direct_param_vars.contains(&var) {
                     ty
+                } else {
+                    let can_apply = self.can_apply_contextual_return_substitution(
+                        &mut infer_ctx,
+                        var,
+                        ty,
+                        &var_map,
+                    );
+                    let should_use =
+                        self.should_use_contextual_return_substitution(ty, contextual_ty, &var_map);
+                    // When the variable was NOT inferred from a direct parameter match
+                    // (i.e., it was inferred structurally from e.g. callback return types),
+                    // allow the contextual return substitution to override even when
+                    // can_apply would normally block it. This handles cases like:
+                    //   let xx: 0 | 1 | 2 = invoke(() => 1);
+                    // where T gets NakedTypeVariable candidate `number` from the lambda
+                    // return type, but the contextual type `0 | 1 | 2` is strictly narrower
+                    // and should take priority. Direct parameter vars (e.g., `foo<T>(x: T)`)
+                    // are excluded because their inference is authoritative.
+                    let indirect_narrowing_override =
+                        !direct_param_vars.contains(&var) && should_use && !can_apply;
+                    if (can_apply && should_use) || indirect_narrowing_override {
+                        contextual_ty
+                    } else {
+                        ty
+                    }
                 }
             } else {
                 ty
