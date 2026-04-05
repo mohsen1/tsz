@@ -474,9 +474,11 @@ fn jsx_overload_mismatch_reports_ts2769_before_ts2786() {
         diagnostics.contains(&2769),
         "Overload prop mismatches should still emit TS2769, got: {diagnostics:?}"
     );
+    // tsc emits TS2786 alongside TS2769 when none of the overloads return
+    // a type assignable to JSX.Element. Both diagnostics are expected.
     assert!(
-        !diagnostics.contains(&2786),
-        "No-overload JSX mismatches should not be pre-empted by TS2786, got: {diagnostics:?}"
+        diagnostics.contains(&2786),
+        "When all overload return types are invalid JSX elements, TS2786 should also be emitted, got: {diagnostics:?}"
     );
 }
 
