@@ -1255,6 +1255,31 @@ impl<'a> Printer<'a> {
                     _ => false,
                 };
                 if should_skip {
+                    // When source has trailing `;` after private method/accessor
+                    // (e.g., `#foo() { };`), tsc preserves the semicolon.
+                    if let Some(mn) = self.arena.get(member_idx) {
+                        let has_trailing_semi = self.source_text.is_some_and(|text| {
+                            let start = mn.pos as usize;
+                            let end = std::cmp::min(mn.end as usize, text.len());
+                            if start >= end {
+                                return false;
+                            }
+                            let member_text = text[start..end].trim_end();
+                            if let Some(before_semi) = member_text.strip_suffix(';') {
+                                before_semi.trim_end().ends_with('}')
+                            } else {
+                                false
+                            }
+                        });
+                        if has_trailing_semi {
+                            if !self.writer.is_at_line_start() {
+                                self.write_line();
+                            }
+                            self.write(";");
+                            self.write_line();
+                            emitted_any_member = true;
+                        }
+                    }
                     if let Some(mn) = self.arena.get(member_idx) {
                         let skip_end = class
                             .members
