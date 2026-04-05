@@ -682,8 +682,9 @@ impl<'a> CheckerState<'a> {
                     }
                 } else {
                     // Fallback: TS2528 "A module cannot have multiple default exports"
-                    // tsc skips interface declarations when emitting TS2528 (interfaces
-                    // merge with values and don't count as conflicting defaults).
+                    // Skip interface declarations when a function or class exists
+                    // (interface can merge with those). When no function/class is
+                    // present, the interface is truly conflicting and must get TS2528.
                     for &export_idx in &effective_default_indices {
                         let is_interface = self
                             .ctx
@@ -691,7 +692,7 @@ impl<'a> CheckerState<'a> {
                             .get_export_decl_at(export_idx)
                             .and_then(|ed| self.ctx.arena.get(ed.export_clause))
                             .is_some_and(|n| n.kind == syntax_kind_ext::INTERFACE_DECLARATION);
-                        if is_interface {
+                        if is_interface && (has_function || has_class) {
                             continue;
                         }
                         let anchor = self.get_default_export_anchor(export_idx);

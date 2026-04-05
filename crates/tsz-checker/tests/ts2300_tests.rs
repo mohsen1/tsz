@@ -851,3 +851,28 @@ fn var_before_let_same_scope_ts2300() {
     let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
     assert_eq!(ts2300, 2, "var-before-let should be TS2300");
 }
+
+/// When an interface default export conflicts with a non-function/non-class
+/// default export (e.g. a type-only identifier), tsc emits TS2528 on BOTH
+/// declarations — the interface is NOT skipped because there is no
+/// function/class for it to merge with.
+#[test]
+fn export_default_interface_plus_type_identifier_both_get_ts2528() {
+    let diagnostics = verify_errors(
+        "export default interface A {}\ninterface B {}\nexport default B;",
+        &[
+            (1, 26, "A module cannot have multiple default exports."),
+            (3, 16, "A module cannot have multiple default exports."),
+        ],
+    );
+    let ts2528 = diagnostics.iter().filter(|d| d.code == 2528).count();
+    assert_eq!(
+        ts2528,
+        2,
+        "Expected TS2528 on both the interface and identifier default exports, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
