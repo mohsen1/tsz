@@ -694,6 +694,14 @@ impl<'a> CheckerState<'a> {
                 // Force tuple element validation (TS1257, TS1265, TS1266)
                 // which lives inside get_type_from_tuple_type.
                 let _ = self.get_type_from_type_node(node_idx);
+                // Recurse into tuple elements to validate nested type nodes
+                // (e.g., indexed access types inside tuples need TS2536/TS4105 checks).
+                if let Some(tuple) = self.ctx.arena.get_tuple_type(node) {
+                    let elements = tuple.elements.nodes.clone();
+                    for &element_idx in &elements {
+                        self.check_type_node(element_idx);
+                    }
+                }
             }
             k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
                 // Force function/constructor type validation (TS2371 for parameter

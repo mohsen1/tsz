@@ -9,6 +9,50 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+/// Check if a property with the given name is private or protected on the given type.
+/// Handles objects, callables, unions (all members must have non-public property),
+/// and intersections (any member having non-public property counts).
+/// Returns `true` if the property exists and is non-public on the type.
+fn has_nonpublic_property(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId, name: &str) -> bool {
+    use tsz_common::Visibility;
+    use tsz_solver::types::TypeData;
+
+    let Some(data) = db.lookup(type_id) else {
+        return false;
+    };
+
+    match data {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+            let shape = db.object_shape(shape_id);
+            shape.properties.iter().any(|p| {
+                db.resolve_atom_ref(p.name).as_ref() == name
+                    && matches!(p.visibility, Visibility::Private | Visibility::Protected)
+            })
+        }
+        TypeData::Callable(shape_id) => {
+            let shape = db.callable_shape(shape_id);
+            shape.properties.iter().any(|p| {
+                db.resolve_atom_ref(p.name).as_ref() == name
+                    && matches!(p.visibility, Visibility::Private | Visibility::Protected)
+            })
+        }
+        TypeData::Union(list_id) => {
+            // For unions, the property must be non-public in ALL members
+            // (if any member is public or missing the property, no TS4105).
+            let members = db.type_list(list_id);
+            if members.is_empty() {
+                return false;
+            }
+            members.iter().all(|&m| has_nonpublic_property(db, m, name))
+        }
+        TypeData::Intersection(_) => {
+            // tsc does not emit TS4105 for intersection constraints
+            false
+        }
+        _ => false,
+    }
+}
+
 fn is_broad_index_type(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
     if matches!(ty, TypeId::STRING | TypeId::NUMBER | TypeId::SYMBOL) {
         return true;
@@ -683,6 +727,22 @@ impl<'a> CheckerState<'a> {
             || index_type == TypeId::NEVER
         {
             return;
+        }
+
+        // TS4105: Private or protected member cannot be accessed on a type parameter.
+        // When the object type is (or contains) a type parameter and the index is a
+        // string literal naming a private/protected property on the constraint, tsc
+        // emits this error. The check fires per-type-parameter in unions but NOT for
+        // intersection constraints (tsc skips those).
+        if let Some(prop_atom) =
+            tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
+        {
+            let property_name = self.ctx.types.resolve_atom(prop_atom);
+            self.check_ts4105_private_on_type_parameter(
+                data.index_type,
+                object_type,
+                &property_name,
+            );
         }
 
         let mut index_constraint =
@@ -1739,5 +1799,57 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// TS4105: Emit "Private or protected member '{name}' cannot be accessed on
+    /// a type parameter." for each type-parameter portion of `object_type` whose
+    /// constraint has a non-public property with the given `name`.
+    ///
+    /// For union object types (e.g. `(T | B)["a"]`), each member is checked
+    /// individually. Only actual `TypeParameter` nodes trigger the diagnostic —
+    /// concrete class types are skipped (tsc only reports TS4105 on type params).
+    fn check_ts4105_private_on_type_parameter(
+        &mut self,
+        error_node: NodeIndex,
+        object_type: TypeId,
+        property_name: &str,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        // Collect the type parameters to inspect: either the object type itself
+        // (if it's a type parameter) or the type-parameter members of a union.
+        let mut type_params_to_check: smallvec::SmallVec<[TypeId; 4]> = smallvec::SmallVec::new();
+
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type) {
+            type_params_to_check.push(object_type);
+        } else if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, object_type)
+        {
+            for &member in &members {
+                if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, member) {
+                    type_params_to_check.push(member);
+                }
+            }
+        }
+
+        let mut emitted = false;
+        for &tp in &type_params_to_check {
+            if let Some(constraint) =
+                crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, tp)
+            {
+                if has_nonpublic_property(self.ctx.types, constraint, property_name) && !emitted {
+                    let message = format_message(
+                        diagnostic_messages::PRIVATE_OR_PROTECTED_MEMBER_CANNOT_BE_ACCESSED_ON_A_TYPE_PARAMETER,
+                        &[property_name],
+                    );
+                    self.error_at_node(
+                        error_node,
+                        &message,
+                        diagnostic_codes::PRIVATE_OR_PROTECTED_MEMBER_CANNOT_BE_ACCESSED_ON_A_TYPE_PARAMETER,
+                    );
+                    emitted = true;
+                }
+            }
+        }
     }
 }
