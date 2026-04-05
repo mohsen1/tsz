@@ -1155,6 +1155,14 @@ impl<'a> CheckerState<'a> {
         // contain type parameters in their properties.
         let props_is_type_param =
             crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, props_type);
+        // When a spread attribute's type is the same as or assignable to the props
+        // type parameter, the spread already satisfies the type parameter constraint.
+        // Checking a synthesized object (which loses the type parameter identity)
+        // against the type parameter would produce a false TS2322.
+        let spread_satisfies_type_param = props_is_type_param
+            && spread_entries
+                .iter()
+                .any(|&(spread_type, _, _)| self.is_assignable_to(spread_type, props_type));
         let reported_type_param_assignability = if !reported_custom_children_assignability
             && !reported_special_attr_assignability
             && !reported_class_missing_props_assignability
@@ -1163,6 +1171,7 @@ impl<'a> CheckerState<'a> {
             && !skip_prop_checks
             && !has_prop_type_error
             && props_is_type_param
+            && !spread_satisfies_type_param
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
             if !self.is_assignable_to(attrs_type, props_type) {
