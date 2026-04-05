@@ -1408,7 +1408,24 @@ impl<'a> CheckerState<'a> {
                     common::contains_type_by_id(self.ctx.types, param_type, TypeId::UNKNOWN);
                 let round1_has_error =
                     common::contains_type_by_id(self.ctx.types, param_type, TypeId::ERROR);
-                let prefer_fresh_instantiation = is_sensitive
+                // For sensitive (callback) args, we normally re-instantiate from the
+                // shape to pick up contextual-return-type inference. However, if
+                // the substitution only contains widened primitives (string, number,
+                // etc.), the solver likely widened literal inferences (K = "a" → string).
+                // In that case the round1 result, which preserves literals, is more
+                // specific and should be preferred.
+                let sensitive_needs_fresh = is_sensitive
+                    && (round1_has_unknown
+                        || round1_has_error
+                        || current_substitution.map().values().any(|&v| {
+                            v != TypeId::STRING
+                                && v != TypeId::NUMBER
+                                && v != TypeId::BOOLEAN
+                                && v != TypeId::BIGINT
+                                && v != TypeId::UNKNOWN
+                                && v != TypeId::ERROR
+                        }));
+                let prefer_fresh_instantiation = sensitive_needs_fresh
                     || round1_has_error
                     || common::contains_infer_types(self.ctx.types, param_type)
                     || common::contains_type_parameters(self.ctx.types, param_type)
@@ -1521,6 +1538,12 @@ impl<'a> CheckerState<'a> {
                         inst
                     }
                 };
+                if is_sensitive && param_type != instantiated {
+                    eprintln!(
+                        "[DEBUG R2-final] i={i} param_type={:?} instantiated={:?}",
+                        param_type, instantiated
+                    );
+                }
                 let preserve_application_shape =
                     should_preserve_contextual_application_shape(self.ctx.types, instantiated);
                 let evaluated = if common::contains_type_parameters(self.ctx.types, instantiated)
