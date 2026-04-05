@@ -696,11 +696,18 @@ impl<'a> CheckerState<'a> {
         // missing property is not a direct named property of the target. In this case, the
         // "missing" property comes from the index signature value type, not from a required
         // named property, so the generic assignability error is more appropriate.
+        // Skip this check for array/tuple targets: their properties (like `length`) come
+        // from the Array interface and ARE named properties even though the array also has
+        // a numeric index signature.
         {
             use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
             let resolver = IndexSignatureResolver::new(self.ctx.types);
-            let target_has_index = resolver.has_index_signature(target, IndexKind::String)
-                || resolver.has_index_signature(target, IndexKind::Number);
+            let target_is_array_or_tuple =
+                tsz_solver::visitor::array_element_type(self.ctx.types, target).is_some()
+                    || tsz_solver::visitor::tuple_list_id(self.ctx.types, target).is_some();
+            let target_has_index = !target_is_array_or_tuple
+                && (resolver.has_index_signature(target, IndexKind::String)
+                    || resolver.has_index_signature(target, IndexKind::Number));
             if target_has_index {
                 let prop_name_str = self.ctx.types.resolve_atom_ref(property_name);
                 let target_has_named_prop = tsz_solver::type_queries::find_property_in_type_by_str(
@@ -738,19 +745,25 @@ impl<'a> CheckerState<'a> {
         // TSC emits TS2322 instead of TS2741 when both source and target have index signatures.
         // For index signature to index signature assignments, the more general assignability error
         // is preferred over specific missing property errors.
+        // Skip for array/tuple targets — their numeric index is implicit and missing named
+        // properties (like `length`) should still produce TS2741.
         use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
         let resolver = IndexSignatureResolver::new(self.ctx.types);
         // Check both original and evaluated types (needed for generic class instances)
         let source_evaluated = self.evaluate_type_with_env(source);
         let target_evaluated = self.evaluate_type_with_env(target);
+        let target_is_array_or_tuple_for_idx =
+            tsz_solver::visitor::array_element_type(self.ctx.types, target).is_some()
+                || tsz_solver::visitor::tuple_list_id(self.ctx.types, target).is_some();
         let source_has_index = [source, source_evaluated].iter().any(|t| {
             resolver.has_index_signature(*t, IndexKind::String)
                 || resolver.has_index_signature(*t, IndexKind::Number)
         });
-        let target_has_index = [target, target_evaluated].iter().any(|t| {
-            resolver.has_index_signature(*t, IndexKind::String)
-                || resolver.has_index_signature(*t, IndexKind::Number)
-        });
+        let target_has_index = !target_is_array_or_tuple_for_idx
+            && [target, target_evaluated].iter().any(|t| {
+                resolver.has_index_signature(*t, IndexKind::String)
+                    || resolver.has_index_signature(*t, IndexKind::Number)
+            });
         if source_has_index && target_has_index {
             let src_str = self.format_type_diagnostic(source);
             let tgt_str = self.format_type_diagnostic(target);
