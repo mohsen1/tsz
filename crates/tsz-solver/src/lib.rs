@@ -208,6 +208,7 @@ pub use diagnostics::builders::{
     DiagnosticBuilder, DiagnosticCollector, SourceLocation, SpannedDiagnosticBuilder,
 };
 pub use diagnostics::format::TypeFormatter;
+pub use diagnostics::format::tracing_helpers::{RelationDisplay, TypeDisplay};
 pub use diagnostics::{
     DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
 };
