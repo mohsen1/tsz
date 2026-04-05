@@ -487,3 +487,48 @@ interface Derived<T> extends Base {
         get_diagnostics(source)
     );
 }
+
+// =========================================================================
+// Regression: `this` type substitution in whole-type assignability check
+// =========================================================================
+
+#[test]
+fn test_class_implements_interface_with_this_type_no_false_positive() {
+    // Interfaces using `this` type (e.g. `Vnode<A, this>`) must have `this`
+    // substituted with the class instance type in the whole-type assignability
+    // check, not just in per-property checks. Without this, the abstract `this`
+    // causes a false TS2420/TS2430.
+    //
+    // Reduced from TypeScript's subclassThisTypeAssignable02.ts
+    let source = r#"
+interface Lifecycle<Attrs, State extends Lifecycle<Attrs, State>> {
+    oninit?(vnode: Vnode<Attrs, State>): number;
+    [_: number]: any;
+}
+
+interface Vnode<Attrs, State extends Lifecycle<Attrs, State>> {
+    tag: Component<Attrs, State>;
+}
+
+interface Component<Attrs, State extends Lifecycle<Attrs, State>> {
+    view(this: State, vnode: Vnode<Attrs, State>): number;
+}
+
+interface ClassComponent<A> extends Lifecycle<A, ClassComponent<A>> {
+    oninit?(vnode: Vnode<A, this>): number;
+    view(vnode: Vnode<A, this>): number;
+}
+
+interface MyAttrs { id: number }
+class C implements ClassComponent<MyAttrs> {
+    view(v: Vnode<MyAttrs, C>) { return 0; }
+    [_: number]: unknown;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2430 = diags.iter().filter(|d| d.0 == 2430).collect::<Vec<_>>();
+    assert!(
+        ts2430.is_empty(),
+        "Should NOT emit TS2430 for class implementing interface with `this` type references. Got: {ts2430:?}"
+    );
+}

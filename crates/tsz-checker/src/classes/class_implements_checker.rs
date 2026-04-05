@@ -1213,7 +1213,23 @@ impl<'a> CheckerState<'a> {
                     if check_whole_type {
                         let class_instance_type =
                             self.get_class_instance_type(class_idx, class_data);
-                        if !self.is_assignable_to(class_instance_type, interface_type) {
+                        // Substitute `this` type in the interface type before the
+                        // whole-type assignability check, matching the per-property
+                        // substitution done above. Without this, interfaces using
+                        // `this` types (e.g. `Vnode<A, this>`) retain an abstract
+                        // `this` that cannot be satisfied, causing false TS2430.
+                        let target_type = if let Some(this_type) = class_this_type
+                            && tsz_solver::contains_this_type(self.ctx.types, interface_type)
+                        {
+                            tsz_solver::substitute_this_type(
+                                self.ctx.types,
+                                interface_type,
+                                this_type,
+                            )
+                        } else {
+                            interface_type
+                        };
+                        if !self.is_assignable_to(class_instance_type, target_type) {
                             let message = if is_class {
                                 format!(
                                     "Class '{class_name}' incorrectly implements class '{interface_display_name}'. Did you mean to extend '{interface_display_name}' and inherit its members as a subclass?"
