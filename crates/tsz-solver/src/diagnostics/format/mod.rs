@@ -4,6 +4,7 @@
 mod compound;
 #[cfg(test)]
 mod tests;
+pub mod tracing_helpers;
 
 use crate::TypeDatabase;
 use crate::def::DefinitionStore;
