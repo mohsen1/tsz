@@ -109,6 +109,10 @@ impl<'a> CheckerState<'a> {
                             | syntax_kind_ext::CONSTRUCTOR
                             | syntax_kind_ext::GET_ACCESSOR
                             | syntax_kind_ext::SET_ACCESSOR
+                            // Construct signatures and index signatures in interfaces:
+                            // tsc's checkTypePredicate is not reached for these positions.
+                            | syntax_kind_ext::CONSTRUCT_SIGNATURE
+                            | syntax_kind_ext::INDEX_SIGNATURE
                     )
                 });
                 if !is_valid_or_parser_error {
