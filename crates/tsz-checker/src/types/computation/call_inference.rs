@@ -16,6 +16,17 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{FunctionShape, TypeId};
 
+/// Detect spread marker tuples `[...T]` created by the checker for generic
+/// TypeParameter spreads. A spread marker is a 1-element tuple where the single
+/// element is a rest element whose inner type is a TypeParameter.
+fn is_spread_marker_tuple(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
+    if let Some(elems) = common::tuple_elements(db, type_id) {
+        elems.len() == 1 && elems[0].rest && is_type_parameter_type(db, elems[0].type_id)
+    } else {
+        false
+    }
+}
+
 /// Count the number of non-`any` parameter types in a callable type.
 ///
 /// Used to compare contextual type candidates: whichever has more specific
@@ -1363,6 +1374,15 @@ impl<'a> CheckerState<'a> {
                         .iter()
                         .any(|(start, end)| diag.start >= *start && diag.start < *end)
                 });
+            }
+
+            // Skip spread marker tuples [...T] created by the checker for generic
+            // TypeParameter spreads. These are already validated by the solver's
+            // check_argument_types_with which has spread-aware logic. The recheck
+            // here compares against the element type of the rest param, which would
+            // incorrectly reject `[...U]` against `ElementType`.
+            if is_spread_marker_tuple(self.ctx.types, actual) {
+                continue;
             }
 
             let is_assignable = self.is_assignable_to_with_env(actual, expected)
