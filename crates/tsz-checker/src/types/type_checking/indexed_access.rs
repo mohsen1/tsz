@@ -599,6 +599,21 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     }
+                    // Also check for `infer X extends C` patterns in the extends type.
+                    // When the extends type contains `infer Head extends DistributedKeyOf<ObjT>`,
+                    // the inferred type parameter `Head` is constrained to `keyof ObjT` in the
+                    // true branch. If our index type matches such an infer parameter, suppress
+                    // TS2536.
+                    if let Some(ref idx_name) = index_name {
+                        if self.extends_type_has_infer_keyof_constraint(
+                            cond.extends_type,
+                            idx_name,
+                            object_type,
+                            object_type_for_check,
+                        ) {
+                            return true;
+                        }
+                    }
                 }
             }
             current = self
@@ -608,6 +623,138 @@ impl<'a> CheckerState<'a> {
                 .map(|ext| ext.parent);
         }
         false
+    }
+
+    /// Check if the extends type of a conditional contains an `infer X extends C` pattern
+    /// where `X` matches `target_name` and `C` resolves to `keyof ObjT`.
+    fn extends_type_has_infer_keyof_constraint(
+        &mut self,
+        extends_node_idx: NodeIndex,
+        target_name: &str,
+        object_type: TypeId,
+        object_type_for_check: TypeId,
+    ) -> bool {
+        // Collect all infer type nodes from the extends type subtree.
+        // We use a stack-based approach since there's no generic node_children method.
+        let infer_nodes = self.collect_infer_nodes_in_subtree(extends_node_idx);
+        for infer_node_idx in infer_nodes {
+            let Some(node) = self.ctx.arena.get(infer_node_idx) else {
+                continue;
+            };
+            let Some(infer_data) = self.ctx.arena.get_infer_type(node) else {
+                continue;
+            };
+            let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter) else {
+                continue;
+            };
+            let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node) else {
+                continue;
+            };
+            let Some(name_node) = self.ctx.arena.get(tp_data.name) else {
+                continue;
+            };
+            let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                continue;
+            };
+            if ident.escaped_text != target_name || tp_data.constraint == NodeIndex::NONE {
+                continue;
+            }
+            // The constraint exists — check if it resolves to keyof ObjT
+            let constraint_type = self.get_type_from_type_node(tp_data.constraint);
+            let constraint_eval = self.evaluate_type_with_env(constraint_type);
+            if self.is_keyof_for_current_object(constraint_type, object_type, object_type_for_check)
+                || self.is_keyof_for_current_object(
+                    constraint_eval,
+                    object_type,
+                    object_type_for_check,
+                )
+            {
+                return true;
+            }
+            // Also check assignability: constraint might be
+            // DistributedKeyOf<ObjT> which evaluates to keyof ObjT
+            let keyof_object = self.ctx.types.evaluate_keyof(object_type_for_check);
+            if self.is_assignable_to(constraint_eval, keyof_object) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Collect all INFER_TYPE node indices in a subtree, using parent-tracking.
+    /// Walks all nodes whose parent chain leads back to `root_idx`.
+    fn collect_infer_nodes_in_subtree(&self, root_idx: NodeIndex) -> Vec<NodeIndex> {
+        let mut result = Vec::new();
+        let mut stack = vec![root_idx];
+        while let Some(idx) = stack.pop() {
+            if idx == NodeIndex::NONE {
+                continue;
+            }
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::INFER_TYPE {
+                result.push(idx);
+                continue; // Don't recurse into infer's children
+            }
+            // Push children based on node type
+            self.push_type_node_children(idx, node, &mut stack);
+        }
+        result
+    }
+
+    /// Push child indices of a type node onto the stack for traversal.
+    fn push_type_node_children(
+        &self,
+        _idx: NodeIndex,
+        node: &tsz_parser::parser::node::Node,
+        stack: &mut Vec<NodeIndex>,
+    ) {
+        // Tuple type: push elements
+        if let Some(tuple) = self.ctx.arena.get_tuple_type(node) {
+            stack.extend(tuple.elements.nodes.iter().copied());
+            return;
+        }
+        // Array type
+        if let Some(arr) = self.ctx.arena.get_array_type(node) {
+            stack.push(arr.element_type);
+            return;
+        }
+        // Union/intersection type (both use CompositeTypeData)
+        if let Some(composite) = self.ctx.arena.get_composite_type(node) {
+            stack.extend(composite.types.nodes.iter().copied());
+            return;
+        }
+        // Type reference with type arguments
+        if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
+            if let Some(ref args) = type_ref.type_arguments {
+                stack.extend(args.nodes.iter().copied());
+            }
+            return;
+        }
+        // Wrapped types: rest, optional, parenthesized (all share WrappedTypeData)
+        if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
+            stack.push(wrapped.type_node);
+            return;
+        }
+        // Conditional type
+        if let Some(cond) = self.ctx.arena.get_conditional_type(node) {
+            stack.push(cond.check_type);
+            stack.push(cond.extends_type);
+            stack.push(cond.true_type);
+            stack.push(cond.false_type);
+            return;
+        }
+        // Indexed access type
+        if let Some(iat) = self.ctx.arena.get_indexed_access_type(node) {
+            stack.push(iat.object_type);
+            stack.push(iat.index_type);
+            return;
+        }
+        // Type operator (keyof, readonly, unique)
+        if let Some(type_op) = self.ctx.arena.get_type_operator(node) {
+            stack.push(type_op.type_node);
+        }
     }
 
     /// Check if `node_a` is a descendant of `node_b` in the AST.
