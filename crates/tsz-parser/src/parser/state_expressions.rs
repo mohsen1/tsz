@@ -915,16 +915,15 @@ impl ParserState {
     }
 
     // Parse type parameter modifiers: `const`, `in`, `out`
+    // Allows duplicates (e.g. `in out in T`) — the checker reports TS1030 for those.
+    // Not allowing duplicates here causes cascading parse errors since `in`/`out` are
+    // reserved keywords and won't parse as identifiers.
     fn parse_type_parameter_modifiers(&mut self) -> Option<NodeList> {
         let mut modifiers = Vec::new();
-        let mut seen_in = false;
-        let mut seen_out = false;
-        let mut seen_const = false;
 
         loop {
             match self.token() {
-                SyntaxKind::ConstKeyword if !seen_const => {
-                    seen_const = true;
+                SyntaxKind::ConstKeyword => {
                     let pos = self.token_pos();
                     let end = self.token_end();
                     self.next_token();
@@ -933,15 +932,13 @@ impl ParserState {
                             .add_token(SyntaxKind::ConstKeyword as u16, pos, end),
                     );
                 }
-                SyntaxKind::InKeyword if !seen_in => {
-                    seen_in = true;
+                SyntaxKind::InKeyword => {
                     let pos = self.token_pos();
                     let end = self.token_end();
                     self.next_token();
                     modifiers.push(self.arena.add_token(SyntaxKind::InKeyword as u16, pos, end));
                 }
-                SyntaxKind::OutKeyword if !seen_out => {
-                    seen_out = true;
+                SyntaxKind::OutKeyword => {
                     let pos = self.token_pos();
                     let end = self.token_end();
                     self.next_token();
