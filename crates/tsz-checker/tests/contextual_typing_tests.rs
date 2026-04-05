@@ -1693,3 +1693,27 @@ setup({
         "Expected at most one TS2345 for spawn(\"alarm\"), got diagnostics={diagnostics:?}"
     );
 }
+
+/// Contextual return type should flow into generic call inference so that
+/// callback parameter types are correctly inferred from the return type context.
+/// `make<A, B>(fn: (a: A) => B): (s: A) => B` called with contextual type
+/// `(s: number) => string` should infer A=number, B=string, then the callback
+/// `(x) => x.toUpperCase()` should get x: number and report TS2339.
+#[test]
+fn test_contextual_return_type_flows_to_callback_params() {
+    let source = r#"
+function make<A, B>(fn: (a: A) => B): (s: A) => B { return fn; }
+const f: (s: number) => string = make((x) => x.toUpperCase());
+"#;
+    let diagnostics = check_default(source);
+    let ts2339: Vec<_> = diagnostics.iter().filter(|d| d.code == 2339).collect();
+    assert!(
+        !ts2339.is_empty(),
+        "Expected TS2339 for toUpperCase on number (contextual return type should infer A=number), \
+         got diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
