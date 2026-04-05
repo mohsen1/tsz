@@ -1316,8 +1316,18 @@ impl<'a> CheckerState<'a> {
                     return (json_type, Vec::new());
                 }
 
+                // In node16/nodenext, when an ESM file default-imports a CJS module,
+                // the default binding is the entire module namespace (module.exports),
+                // not the "default" export. This matches tsc's behavior where Node.js
+                // ESM-CJS interop wraps the CJS module.
+                let is_node_esm_importing_cjs = export_name == "default"
+                    && self.ctx.compiler_options.module.is_node_module()
+                    && self.ctx.file_is_esm == Some(true)
+                    && !self.module_is_esm(module_name);
+
                 if export_name == "default"
-                    && self.source_file_import_uses_system_default_namespace_fallback(module_name)
+                    && (self.source_file_import_uses_system_default_namespace_fallback(module_name)
+                        || is_node_esm_importing_cjs)
                 {
                     if self
                         .ctx
