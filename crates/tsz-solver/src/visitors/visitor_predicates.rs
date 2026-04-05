@@ -668,10 +668,12 @@ pub fn constraint_references_type_param_in_resolution_path(
                 stack.push(*obj);
                 stack.push(*idx);
             }
-            // KeyOf: descend into operand
-            TypeData::KeyOf(inner) => {
-                stack.push(*inner);
-            }
+            // KeyOf: do NOT descend into operand.
+            // `keyof X` resolves to `string | number | symbol` at the base-constraint
+            // level regardless of X. TSC's getBaseConstraint does not recurse through
+            // keyof, so `T extends { [K in keyof T]: V }` is not circular — the
+            // `keyof T` reference terminates the constraint resolution chain.
+            TypeData::KeyOf(_) => {}
             // Everything else is a "type reference" or leaf — don't descend.
             // Array<T>, Tuple, ReadonlyType, NoInfer, Application, Object,
             // Function, Callable, etc. are opaque at the constraint resolution level.
