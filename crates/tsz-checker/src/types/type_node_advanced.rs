@@ -451,6 +451,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return TypeId::ERROR;
         };
 
+        // Capture type argument node indices early (before borrows prevent access).
+        // When present, the base type will be wrapped in Application(base, args)
+        // so that constraint checking (TS2344) sees the instantiated type rather
+        // than the raw function type. This matches tsc behavior: `typeof fn<Args>`
+        // produces an instantiation expression type, not the original function type.
+        let type_arg_node_indices: Vec<NodeIndex> = type_query
+            .type_arguments
+            .as_ref()
+            .map(|args| args.nodes.clone())
+            .unwrap_or_default();
+
         // `default` is a reserved keyword and cannot be used as an identifier in
         // expression position. `typeof default` must always report TS2304 even when
         // the file has an `export default` declaration, because the default-export
@@ -481,6 +492,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if let Some(&expr_type) = self.ctx.node_types.get(&type_query.expr_name.0)
             && expr_type != TypeId::ERROR
         {
+            // Apply type arguments from `typeof expr<Args>` instantiation expressions.
+            if !type_arg_node_indices.is_empty() {
+                let type_args: Vec<TypeId> = type_arg_node_indices
+                    .iter()
+                    .map(|&arg_idx| self.check(arg_idx))
+                    .collect();
+                return self.ctx.types.application(expr_type, type_args);
+            }
             return expr_type;
         }
 
@@ -521,6 +540,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
             && let Some(&param_type) = self.ctx.typeof_param_scope.get(ident.escaped_text.as_str())
         {
+            if !type_arg_node_indices.is_empty() {
+                let type_args: Vec<TypeId> = type_arg_node_indices
+                    .iter()
+                    .map(|&arg_idx| self.check(arg_idx))
+                    .collect();
+                return self.ctx.types.application(param_type, type_args);
+            }
             return param_type;
         }
 
@@ -636,13 +662,28 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     let narrowed =
                         analyzer.get_flow_type(type_query.expr_name, declared_type, flow_node);
                     if narrowed != TypeId::ERROR {
+                        if !type_arg_node_indices.is_empty() {
+                            let type_args: Vec<TypeId> = type_arg_node_indices
+                                .iter()
+                                .map(|&arg_idx| self.check(arg_idx))
+                                .collect();
+                            return self.ctx.types.application(narrowed, type_args);
+                        }
                         return narrowed;
                     }
                 }
             }
 
             let factory = self.ctx.types.factory();
-            return factory.type_query(tsz_solver::SymbolRef(sym_id.0));
+            let base = factory.type_query(tsz_solver::SymbolRef(sym_id.0));
+            if !type_arg_node_indices.is_empty() {
+                let type_args: Vec<TypeId> = type_arg_node_indices
+                    .iter()
+                    .map(|&arg_idx| self.check(arg_idx))
+                    .collect();
+                return self.ctx.types.application(base, type_args);
+            }
+            return base;
         }
 
         // For qualified/generic typeof expressions (typeof A.B, typeof A<B>),
@@ -710,7 +751,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     }
                 }
                 let factory = self.ctx.types.factory();
-                return factory.type_query(tsz_solver::SymbolRef(sym_id.0));
+                let base = factory.type_query(tsz_solver::SymbolRef(sym_id.0));
+                if !type_arg_node_indices.is_empty() {
+                    let type_args: Vec<TypeId> = type_arg_node_indices
+                        .iter()
+                        .map(|&arg_idx| self.check(arg_idx))
+                        .collect();
+                    return self.ctx.types.application(base, type_args);
+                }
+                return base;
             }
             // Skip TS2304 for well-known globals that may not be in local binder scope
             // but are valid in typeof position (undefined, NaN, Infinity, globalThis, etc.)
