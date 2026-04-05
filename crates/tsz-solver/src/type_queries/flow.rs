@@ -628,11 +628,16 @@ fn types_are_comparable_for_assertion_inner(
         return true;
     }
 
-    // Lazy types at non-zero depth are assumed comparable
-    if depth > 0
-        && (matches!(db.lookup(source), Some(TypeData::Lazy(_)))
-            || matches!(db.lookup(target), Some(TypeData::Lazy(_))))
-    {
+    // Handle Lazy types (unresolved semantic references like interface names).
+    // Only assume comparable when BOTH are Lazy at depth > 0 — we can't
+    // structurally compare two opaque references so we conservatively assume
+    // overlap (avoids false TS2352). When only ONE side is Lazy, fall through
+    // to the structural property check. The Lazy type will have no extractable
+    // properties, so it correctly returns "not comparable" for cases like
+    // comparing `{z: any}` (concrete Object) with `T1` (empty interface ref).
+    let source_is_lazy = matches!(db.lookup(source), Some(TypeData::Lazy(_)));
+    let target_is_lazy = matches!(db.lookup(target), Some(TypeData::Lazy(_)));
+    if depth > 0 && source_is_lazy && target_is_lazy {
         return true;
     }
 
