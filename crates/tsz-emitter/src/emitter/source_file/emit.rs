@@ -995,6 +995,12 @@ impl<'a> Printer<'a> {
                 }
             }
             self.ctx.module_state.default_func_export_hoisted = !default_func_exports.is_empty();
+            for name in &default_func_exports {
+                self.ctx
+                    .module_state
+                    .default_exported_func_names
+                    .insert(name.clone());
+            }
 
             // Emit CJS JSX runtime require() after exports preamble
             if let Some(ref jsx_import) = jsx_import_text {

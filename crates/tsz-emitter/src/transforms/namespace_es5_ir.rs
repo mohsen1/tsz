@@ -100,6 +100,7 @@ pub struct NamespaceES5Transformer<'a> {
     /// Hoisted temp variable names collected from expression conversions
     /// (e.g., from computed property lowering inside object literals)
     hoisted_temps: RefCell<Vec<String>>,
+    default_exported_func_names: std::collections::HashSet<String>,
 }
 
 impl<'a> NamespaceES5Transformer<'a> {
@@ -113,6 +114,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             prior_exported_vars: std::collections::HashSet::new(),
             legacy_decorators: false,
             hoisted_temps: RefCell::new(Vec::new()),
+            default_exported_func_names: std::collections::HashSet::new(),
         }
     }
 
@@ -126,6 +128,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             prior_exported_vars: std::collections::HashSet::new(),
             legacy_decorators: false,
             hoisted_temps: RefCell::new(Vec::new()),
+            default_exported_func_names: std::collections::HashSet::new(),
         }
     }
 
@@ -143,6 +146,10 @@ impl<'a> NamespaceES5Transformer<'a> {
     /// Set `CommonJS` mode
     pub const fn set_commonjs(&mut self, is_commonjs: bool) {
         self.is_commonjs = is_commonjs;
+    }
+
+    pub fn set_default_exported_func_names(&mut self, names: std::collections::HashSet<String>) {
+        self.default_exported_func_names = names;
     }
 
     /// Set exported variable names from prior blocks of the same namespace.
@@ -416,6 +423,9 @@ impl<'a> NamespaceES5Transformer<'a> {
         // Root name is the first part
         let name = name_parts.first().cloned().unwrap_or_default();
 
+        let default_export_merge =
+            !is_exported && self.is_commonjs && self.default_exported_func_names.contains(&name);
+
         Some(IRNode::NamespaceIIFE {
             name: name.into(),
             name_parts: name_parts.into_iter().map(Into::into).collect(),
@@ -423,6 +433,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs,
             should_declare_var,
+            default_export_merge,
             parent_name: None,
             param_name: param_name.map(Into::into),
             skip_sequence_indent: false,
@@ -1200,6 +1211,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs,
             should_declare_var,
+            default_export_merge: false,
             parent_name: is_exported.then(|| parent_ns.to_string().into()),
             param_name: param_name.map(Into::into),
             skip_sequence_indent: true, // Nested namespace IIFEs need to skip indent when in sequence

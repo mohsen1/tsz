@@ -162,6 +162,9 @@ pub struct ModuleTransformState {
     /// exports/imports survived), an `export {};` marker must be emitted at the end
     /// to preserve module semantics.
     pub had_elided_export_clause: bool,
+
+    /// Names of functions/classes exported as `export default`.
+    pub default_exported_func_names: FxHashSet<String>,
 }
 
 impl ModuleTransformState {

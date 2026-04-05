@@ -94,6 +94,16 @@ impl<'a> Printer<'a> {
             let mut es5_emitter = NamespaceES5Emitter::with_commonjs(self.arena, use_cjs);
             es5_emitter.set_target_es5(self.ctx.target_es5);
             es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+            if !self.ctx.module_state.default_exported_func_names.is_empty() {
+                es5_emitter.set_default_exported_func_names(
+                    self.ctx
+                        .module_state
+                        .default_exported_func_names
+                        .iter()
+                        .cloned()
+                        .collect(),
+                );
+            }
             let ns_name = self.get_identifier_text_idx(module.name);
             if !ns_name.is_empty() {
                 // Cross-block export sharing for ES5 path
@@ -288,6 +298,18 @@ impl<'a> Printer<'a> {
                 self.write(&name);
                 self.write(" = {}));");
             }
+        } else if self.ctx.is_commonjs()
+            && self
+                .ctx
+                .module_state
+                .default_exported_func_names
+                .contains(&name)
+        {
+            self.write("exports.");
+            self.write(&name);
+            self.write(" || (exports.");
+            self.write(&name);
+            self.write(" = {}));");
         } else {
             self.write(&name);
             self.write(" || (");

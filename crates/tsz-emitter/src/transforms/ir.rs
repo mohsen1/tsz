@@ -471,6 +471,8 @@ pub enum IRNode {
         /// Whether to emit the `var name;` declaration for this namespace.
         /// Set to false when merging with a class/function/enum that already declared it.
         should_declare_var: bool,
+        /// When true, namespace merges with default-exported fn in CJS.
+        default_export_merge: bool,
         /// Parent namespace name for qualified binding: `NS = Parent.NS || (Parent.NS = {})`
         parent_name: Option<Cow<'static, str>>,
         /// Renamed IIFE parameter name when a member collides with the namespace name.
