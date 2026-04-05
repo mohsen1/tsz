@@ -765,7 +765,21 @@ pub(crate) fn compile_with_cache_and_changes(
 fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
     matches!(
         code,
-        8002 | 8003 | 8004 | 8006 | 8008 | 8009 | 8010 | 8011 | 8013 | 8015 | 8016 | 8017 | 8018
+        8002 | 8003
+            | 8004
+            | 8006
+            | 8008
+            | 8009
+            | 8010
+            | 8011
+            | 8013
+            | 8015
+            | 8016
+            | 8017
+            | 8018
+            | 8037
+            | 8038
+            | 8039
     ) || matches!(code, 17002 | 17006 | 17007 | 17008 | 17012)
         || matches!(
             code,
