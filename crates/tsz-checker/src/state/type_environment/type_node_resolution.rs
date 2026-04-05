@@ -105,6 +105,7 @@ impl<'a> CheckerState<'a> {
                             | syntax_kind_ext::GET_ACCESSOR
                             | syntax_kind_ext::SET_ACCESSOR
                             | syntax_kind_ext::CONSTRUCT_SIGNATURE
+                            | syntax_kind_ext::CONSTRUCTOR_TYPE
                     )
                 });
                 if !is_valid_or_parser_error {
