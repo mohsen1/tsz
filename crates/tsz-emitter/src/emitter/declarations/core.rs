@@ -66,16 +66,6 @@ impl<'a> Printer<'a> {
             self.write(" ");
         }
 
-        // Skip comments inside type parameter list (e.g., `<T, U /*extends T*/>`)
-        // since type parameters are stripped in JS output
-        if let Some(ref type_params) = func.type_parameters {
-            for &tp_idx in &type_params.nodes {
-                if let Some(tp_node) = self.arena.get(tp_idx) {
-                    self.skip_comments_in_range(tp_node.pos, tp_node.end);
-                }
-            }
-        }
-
         // Parameters - only emit names, not types for JavaScript
         // Map opening `(` to its source position (after name/type params)
         let open_paren_pos = {
@@ -94,6 +84,15 @@ impl<'a> Printer<'a> {
                 .map(|source_pos| source_pos.pos)
                 .unwrap_or(search_start)
         };
+        // Skip comments inside the type parameter list
+        if func.type_parameters.is_some() {
+            let tp_skip_start = if func.name.is_some() {
+                self.arena.get(func.name).map_or(node.pos, |n| n.end)
+            } else {
+                node.pos
+            };
+            self.skip_comments_in_range(tp_skip_start, open_paren_pos);
+        }
         self.write("(");
         let search_start = func
             .parameters
@@ -251,6 +250,14 @@ impl<'a> Printer<'a> {
             self.map_source_offset(name_node.end);
         }
         self.write(" = ");
+        // Emit inline comments between = and the initializer value.
+        if let Some(init_node) = self.arena.get(decl.initializer) {
+            self.emit_comments_before_pos(init_node.pos);
+            if self.pending_block_comment_space {
+                self.write_space();
+                self.pending_block_comment_space = false;
+            }
+        }
         self.emit_expression(decl.initializer);
     }
 
