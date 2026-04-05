@@ -1534,13 +1534,11 @@ fn find_node_modules_package_root(path: &Path) -> Option<PathBuf> {
 
 /// Build a redirect map for duplicate packages (same name+version at different
 /// `node_modules` paths). The shallowest copy becomes canonical.
-#[allow(clippy::print_stderr)]
 pub(crate) fn build_duplicate_package_redirects(
     file_names: &[String],
     options: &ResolvedCompilerOptions,
 ) -> FxHashMap<PathBuf, PathBuf> {
     use std::collections::hash_map::Entry;
-    let debug = std::env::var_os("TSZ_DEBUG_RESOLVE").is_some();
 
     let mut canonical_packages: FxHashMap<(String, String), (PathBuf, usize)> =
         FxHashMap::default();
@@ -1551,10 +1549,8 @@ pub(crate) fn build_duplicate_package_redirects(
         }
     }
 
-    if debug {
-        for root in &package_roots {
-            eprintln!("[dup-pkg] found package root: {}", root.display());
-        }
+    for root in &package_roots {
+        tracing::debug!(target: "tsz::dup_pkg", root = %root.display(), "found package root");
     }
 
     let mut root_redirects: FxHashMap<PathBuf, PathBuf> = FxHashMap::default();
@@ -1573,15 +1569,11 @@ pub(crate) fn build_duplicate_package_redirects(
                 Err(_) => continue,
             },
             Err(e) => {
-                if debug {
-                    eprintln!("[dup-pkg] cannot read {}: {}", pkg_json_path.display(), e);
-                }
+                tracing::debug!(target: "tsz::dup_pkg", path = %pkg_json_path.display(), error = %e, "cannot read package.json");
                 continue;
             }
         };
-        if debug {
-            eprintln!("[dup-pkg] {}@{} at {}", name, version, pkg_root.display());
-        }
+        tracing::debug!(target: "tsz::dup_pkg", name = %name, version = %version, root = %pkg_root.display(), "package found");
         let depth = pkg_root
             .components()
             .filter(|c| c.as_os_str() == "node_modules")
@@ -1616,14 +1608,8 @@ pub(crate) fn build_duplicate_package_redirects(
     if root_redirects.is_empty() {
         return FxHashMap::default();
     }
-    if debug {
-        for (from, to) in &root_redirects {
-            eprintln!(
-                "[dup-pkg] root redirect: {} -> {}",
-                from.display(),
-                to.display()
-            );
-        }
+    for (from, to) in &root_redirects {
+        tracing::debug!(target: "tsz::dup_pkg", from = %from.display(), to = %to.display(), "root redirect");
     }
     let mut file_redirects: FxHashMap<PathBuf, PathBuf> = FxHashMap::default();
     for file_name in file_names {
@@ -1635,13 +1621,7 @@ pub(crate) fn build_duplicate_package_redirects(
             let canonical_file = canonical_root.join(relative);
             let from = normalize_resolved_path(file_path, options);
             let to = normalize_resolved_path(&canonical_file, options);
-            if debug {
-                eprintln!(
-                    "[dup-pkg] file redirect: {} -> {}",
-                    from.display(),
-                    to.display()
-                );
-            }
+            tracing::debug!(target: "tsz::dup_pkg", from = %from.display(), to = %to.display(), "file redirect");
             if from != to {
                 file_redirects.insert(from, to);
             }
