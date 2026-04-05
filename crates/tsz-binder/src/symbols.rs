@@ -4,6 +4,7 @@
 
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tsz_parser::NodeIndex;
 
 // =============================================================================
@@ -310,14 +311,17 @@ impl SymbolTable {
 /// back to a linear scan.
 #[derive(Clone, Debug, Serialize, Default)]
 pub struct SymbolArena {
-    symbols: Vec<Symbol>,
+    /// Arc-wrapped symbol storage for O(1) clone.
+    /// During binding (refcount=1), `Arc::make_mut` is zero-cost.
+    /// During checking (shared across files), no mutations occur.
+    symbols: Arc<Vec<Symbol>>,
     /// Base offset for symbol IDs (0 for binder, high value for checker-local symbols)
     base_offset: u32,
     /// Name-to-SymbolId index for O(1) lookups by `escaped_name`.
     /// Maintained incrementally on `alloc`/`alloc_from`; rebuilt automatically
     /// after deserialization.
     #[serde(skip)]
-    name_index: FxHashMap<String, Vec<SymbolId>>,
+    name_index: Arc<FxHashMap<String, Vec<SymbolId>>>,
 }
 
 impl<'de> Deserialize<'de> for SymbolArena {
@@ -335,9 +339,9 @@ impl<'de> Deserialize<'de> for SymbolArena {
 
         let raw = SymbolArenaRaw::deserialize(deserializer)?;
         let mut arena = Self {
-            symbols: raw.symbols,
+            symbols: Arc::new(raw.symbols),
             base_offset: raw.base_offset,
-            name_index: FxHashMap::default(),
+            name_index: Arc::new(FxHashMap::default()),
         };
         arena.rebuild_name_index();
         Ok(arena)
@@ -353,9 +357,9 @@ impl SymbolArena {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            symbols: Vec::new(),
+            symbols: Arc::new(Vec::new()),
             base_offset: 0,
-            name_index: FxHashMap::default(),
+            name_index: Arc::new(FxHashMap::default()),
         }
     }
 
@@ -364,9 +368,9 @@ impl SymbolArena {
     #[must_use]
     pub fn new_with_base(base: u32) -> Self {
         Self {
-            symbols: Vec::new(),
+            symbols: Arc::new(Vec::new()),
             base_offset: base,
-            name_index: FxHashMap::default(),
+            name_index: Arc::new(FxHashMap::default()),
         }
     }
 
@@ -378,9 +382,12 @@ impl SymbolArena {
     pub fn with_capacity(capacity: usize) -> Self {
         let safe_capacity = capacity.min(Self::MAX_SYMBOL_PREALLOC);
         Self {
-            symbols: Vec::with_capacity(safe_capacity),
+            symbols: Arc::new(Vec::with_capacity(safe_capacity)),
             base_offset: 0,
-            name_index: FxHashMap::with_capacity_and_hasher(safe_capacity, Default::default()),
+            name_index: Arc::new(FxHashMap::with_capacity_and_hasher(
+                safe_capacity,
+                Default::default(),
+            )),
         }
     }
 
@@ -396,9 +403,12 @@ impl SymbolArena {
                 + u32::try_from(self.symbols.len()).expect("symbol arena length exceeds u32"),
         );
         if !name.is_empty() {
-            self.name_index.entry(name.clone()).or_default().push(id);
+            Arc::make_mut(&mut self.name_index)
+                .entry(name.clone())
+                .or_default()
+                .push(id);
         }
-        self.symbols.push(Symbol::new(id, flags, name));
+        Arc::make_mut(&mut self.symbols).push(Symbol::new(id, flags, name));
         id
     }
 
@@ -415,14 +425,14 @@ impl SymbolArena {
                 + u32::try_from(self.symbols.len()).expect("symbol arena length exceeds u32"),
         );
         if !source.escaped_name.is_empty() {
-            self.name_index
+            Arc::make_mut(&mut self.name_index)
                 .entry(source.escaped_name.clone())
                 .or_default()
                 .push(id);
         }
         let mut cloned = source.clone();
         cloned.id = id;
-        self.symbols.push(cloned);
+        Arc::make_mut(&mut self.symbols).push(cloned);
         id
     }
 
@@ -449,19 +459,19 @@ impl SymbolArena {
             // ID is from a different arena
             None
         } else {
-            self.symbols.get_mut((id.0 - self.base_offset) as usize)
+            Arc::make_mut(&mut self.symbols).get_mut((id.0 - self.base_offset) as usize)
         }
     }
 
     /// Get the number of symbols.
     #[must_use]
-    pub const fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.symbols.len()
     }
 
     /// Check if empty.
     #[must_use]
-    pub const fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.symbols.is_empty()
     }
 
@@ -469,24 +479,25 @@ impl SymbolArena {
     /// This avoids repeated reallocations when the approximate number of
     /// upcoming symbol allocations is known.
     pub fn reserve(&mut self, additional: usize) {
-        self.symbols.reserve(additional);
-        self.name_index.reserve(additional);
+        Arc::make_mut(&mut self.symbols).reserve(additional);
+        Arc::make_mut(&mut self.name_index).reserve(additional);
     }
 
     /// Clear all symbols while keeping the allocated capacity.
     pub fn clear(&mut self) {
-        self.symbols.clear();
-        self.name_index.clear();
+        Arc::make_mut(&mut self.symbols).clear();
+        Arc::make_mut(&mut self.name_index).clear();
     }
 
     /// Rebuild the name index from the current symbol list.
     /// Call this after deserialization or after `reserve_symbol_ids` if
     /// indexed lookups are needed on those placeholder entries.
     pub fn rebuild_name_index(&mut self) {
-        self.name_index.clear();
-        for sym in &self.symbols {
+        let name_index = Arc::make_mut(&mut self.name_index);
+        name_index.clear();
+        for sym in self.symbols.iter() {
             if !sym.escaped_name.is_empty() {
-                self.name_index
+                name_index
                     .entry(sym.escaped_name.clone())
                     .or_default()
                     .push(sym.id);
@@ -531,7 +542,7 @@ impl SymbolArena {
 
     /// Iterate over all symbols in the arena mutably.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Symbol> {
-        self.symbols.iter_mut()
+        Arc::make_mut(&mut self.symbols).iter_mut()
     }
 
     /// Reserve `SymbolIds` in this arena by pre-allocating placeholder symbols.
@@ -551,10 +562,10 @@ impl SymbolArena {
     pub fn reserve_symbol_ids(&mut self, count: usize) {
         let current_len = self.symbols.len();
         if count > current_len {
-            // Extend with placeholder symbols to reserve the SymbolIds
-            self.symbols.reserve(count);
+            let symbols = Arc::make_mut(&mut self.symbols);
+            symbols.reserve(count);
             for id in current_len..count {
-                self.symbols.push(Symbol::new(
+                symbols.push(Symbol::new(
                     SymbolId(u32::try_from(id).expect("symbol ID exceeds u32")),
                     0,
                     String::new(), // Empty placeholder
