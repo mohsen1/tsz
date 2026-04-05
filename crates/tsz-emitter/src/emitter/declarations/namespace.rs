@@ -106,6 +106,11 @@ impl<'a> Printer<'a> {
             }
             let ns_name = self.get_identifier_text_idx(module.name);
             if !ns_name.is_empty() {
+                // When the namespace name was already declared (e.g., by a
+                // function or class), suppress the `var` declaration.
+                if self.declared_namespace_names.contains(&ns_name) {
+                    es5_emitter.set_should_declare_var(false);
+                }
                 // Cross-block export sharing for ES5 path
                 let block_exports = es5_emitter.collect_exported_var_names(idx);
                 let entry = self

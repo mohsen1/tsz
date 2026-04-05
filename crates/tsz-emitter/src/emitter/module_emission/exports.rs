@@ -597,13 +597,33 @@ impl<'a> Printer<'a> {
                 // export namespace N {}
                 k if k == syntax_kind_ext::MODULE_DECLARATION => {
                     if !export.is_default_export {
-                        // Fold exports.Name into the IIFE tail:
-                        // (N || (exports.N = N = {})) instead of separate
-                        // `exports.N = N;` after the IIFE.
-                        // Note: fold is used even when has_export_assignment is true —
-                        // `export = X` sets module.exports but named exports like
-                        // `export enum E` still get their own exports.E binding.
-                        self.pending_cjs_namespace_export_fold = true;
+                        // When a namespace merges with a default-exported function
+                        // of the same name, tsc does NOT fold exports.Name into
+                        // the IIFE tail — the function declaration is the primary
+                        // binding, and the namespace just augments the local name.
+                        let ns_name = self
+                            .arena
+                            .get_module(clause_node)
+                            .and_then(|m| self.get_identifier_text_opt(m.name));
+                        let merges_with_default_func = ns_name.as_ref().is_some_and(|n| {
+                            self.ctx
+                                .module_state
+                                .default_exported_func_names
+                                .contains(n)
+                        });
+                        eprintln!(
+                            "DEBUG: ns_name={ns_name:?}, default_names={:?}, merges={merges_with_default_func}",
+                            self.ctx.module_state.default_exported_func_names
+                        );
+                        if !merges_with_default_func {
+                            // Fold exports.Name into the IIFE tail:
+                            // (N || (exports.N = N = {})) instead of separate
+                            // `exports.N = N;` after the IIFE.
+                            // Note: fold is used even when has_export_assignment is true —
+                            // `export = X` sets module.exports but named exports like
+                            // `export enum E` still get their own exports.E binding.
+                            self.pending_cjs_namespace_export_fold = true;
+                        }
                         self.emit_module_declaration(clause_node, export.export_clause);
                         // If the flag was consumed (instantiated namespace),
                         // no separate export needed. If still set, the namespace
