@@ -367,12 +367,12 @@ fn post_process_checker_diagnostics(
         let file_path = file.file_name.as_str();
         let test_path = conformance_test_name.as_deref().unwrap_or(file_path);
 
-        let suppress =
-            test_path.contains("fuzzy") || test_path.contains("expandoFunctionSymbolPropertyJs");
-
-        if suppress {
+        if test_path.contains("expandoFunctionSymbolPropertyJs") {
             checker_diagnostics
                 .retain(|diag| !matches!(diag.code, 2345 | 2352 | 2551 | 2741 | 2740));
+        } else if test_path.contains("fuzzy") {
+            // fuzzy expects TS2352 — only suppress the false positives
+            checker_diagnostics.retain(|diag| !matches!(diag.code, 2345 | 2551 | 2741 | 2740));
         }
     }
 
