@@ -451,6 +451,31 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // When a variable is merged with a namespace (e.g., `namespace ns { ... }` +
+            // `const ns: ns.Foo`), the binder's value_declaration may point to the
+            // ModuleDeclaration node instead of the VariableDeclaration. Fall back to
+            // searching declarations[] for the actual variable declaration.
+            if resolved_value_decl.is_some()
+                && self
+                    .ctx
+                    .arena
+                    .get(resolved_value_decl)
+                    .and_then(|n| self.ctx.arena.get_variable_declaration(n))
+                    .is_none()
+            {
+                for &decl_idx in declarations {
+                    if decl_idx.is_none() {
+                        continue;
+                    }
+                    if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                        && self.ctx.arena.get_variable_declaration(decl_node).is_some()
+                    {
+                        resolved_value_decl = decl_idx;
+                        break;
+                    }
+                }
+            }
+
             if resolved_value_decl.is_some()
                 && let Some(node) = self.ctx.arena.get(resolved_value_decl)
             {

@@ -823,6 +823,19 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
             }
+            // For ambient module `export =` entries, the exports table key is
+            // "export=" but the actual symbol has a different escaped_name (e.g.,
+            // "passport"). Fall back to matching by SymbolId alone when the name
+            // didn't match — this is safe because SymbolId uniquely identifies the
+            // symbol within its owning binder.
+            if expected_name == "export=" {
+                for (idx, binder) in binders.iter().enumerate() {
+                    if binder.get_symbol(sym_id).is_some() {
+                        self.ctx.register_symbol_file_target(sym_id, idx);
+                        return;
+                    }
+                }
+            }
         }
     }
 
