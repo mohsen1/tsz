@@ -661,7 +661,8 @@ pub(crate) fn classify_object_properties(
         });
     }
 
-    let source_shape = crate::query_boundaries::common::get_merged_object_shape_for_type(db, source)?;
+    let source_shape =
+        crate::query_boundaries::common::get_merged_object_shape_for_type(db, source)?;
     let source_props = source_shape.properties.as_slice();
 
     if source_props.is_empty() {
@@ -674,7 +675,9 @@ pub(crate) fn classify_object_properties(
     let mut classification = PropertyClassification::default();
 
     // Check for index signatures, empty object targets, and special shapes.
-    if let Some(target_shape) = crate::query_boundaries::common::get_merged_object_shape_for_type(db, target) {
+    if let Some(target_shape) =
+        crate::query_boundaries::common::get_merged_object_shape_for_type(db, target)
+    {
         if target_shape.string_index.is_some() {
             classification.target_has_index_signature = true;
         }
@@ -694,7 +697,9 @@ pub(crate) fn classify_object_properties(
     } else if let Some(members) = union_members(db, target) {
         // For unions, check if any member has index signatures or is special.
         for &member in &members {
-            if let Some(shape) = crate::query_boundaries::common::get_merged_object_shape_for_type(db, member) {
+            if let Some(shape) =
+                crate::query_boundaries::common::get_merged_object_shape_for_type(db, member)
+            {
                 if shape.string_index.is_some() {
                     classification.target_has_index_signature = true;
                 }
@@ -720,7 +725,9 @@ pub(crate) fn classify_object_properties(
             if is_type_parameter_like(db, member) {
                 classification.target_is_type_parameter = true;
             }
-            if let Some(shape) = crate::query_boundaries::common::get_merged_object_shape_for_type(db, member) {
+            if let Some(shape) =
+                crate::query_boundaries::common::get_merged_object_shape_for_type(db, member)
+            {
                 if shape.string_index.is_some() || shape.number_index.is_some() {
                     classification.target_has_index_signature = true;
                 }
@@ -794,7 +801,9 @@ fn collect_target_properties(
     use super::common::{intersection_members, object_shape_for_type, union_members};
     let mut props = std::collections::HashMap::new();
 
-    if let Some(shape) = crate::query_boundaries::common::get_merged_object_shape_for_type(db, target) {
+    if let Some(shape) =
+        crate::query_boundaries::common::get_merged_object_shape_for_type(db, target)
+    {
         for prop in shape.properties.iter() {
             let name = db.resolve_atom(prop.name);
             props.entry(name).or_insert(prop.type_id);
@@ -803,7 +812,9 @@ fn collect_target_properties(
 
     if let Some(members) = union_members(db, target) {
         for &member in &members {
-            if let Some(shape) = crate::query_boundaries::common::get_merged_object_shape_for_type(db, member) {
+            if let Some(shape) =
+                crate::query_boundaries::common::get_merged_object_shape_for_type(db, member)
+            {
                 for prop in shape.properties.iter() {
                     let name = db.resolve_atom(prop.name);
                     props.entry(name).or_insert(prop.type_id);
@@ -814,7 +825,9 @@ fn collect_target_properties(
 
     if let Some(members) = intersection_members(db, target) {
         for &member in members.iter() {
-            if let Some(shape) = crate::query_boundaries::common::get_merged_object_shape_for_type(db, member) {
+            if let Some(shape) =
+                crate::query_boundaries::common::get_merged_object_shape_for_type(db, member)
+            {
                 for prop in shape.properties.iter() {
                     let name = db.resolve_atom(prop.name);
                     props.entry(name).or_insert(prop.type_id);
@@ -834,7 +847,9 @@ fn collect_target_property_names(
     use super::common::{intersection_members, object_shape_for_type, union_members};
     let mut names = std::collections::HashSet::new();
 
-    if let Some(shape) = crate::query_boundaries::common::get_merged_object_shape_for_type(db, target) {
+    if let Some(shape) =
+        crate::query_boundaries::common::get_merged_object_shape_for_type(db, target)
+    {
         for prop in shape.properties.iter() {
             names.insert(db.resolve_atom(prop.name));
         }
@@ -842,7 +857,9 @@ fn collect_target_property_names(
 
     if let Some(members) = union_members(db, target) {
         for &member in &members {
-            if let Some(shape) = crate::query_boundaries::common::get_merged_object_shape_for_type(db, member) {
+            if let Some(shape) =
+                crate::query_boundaries::common::get_merged_object_shape_for_type(db, member)
+            {
                 for prop in shape.properties.iter() {
                     names.insert(db.resolve_atom(prop.name));
                 }
@@ -852,7 +869,9 @@ fn collect_target_property_names(
 
     if let Some(members) = intersection_members(db, target) {
         for &member in members.iter() {
-            if let Some(shape) = crate::query_boundaries::common::get_merged_object_shape_for_type(db, member) {
+            if let Some(shape) =
+                crate::query_boundaries::common::get_merged_object_shape_for_type(db, member)
+            {
                 for prop in shape.properties.iter() {
                     names.insert(db.resolve_atom(prop.name));
                 }
