@@ -131,7 +131,53 @@ impl<'a> CheckerState<'a> {
         // resolution path (e.g., mapped type key source, union/intersection members,
         // conditional types, index access). This catches cases like
         // `T extends { [P in T]: number }` without false-positiving on `T extends Array<T>`.
+        //
         let atom = self.ctx.types.intern_string(param_name);
+        // For mapped type constraints, only consider it circular if the type parameter
+        // appears directly in the key source (e.g., `[P in T]` is circular), not when it
+        // appears through `keyof` (e.g., `[K in keyof T]` is valid).
+        // `T extends { [K in keyof T]: T[K] }` is a common valid TypeScript pattern.
+        if let Some(mapped) = crate::query_boundaries::property_access::get_mapped_type(
+            self.ctx.types,
+            constraint_type,
+        ) {
+            let key_source = mapped.constraint;
+            // Check if the key source directly contains the type parameter without
+            // going through a `keyof` wrapper. Strip keyof from the key source first,
+            // then check if the remainder still references the type parameter.
+            let key_without_keyof = tsz_solver::keyof_inner_type(self.ctx.types, key_source)
+                .map(|_| {
+                    // The key is `keyof X` or `keyof X & Y`. T only appears inside
+                    // keyof, which is a valid non-circular reference.
+                    false
+                })
+                .unwrap_or_else(|| {
+                    // Key is not wrapped in keyof. Check for intersection like
+                    // `keyof T & string` - strip intersection members that are keyof.
+                    if let Some(members_id) =
+                        tsz_solver::visitor::intersection_list_id(self.ctx.types, key_source)
+                    {
+                        let members = self.ctx.types.type_list(members_id);
+                        // Check if T only appears inside keyof members of the intersection
+                        members.iter().any(|&member| {
+                            tsz_solver::keyof_inner_type(self.ctx.types, member).is_none()
+                                && tsz_solver::contains_type_parameter_named_shallow(
+                                    self.ctx.types,
+                                    member,
+                                    atom,
+                                )
+                        })
+                    } else {
+                        // Not keyof, not intersection - check directly
+                        tsz_solver::contains_type_parameter_named_shallow(
+                            self.ctx.types,
+                            key_source,
+                            atom,
+                        )
+                    }
+                });
+            return key_without_keyof;
+        }
         tsz_solver::constraint_references_type_param_in_resolution_path(
             self.ctx.types,
             constraint_type,
