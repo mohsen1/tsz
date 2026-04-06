@@ -286,7 +286,7 @@ impl<'a> TypeFormatter<'a> {
             None => return format!("Type({})", type_id.0).into(),
         };
 
-        // For composite types that might be named (interfaces, type aliases, classes),
+        // For composite types that might be named (interfaces, classes, enums),
         // check if this TypeId maps to a definition name. This handles:
         // - Interfaces: `interface Foo { a: string }` displays as "Foo"
         // - Cross-file scenarios where ObjectShape's symbol can't be resolved
@@ -294,6 +294,9 @@ impl<'a> TypeFormatter<'a> {
         // NOTE: We deliberately do NOT use `find_type_alias_by_body` here because
         // tsc only shows alias names when the type was directly referenced through
         // that alias, not when a computed type happens to match an alias body.
+        // We also skip TypeAlias definitions found via `find_def_for_type` because
+        // type aliases register their body types, causing computed types to incorrectly
+        // display as alias names (e.g., showing `T2` instead of `"number" | "boolean"`).
         // The `display_alias` mechanism (below) handles the cases where tsc does
         // show alias names for evaluated types.
         //
@@ -315,37 +318,41 @@ impl<'a> TypeFormatter<'a> {
             if let Some(def_id) = def_store.find_def_for_type(type_id)
                 && let Some(def) = def_store.get(def_id)
             {
-                let name = self.format_def_name(&def);
-                // Enum and namespace value types are displayed as `typeof Name` by tsc.
-                // Class instance types and interfaces use just the name.
                 use crate::def::DefKind;
-                if matches!(
+                // Skip type aliases - they register their body types which causes
+                // computed types to incorrectly display as alias names.
+                if matches!(def.kind, DefKind::TypeAlias) {
+                    // fall through to structural display
+                } else if matches!(
                     def.kind,
                     DefKind::Enum | DefKind::Namespace | DefKind::ClassConstructor
                 ) {
+                    let name = self.format_def_name(&def);
                     return format!("typeof {name}").into();
-                }
-                // For generic types, prefer the display_alias (which has the actual
-                // instantiated type arguments like `A<number>`) over appending raw
-                // type parameter names from the definition (like `A<T>`).
-                // The display_alias is set when an Application type is evaluated,
-                // and preserves the concrete type arguments from the instantiation.
-                if !def.type_params.is_empty() {
-                    if let Some(alias_origin) = self.interner.get_display_alias(type_id)
-                        && self.display_alias_visiting.insert(alias_origin)
-                    {
-                        let result = self.format(alias_origin);
-                        self.display_alias_visiting.remove(&alias_origin);
-                        return result;
+                } else {
+                    let name = self.format_def_name(&def);
+                    // For generic types, prefer the display_alias (which has the actual
+                    // instantiated type arguments like `A<number>`) over appending raw
+                    // type parameter names from the definition (like `A<T>`).
+                    // The display_alias is set when an Application type is evaluated,
+                    // and preserves the concrete type arguments from the instantiation.
+                    if !def.type_params.is_empty() {
+                        if let Some(alias_origin) = self.interner.get_display_alias(type_id)
+                            && self.display_alias_visiting.insert(alias_origin)
+                        {
+                            let result = self.format(alias_origin);
+                            self.display_alias_visiting.remove(&alias_origin);
+                            return result;
+                        }
+                        let params: Vec<String> = def
+                            .type_params
+                            .iter()
+                            .map(|tp| self.atom(tp.name).to_string())
+                            .collect();
+                        return format!("{}<{}>", name, params.join(", ")).into();
                     }
-                    let params: Vec<String> = def
-                        .type_params
-                        .iter()
-                        .map(|tp| self.atom(tp.name).to_string())
-                        .collect();
-                    return format!("{}<{}>", name, params.join(", ")).into();
+                    return name.into();
                 }
-                return name.into();
             }
         }
 
