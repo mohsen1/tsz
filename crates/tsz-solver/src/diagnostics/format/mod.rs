@@ -307,6 +307,7 @@ impl<'a> TypeFormatter<'a> {
         ) && let Some(def_store) = self.def_store
         {
             if let Some(def_id) = def_store.find_def_for_type(type_id)
+                && !def_store.is_computed_alias(def_id)
                 && let Some(def) = def_store.get(def_id)
             {
                 let exact_name = self.format_def_name(&def);
@@ -315,11 +316,13 @@ impl<'a> TypeFormatter<'a> {
                 }
             }
             if let Some(def_id) = def_store.find_type_alias_by_body(type_id)
+                && !def_store.is_computed_alias(def_id)
                 && let Some(def) = def_store.get(def_id)
             {
                 return self.format_def_name(&def).into();
             }
             if let Some(def_id) = def_store.find_def_for_type(type_id)
+                && !def_store.is_computed_alias(def_id)
                 && let Some(def) = def_store.get(def_id)
             {
                 let name = self.format_def_name(&def);
