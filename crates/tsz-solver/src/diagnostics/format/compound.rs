@@ -1247,18 +1247,14 @@ impl<'a> TypeFormatter<'a> {
 
         use tsz_binder::symbol_flags;
 
-        // Walk up the parent chain, qualifying with enum and namespace parents.
-        // tsc qualifies type names with their containing namespace/module
-        // (e.g., `m.variable` not just `variable`) to disambiguate when the same
-        // name exists in different scopes. Also qualifies with enum parents
-        // (e.g., `Choice.Yes`).
+        // Walk up the parent chain, qualifying with enum parents only.
+        // tsc qualifies type names with their containing enum (e.g., `Choice.Yes`)
+        // but uses SHORT names for types inside namespaces (e.g., `Line` not `A.Line`).
         // Skip file-level module symbols (synthetic names like __test1__, "file.ts", etc.)
         // as those represent file modules, not declared namespaces.
         while current_parent != SymbolId::NONE {
             if let Some(parent_sym) = arena.get(current_parent) {
-                let is_qualifying_parent = parent_sym.has_any_flags(
-                    symbol_flags::ENUM | symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE,
-                );
+                let is_qualifying_parent = parent_sym.has_any_flags(symbol_flags::ENUM);
                 let name = &parent_sym.escaped_name;
                 let is_file_module = name.starts_with('"')
                     || name.starts_with("__")
@@ -1297,42 +1293,12 @@ impl<'a> TypeFormatter<'a> {
     }
 
     pub(super) fn format_def_name(&mut self, def: &crate::def::DefinitionInfo) -> String {
-        // Try to qualify with namespace parents using the definition's symbol_id.
-        // This matches tsc's behavior of showing `m.variable` for types inside
-        // namespaces, not just the short name `variable`.
-        if let Some(arena) = self.symbol_arena
-            && let Some(sym_id_raw) = def.symbol_id
-            && let Some(sym) = arena.get(SymbolId(sym_id_raw))
-        {
-            use tsz_binder::symbol_flags;
-            let mut qualified_name = sym.escaped_name.to_string();
-            let mut current_parent = sym.parent;
-
-            while current_parent != SymbolId::NONE {
-                if let Some(parent_sym) = arena.get(current_parent) {
-                    let is_qualifying_parent = parent_sym.has_any_flags(
-                        symbol_flags::ENUM | symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE,
-                    );
-                    let name = &parent_sym.escaped_name;
-                    let is_file_module = name.starts_with('"')
-                        || name.starts_with("__")
-                        || name.contains('/')
-                        || name.contains('\\')
-                        || name.is_empty();
-                    if is_qualifying_parent && !is_file_module {
-                        qualified_name = format!("{}.{}", parent_sym.escaped_name, qualified_name);
-                        current_parent = parent_sym.parent;
-                    } else {
-                        break;
-                    }
-                } else {
-                    break;
-                }
-            }
-            return qualified_name;
-        }
-
-        // Fallback: use the short (unqualified) definition name.
+        // Always use the short (unqualified) definition name.
+        // Enum member qualification (e.g., `Choice.Yes`) is handled by
+        // `format_symbol_name` through the `resolve_symbol_ref_name` path.
+        // Using `format_symbol_name` here causes cross-binder SymbolId
+        // collisions where the def's symbol_id maps to a namespace-qualified
+        // symbol in the current binder (e.g., `A.B` instead of just `B`).
         self.atom(def.name).to_string()
     }
 }
