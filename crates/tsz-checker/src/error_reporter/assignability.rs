@@ -24,7 +24,7 @@ pub(super) fn is_builtin_wrapper_name(name: &str) -> bool {
 /// This catches cases where a complex type (e.g., homomorphic mapped type over a
 /// primitive) evaluates/displays as a primitive, even if the solver's TypeId doesn't
 /// directly represent the primitive.
-pub(super) fn is_primitive_type_name(name: &str) -> bool {
+pub(crate) fn is_primitive_type_name(name: &str) -> bool {
     matches!(
         name,
         "string"
