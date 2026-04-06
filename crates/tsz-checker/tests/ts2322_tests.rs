@@ -3401,9 +3401,11 @@ fn test_no_error_without_strict_builtin_iterator_return() {
 declare const x: BuiltinIteratorReturn;
 const r1: number = x;
 "#;
-    let mut options = CheckerOptions::default();
-    options.strict_builtin_iterator_return = false;
-    options.strict_null_checks = true;
+    let options = CheckerOptions {
+        strict_builtin_iterator_return: false,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
     let diagnostics = compile_with_libs_for_ts(source, "test.ts", options);
 
     let ts2322_count = diagnostics
