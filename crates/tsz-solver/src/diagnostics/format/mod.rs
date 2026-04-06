@@ -457,6 +457,13 @@ impl<'a> TypeFormatter<'a> {
             }
             TypeData::Callable(shape_id) => {
                 let shape = self.interner.callable_shape(*shape_id);
+                // Check for a named symbol (e.g. ObjectConstructor, SymbolConstructor)
+                // before falling back to structural expansion.
+                if let Some(sym_id) = shape.symbol
+                    && let Some(name) = self.format_symbol_name(sym_id)
+                {
+                    return name.into();
+                }
                 self.format_callable(shape.as_ref()).into()
             }
             TypeData::TypeParameter(info) => Cow::Owned(self.atom(info.name).to_string()),
