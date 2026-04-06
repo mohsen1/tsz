@@ -14,6 +14,7 @@ impl<'a> CheckerState<'a> {
     /// When there are multiple spreads, we don't emit TS2739/TS2740 for missing
     /// properties here because later spreads might provide them. Instead, we let
     /// the final combined prop validation handle missing property checks.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn check_spread_property_types(
         &mut self,
         spread_type: TypeId,

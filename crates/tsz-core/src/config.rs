@@ -306,7 +306,7 @@ pub struct CompilerOptions {
         deserialize_with = "deserialize_bool_or_string"
     )]
     pub strict_bind_call_apply: Option<bool>,
-    /// Built-in iterators use `undefined` for TReturn instead of `any`
+    /// Built-in iterators use `undefined` for `TReturn` instead of `any`
     #[serde(
         default,
         alias = "strictBuiltinIteratorReturn",

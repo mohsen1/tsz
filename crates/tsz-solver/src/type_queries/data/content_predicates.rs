@@ -204,8 +204,8 @@ pub fn is_bare_infer_placeholder_db(db: &dyn TypeDatabase, type_id: TypeId) -> b
 }
 
 /// Check if a type is a spread marker tuple `[...T]` created by the checker
-/// for generic TypeParameter spreads. These are 1-element rest tuples whose
-/// inner type is a TypeParameter.
+/// for generic `TypeParameter` spreads. These are 1-element rest tuples whose
+/// inner type is a `TypeParameter`.
 pub fn is_spread_marker_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if let Some(TypeData::Tuple(elems_id)) = db.lookup(type_id) {
         let elems = db.tuple_list(elems_id);

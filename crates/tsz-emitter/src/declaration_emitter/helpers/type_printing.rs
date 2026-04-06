@@ -362,7 +362,7 @@ impl<'a> DeclarationEmitter<'a> {
                         {
                             let mut s = 1u32;
                             loop {
-                                let cand = format!("{}_{}", trimmed, s);
+                                let cand = format!("{trimmed}_{s}");
                                 if !outer_names.contains(&cand)
                                     && !renames.iter().any(|(_, r)| *r == cand)
                                 {
@@ -422,7 +422,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
         result
     }
-    fn is_ident_char(b: u8) -> bool {
+    const fn is_ident_char(b: u8) -> bool {
         b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
     }
 

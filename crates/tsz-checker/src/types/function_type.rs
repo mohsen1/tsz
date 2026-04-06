@@ -1189,7 +1189,7 @@ impl<'a> CheckerState<'a> {
             && let Some(ref ctx_shape) = contextual_signature_shape
             && let Some(ref ctx_pred) = ctx_shape.type_predicate
         {
-            type_predicate = Some(ctx_pred.clone());
+            type_predicate = Some(*ctx_pred);
         }
 
         // Save the annotated return type before evaluation. evaluate_application_type()

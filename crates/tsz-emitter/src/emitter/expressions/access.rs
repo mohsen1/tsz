@@ -688,7 +688,7 @@ impl<'a> Printer<'a> {
                     }
                 });
             if !arg_text.is_empty() {
-                let comment = format!("{}[{}]", enum_name, arg_text).replace("*/", "*_/");
+                let comment = format!("{enum_name}[{arg_text}]").replace("*/", "*_/");
                 Some(format!("{} /* {} */", value.to_js_literal(), comment))
             } else if is_template {
                 Some(format!(
