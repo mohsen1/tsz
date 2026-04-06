@@ -576,6 +576,14 @@ impl<'a> CheckerState<'a> {
                 // emit the assignability error at the expression position.
                 // This matches tsc which emits TS2741 at `new Animal()` instead
                 // of TS2345 on the whole callback.
+                //
+                // Use Exact anchor to prevent RewriteAssignment from walking up
+                // to the parent arrow function. Without this, the diagnostic
+                // anchor becomes the arrow function node, causing the source type
+                // to be displayed as the function type (e.g., `() => Animal`)
+                // instead of the body expression type (`Animal`), and preventing
+                // the solver from producing the specific MissingProperty failure
+                // reason needed for TS2741.
                 let body_type = self.get_type_of_node(func.body);
                 if body_type == TypeId::ERROR
                     || body_type == TypeId::ANY
@@ -585,7 +593,12 @@ impl<'a> CheckerState<'a> {
                 {
                     return false;
                 }
-                self.error_type_not_assignable_at(body_type, expected_return_type, func.body);
+                // Evaluate the expected return type to strip type wrappers like
+                // NoInfer<T> → T for display purposes. tsc displays `Dog` not
+                // `NoInfer<Dog>` in TS2741 messages because it evaluates the type
+                // before rendering the diagnostic.
+                let display_target = self.evaluate_type_with_env(expected_return_type);
+                self.error_type_not_assignable_at_with_anchor(body_type, display_target, func.body);
                 true
             }
             _ => false,

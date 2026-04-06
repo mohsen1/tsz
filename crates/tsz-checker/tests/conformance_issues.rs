@@ -24227,3 +24227,47 @@ interface Foo {
         "Should emit TS2344 when union constraint `AnyStyled` doesn't satisfy `ComponentType<any>`.\nActual: {diagnostics:?}"
     );
 }
+
+/// Callback return type elaboration with NoInfer should produce TS2741
+/// at the body expression, not TS2322 at the arrow function.
+///
+/// When `doSomething<T>(value: T, getDefault: () => NoInfer<T>)` is called
+/// with `doSomething(new Dog(), () => new Animal())`, T infers as Dog.
+/// The callback return type `NoInfer<Dog>` evaluates to `Dog`, and since
+/// `Animal` is missing `woof` from `Dog`, tsc emits TS2741 at the `new Animal()`
+/// expression, not a generic TS2322 at the arrow function.
+#[test]
+fn test_noinfer_callback_return_type_elaboration_emits_ts2741() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+declare class Animal { move(): void }
+declare class Dog extends Animal { woof(): void }
+declare function doSomething<T>(value: T, getDefault: () => NoInfer<T>): void;
+
+doSomething(new Dog(), () => new Animal());
+        "#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    assert!(
+        has_error(&diagnostics, 2741),
+        "Should emit TS2741 (Property 'woof' is missing in type 'Animal' but required in type 'Dog') for NoInfer callback return type mismatch.\nActual: {diagnostics:?}"
+    );
+    let msg = diagnostic_message(&diagnostics, 2741).unwrap();
+    assert!(
+        msg.contains("woof") && msg.contains("Animal") && msg.contains("Dog"),
+        "TS2741 message should reference 'woof', 'Animal', and 'Dog'.\nActual message: {msg}"
+    );
+    // Should NOT have TS2322 for the callback argument (the elaboration replaces it)
+    let ts2322_msgs: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert!(
+        ts2322_msgs.is_empty(),
+        "Should not emit TS2322 for callback return type when TS2741 is emitted.\nTS2322 diagnostics: {ts2322_msgs:?}"
+    );
+}
