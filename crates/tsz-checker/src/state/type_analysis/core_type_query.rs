@@ -104,6 +104,8 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .symbol_resolution_set
                     .contains(&tsz_binder::SymbolId(*sym_id))
+                    // Also check typeof_resolution_stack for self-referential typeof
+                    || self.ctx.typeof_resolution_stack.borrow().contains(sym_id)
             })
         {
             // `typeof f` inside `f`'s own signature must stay as a type-query
@@ -285,13 +287,28 @@ impl<'a> CheckerState<'a> {
                 // the instance type instead of the constructor type needed for typeof.
                 let flow_resolved = query_expr_type(self, use_flow_sensitive_query);
                 let flow_is_lazy = lazy_def_id(self.ctx.types, flow_resolved).is_some();
-                if flow_resolved != TypeId::ANY && flow_resolved != TypeId::ERROR && !flow_is_lazy {
+                // CRITICAL: If the symbol is in the resolution set, this is a self-referential
+                // typeof (e.g., `typeof fn` inside fn's own return type). Don't return the
+                // resolved function type - it would create double arrows like `() => () => typeof fn`.
+                let is_self_referential = self
+                    .ctx
+                    .symbol_resolution_set
+                    .contains(&tsz_binder::SymbolId(sym_id));
+                if flow_resolved != TypeId::ANY
+                    && flow_resolved != TypeId::ERROR
+                    && !flow_is_lazy
+                    && !is_self_referential
+                {
                     let flow_resolved = self.get_enum_namespace_type_for_value(flow_resolved);
                     trace!(flow_resolved = ?flow_resolved, "=> returning flow-resolved type directly");
                     return flow_resolved;
                 }
                 let resolved_is_lazy = lazy_def_id(self.ctx.types, resolved).is_some();
-                if resolved != TypeId::ANY && resolved != TypeId::ERROR && !resolved_is_lazy {
+                if resolved != TypeId::ANY
+                    && resolved != TypeId::ERROR
+                    && !resolved_is_lazy
+                    && !is_self_referential
+                {
                     let resolved = self.get_enum_namespace_type_for_value(resolved);
                     // Fall back to symbol type when flow result is unavailable.
                     trace!("=> returning symbol-resolved type directly");

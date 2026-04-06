@@ -1379,8 +1379,9 @@ impl TypeInterner {
 
     /// Intern a function type
     pub fn function(&self, shape: FunctionShape) -> TypeId {
-        let shape_id = self.intern_function_shape(shape);
-        self.intern(TypeData::Function(shape_id))
+        let shape_id = self.intern_function_shape(shape.clone());
+        let type_id = self.intern(TypeData::Function(shape_id));
+        type_id
     }
 
     /// Intern a callable type with overloaded signatures

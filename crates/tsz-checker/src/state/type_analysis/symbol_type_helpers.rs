@@ -231,7 +231,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let sig = implementation_sig?;
-        Some(factory.function(FunctionShape {
+        let func_type = factory.function(FunctionShape {
             type_params: sig.type_params,
             params: sig.params,
             this_type: sig.this_type,
@@ -239,7 +239,8 @@ impl<'a> CheckerState<'a> {
             type_predicate: sig.type_predicate,
             is_constructor: false,
             is_method: false,
-        }))
+        });
+        Some(func_type)
     }
 
     /// Check if a symbol is a numeric enum and register it in the `TypeEnvironment`.
