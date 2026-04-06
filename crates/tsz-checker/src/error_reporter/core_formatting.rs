@@ -16,7 +16,7 @@ impl<'a> CheckerState<'a> {
         // directly before evaluation resolves it to its body (which loses the alias
         // identity). tsc preserves alias names like "ExoticAnimal" in error messages
         // instead of expanding to "CatDog | ManBearPig | Platypus".
-        if let Some(tsz_solver::types::TypeData::Lazy(def_id)) = self.ctx.types.lookup(ty) {
+        if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, ty) {
             if let Some(def) = self.ctx.definition_store.get(def_id) {
                 if def.kind == tsz_solver::def::DefKind::TypeAlias && def.type_params.is_empty() {
                     let name = self.ctx.types.resolve_atom_ref(def.name);
