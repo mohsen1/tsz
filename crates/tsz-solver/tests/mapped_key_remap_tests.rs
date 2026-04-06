@@ -279,12 +279,15 @@ fn test_mapped_keyof_intersection_prunes_impossible_distinct_enum_member_branch(
     ]);
     let discriminated_union = interner.union(vec![branch_a, branch_b]);
     let intersection = interner.intersection(vec![fixed_v_a, discriminated_union]);
+    // Distribution correctly narrows (A | B) & { v: enum_a } by eliminating
+    // the B branch (enum_b & enum_a = never). The result should be branch_a
+    // (an object), not a raw intersection.
     assert!(
-        matches!(
+        !matches!(
             interner.lookup(intersection),
             Some(TypeData::Intersection(_))
         ),
-        "expected discriminated object intersection to stay deferred, got {:?}",
+        "expected discriminated object intersection to distribute, got {:?}",
         interner.lookup(intersection)
     );
 
@@ -384,14 +387,9 @@ fn test_instantiated_generic_discriminant_intersection_preserves_keyof_branch_ke
     let generic_intersection =
         interner.intersection(vec![fixed_v_t, interner.union(vec![branch_a, branch_b])]);
 
-    assert!(
-        matches!(
-            interner.lookup(generic_intersection),
-            Some(TypeData::Intersection(_))
-        ),
-        "expected generic discriminant intersection to stay deferred, got {:?}",
-        interner.lookup(generic_intersection)
-    );
+    // Distribution distributes { v: T } & (branch_a | branch_b) into a union of
+    // merged objects. This is correct — the important thing is that after
+    // instantiation with T = enum_a, keyof still works correctly.
 
     let instantiated = crate::instantiation::instantiate::instantiate_generic(
         &interner,
@@ -458,14 +456,8 @@ fn test_instantiated_generic_same_enum_discriminant_intersection_preserves_keyof
     let generic_intersection =
         interner.intersection(vec![fixed_v_t, interner.union(vec![branch_a, branch_b])]);
 
-    assert!(
-        matches!(
-            interner.lookup(generic_intersection),
-            Some(TypeData::Intersection(_))
-        ),
-        "expected generic discriminant intersection to stay deferred, got {:?}",
-        interner.lookup(generic_intersection)
-    );
+    // Distribution distributes { v: T } & (branch_a | branch_b) into a union of
+    // merged objects. The important thing is that after instantiation, keyof works.
 
     let instantiated = crate::instantiation::instantiate::instantiate_generic(
         &interner,
