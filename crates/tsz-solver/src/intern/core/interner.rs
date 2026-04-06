@@ -1132,6 +1132,12 @@ impl TypeInterner {
         if evaluated == application {
             return;
         }
+        // Never alias intrinsic types (string, number, any, etc.) — they are
+        // shared sentinels and aliasing them would make ALL occurrences display
+        // as whatever alias happened to be stored last.
+        if evaluated.is_intrinsic() {
+            return;
+        }
         // Guard against self-referential cycles: if the Application's args
         // contain the evaluated type itself, storing this alias would create
         // a formatting cycle (e.g., `Wrap<T> = T | T[]` where evaluating

@@ -162,10 +162,7 @@ impl<'a> CheckerState<'a> {
         // is NOT in a pure ambient namespace.
         let mut current = decl_idx;
         let mut found_ambient_namespace = false;
-        loop {
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                break;
-            };
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
             let parent = ext.parent;
             if parent.is_none() {
                 break;
