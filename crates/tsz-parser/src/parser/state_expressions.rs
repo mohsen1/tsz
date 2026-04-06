@@ -891,8 +891,35 @@ impl ParserState {
         // Parse optional modifiers: const, in, out (TypeScript 4.7+ variance, 5.0+ const)
         let modifiers = self.parse_type_parameter_modifiers();
 
-        // Parse the type parameter name
-        let name = self.parse_identifier();
+        // Parse the type parameter name.
+        // When the current token is not an identifier, keyword, or reserved word,
+        // emit TS1139 "Type parameter declaration expected" instead of the generic
+        // TS1003 "Identifier expected", matching tsc behavior.
+        let name = if !self.is_identifier_or_keyword() && !self.is_reserved_word() {
+            let pos = self.token_pos();
+            let end = self.token_end();
+            if self.should_report_error() {
+                self.parse_error_at(
+                    pos,
+                    end.saturating_sub(pos),
+                    tsz_common::diagnostics::diagnostic_messages::TYPE_PARAMETER_DECLARATION_EXPECTED,
+                    tsz_common::diagnostics::diagnostic_codes::TYPE_PARAMETER_DECLARATION_EXPECTED,
+                );
+            }
+            self.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                pos,
+                pos,
+                crate::parser::node::IdentifierData {
+                    atom: tsz_common::interner::Atom::NONE,
+                    escaped_text: String::new(),
+                    original_text: None,
+                    type_arguments: None,
+                },
+            )
+        } else {
+            self.parse_identifier()
+        };
 
         // Parse optional constraint: extends SomeType
         let constraint = if self.parse_optional(SyntaxKind::ExtendsKeyword) {
@@ -927,34 +954,44 @@ impl ParserState {
     // Allows duplicates (e.g. `in out in T`) — the checker reports TS1030 for those.
     // Not allowing duplicates here causes cascading parse errors since `in`/`out` are
     // reserved keywords and won't parse as identifiers.
+    //
+    // CRITICAL: Before consuming a modifier keyword, peek at the next token to check
+    // if it can follow a type parameter name (e.g., `>`, `,`, `extends`, `=`). If so,
+    // the current keyword is the type parameter name, not a modifier. This avoids
+    // greedily consuming keywords like `in in>` where the second `in` is the name.
+    // Leaving it for `parse_identifier` produces TS1359 (reserved word) matching tsc.
     fn parse_type_parameter_modifiers(&mut self) -> Option<NodeList> {
         let mut modifiers = Vec::new();
 
         loop {
             match self.token() {
-                SyntaxKind::ConstKeyword => {
+                SyntaxKind::ConstKeyword | SyntaxKind::InKeyword | SyntaxKind::OutKeyword => {
+                    // Peek at the next token: if it can follow a type parameter name
+                    // (>, ,, extends, =, EOF), then this keyword IS the name, not a modifier.
+                    let saved_token = self.current_token;
+                    let saved_state = self.scanner.save_state();
+                    self.next_token();
+                    let next = self.current_token;
+                    self.scanner.restore_state(saved_state);
+                    self.current_token = saved_token;
+
+                    if matches!(
+                        next,
+                        SyntaxKind::GreaterThanToken
+                            | SyntaxKind::CommaToken
+                            | SyntaxKind::ExtendsKeyword
+                            | SyntaxKind::EqualsToken
+                            | SyntaxKind::EndOfFileToken
+                    ) {
+                        // This keyword is the type parameter name, not a modifier.
+                        break;
+                    }
+
+                    let kind = self.token();
                     let pos = self.token_pos();
                     let end = self.token_end();
                     self.next_token();
-                    modifiers.push(
-                        self.arena
-                            .add_token(SyntaxKind::ConstKeyword as u16, pos, end),
-                    );
-                }
-                SyntaxKind::InKeyword => {
-                    let pos = self.token_pos();
-                    let end = self.token_end();
-                    self.next_token();
-                    modifiers.push(self.arena.add_token(SyntaxKind::InKeyword as u16, pos, end));
-                }
-                SyntaxKind::OutKeyword => {
-                    let pos = self.token_pos();
-                    let end = self.token_end();
-                    self.next_token();
-                    modifiers.push(
-                        self.arena
-                            .add_token(SyntaxKind::OutKeyword as u16, pos, end),
-                    );
+                    modifiers.push(self.arena.add_token(kind as u16, pos, end));
                 }
                 _ => break,
             }
