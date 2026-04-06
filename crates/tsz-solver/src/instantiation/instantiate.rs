@@ -61,38 +61,56 @@ impl TypeSubstitution {
         type_args: &[TypeId],
     ) -> Self {
         let mut map = FxHashMap::default();
+
+        // Phase 1: Insert explicitly-provided type arguments.
         for (i, param) in type_params.iter().enumerate() {
-            let type_id = if i < type_args.len() {
-                type_args[i]
-            } else {
-                // Use default value if type argument not provided
-                match param.default {
-                    Some(default) => {
-                        // Defaults may reference earlier type parameters, so instantiate them
-                        let resolved = if i > 0 && !map.is_empty() {
-                            let subst = Self { map: map.clone() };
-                            instantiate_type(interner, default, &subst)
-                        } else {
-                            default
-                        };
-                        // Circular default detection: if the resolved default is (or
-                        // contains) the type parameter itself, fall back to `any`.
-                        // This matches tsc behavior for `type T<X extends C = X>`.
-                        if type_references_param(interner, resolved, param.name) {
-                            TypeId::ANY
-                        } else {
-                            resolved
-                        }
-                    }
-                    None => {
-                        // No default and no argument - leave this parameter unsubstituted
-                        // It will remain as a TypeParameter in the result
-                        continue;
-                    }
-                }
-            };
-            map.insert(param.name, type_id);
+            if i < type_args.len() {
+                map.insert(param.name, type_args[i]);
+            }
         }
+
+        // Phase 2: Pre-fill unsupplied type parameters with `error` so that
+        // forward references in defaults resolve to error (silencing downstream
+        // assignability checks). This matches tsc's `fillMissingTypeArguments`
+        // which initializes unsupplied slots to `errorType` before processing
+        // defaults.
+        for (i, param) in type_params.iter().enumerate() {
+            if i >= type_args.len() {
+                map.insert(param.name, TypeId::ERROR);
+            }
+        }
+
+        // Phase 3: Process defaults in declaration order. Each default is
+        // instantiated with the substitution built so far (which includes
+        // explicitly provided args, already-resolved defaults, and `error` for
+        // not-yet-resolved params). This means a forward reference like `U = V`
+        // where V hasn't been processed yet resolves to `error`, matching tsc.
+        for (i, param) in type_params.iter().enumerate() {
+            if i < type_args.len() {
+                continue; // already provided explicitly
+            }
+            match param.default {
+                Some(default) => {
+                    let subst = Self { map: map.clone() };
+                    let resolved = instantiate_type(interner, default, &subst);
+                    // Circular default detection: if the resolved default is (or
+                    // contains) the type parameter itself, fall back to `any`.
+                    // This matches tsc behavior for `type T<X extends C = X>`.
+                    let final_type = if type_references_param(interner, resolved, param.name) {
+                        TypeId::ANY
+                    } else {
+                        resolved
+                    };
+                    map.insert(param.name, final_type);
+                }
+                None => {
+                    // No default and no argument - remove the error placeholder
+                    // so this parameter remains unsubstituted.
+                    map.remove(&param.name);
+                }
+            }
+        }
+
         Self { map }
     }
 
