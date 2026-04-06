@@ -1890,7 +1890,9 @@ pub(super) const fn is_structural_parse_error(code: u32) -> bool {
         | 1313 // 'else' is not allowed after rest element
         | 1351 // An identifier or keyword cannot immediately follow a numeric literal
         | 1382 // Unexpected token in JSX
+        | 1441 // Cannot start a function call in a type annotation
         | 1442 // Identifier or expression expected
+        | 1068 // Unexpected token. A constructor, method, accessor, or property was expected.
     )
 }
 

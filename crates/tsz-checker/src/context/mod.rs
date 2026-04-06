@@ -963,8 +963,16 @@ pub struct CheckerContext<'a> {
     /// checks (TS1100, TS1173, TS1212, etc.) which are semantic errors emitted
     /// during parsing. Used for broader TS2304 suppression matching tsc behavior.
     pub has_real_syntax_errors: bool,
+    /// Whether the file has structural parse errors -- errors that cause AST
+    /// malformation and set `containsParseError` in tsc's parser (TS1005,
+    /// TS1068, TS1109, etc.). Unlike `has_real_syntax_errors`, this excludes
+    /// grammar-only violations like TS1101 ("with" in strict mode) that don't
+    /// affect AST structure. Used for file-wide TS2564 suppression: tsc
+    /// suppresses definite-assignment analysis for the entire source file when
+    /// any structural parse error exists anywhere in the file.
+    pub has_structural_parse_errors: bool,
     /// Positions of "real" syntax errors only (matching `is_real_syntax_error()`).
-    /// Used for per-node TS2564 suppression — only real parse failures (not grammar
+    /// Used for per-node TS2564 suppression -- only real parse failures (not grammar
     /// checks like TS1030 "modifier already seen") suppress property initialization.
     pub real_syntax_error_positions: Vec<u32>,
     /// Positions of ALL parse errors (including non-suppressing ones like TS1359).
