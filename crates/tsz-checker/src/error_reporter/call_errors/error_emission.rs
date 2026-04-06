@@ -310,13 +310,13 @@ impl<'a> CheckerState<'a> {
         let anchor_argument_from_mixed_failures = shared_argument_anchor.is_some()
             && !remaining_failures.is_empty()
             && remaining_failures_are_count_mismatches;
-        let _anchor_argument_from_all_failures =
-            all_failures_are_argument_mismatches && shared_argument_anchor.is_some();
+        // tsc anchors TS2769 at the call expression (function name), not at
+        // arguments when ALL failures are argument mismatches. Only anchor at
+        // arguments for mixed failure patterns (argument + count mismatches).
         let anchor_first_argument = identical_argument_failures
             && !remaining_failures.is_empty()
             && remaining_failures_are_count_mismatches
-            || anchor_argument_from_mixed_failures
-            || anchor_argument_from_all_failures;
+            || anchor_argument_from_mixed_failures;
 
         let anchor_kind = if literal_anchor.is_some() {
             DiagnosticAnchorKind::Exact
