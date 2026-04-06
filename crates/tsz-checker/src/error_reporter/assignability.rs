@@ -637,13 +637,13 @@ impl<'a> CheckerState<'a> {
         let analysis = self.analyze_assignability_failure(source, target);
         let reason = analysis.failure_reason;
 
-        // DEBUG: Trace what's happening with contextualTyping33
+        // Trace what's happening with contextualTyping33
         if self.ctx.file_name.contains("contextualTyping33") {
-            let src_str = self.format_type_diagnostic(source);
-            let tgt_str = self.format_type_diagnostic(target);
-            eprintln!(
-                "[DEBUG diagnose_assignment] source={:?}/{}, target={:?}/{}, reason={:?}",
-                source, src_str, target, tgt_str, reason
+            let _src_str = self.format_type_diagnostic(source);
+            let _tgt_str = self.format_type_diagnostic(target);
+            tracing::trace!(
+                source = %_src_str, target = %_tgt_str, ?reason,
+                "diagnose_assignment"
             );
         }
 

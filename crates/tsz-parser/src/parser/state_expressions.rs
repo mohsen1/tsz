@@ -963,6 +963,7 @@ impl ParserState {
     fn parse_type_parameter_modifiers(&mut self) -> Option<NodeList> {
         let mut modifiers = Vec::new();
 
+        #[allow(clippy::while_let_loop)] // Inner conditional break makes while-let impractical
         loop {
             match self.token() {
                 SyntaxKind::ConstKeyword | SyntaxKind::InKeyword | SyntaxKind::OutKeyword => {
