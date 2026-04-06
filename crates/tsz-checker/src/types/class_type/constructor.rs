@@ -1982,11 +1982,22 @@ impl<'a> CheckerState<'a> {
                     } else {
                         sig.type_params.clone()
                     };
+                    // For the return type: when the base signature has type params
+                    // and no substitution is provided yet, preserve the base's
+                    // return type so generic resolution can instantiate it properly.
+                    // Otherwise use the derived instance type.
+                    let return_type = if inherited_substitution.is_none() && !sig.type_params.is_empty() {
+                        sig.return_type
+                    } else {
+                        inherited_substitution.map_or(instance_type, |subst| {
+                            instantiate_type(self.ctx.types, sig.return_type, subst)
+                        })
+                    };
                     CallSignature {
                         type_params,
                         params,
                         this_type,
-                        return_type: instance_type,
+                        return_type,
                         type_predicate: sig.type_predicate,
                         is_method: sig.is_method,
                     }
