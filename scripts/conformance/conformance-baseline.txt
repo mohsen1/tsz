@@ -116,6 +116,7 @@ FAIL TypeScript/tests/cases/compiler/importDeclWithClassModifiers.ts | expected:
 FAIL TypeScript/tests/cases/compiler/importedEnumMemberMergedWithExportedAliasIsError.ts | expected:[TS2395,TS2440] actual:[]
 FAIL TypeScript/tests/cases/compiler/inDoesNotOperateOnPrimitiveTypes.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/inKeywordTypeguard.ts | expected:[TS2322,TS2339,TS2564,TS2638,TS5024,TS18046] actual:[TS2322,TS2339,TS2564,TS2638,TS5024,TS7053]
+FAIL TypeScript/tests/cases/compiler/incrementalTsBuildInfoFile.ts | expected:[TS5033] actual:[]
 FAIL TypeScript/tests/cases/compiler/indexAt.ts | expected:[TS2550] actual:[TS2550]
 FAIL TypeScript/tests/cases/compiler/indexedAccessPrivateMemberOfGenericConstraint.ts | expected:[TS2564,TS4105] actual:[TS2564,TS4105]
 FAIL TypeScript/tests/cases/compiler/indexedAccessRelation.ts | expected:[TS2322] actual:[TS2322]
@@ -3951,7 +3952,6 @@ PASS TypeScript/tests/cases/compiler/incrementOnTypeParameter.ts
 PASS TypeScript/tests/cases/compiler/incrementalConfig.ts
 PASS TypeScript/tests/cases/compiler/incrementalInvalid.ts
 PASS TypeScript/tests/cases/compiler/incrementalOut.ts
-PASS TypeScript/tests/cases/compiler/incrementalTsBuildInfoFile.ts
 PASS TypeScript/tests/cases/compiler/indexClassByNumber.ts
 PASS TypeScript/tests/cases/compiler/indexIntoArraySubclass.ts
 PASS TypeScript/tests/cases/compiler/indexIntoEnum.ts
@@ -7526,7 +7526,6 @@ PASS TypeScript/tests/cases/conformance/classes/methodDeclarations/optionalMetho
 PASS TypeScript/tests/cases/conformance/classes/mixinAbstractClasses.2.ts
 PASS TypeScript/tests/cases/conformance/classes/mixinAbstractClasses.ts
 PASS TypeScript/tests/cases/conformance/classes/mixinAbstractClassesReturnTypeInference.ts
-PASS TypeScript/tests/cases/conformance/classes/mixinAccessors1.ts
 PASS TypeScript/tests/cases/conformance/classes/mixinAccessors2.ts
 PASS TypeScript/tests/cases/conformance/classes/mixinAccessors4.ts
 PASS TypeScript/tests/cases/conformance/classes/mixinAccessors5.ts
@@ -7811,7 +7810,6 @@ PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionAsyncE
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionAsyncES6System.ts
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionAsyncES6UMD.ts
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionCheckReturntype1.ts
-PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionDeclarationEmit1.ts
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionDeclarationEmit2.ts
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionDeclarationEmit3.ts
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionES5AMD.ts
