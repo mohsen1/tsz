@@ -628,7 +628,9 @@ impl<'a> CheckerContext<'a> {
     /// Skips union optionalization (synthetic `?: undefined` members) that
     /// tsc only uses in hover/quickinfo, not in error messages.
     pub fn create_diagnostic_type_formatter(&self) -> tsz_solver::TypeFormatter<'_> {
-        self.create_type_formatter().with_diagnostic_mode()
+        self.create_type_formatter()
+            .with_diagnostic_mode()
+            .with_strict_null_checks(self.compiler_options.strict_null_checks)
     }
 
     /// Register a resolved type in the `TypeEnvironment` for both `SymbolRef` and `DefId`.

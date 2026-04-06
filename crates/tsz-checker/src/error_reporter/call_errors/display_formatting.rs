@@ -360,7 +360,12 @@ impl<'a> CheckerState<'a> {
                     .find(|p| p.name == prop_atom && p.optional)
                     .map(|p| {
                         // tsc displays optional property types with `| undefined`
-                        // in error messages (e.g., `IFoo[] | undefined` not just `IFoo[]`).
+                        // in error messages only when strictNullChecks is enabled.
+                        // Without strictNullChecks, undefined is implicit in all types
+                        // and tsc shows the declared type without `| undefined`.
+                        if !self.ctx.strict_null_checks() {
+                            return p.type_id;
+                        }
                         // Create a union with undefined if not already present.
                         if p.type_id == TypeId::UNDEFINED {
                             p.type_id
@@ -385,6 +390,21 @@ impl<'a> CheckerState<'a> {
                 } else {
                     contextual_property_type.unwrap_or(type_id)
                 };
+            // When strictNullChecks is off, strip synthetic `| undefined` from both
+            // the effective type and the diagnostic type. Without strictNullChecks,
+            // `undefined` is implicit in all types and tsc does not display it.
+            let effective_type = if !self.ctx.strict_null_checks() {
+                tsz_solver::remove_undefined(self.ctx.types.as_type_database(), effective_type)
+            } else {
+                effective_type
+            };
+            let declared_optional_type = declared_optional_type.map(|t| {
+                if !self.ctx.strict_null_checks() {
+                    tsz_solver::remove_undefined(self.ctx.types.as_type_database(), t)
+                } else {
+                    t
+                }
+            });
             return Some((
                 effective_type,
                 declared_optional_type.unwrap_or(effective_type),

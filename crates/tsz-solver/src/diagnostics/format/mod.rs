@@ -170,6 +170,16 @@ impl<'a> TypeFormatter<'a> {
         self
     }
 
+    /// Configure strict null checks mode.
+    /// When strictNullChecks is off, optional properties should not display
+    /// `| undefined` since undefined is implicit in all types.
+    pub const fn with_strict_null_checks(mut self, strict: bool) -> Self {
+        if !strict {
+            self.preserve_optional_property_surface_syntax = true;
+        }
+        self
+    }
+
     /// Enable display properties for fresh object literal types.
     /// When enabled, the formatter uses pre-widened literal types from the
     /// freshness model side table for error messages.
