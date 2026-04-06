@@ -1090,3 +1090,9 @@ pub(crate) fn get_merged_object_shape_for_type(
         symbol: base_shape.symbol,
     })
 }
+
+/// Returns `true` if `type_id` is a union or intersection whose members are
+/// all primitive intrinsics or literal types.
+pub(crate) fn is_primitive_or_literal_compound(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_primitive_or_literal_compound(db, type_id)
+}
