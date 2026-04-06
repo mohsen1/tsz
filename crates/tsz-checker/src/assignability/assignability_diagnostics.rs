@@ -191,12 +191,29 @@ impl<'a> CheckerState<'a> {
         // Track whether excess property checking emits diagnostics.
         // When TS2353 is emitted for excess properties, tsc does NOT also emit TS1360.
         let mut had_excess_property_error = false;
-        if let Some(node) = self.ctx.arena.get(source_idx)
-            && node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
         {
-            let diags_before = self.ctx.diagnostics.len();
-            self.check_object_literal_excess_properties(source, target, source_idx);
-            had_excess_property_error = self.ctx.diagnostics.len() > diags_before;
+            let is_direct_literal = self
+                .ctx
+                .arena
+                .get(source_idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
+            if is_direct_literal {
+                let diags_before = self.ctx.diagnostics.len();
+                self.check_object_literal_excess_properties(source, target, source_idx);
+                had_excess_property_error = self.ctx.diagnostics.len() > diags_before;
+            } else if crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, source)
+            {
+                // Fresh type from non-literal expression (e.g., `return obj = { x: 1, y: 2 }`).
+                // Walk through binary assignment expressions to find the object literal.
+                let literal_idx = self.find_rhs_object_literal(source_idx);
+                let diags_before = self.ctx.diagnostics.len();
+                self.check_object_literal_excess_properties(
+                    source,
+                    target,
+                    literal_idx.unwrap_or(source_idx),
+                );
+                had_excess_property_error = self.ctx.diagnostics.len() > diags_before;
+            }
         }
 
         if self.is_assignable_to(source, target) {
@@ -431,6 +448,28 @@ impl<'a> CheckerState<'a> {
             }
             self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
             return false;
+        }
+
+        // Check excess properties on fresh object types BEFORE the assignability
+        // check. Fresh types from chained assignments (e.g., `return obj = { x: 1, y: 2 }`)
+        // are structurally assignable but should still trigger TS2353.
+        {
+            let is_direct_literal = self
+                .ctx
+                .arena
+                .get(source_idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
+            if is_direct_literal {
+                self.check_object_literal_excess_properties(source, target, source_idx);
+            } else if crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, source)
+            {
+                let literal_idx = self.find_rhs_object_literal(source_idx);
+                self.check_object_literal_excess_properties(
+                    source,
+                    target,
+                    literal_idx.unwrap_or(source_idx),
+                );
+            }
         }
 
         // Canonical relation path: execute a RelationRequest to get both the
