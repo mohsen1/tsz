@@ -147,7 +147,8 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let kind = mod_node.kind;
-                    if kind == SyntaxKind::InKeyword as u16 || kind == SyntaxKind::OutKeyword as u16 {
+                    if kind == SyntaxKind::InKeyword as u16 || kind == SyntaxKind::OutKeyword as u16
+                    {
                         let modifier_text = if kind == SyntaxKind::InKeyword as u16 {
                             "in"
                         } else {
