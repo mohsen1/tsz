@@ -1116,48 +1116,11 @@ impl<'a> CheckerState<'a> {
                         crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     );
                 } else {
-                    // For arrow/function expression property values, try deeper
-                    // elaboration first. tsc's elaborateElementwise recurses
-                    // into function return expressions so the error points at
-                    // the body expression (e.g., `"hello"` in `b: () => "hello"`)
-                    // rather than the property name. Unlike the callback argument
-                    // path (try_elaborate_function_arg_return_error), the property
-                    // context reports the return type mismatch, not the full
-                    // function type mismatch.
-                    let elaborated_body = (|| {
-                        let func_node = self.ctx.arena.get(prop_value_idx)?;
-                        let func = self.ctx.arena.get_function(func_node)?;
-                        let expected_ret = self.first_callable_return_type(target_prop_type)?;
-                        if expected_ret == TypeId::VOID || expected_ret == TypeId::ANY {
-                            return None;
-                        }
-                        let body_node = self.ctx.arena.get(func.body)?;
-                        // Only expression-bodied arrows (not block bodies)
-                        if body_node.kind == syntax_kind_ext::BLOCK {
-                            return None;
-                        }
-                        let body_type = self.get_type_of_node(func.body);
-                        if body_type == TypeId::ERROR
-                            || body_type == TypeId::ANY
-                            || self.is_assignable_to(body_type, expected_ret)
-                        {
-                            return None;
-                        }
-                        Some((body_type, expected_ret, func.body))
-                    })();
-                    if let Some((body_type, expected_ret, body_idx)) = elaborated_body {
-                        self.error_type_not_assignable_at_with_anchor(
-                            body_type,
-                            expected_ret,
-                            body_idx,
-                        );
-                    } else {
-                        self.error_type_not_assignable_at_with_anchor(
-                            source_prop_type_for_diagnostic,
-                            target_for_diag,
-                            prop_name_idx,
-                        );
-                    }
+                    self.error_type_not_assignable_at_with_anchor(
+                        source_prop_type_for_diagnostic,
+                        target_for_diag,
+                        prop_name_idx,
+                    );
                 }
                 elaborated = true;
                 continue;
