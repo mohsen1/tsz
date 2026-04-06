@@ -855,3 +855,68 @@ if (isA(v)) {
         "Type predicate narrowing failed for discriminated union: {ts2322:?}"
     );
 }
+
+/// Test that negated assertion with conditional type predicate narrows correctly.
+/// When `assert(!isB(foo))` where `isB` uses a conditional type predicate like
+/// `Extract<T, U>`, the false branch should exclude matching union members.
+///
+/// This exercises the resolve_type_uncached path for Conditional types in the
+/// solver's narrowing context — ensuring inner Lazy types are resolved before
+/// the conditional is evaluated/distributed.
+#[test]
+fn test_negated_assertion_with_conditional_type_predicate() {
+    let source = r#"
+type Foo = {type: 'A', a: number} | {type: 'B', b: number};
+type MyExtract<T, U> = T extends U ? T : never;
+declare function isB(x: Foo): x is MyExtract<Foo, {type: 'B'}>;
+declare function assert(x: boolean): asserts x;
+
+function test(foo: Foo): {type: 'A', a: number} {
+    assert(!isB(foo));
+    return foo;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    // Should NOT have TS2322 — foo is narrowed to {type: 'A', a: number}
+    // by excluding Extract<Foo, {type: 'B'}> = {type: 'B', b: number}
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert!(
+        ts2322.is_empty(),
+        "Negated assertion with conditional type predicate should narrow correctly: {ts2322:?}"
+    );
+}
