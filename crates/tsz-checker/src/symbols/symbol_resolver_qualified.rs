@@ -281,11 +281,10 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or(file_sym);
                     // Only use the file_locals result if it's NOT a type parameter
                     // (i.e. it's an import/namespace/module).
-                    if !self
+                    if self
                         .ctx
                         .binder
-                        .get_symbol_with_libs(resolved_file, &lib_binders)
-                        .is_some_and(|s| (s.flags & symbol_flags::TYPE_PARAMETER) != 0)
+                        .get_symbol_with_libs(resolved_file, &lib_binders).is_none_or(|s| (s.flags & symbol_flags::TYPE_PARAMETER) == 0)
                     {
                         left_sym = resolved_file;
                     }

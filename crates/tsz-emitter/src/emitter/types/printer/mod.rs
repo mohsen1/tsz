@@ -78,19 +78,19 @@ impl<'a> TypePrinter<'a> {
     }
 
     /// Set the symbol arena for visibility checking.
-    pub fn with_symbols(mut self, symbol_arena: &'a SymbolArena) -> Self {
+    pub const fn with_symbols(mut self, symbol_arena: &'a SymbolArena) -> Self {
         self.symbol_arena = Some(symbol_arena);
         self
     }
 
     /// Set the type cache for resolving Lazy(DefId) types.
-    pub fn with_type_cache(mut self, type_cache: &'a TypeCacheView) -> Self {
+    pub const fn with_type_cache(mut self, type_cache: &'a TypeCacheView) -> Self {
         self.type_cache = Some(type_cache);
         self
     }
 
     /// Set the maximum recursion depth for type inlining.
-    pub fn with_max_depth(mut self, max_depth: u32) -> Self {
+    pub const fn with_max_depth(mut self, max_depth: u32) -> Self {
         self.max_depth = max_depth;
         self
     }
@@ -98,7 +98,7 @@ impl<'a> TypePrinter<'a> {
     /// Enable multi-line type formatting at the given indentation level.
     /// Object types with members will be formatted across multiple lines
     /// using 4-space indentation. Without this, object types use flat format.
-    pub fn with_indent_level(mut self, indent_level: u32) -> Self {
+    pub const fn with_indent_level(mut self, indent_level: u32) -> Self {
         self.indent_level = Some(indent_level);
         self
     }
@@ -106,13 +106,13 @@ impl<'a> TypePrinter<'a> {
     /// Set the enclosing symbol (namespace/class) for context-relative name resolution.
     /// Qualified names that share a prefix with this symbol's path will have the
     /// shared prefix stripped (e.g., inside namespace `m1.m2`, type `m1.m2.c` becomes `c`).
-    pub fn with_enclosing_symbol(mut self, sym_id: SymbolId) -> Self {
+    pub const fn with_enclosing_symbol(mut self, sym_id: SymbolId) -> Self {
         self.enclosing_symbol = Some(sym_id);
         self
     }
 
     /// Set the AST arena for declaration-reachability checks.
-    pub fn with_node_arena(mut self, node_arena: &'a NodeArena) -> Self {
+    pub const fn with_node_arena(mut self, node_arena: &'a NodeArena) -> Self {
         self.node_arena = Some(node_arena);
         self
     }
@@ -155,7 +155,7 @@ impl<'a> TypePrinter<'a> {
 
     /// Configure strictNullChecks mode. When false, standalone `null` and
     /// `undefined` widen to `any` and are stripped from union members.
-    pub fn with_strict_null_checks(mut self, strict: bool) -> Self {
+    pub const fn with_strict_null_checks(mut self, strict: bool) -> Self {
         self.strict_null_checks = strict;
         self
     }
@@ -197,7 +197,7 @@ impl<'a> TypePrinter<'a> {
             if all_in_scope.contains(&original) || new_names_in_scope.contains(&original) {
                 let mut suffix = 1u32;
                 loop {
-                    let candidate = format!("{}_{}", original, suffix);
+                    let candidate = format!("{original}_{suffix}");
                     if !all_in_scope.contains(&candidate)
                         && !new_names_in_scope.contains(&candidate)
                     {

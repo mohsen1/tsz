@@ -1051,7 +1051,7 @@ pub(crate) fn get_merged_object_shape_for_type(
     let base_shape = tsz_solver::type_queries::get_object_shape(db, type_id)?;
 
     // Collect properties from intersection members
-    let mut merged_props: Vec<PropertyInfo> = base_shape.properties.iter().cloned().collect();
+    let mut merged_props: Vec<PropertyInfo> = base_shape.properties.to_vec();
     let mut has_string_index = base_shape.string_index.is_some();
     let mut has_number_index = base_shape.number_index.is_some();
 

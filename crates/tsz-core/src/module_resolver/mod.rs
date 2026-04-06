@@ -554,8 +554,7 @@ impl ModuleResolver {
                         error: Some(ModuleLookupError {
                             code: MODULE_WAS_RESOLVED_TO_BUT_ALLOW_ARBITRARY_EXTENSIONS_IS_NOT_SET,
                             message: format!(
-                                "Module '{}' was resolved to '{}', but '--allowArbitraryExtensions' is not set.",
-                                specifier, resolved_name
+                                "Module '{specifier}' was resolved to '{resolved_name}', but '--allowArbitraryExtensions' is not set."
                             ),
                         }),
                     };

@@ -1600,8 +1600,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     || s_shape
                         .flags
                         .contains(crate::types::ObjectFlags::ENUM_NAMESPACE);
-                if source_has_implicit_index {
-                    if let (Some(s_idx), Some(t_idx)) =
+                if source_has_implicit_index
+                    && let (Some(s_idx), Some(t_idx)) =
                         (&s_shape.number_index, &t_shape.string_index)
                     {
                         // Use MappedType priority for number-to-string cross inference so
@@ -1629,7 +1629,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             );
                         }
                     }
-                }
                 if let (Some(s_idx), Some(t_idx)) = (&s_shape.string_index, &t_shape.number_index) {
                     self.constrain_types(
                         ctx,

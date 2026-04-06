@@ -686,7 +686,7 @@ fn types_are_comparable_for_assertion_inner(
     types_have_common_properties_relaxed(db, source, target, depth)
 }
 
-/// Relaxed version of types_have_common_properties for TS2352.
+/// Relaxed version of `types_have_common_properties` for TS2352.
 /// Only requires that shared properties have comparable types.
 /// Missing target properties in the source are allowed.
 fn types_have_common_properties_relaxed(
