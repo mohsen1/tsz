@@ -787,11 +787,18 @@ impl<'a> CheckerState<'a> {
                 // Only check DAA when usage precedes the declaration (hoisted binding,
                 // initializer not yet run).
                 //
+                // Also skip when the "usage" identifier is the declaration's own
+                // name (pos within the declaration span). This happens when the
+                // checker resolves the LHS identifier during declaration processing
+                // — the LHS is an assignment target, not a value read, so TS2454
+                // should not fire.
+                //
                 // Exception: if the declaration is inside a try block, the initializer
                 // may not execute (a prior statement could throw), so we must still
                 // run the flow-based DAA check.
                 if let Some(usage_node) = self.ctx.arena.get(idx)
-                    && usage_node.pos >= decl_node.end
+                    && (usage_node.pos >= decl_node.end
+                        || (usage_node.pos >= decl_node.pos && usage_node.end <= decl_node.end))
                     && !self.is_inside_try_block(decl_id_to_check)
                 {
                     return false;
