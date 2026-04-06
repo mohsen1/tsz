@@ -205,8 +205,8 @@ impl<'a> CheckerState<'a> {
                     // type with the default arguments applied (matching tsc behavior).
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
                     let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
-                    let all_have_defaults = !type_params.is_empty()
-                        && type_params.iter().all(|p| p.default.is_some());
+                    let all_have_defaults =
+                        !type_params.is_empty() && type_params.iter().all(|p| p.default.is_some());
                     if all_have_defaults {
                         let default_args: Vec<TypeId> = type_params
                             .iter()

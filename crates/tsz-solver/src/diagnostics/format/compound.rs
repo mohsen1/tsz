@@ -1209,12 +1209,30 @@ impl<'a> TypeFormatter<'a> {
         if shape.string_index.is_none()
             && shape.number_index.is_none()
             && shape.properties.len() >= 6
-            && shape.properties.iter().any(|p| self.atom(p.name).as_ref() == "constructor")
-            && shape.properties.iter().any(|p| self.atom(p.name).as_ref() == "toString")
-            && shape.properties.iter().any(|p| self.atom(p.name).as_ref() == "toLocaleString")
-            && shape.properties.iter().any(|p| self.atom(p.name).as_ref() == "valueOf")
-            && shape.properties.iter().any(|p| self.atom(p.name).as_ref() == "hasOwnProperty")
-            && shape.properties.iter().any(|p| self.atom(p.name).as_ref() == "isPrototypeOf")
+            && shape
+                .properties
+                .iter()
+                .any(|p| self.atom(p.name).as_ref() == "constructor")
+            && shape
+                .properties
+                .iter()
+                .any(|p| self.atom(p.name).as_ref() == "toString")
+            && shape
+                .properties
+                .iter()
+                .any(|p| self.atom(p.name).as_ref() == "toLocaleString")
+            && shape
+                .properties
+                .iter()
+                .any(|p| self.atom(p.name).as_ref() == "valueOf")
+            && shape
+                .properties
+                .iter()
+                .any(|p| self.atom(p.name).as_ref() == "hasOwnProperty")
+            && shape
+                .properties
+                .iter()
+                .any(|p| self.atom(p.name).as_ref() == "isPrototypeOf")
         {
             return Some("Object".to_string());
         }
