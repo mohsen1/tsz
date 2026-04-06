@@ -181,26 +181,6 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    // Register the reverse mapping TypeId→DefId so the type formatter
-                    // can display the interface name (e.g., "String") instead of
-                    // expanding to the full structural form.  Classes already do this
-                    // (see the CLASS branch above); interfaces were missing it.
-                    // Only register for composite structural types (objects, functions,
-                    // callables, tuples) — NOT for primitives/literals/unions that
-                    // could coincidentally match other type aliases.
-                    // Skip merged interface+namespace symbols — the existing
-                    // resolve_object_shape_name path handles them correctly by
-                    // checking the symbol flags; a type_to_def mapping here could
-                    // pick up the wrong DefKind and show "typeof B" instead of "B".
-                    if !is_merged_with_namespace
-                        && !should_force_interface_decl_path
-                        && query::is_composite_shape_type(self.ctx.types, structural_type)
-                    {
-                        self.ctx
-                            .definition_store
-                            .register_type_to_def(structural_type, def_id);
-                    }
-
                     // For merged interface+namespace symbols, return the structural type
                     // directly instead of Lazy wrapper. The Lazy wrapper causes property
                     // access to incorrectly classify the type as a namespace value,
