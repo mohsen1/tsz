@@ -12,7 +12,7 @@ use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
-use tsz_solver::{CallSignature, CallableShape};
+use tsz_solver::{CallSignature, CallableShape, TypeData};
 
 impl<'a> CheckerState<'a> {
     fn widen_function_like_assertion_source(&self, type_id: TypeId) -> TypeId {
@@ -262,8 +262,20 @@ impl<'a> CheckerState<'a> {
         } else {
             type_id
         };
-        let evaluated = self.evaluate_type_with_env(type_id);
+        let evaluated = self.evaluate_type_for_assignability(type_id);
         if tsz_solver::type_queries::get_type_application(self.ctx.types, type_id).is_some() {
+            // For type alias applications that evaluate to complex types (intersections,
+            // objects, etc.), show the expanded form rather than the alias name.
+            // This matches tsc's behavior for TS2352 error messages.
+            if evaluated != type_id
+                && evaluated != TypeId::ERROR
+                && !matches!(
+                    self.ctx.types.lookup(evaluated),
+                    Some(TypeData::TypeParameter(_))
+                )
+            {
+                return self.format_type_for_assignability_message(evaluated);
+            }
             return self.format_type_for_assignability_message(type_id);
         }
         self.format_type_for_assignability_message(evaluated)
