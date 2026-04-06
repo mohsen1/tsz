@@ -1340,7 +1340,23 @@ impl<'a> TypeInstantiator<'a> {
                 {
                     return substituted;
                 }
-                self.interner.infer(*info)
+                // Instantiate the constraint if it references type parameters being substituted.
+                // e.g., `infer A extends keyof T` when T is being substituted with Obj
+                // needs the constraint updated to `keyof Obj`.
+                let new_info = if let Some(constraint) = info.constraint {
+                    let new_constraint = self.instantiate(constraint);
+                    if new_constraint != constraint {
+                        TypeParamInfo {
+                            constraint: Some(new_constraint),
+                            ..*info
+                        }
+                    } else {
+                        *info
+                    }
+                } else {
+                    *info
+                };
+                self.interner.infer(new_info)
             }
         }
     }

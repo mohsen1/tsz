@@ -247,5 +247,9 @@ path = "tests/import_attributes_resolution_mode_tests.rs"
 name = "contextual_typing_tests"
 path = "tests/contextual_typing_tests.rs"
 
+[[test]]
+name = "infer_extends_constraint_substitution_tests"
+path = "tests/infer_extends_constraint_substitution_tests.rs"
+
 [lints]
 workspace = true
