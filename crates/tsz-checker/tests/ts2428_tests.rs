@@ -99,7 +99,6 @@ interface A<T, U> {
     );
 }
 
-
 #[test]
 fn different_arity_with_defaults_no_ts2428() {
     let source = r#"

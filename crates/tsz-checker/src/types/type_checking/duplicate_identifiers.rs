@@ -734,8 +734,8 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     self.check_merged_interface_declaration_diagnostics(&decls_in_scope);
-                    let mismatch = !self
-                        .interface_type_parameters_are_group_merge_compatible(&decls_in_scope);
+                    let mismatch =
+                        !self.interface_type_parameters_are_group_merge_compatible(&decls_in_scope);
                     if mismatch {
                         let message = format_message(
                             diagnostic_messages::ALL_DECLARATIONS_OF_MUST_HAVE_IDENTICAL_TYPE_PARAMETERS,
@@ -1828,9 +1828,7 @@ impl<'a> CheckerState<'a> {
             // Merge diagnostics only when interface type parameters are identical.
             // TS2428 is reported separately; once mismatched, compatibility checks
             // should not be compared across declarations in the same scope.
-            if !self
-                .interface_type_parameters_are_group_merge_compatible(&declarations_in_scope)
-            {
+            if !self.interface_type_parameters_are_group_merge_compatible(&declarations_in_scope) {
                 continue;
             }
 
