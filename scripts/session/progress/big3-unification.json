@@ -7,10 +7,21 @@
       "date": "2026-04-06",
       "summary": "Fixed globalThis property resolution for Window & typeof globalThis intersection types",
       "invariant": "When resolving properties on intersection types like Window & typeof globalThis, tsz should check properties from ALL intersection members (Window interface first), not just shortcut to globalThis property resolution",
-      "tests_fixed": ["globalMergeWithCommonJSAssignmentDeclaration.ts"],
+      "tests_fixed": [
+        "globalMergeWithCommonJSAssignmentDeclaration.ts"
+      ],
       "kpi_impact": "+2 conformance tests passing, overall 11747/12581 (93.4%)",
-      "changes": ["crates/tsz-checker/src/state/type_environment/type_node_resolution.rs"],
+      "changes": [
+        "crates/tsz-checker/src/state/type_environment/type_node_resolution.rs"
+      ],
       "regressions": "None detected in 200-test regression check"
+    },
+    {
+      "date": "2026-04-06",
+      "start_pass": 11745,
+      "end_pass": 11747,
+      "delta": 2,
+      "commits": 1
     }
   ],
   "known_dead_ends": [],
