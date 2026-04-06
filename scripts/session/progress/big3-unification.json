@@ -59,5 +59,18 @@
     "assignmentToVoidZero1.ts is close-to-passing (diff=1) with missing TS2322 - flow analysis issue",
     "genericDefaults.ts has extra TS2345 from generic default handling"
   ],
-  "cross_cutting_blockers": []
-}
+    {
+      "date": "2026-04-06",
+      "summary": "Added support for strictBuiltinIteratorReturn compiler option in conformance runner",
+      "invariant": "The conformance test runner must properly pass the strictBuiltinIteratorReturn option to enable iterator return type checking for tests that use this directive",
+      "tests_fixed": [
+        "iterableTReturnTNext.ts and related iterator tests (3 improvements)"
+      ],
+      "kpi_impact": "+3 tests passing, Big3 wrong-code count maintained at 68",
+      "changes": [
+        "crates/conformance/src/options_convert.rs",
+        "crates/tsz-cli/src/bin/tsz_server/main.rs",
+        "crates/tsz-cli/src/bin/tsz_server/check.rs"
+      ],
+      "regressions": "None detected in full conformance suite"
+    }
