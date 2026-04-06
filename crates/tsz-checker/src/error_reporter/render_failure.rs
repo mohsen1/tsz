@@ -1843,8 +1843,10 @@ impl<'a> CheckerState<'a> {
             let display = self.format_assignment_source_type_for_diagnostic(source, target, idx);
             // tsc preserves literal union structure (e.g., `"c" | "d"`) in error
             // messages. If format_assignment_source_type_for_diagnostic widened the
-            // union to a primitive (e.g., `string`), fall back to the TypeFormatter
-            // which correctly displays literal union members.
+            // union to a primitive (e.g., `string`) or used a type alias name
+            // (e.g., `Variants` from a parameter annotation), fall back to the
+            // TypeFormatter which correctly displays literal union members.
+            // This handles both widening and flow-narrowed type alias display.
             if crate::query_boundaries::common::union_members(self.ctx.types, source).is_some_and(
                 |members| {
                     !members.is_empty()
@@ -1855,7 +1857,7 @@ impl<'a> CheckerState<'a> {
                         })
                 },
             ) && !tsz_solver::is_primitive_type(self.ctx.types, source)
-                && (display == "string" || display == "number" || display == "bigint")
+                && !display.contains(" | ")
             {
                 self.format_type_diagnostic(source)
             } else {
