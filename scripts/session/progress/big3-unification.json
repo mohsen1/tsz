@@ -45,6 +45,18 @@
         "crates/tsz-cli/src/bin/tsz_server/check.rs"
       ],
       "regressions": "None detected in full conformance suite"
+    {
+      "date": "2026-04-06",
+      "summary": "Fixed TS2608 error position for JSX.ElementAttributesProperty",
+      "invariant": "When JSX.ElementAttributesProperty has more than one property, TS2608 should be emitted on the interface declaration (the interface name identifier) rather than on JSX element usages",
+      "tests_fixed": [
+        "tsxElementResolution15.tsx"
+      ],
+      "kpi_impact": "+1 test passing, overall 11746/12581 (93.4%)",
+      "changes": [
+        "crates/tsz-checker/src/checkers/jsx/extraction.rs"
+      ],
+      "regressions": "None detected in full conformance suite"
     }
   ],
   "known_dead_ends": [
