@@ -99,6 +99,33 @@ interface A<T, U> {
     );
 }
 
+
+#[test]
+fn different_arity_with_defaults_no_ts2428() {
+    let source = r#"
+interface i04 {}
+interface i04<T> {}
+interface i04<T = number> {}
+interface i04<T = number, U = string> {}
+"#;
+    assert!(
+        !has_error_with_code(source, 2428),
+        "Should NOT emit TS2428 when extra type parameters have defaults in the merge group"
+    );
+}
+
+#[test]
+fn different_arity_with_defaults_pairwise_no_ts2428() {
+    let source = r#"
+interface A {}
+interface A<T = number> {}
+"#;
+    assert!(
+        !has_error_with_code(source, 2428),
+        "Should NOT emit TS2428 when extra type parameter has default"
+    );
+}
+
 #[test]
 fn namespace_separate_blocks_emits_ts2428() {
     let source = r#"
