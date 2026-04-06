@@ -72,7 +72,10 @@ fi
 # shellcheck source=_select-campaigns.sh
 source "$SCRIPT_DIR/_select-campaigns.sh"
 
-mapfile -t available < <(_select_campaigns)
+available=()
+while IFS= read -r line; do
+    available+=("$line")
+done < <(_select_campaigns)
 
 echo ""
 echo "============================================="
