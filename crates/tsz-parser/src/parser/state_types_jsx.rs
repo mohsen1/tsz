@@ -974,7 +974,8 @@ impl ParserState {
         if !self.is_token(SyntaxKind::Identifier)
             && !self.is_token(SyntaxKind::ThisKeyword)
             && !self.is_identifier_or_keyword()
-        {            // When the current token is '}' in JSX context, emit TS1005 "'}' expected."
+        {
+            // When the current token is '}' in JSX context, emit TS1005 "'}' expected."
             // instead of TS1003 "Identifier expected." to match tsc behavior.
             // Note: In JSX mode, '}' is scanned as JsxText with TS1381, not CloseBraceToken.
             // The JsxText may contain just '}' or '}' followed by other characters.
