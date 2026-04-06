@@ -10,7 +10,7 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     /// Check spread property types against the expected props type.
-    /// 
+    ///
     /// When there are multiple spreads, we don't emit TS2739/TS2740 for missing
     /// properties here because later spreads might provide them. Instead, we let
     /// the final combined prop validation handle missing property checks.
@@ -151,7 +151,11 @@ impl<'a> CheckerState<'a> {
                     // Emit TS2739 (≤5 missing props) or TS2740 (>5 missing props)
                     let spread_name = self.format_type(spread_type);
                     let is_truncated = missing_props.len() > 5;
-                    let display_count = if is_truncated { 4 } else { 5.min(missing_props.len()) };
+                    let display_count = if is_truncated {
+                        4
+                    } else {
+                        5.min(missing_props.len())
+                    };
                     let props_list = missing_props[..display_count].join(", ");
 
                     let (message, code) = if is_truncated {
