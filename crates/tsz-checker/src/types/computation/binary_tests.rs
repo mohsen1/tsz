@@ -682,6 +682,8 @@ fn ts2367_still_emitted_for_genuinely_unrelated_types() {
 
 #[test]
 fn ts2367_widens_cross_family_literal_against_constrained_intersection() {
+    // tsc preserves the narrow types in TS2367 messages, showing `"hello"`
+    // instead of widened `string`.
     let diags = check_source_diagnostics(
         r#"function f<T extends string | number>(x: T & number) {
     const t1 = x === "hello";
@@ -700,14 +702,16 @@ fn ts2367_widens_cross_family_literal_against_constrained_intersection() {
     assert!(
         relevant[0]
             .message_text
-            .contains("types 'T & number' and 'string' have no overlap"),
-        "Expected widened string display, got: {:?}",
+            .contains("types 'T & number' and '\"hello\"' have no overlap"),
+        "Expected narrow type display matching tsc, got: {:?}",
         relevant[0].message_text
     );
 }
 
 #[test]
-fn ts2367_widens_literal_unions_to_comparison_base_type() {
+fn ts2367_preserves_literal_types_in_display() {
+    // tsc preserves literal types in TS2367 messages: `1 | 2` and `"hello"`
+    // rather than widening to `number` and `string`.
     let diags = check_source_diagnostics(r#"declare let x: 1 | 2; if (x === "hello") {}"#);
     let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2367).collect();
     assert_eq!(
@@ -722,8 +726,8 @@ fn ts2367_widens_literal_unions_to_comparison_base_type() {
     assert!(
         relevant[0]
             .message_text
-            .contains("types 'number' and 'string' have no overlap"),
-        "Expected comparison-base display for numeric literal union, got: {:?}",
+            .contains("types '1 | 2' and '\"hello\"' have no overlap"),
+        "Expected narrow type display matching tsc, got: {:?}",
         relevant[0].message_text
     );
 }

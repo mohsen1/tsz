@@ -1488,26 +1488,11 @@ impl<'a> CheckerState<'a> {
                 )
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-                // Mirror tsc's comparison display policy:
-                // - preserve literal detail when both operands stay in the same comparison family
-                //   (e.g. `1 | 2` vs `3`)
-                // - otherwise format against each side's comparison base type
-                //   (e.g. `T & number` vs `"hello"` -> `T & number` vs `string`)
-                //
-                // Using comparison-base widening here is important for unions, enums,
-                // and template/string-intrinsic types. Literal-only widening leaves
-                // unions like `1 | 2` unchanged, which drifts from tsc's `number`.
-                let left_base =
-                    tsz_solver::get_base_type_for_comparison(self.ctx.types, left_narrow);
-                let right_base =
-                    tsz_solver::get_base_type_for_comparison(self.ctx.types, right_narrow);
-                let (left_display, right_display) = if left_base == right_base {
-                    // Same comparison family: preserve literal detail.
-                    (left_narrow, right_narrow)
-                } else {
-                    // Different comparison families: show comparison-base types.
-                    (left_base, right_base)
-                };
+                // tsc always shows the narrow (non-widened) types in TS2367 messages,
+                // preserving literal types like `"foo"` and `"bar"` rather than
+                // widening to `string`. This matches diagnostics like:
+                //   `types 'Refrigerator | "foo"' and '"bar"' have no overlap`
+                let (left_display, right_display) = (left_narrow, right_narrow);
                 let (left_str, right_str) = self.format_type_pair(left_display, right_display);
                 let message = format_message(
                     diagnostic_messages::THIS_COMPARISON_APPEARS_TO_BE_UNINTENTIONAL_BECAUSE_THE_TYPES_AND_HAVE_NO_OVERLA,
