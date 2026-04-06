@@ -288,12 +288,18 @@ impl<'a> TypeFormatter<'a> {
 
         // For composite types that might be named (interfaces, type aliases, classes),
         // check if this TypeId maps to a definition name. This handles:
-        // - Type aliases: `type ExoticAnimal = CatDog | ManBearPig` displays as "ExoticAnimal"
         // - Interfaces: `interface Foo { a: string }` displays as "Foo"
         // - Cross-file scenarios where ObjectShape's symbol can't be resolved
         //
+        // NOTE: We deliberately do NOT use `find_type_alias_by_body` here because
+        // tsc only shows alias names when the type was directly referenced through
+        // that alias, not when a computed type happens to match an alias body.
+        // The `display_alias` mechanism (below) handles the cases where tsc does
+        // show alias names for evaluated types.
+        //
         // Restricted to composite shapes to avoid false positives where a primitive
         // or literal type coincidentally matches an alias body (e.g. `type U = 1`).
+        #[allow(clippy::collapsible_if)]
         if matches!(
             &key,
             TypeData::Object(_)
@@ -306,19 +312,6 @@ impl<'a> TypeFormatter<'a> {
                 | TypeData::Mapped(_)
         ) && let Some(def_store) = self.def_store
         {
-            if let Some(def_id) = def_store.find_def_for_type(type_id)
-                && let Some(def) = def_store.get(def_id)
-            {
-                let exact_name = self.format_def_name(&def);
-                if exact_name.contains('<') {
-                    return exact_name.into();
-                }
-            }
-            if let Some(def_id) = def_store.find_type_alias_by_body(type_id)
-                && let Some(def) = def_store.get(def_id)
-            {
-                return self.format_def_name(&def).into();
-            }
             if let Some(def_id) = def_store.find_def_for_type(type_id)
                 && let Some(def) = def_store.get(def_id)
             {

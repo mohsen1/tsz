@@ -24191,7 +24191,7 @@ class C {
     );
 }
 
-/// Callback return type elaboration with NoInfer should produce TS2741
+/// Callback return type elaboration with `NoInfer` should produce TS2741
 /// at the body expression, not TS2322 at the arrow function.
 ///
 /// When `doSomething<T>(value: T, getDefault: () => NoInfer<T>)` is called

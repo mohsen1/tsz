@@ -43,7 +43,7 @@ fn has_error(diags: &[tsz_checker::diagnostics::Diagnostic], code: u32) -> bool 
 }
 
 /// `infer A extends keyof T` should work when T is a substituted type parameter.
-/// GetPath<T, P> recursively walks a path through an object type.
+/// `GetPath<T, P>` recursively walks a path through an object type.
 #[test]
 fn test_infer_extends_keyof_in_conditional_type() {
     let source = r#"
