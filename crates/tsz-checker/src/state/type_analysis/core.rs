@@ -364,11 +364,11 @@ impl<'a> CheckerState<'a> {
                             let resolved = self
                                 .resolve_alias_symbol(file_sym, &mut visited)
                                 .unwrap_or(file_sym);
-                            if !self
+                            if self
                                 .ctx
                                 .binder
                                 .get_symbol_with_libs(resolved, &lib_binders)
-                                .is_some_and(|s| (s.flags & symbol_flags::TYPE_PARAMETER) != 0)
+                                .is_none_or(|s| (s.flags & symbol_flags::TYPE_PARAMETER) == 0)
                             {
                                 TypeSymbolResolution::Type(resolved)
                             } else {

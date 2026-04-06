@@ -1854,7 +1854,7 @@ impl<'a> CheckerState<'a> {
                                 || m == TypeId::BOOLEAN_FALSE
                         })
                 },
-            ) && tsz_solver::is_primitive_type(self.ctx.types, source) == false
+            ) && !tsz_solver::is_primitive_type(self.ctx.types, source)
                 && (display == "string" || display == "number" || display == "bigint")
             {
                 self.format_type_diagnostic(source)

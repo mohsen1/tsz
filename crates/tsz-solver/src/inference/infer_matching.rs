@@ -409,10 +409,8 @@ impl<'a> InferenceContext<'a> {
                 //
                 // For named class/interface types this is skipped — they must
                 // declare an explicit string index to participate in inference.
-                if has_implicit_index {
-                    if let Some(s_number_idx) = &source_shape.number_index {
-                        implicit_parts.push(s_number_idx.value_type);
-                    }
+                if has_implicit_index && let Some(s_number_idx) = &source_shape.number_index {
+                    implicit_parts.push(s_number_idx.value_type);
                 }
 
                 // Contribution from named properties (implicit index signature).
