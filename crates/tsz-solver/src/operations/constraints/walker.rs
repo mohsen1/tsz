@@ -1224,7 +1224,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             (s_pred.type_id, t_pred.type_id)
                         {
                             // Type predicates are covariant: source_pred_type <: target_pred_type
+                            // Mark as type annotation source to prevent literal widening.
+                            let was = ctx.source_is_type_annotation;
+                            ctx.source_is_type_annotation = true;
                             self.constrain_types(ctx, var_map, s_pred_type, t_pred_type, priority);
+                            ctx.source_is_type_annotation = was;
                         }
                     }
                 } else {
@@ -1418,6 +1422,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             (s_pred.type_id, t_pred.type_id)
                     {
                         // Type predicates are covariant: source_pred_type <: target_pred_type
+                        // Mark as type annotation source to prevent literal widening.
+                        let was = ctx.source_is_type_annotation;
+                        ctx.source_is_type_annotation = true;
                         self.constrain_types(
                             ctx,
                             &combined_var_map,
@@ -1425,6 +1432,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             t_pred_type,
                             priority,
                         );
+                        ctx.source_is_type_annotation = was;
                     }
                 }
             }

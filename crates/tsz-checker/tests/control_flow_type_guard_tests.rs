@@ -920,3 +920,65 @@ function test(foo: Foo): {type: 'A', a: number} {
         "Negated assertion with conditional type predicate should narrow correctly: {ts2322:?}"
     );
 }
+
+/// Regression test: generic type inference from type predicate literal types
+/// should preserve the literal type, not widen it.
+///
+/// When calling `capture<V>(pred: (x: unknown) => x is V)` with a predicate
+/// like `isB: (x: unknown) => x is 'B'`, V should be inferred as `'B'` (literal),
+/// not widened to `string`. This matches tsc's behavior where types from type
+/// annotations don't carry the RequiresWidening flag.
+#[test]
+fn test_generic_inference_preserves_literal_from_type_predicate() {
+    let source = r#"
+declare function capture<V>(predicate: (arg: unknown) => arg is V): V;
+declare function isB(arg: unknown): arg is 'B';
+
+const result = capture(isB);
+const check: 'B' = result;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    // TS2322 would mean V was widened from 'B' to string
+    let ts2322: Vec<_> = relevant.iter().filter(|(code, _)| *code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Generic inference from type predicate should preserve literal 'B', not widen to string: {ts2322:?}"
+    );
+}
