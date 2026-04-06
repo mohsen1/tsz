@@ -170,6 +170,7 @@ for campaign in "${available[@]}"; do
 
         opencode run "$PROMPT" \
             -m "$MODEL" \
+            --variant high \
             --dir "$WORKTREE_DIR" \
             --title "campaign-$campaign" \
             > "$LOG_FILE" 2>&1 &
