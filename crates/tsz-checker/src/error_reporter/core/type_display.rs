@@ -785,18 +785,29 @@ impl<'a> CheckerState<'a> {
         &self,
         ty: TypeId,
     ) -> TypeId {
-        let ty = tsz_solver::evaluate_type(self.ctx.types, ty);
-        if let Some(members) = query::union_members(self.ctx.types, ty) {
+        // Evaluate for structural analysis but preserve original members for display.
+        // NoInfer<T> wrappers and type aliases are stripped by evaluation, but the
+        // display should preserve them (tsc shows `NoInfer<{x: string}>` not `{x: string}`).
+        let evaluated = tsz_solver::evaluate_type(self.ctx.types, ty);
+        let original_members = query::union_members(self.ctx.types, ty);
+        if let Some(members) = query::union_members(self.ctx.types, evaluated) {
             let object_like: Vec<_> = members
                 .iter()
-                .copied()
-                .filter(|member| {
-                    let evaluated = tsz_solver::evaluate_type(self.ctx.types, *member);
+                .enumerate()
+                .filter(|(_, member)| {
+                    let evaluated = tsz_solver::evaluate_type(self.ctx.types, **member);
                     !tsz_solver::is_primitive_type(self.ctx.types, evaluated)
                         && !crate::query_boundaries::common::contains_type_parameters(
                             self.ctx.types,
                             evaluated,
                         )
+                })
+                .map(|(i, member)| {
+                    // Use original (pre-evaluation) member if available for display
+                    original_members
+                        .as_ref()
+                        .and_then(|orig| orig.get(i).copied())
+                        .unwrap_or(*member)
                 })
                 .collect();
             // Only strip if we actually removed something and have at least one member left
