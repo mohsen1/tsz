@@ -1624,9 +1624,13 @@ impl ParserState {
                     },
                 )
             } else {
-                // Check for reserved word as namespace name - emit TS2819 instead of TS1359
-                if self.is_reserved_word() {
-                    let word = self.current_keyword_text();
+                // Check for reserved word or numeric literal as namespace name - emit TS2819
+                if self.is_reserved_word() || self.is_token(SyntaxKind::NumericLiteral) {
+                    let word = if self.is_token(SyntaxKind::NumericLiteral) {
+                        self.scanner.get_token_value()
+                    } else {
+                        self.current_keyword_text().to_string()
+                    };
                     let name_start = self.token_pos();
                     let name_end = self.token_end();
                     use tsz_common::diagnostics::diagnostic_codes;
@@ -1637,7 +1641,7 @@ impl ParserState {
                         diagnostic_codes::NAMESPACE_NAME_CANNOT_BE,
                     );
                     self.next_token();
-                    // After a reserved word namespace name, emit TS1005 for ';' expected
+                    // After an invalid namespace name, emit TS1005 for ';' expected
                     if self.is_token(SyntaxKind::OpenBraceToken) {
                         let brace_pos = self.token_pos();
                         self.parse_error_at(
@@ -1792,9 +1796,13 @@ impl ParserState {
                     },
                 )
             } else {
-                // Check for reserved word as namespace name - emit TS2819 instead of TS1359
-                if self.is_reserved_word() {
-                    let word = self.current_keyword_text();
+                // Check for reserved word or numeric literal as namespace name - emit TS2819
+                if self.is_reserved_word() || self.is_token(SyntaxKind::NumericLiteral) {
+                    let word = if self.is_token(SyntaxKind::NumericLiteral) {
+                        self.scanner.get_token_value()
+                    } else {
+                        self.current_keyword_text().to_string()
+                    };
                     let name_start = self.token_pos();
                     let name_end = self.token_end();
                     use tsz_common::diagnostics::diagnostic_codes;
@@ -1805,7 +1813,7 @@ impl ParserState {
                         diagnostic_codes::NAMESPACE_NAME_CANNOT_BE,
                     );
                     self.next_token();
-                    // After a reserved word namespace name, emit TS1005 for ';' expected
+                    // After an invalid namespace name, emit TS1005 for ';' expected
                     if self.is_token(SyntaxKind::OpenBraceToken) {
                         let brace_pos = self.token_pos();
                         self.parse_error_at(

@@ -93,7 +93,7 @@ pub fn look_ahead_is_module_declaration(
     look_ahead_is_on_same_line(scanner, current_token, |token| {
         matches!(
             token,
-            SyntaxKind::StringLiteral | SyntaxKind::OpenBraceToken
+            SyntaxKind::StringLiteral | SyntaxKind::OpenBraceToken | SyntaxKind::NumericLiteral
         ) || (token == SyntaxKind::Identifier
             || (tsz_scanner::token_is_keyword(token)
                 && !tsz_scanner::token_is_reserved_word(token)))
