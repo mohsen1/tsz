@@ -10,10 +10,10 @@
 //! - [`SourceLocation`]: Tracks source positions for AST nodes
 
 use super::format::TypeFormatter;
-use crate::def::DefinitionStore;
-use crate::diagnostics::{codes, DiagnosticSeverity, SourceSpan, TypeDiagnostic};
-use crate::types::TypeId;
 use crate::TypeDatabase;
+use crate::def::DefinitionStore;
+use crate::diagnostics::{DiagnosticSeverity, SourceSpan, TypeDiagnostic, codes};
+use crate::types::TypeId;
 use std::sync::Arc;
 
 // =============================================================================
