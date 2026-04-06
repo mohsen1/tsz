@@ -476,6 +476,14 @@ pub struct DefinitionStore {
     /// structural expansions (e.g., "{ r: number; g: number; b: number }").
     body_to_alias: DashMap<TypeId, DefId>,
 
+    /// Set of type alias `DefId`s whose body is a computed type (intersection,
+    /// conditional) that evaluates to a structurally different kind.
+    ///
+    /// tsc drops alias tracking when the body is reduced (e.g.,
+    /// `type T2 = T1 & U` where the intersection simplifies to a union).
+    /// The `TypeFormatter` checks this set to avoid showing computed alias names.
+    computed_alias_defs: dashmap::DashSet<DefId>,
+
     /// Reverse index: `file_id` -> `Vec<DefId>` for per-file definition lookups.
     ///
     /// Populated during `register()` when the `DefinitionInfo` has a `file_id`.
@@ -688,6 +696,7 @@ impl DefinitionStore {
             symbol_def_index: DashMap::new(),
             symbol_only_index: DashMap::new(),
             body_to_alias: DashMap::new(),
+            computed_alias_defs: dashmap::DashSet::new(),
             shape_to_def: DashMap::new(),
             file_to_defs: DashMap::new(),
             class_to_constructor: DashMap::new(),
@@ -834,11 +843,25 @@ impl DefinitionStore {
 
     /// Update the body `TypeId` for a definition (for lazy evaluation).
     pub fn set_body(&self, id: DefId, body: TypeId) {
+        self.set_body_impl(id, body, true);
+    }
+
+    /// Update the body `TypeId` without registering in `body_to_alias`.
+    ///
+    /// Used for type aliases whose body is a computed type (e.g., intersection
+    /// or conditional that evaluates to a structurally different type). tsc
+    /// drops alias tracking in these cases, so we avoid reverse-mapping the
+    /// evaluated result back to the alias name.
+    pub fn set_body_no_alias_index(&self, id: DefId, body: TypeId) {
+        self.set_body_impl(id, body, false);
+    }
+
+    fn set_body_impl(&self, id: DefId, body: TypeId, register_alias: bool) {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
             entry.body = Some(body);
 
             // Maintain body_to_alias index for non-generic type aliases.
-            if entry.kind == DefKind::TypeAlias && entry.type_params.is_empty() {
+            if register_alias && entry.kind == DefKind::TypeAlias && entry.type_params.is_empty() {
                 self.body_to_alias.entry(body).or_insert(id);
             }
         }
@@ -962,6 +985,7 @@ impl DefinitionStore {
         self.symbol_def_index.clear();
         self.symbol_only_index.clear();
         self.body_to_alias.clear();
+        self.computed_alias_defs.clear();
         self.shape_to_def.clear();
         self.file_to_defs.clear();
         self.class_to_constructor.clear();
@@ -1096,6 +1120,20 @@ impl DefinitionStore {
     /// covering all registration paths.
     pub fn find_type_alias_by_body(&self, type_id: TypeId) -> Option<DefId> {
         self.body_to_alias.get(&type_id).map(|r| *r)
+    }
+
+    /// Mark a type alias `DefId` as having a computed body (intersection,
+    /// conditional) that evaluates to a structurally different type.
+    ///
+    /// tsc drops alias tracking in these cases, so the `TypeFormatter` should
+    /// NOT display the alias name for types matched via reverse lookup.
+    pub fn mark_computed_alias(&self, def_id: DefId) {
+        self.computed_alias_defs.insert(def_id);
+    }
+
+    /// Check if a `DefId` was marked as a computed alias.
+    pub fn is_computed_alias(&self, def_id: DefId) -> bool {
+        self.computed_alias_defs.contains(&def_id)
     }
 
     /// Find all `DefId`s registered under the given name.
