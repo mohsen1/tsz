@@ -1868,55 +1868,30 @@ impl<'a> CheckerState<'a> {
                             );
                         }
                     }
-                    // Clear contextual type for spread expressions whose type is
-                    // not influenced by contextual typing. Only direct object
-                    // literals in spreads (e.g., `{ ...{ a: "a" } }`) should keep
-                    // the contextual type so that literal types stay narrow.
-                    // All other expressions — call expressions, property accesses,
-                    // identifiers, etc. — resolve their own type independently.
-                    // Passing the outer contextual type through causes incorrect
-                    // type resolution when the spread expression involves generic
-                    // type parameters (the non-empty request bypasses the node
-                    // cache and triggers a fresh computation that may not have the
-                    // type parameter instantiation available).
+                    // Clear contextual type for call-like spread expressions.
+                    // The outer contextual type (e.g., from a destructuring pattern)
+                    // should not propagate into call expression return types —
+                    // otherwise IIFEs in spreads get false contextual return types,
+                    // producing spurious TS2741/TS2322 errors.
+                    // But direct object literals in spreads (e.g., `{ ...{ a: "a" } }`)
+                    // SHOULD keep the contextual type so literals stay narrow.
                     let unwrapped_spread = self
                         .ctx
                         .arena
                         .skip_parenthesized_and_assertions(spread_expr);
-                    let spread_is_object_literal =
+                    let spread_is_call_like =
                         self.ctx.arena.get(unwrapped_spread).is_some_and(|node| {
-                            node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            node.kind == syntax_kind_ext::CALL_EXPRESSION
+                                || node.kind == syntax_kind_ext::NEW_EXPRESSION
+                                || node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
                         });
-                    let spread_request = if spread_is_object_literal {
-                        base_request
-                    } else {
+                    let spread_request = if spread_is_call_like {
                         base_request.contextual_opt(None)
+                    } else {
+                        base_request
                     };
-                    let mut spread_type =
+                    let spread_type =
                         self.get_type_of_node_with_request(spread_expr, &spread_request);
-                    // When a spread expression resolves to ERROR but is a property
-                    // access chain (e.g., `...this.options.suggestion`), the ERROR
-                    // may be a stale cache entry from an early call-resolution pass
-                    // where the method's `this` type wasn't yet established. In that
-                    // early pass, `this.options` resolves against the unresolved type
-                    // parameter default (`any`), and the chained property access fails.
-                    // By the time the object literal is being fully computed, the
-                    // `this` type stack is correct. Invalidate the cached ERROR and
-                    // re-evaluate to pick up the proper `this` type context.
-                    if spread_type == TypeId::ERROR {
-                        let unwrapped = self
-                            .ctx
-                            .arena
-                            .skip_parenthesized_and_assertions(spread_expr);
-                        if self.ctx.arena.get(unwrapped).is_some_and(|n| {
-                            n.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                                || n.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                        }) {
-                            self.invalidate_expression_for_contextual_retry(spread_expr);
-                            spread_type =
-                                self.get_type_of_node_with_request(spread_expr, &spread_request);
-                        }
-                    }
                     // TS2698: Spread types may only be created from object types.
                     // Only check in expression context — in destructuring targets,
                     // `{ ...x }` is a rest binding (x receives remaining properties),
@@ -2144,6 +2119,7 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.types,
                                     spread_type,
                                 ));
+
                         if is_generic_spread {
                             generic_spread_types.push(spread_type);
                         }
