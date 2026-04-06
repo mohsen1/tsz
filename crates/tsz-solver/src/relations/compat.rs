@@ -727,6 +727,16 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         self.exact_optional_property_types = config.exact_optional_property_types;
         self.no_unchecked_indexed_access = config.no_unchecked_indexed_access;
 
+        // Propagate to internal SubtypeChecker so explain/failure analysis
+        // uses the same strictNullChecks/strictFunctionTypes/exactOptionalPropertyTypes
+        // as the compat layer. Without this, the SubtypeChecker defaults to
+        // strict_null_checks=true and produces incorrect `| undefined` in error
+        // messages when strictNullChecks is off.
+        self.subtype.strict_null_checks = config.strict_null_checks;
+        self.subtype.strict_function_types = config.strict_function_types;
+        self.subtype.exact_optional_property_types = config.exact_optional_property_types;
+        self.subtype.no_unchecked_indexed_access = config.no_unchecked_indexed_access;
+
         // In tsc, `any` is always assignable to and from all types regardless of
         // strictFunctionTypes. The strictFunctionTypes flag only affects contravariance
         // of function parameters. Sound mode is the opt-in for stricter `any` behavior.

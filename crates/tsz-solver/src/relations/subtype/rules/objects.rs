@@ -1253,7 +1253,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// explicitly include undefined. This function adds undefined to the type unless
     /// exactOptionalPropertyTypes is enabled.
     pub(crate) fn optional_property_type(&self, prop: &PropertyInfo) -> TypeId {
-        if prop.optional && !self.exact_optional_property_types {
+        if prop.optional && !self.exact_optional_property_types && self.strict_null_checks {
             self.interner.union2(prop.type_id, TypeId::UNDEFINED)
         } else {
             prop.type_id
@@ -1268,7 +1268,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             prop.write_type
         };
-        if prop.optional && !self.exact_optional_property_types {
+        if prop.optional && !self.exact_optional_property_types && self.strict_null_checks {
             self.interner.union2(write, TypeId::UNDEFINED)
         } else {
             write

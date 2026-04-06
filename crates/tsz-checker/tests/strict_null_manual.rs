@@ -262,3 +262,136 @@ function bar<U>() {
         "Expected at least 1 TS2345 error (null should NOT be assignable to T with strictNullChecks), got {ts2345_count}"
     );
 }
+
+/// When strictNullChecks is off, optional property types in TS2322 error messages
+/// should NOT include `| undefined`. tsc displays the declared type without
+/// `| undefined` because undefined is implicit in all types without strictNullChecks.
+#[test]
+fn test_optional_property_error_message_without_strict_null_checks() {
+    let source = r#"
+interface Stuff {
+    a?: () => string;
+    b: number;
+}
+const x: Stuff = {
+    a() { return 123; },
+    b: 1,
+};
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = crate::context::CheckerOptions {
+        strict_null_checks: false,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let ts2322_diags: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .collect();
+
+    // Should have at least one TS2322 for the property type mismatch
+    assert!(
+        !ts2322_diags.is_empty(),
+        "Expected TS2322 for property type mismatch, got none. All diagnostics: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+
+    // The error message should NOT contain `| undefined` when strictNullChecks is off
+    for diag in &ts2322_diags {
+        assert!(
+            !diag.message_text.contains("| undefined"),
+            "TS2322 error message should not contain '| undefined' when strictNullChecks is off. Got: {}",
+            diag.message_text
+        );
+    }
+}
+
+/// When strictNullChecks is ON, optional property types in TS2322 error messages
+/// SHOULD include `| undefined`.
+#[test]
+fn test_optional_property_error_message_with_strict_null_checks() {
+    let source = r#"
+interface Stuff {
+    a?: () => string;
+    b: number;
+}
+const x: Stuff = {
+    a() { return 123; },
+    b: 1,
+};
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let ts2322_diags: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .collect();
+
+    // Should have at least one TS2322 for the property type mismatch
+    assert!(
+        !ts2322_diags.is_empty(),
+        "Expected TS2322 for property type mismatch with strictNullChecks, got none. All diagnostics: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+
+    // The error message SHOULD contain `| undefined` when strictNullChecks is on
+    let has_undefined = ts2322_diags
+        .iter()
+        .any(|d| d.message_text.contains("| undefined"));
+    assert!(
+        has_undefined,
+        "TS2322 error message should contain '| undefined' when strictNullChecks is on. Messages: {:?}",
+        ts2322_diags
+            .iter()
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+}
