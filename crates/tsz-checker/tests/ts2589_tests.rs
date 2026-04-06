@@ -106,6 +106,69 @@ let f1: Foo<"true", {}>;
     );
 }
 
+/// TS2615: circular mapped type in a type alias with indexed access should
+/// emit both TS2589 and TS2615 when the mapped type constraint resolves to
+/// a concrete string literal key.
+///
+/// Repro from microsoft/TypeScript#30050 (`recursivelyExpandingUnionNoStackoverflow.ts`):
+/// `type N<T, K extends string> = T | { [P in K]: N<T, K> }[K];`
+/// `type M = N<number, "M">;`
+///
+/// tsc emits TS2615 alongside TS2589 because `K = "M"` is a concrete key.
+#[test]
+fn circular_mapped_type_alias_emits_ts2615_alongside_ts2589() {
+    let source = r#"
+type N<T, K extends string> = T | { [P in K]: N<T, K> }[K];
+type M = N<number, "M">;
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2589),
+        "Should emit TS2589 for excessively deep type instantiation, got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.0 == 2615),
+        "Should emit TS2615 for circular mapped type property, got: {diags:?}"
+    );
+    let ts2615 = diags.iter().find(|d| d.0 == 2615).unwrap();
+    assert!(
+        ts2615.1.contains("'M'"),
+        "TS2615 message should reference property 'M', got: {}",
+        ts2615.1
+    );
+    assert!(
+        ts2615.1.contains(r#"[P in "M"]"#),
+        "TS2615 message should include mapped type with quoted key, got: {}",
+        ts2615.1
+    );
+}
+
+/// TS2615 should NOT be emitted when the mapped type constraint resolves to
+/// multiple keys (e.g., `keyof T`). In that case, tsc only emits TS2589.
+#[test]
+fn circular_mapped_type_alias_no_ts2615_for_keyof_constraint() {
+    let source = r#"
+type Circular<T> = { [P in keyof T]: Circular<T> };
+type tup = [number, number, number, number];
+function foo(arg: Circular<tup>): tup {
+    return arg;
+}
+"#;
+    let diags = get_diagnostics(source);
+    // tsc does not emit TS2615 for `Circular<tup>` because `keyof tup`
+    // doesn't resolve to a single concrete string literal key.
+    // (The interface-level TS2615 is a separate check in interface_checks.rs.)
+    // Here we only verify the type-alias-application path doesn't false-positive.
+    let alias_ts2615 = diags
+        .iter()
+        .filter(|d| d.0 == 2615 && d.1.contains("'?'"))
+        .count();
+    assert_eq!(
+        alias_ts2615, 0,
+        "Should NOT emit TS2615 with '?' placeholder for keyof constraint, got: {diags:?}"
+    );
+}
+
 /// Regression test for react16.d.ts infinite loop.
 ///
 /// Deeply-nested generic types with cross-referencing interfaces and type

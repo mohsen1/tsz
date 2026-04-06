@@ -897,11 +897,19 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::diagnostic_codes;
 
         // Try to extract the property name from the type application args.
-        let prop_name = self.extract_mapped_type_property_name(type_id);
-        let prop_display = prop_name.as_deref().unwrap_or("?");
+        // Returns (unquoted_name, quoted_name) — tsc uses unquoted in the property
+        // reference and quoted in the mapped type representation.
+        // tsc only emits TS2615 for type alias applications when the mapped type
+        // constraint resolves to a concrete string literal key (e.g., `"M"` in
+        // `N<number, "M">`). When the constraint is `keyof T` resolving to
+        // multiple keys, tsc omits TS2615 and only emits TS2589.
+        let Some((prop_display, prop_in_mapped)) = self.extract_mapped_type_property_name(type_id)
+        else {
+            return;
+        };
 
         // Build a simplified mapped type representation for the message.
-        let mapped_str = format!("{{ [P in {prop_display}]: any; }}");
+        let mapped_str = format!("{{ [P in {prop_in_mapped}]: any; }}");
 
         let message = format!(
             "Type of property '{prop_display}' circularly references itself in mapped type '{mapped_str}'."
@@ -914,7 +922,8 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Try to extract the property name from a circular mapped type application.
-    fn extract_mapped_type_property_name(&self, type_id: TypeId) -> Option<String> {
+    /// Returns (unquoted_name, quoted_name) for use in the diagnostic message.
+    fn extract_mapped_type_property_name(&self, type_id: TypeId) -> Option<(String, String)> {
         let (_base, args) =
             tsz_solver::type_queries::get_application_info(self.ctx.types, type_id)?;
 
@@ -923,7 +932,7 @@ impl<'a> CheckerState<'a> {
                 tsz_solver::type_queries::get_string_literal_value(self.ctx.types, arg_id)
             {
                 let name = self.ctx.types.resolve_atom(atom);
-                return Some(format!("\"{name}\""));
+                return Some((name.to_string(), format!("\"{name}\"")));
             }
         }
         None
