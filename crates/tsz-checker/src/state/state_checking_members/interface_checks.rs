@@ -28,6 +28,10 @@ impl<'a> CheckerState<'a> {
         // TS1277: 'const' modifier not allowed on interface type parameters
         self.check_const_type_parameter_on_non_function(iface.type_parameters.as_ref());
 
+        // TS1274: Check for modifiers that can never appear on type parameters
+        // (public, private, static, etc.)
+        self.check_never_valid_type_parameter_modifiers(iface.type_parameters.as_ref());
+
         // Check for reserved interface names (TS2427)
         // Interface names cannot be primitive type names (string, number, boolean, etc.)
         if iface.name.is_some()

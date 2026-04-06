@@ -102,6 +102,10 @@ impl<'a> CheckerState<'a> {
         // TS1277: 'const' modifier not allowed on type alias type parameters
         self.check_const_type_parameter_on_non_function(alias.type_parameters.as_ref());
 
+        // TS1274: Check for modifiers that can never appear on type parameters
+        // (public, private, static, etc.)
+        self.check_never_valid_type_parameter_modifiers(alias.type_parameters.as_ref());
+
         // Check type parameter defaults for ordering (TS2706), forward references (TS2744),
         // and circular defaults (TS2716)
         let alias_name_str = self

@@ -994,6 +994,40 @@ impl ParserState {
                     self.next_token();
                     modifiers.push(self.arena.add_token(kind as u16, pos, end));
                 }
+                // Handle invalid modifiers (public, private, static, etc.) - consume them
+                // so the checker can emit TS1274. Only consume if followed by an identifier.
+                SyntaxKind::PublicKeyword
+                | SyntaxKind::PrivateKeyword
+                | SyntaxKind::ProtectedKeyword
+                | SyntaxKind::StaticKeyword
+                | SyntaxKind::ReadonlyKeyword
+                | SyntaxKind::AsyncKeyword
+                | SyntaxKind::DeclareKeyword
+                | SyntaxKind::AbstractKeyword
+                | SyntaxKind::OverrideKeyword
+                | SyntaxKind::AccessorKeyword
+                | SyntaxKind::ExportKeyword
+                | SyntaxKind::DefaultKeyword => {
+                    // Peek at the next token: only consume if followed by something
+                    // that looks like a type parameter name (identifier/keyword)
+                    let saved_token = self.current_token;
+                    let saved_state = self.scanner.save_state();
+                    self.next_token();
+                    let _next = self.current_token;
+                    self.scanner.restore_state(saved_state);
+                    self.current_token = saved_token;
+
+                    // If next token could be a type parameter name, consume this as a modifier
+                    if self.is_identifier_or_keyword() || self.is_reserved_word() {
+                        let kind = self.token();
+                        let pos = self.token_pos();
+                        let end = self.token_end();
+                        self.next_token();
+                        modifiers.push(self.arena.add_token(kind as u16, pos, end));
+                    } else {
+                        break;
+                    }
+                }
                 _ => break,
             }
         }
