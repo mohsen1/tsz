@@ -342,6 +342,14 @@ impl<'a> CheckerState<'a> {
         depth: usize,
     ) -> TypeId {
         const MAX_ASSIGNABILITY_DISPLAY_DEPTH: usize = 12;
+        // Type parameters should not be normalized — they should display as their
+        // name (e.g., `T`) not their constraint (e.g., `String`). The solver's
+        // `get_object_shape` looks through type parameter constraints, which causes
+        // the object-shape branch below to incorrectly resolve `T extends String`
+        // to the `String` interface's object type.
+        if crate::query_boundaries::state::checking::is_type_parameter_like(self.ctx.types, ty) {
+            return ty;
+        }
         let ty = self
             .materialize_finite_mapped_type_for_display(ty)
             .unwrap_or(ty);
