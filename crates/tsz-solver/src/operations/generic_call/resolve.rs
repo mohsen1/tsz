@@ -737,13 +737,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             &mut placeholder_visited,
                         ));
                     }
-                    // When the target type is a type parameter placeholder, check if the
-                    // argument is assignable to the constraint or default. If neither,
-                    // the call will fail after inference.
+                    // When the target type is a type parameter placeholder with a constraint,
+                    // check if the argument is assignable to the constraint. If not,
+                    // the call will fail after inference. Note: we only check constraints,
+                    // not defaults, because defaults are fallback types when inference
+                    // fails, not requirements for the argument.
                     if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(target_type) {
-                        // Try constraint first, then default
-                        let check_type = tp.constraint.or(tp.default);
-                        if let Some(check_type_id) = check_type {
+                        // Only check constraint, not default
+                        if let Some(check_type_id) = tp.constraint {
                             let inst_check_type = instantiate_call_type(
                                 self.interner,
                                 check_type_id,
