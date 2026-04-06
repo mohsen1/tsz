@@ -737,34 +737,39 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             &mut placeholder_visited,
                         ));
                     }
-                    if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(target_type)
-                        && let Some(constraint) = tp.constraint
-                    {
-                        let inst_constraint = instantiate_call_type(
-                            self.interner,
-                            constraint,
-                            &substitution,
-                            actual_this_type,
-                        );
-                        placeholder_visited.clear();
-                        if !self.type_contains_placeholder(
-                            inst_constraint,
-                            &var_map,
-                            &mut placeholder_visited,
-                        ) {
-                            // Constraint is fully concrete - safe to check now
-                            if !self
-                                .checker
-                                .is_assignable_to(contextual_arg_type, inst_constraint)
-                                && !self
-                                    .is_function_union_compat(contextual_arg_type, inst_constraint)
-                            {
-                                return CallResult::ArgumentTypeMismatch {
-                                    index: i,
-                                    expected: inst_constraint,
-                                    actual: contextual_arg_type,
-                                    fallback_return: TypeId::ERROR,
-                                };
+                    // When the target type is a type parameter placeholder, check if the
+                    // argument is assignable to the constraint or default. If neither,
+                    // the call will fail after inference.
+                    if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(target_type) {
+                        // Try constraint first, then default
+                        let check_type = tp.constraint.or(tp.default);
+                        if let Some(check_type_id) = check_type {
+                            let inst_check_type = instantiate_call_type(
+                                self.interner,
+                                check_type_id,
+                                &substitution,
+                                actual_this_type,
+                            );
+                            placeholder_visited.clear();
+                            if !self.type_contains_placeholder(
+                                inst_check_type,
+                                &var_map,
+                                &mut placeholder_visited,
+                            ) {
+                                // Check type is fully concrete - safe to check now
+                                if !self
+                                    .checker
+                                    .is_assignable_to(contextual_arg_type, inst_check_type)
+                                    && !self
+                                        .is_function_union_compat(contextual_arg_type, inst_check_type)
+                                {
+                                    return CallResult::ArgumentTypeMismatch {
+                                        index: i,
+                                        expected: inst_check_type,
+                                        actual: contextual_arg_type,
+                                        fallback_return: TypeId::ERROR,
+                                    };
+                                }
                             }
                         }
                     }
