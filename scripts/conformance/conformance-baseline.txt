@@ -166,6 +166,7 @@ FAIL TypeScript/tests/cases/compiler/jsxFragmentWrongType.tsx | expected:[TS2304
 FAIL TypeScript/tests/cases/compiler/jsxFunctionTypeChildren.tsx | expected:[] actual:[TS2739]
 FAIL TypeScript/tests/cases/compiler/jsxIntrinsicElementsTypeArgumentErrors.tsx | expected:[TS1009,TS1099,TS2304,TS2344,TS2558] actual:[TS1099]
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixIntrinsics.tsx | expected:[TS2322,TS2339] actual:[TS2322,TS2339]
+FAIL TypeScript/tests/cases/compiler/jsxRuntimePragma.ts | expected:[] actual:[TS2740,TS2741]
 FAIL TypeScript/tests/cases/compiler/keyRemappingKeyofResult.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/keyofIsLiteralContexualType.ts | expected:[TS2322,TS2339] actual:[TS2322,TS2339]
 FAIL TypeScript/tests/cases/compiler/lambdaArgCrash.ts | expected:[TS2304,TS2345] actual:[TS2304,TS2345]
@@ -568,6 +569,7 @@ FAIL TypeScript/tests/cases/conformance/jsdoc/typedefCrossModule5.ts | expected:
 FAIL TypeScript/tests/cases/conformance/jsdoc/typedefDuplicateTypeDeclaration.ts | expected:[TS8033] actual:[TS8033]
 FAIL TypeScript/tests/cases/conformance/jsdoc/typedefTagWrapping.ts | expected:[TS1110] actual:[TS1110]
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenCanBeTupleType.tsx | expected:[TS2769] actual:[TS2769]
+FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty2.tsx | expected:[TS2710,TS2741,TS2746] actual:[TS2710,TS2739,TS2741,TS2746]
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty4.tsx | expected:[TS2322,TS2551] actual:[TS2551,TS2746]
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty5.tsx | expected:[TS2740,TS2741] actual:[TS2740,TS2741]
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxGenericTagHasCorrectInferences.tsx | expected:[TS2322] actual:[TS2322]
@@ -4563,7 +4565,6 @@ PASS TypeScript/tests/cases/compiler/jsxNestedWithinTernaryParsesCorrectly.tsx
 PASS TypeScript/tests/cases/compiler/jsxPartialSpread.tsx
 PASS TypeScript/tests/cases/compiler/jsxPreserveWithJsInput.ts
 PASS TypeScript/tests/cases/compiler/jsxPropsAsIdentifierNames.tsx
-PASS TypeScript/tests/cases/compiler/jsxRuntimePragma.ts
 PASS TypeScript/tests/cases/compiler/jsxSpreadFirstUnionNoErrors.tsx
 PASS TypeScript/tests/cases/compiler/jsxSpreadTag.ts
 PASS TypeScript/tests/cases/compiler/jsxViaImport.2.tsx
@@ -10182,7 +10183,6 @@ PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty13.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty14.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty15.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty16.tsx
-PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty2.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty3.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty6.tsx
 PASS TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty7.tsx
