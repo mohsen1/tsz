@@ -992,6 +992,15 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
+                // When JSX body children exist, treat `children` as already provided
+                // so spreads that don't include `children` don't trigger TS2741.
+                if children_ctx
+                    .as_ref()
+                    .is_some_and(|ctx| ctx.child_count > 0)
+                {
+                    overridden.insert("children");
+                }
+
                 // Check if there are later spreads that could provide missing properties.
                 let has_later_spreads = i < spread_count - 1;
 
