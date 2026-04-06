@@ -1025,6 +1025,7 @@ impl<'a> CheckerState<'a> {
                     props_type,
                     tag_name_idx,
                     &overridden,
+                    &overridden_for_missing,
                     has_later_spreads,
                     suppress_missing_props,
                     &display_target,

@@ -20,6 +20,7 @@ impl<'a> CheckerState<'a> {
         props_type: TypeId,
         tag_name_idx: NodeIndex,
         overridden_names: &rustc_hash::FxHashSet<&str>,
+        overridden_for_missing: &rustc_hash::FxHashSet<&str>,
         has_later_spreads: bool,
         suppress_missing_props: bool,
         display_target: &str,
@@ -150,7 +151,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     if !spread_prop_names.contains(&req_name)
-                        && !overridden_names.contains(req_name.as_str())
+                        && !overridden_for_missing.contains(req_name.as_str())
                     {
                         missing_props.push(req_name);
                     }
@@ -201,7 +202,10 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check per-property type mismatches
-        let mut has_type_mismatch = false;
+        // Track mismatches that will NOT be fixed by later explicit attributes.
+        // A mismatch is "fixable" if a later explicit attr will overwrite the property.
+        // A mismatch is "unfixable" if the spread's value will actually be used.
+        let mut has_unfixable_mismatch = false;
         for prop in &spread_shape.properties {
             let prop_name = self.ctx.types.resolve_atom(prop.name).to_string();
 
@@ -227,30 +231,33 @@ impl<'a> CheckerState<'a> {
             };
 
             if !self.is_assignable_to(source_type, expected_type) {
-                has_type_mismatch = true;
-                break;
+                // This property has a type mismatch.
+                // Check if it will be overwritten by a later explicit attribute.
+                if !overridden_names.contains(prop_name.as_str()) {
+                    // No later explicit attr will overwrite this property,
+                    // so the spread's wrong value will be used.
+                    has_unfixable_mismatch = true;
+                    break;
+                }
+                // If the property is in overridden_names, a later explicit attr
+                // will provide the value instead, so this mismatch is fixable.
             }
         }
 
-        // For generic spreads with per-property type mismatches, still emit TS2322
-        // unless the entire spread type is known to be assignable to the props type.
-        // This handles cases like `T extends { y: string }` being spread into an element
-        // that requires `{ x: string }` - the constraint doesn't satisfy the requirement.
-        if has_type_mismatch && spread_has_type_params {
-            // Only suppress if the resolved/evaluated spread type is assignable.
-            // The resolved_spread represents the constraint or instantiated type,
-            // which gives us a concrete type to check against.
-            if self.is_assignable_to(resolved_spread, props_type) {
-                has_type_mismatch = false;
-            }
-        }
-
-        // For generic spreads where no per-property mismatches were found,
-        // still check whole-type assignability. This catches cases where the
-        // spread is missing required properties that aren't covered by per-property checks.
+        // For generic spreads, also check whole-type assignability to catch
+        // missing required properties that aren't covered by per-property checks.
+        let mut has_type_mismatch = has_unfixable_mismatch;
         if !has_type_mismatch && spread_has_type_params {
             if !self.is_assignable_to(resolved_spread, props_type) {
                 has_type_mismatch = true;
+            }
+        }
+
+        // For generic spreads with type mismatches, only suppress TS2322 if the
+        // resolved spread type is assignable to the props type.
+        if has_type_mismatch && spread_has_type_params {
+            if self.is_assignable_to(resolved_spread, props_type) {
+                has_type_mismatch = false;
             }
         }
 
