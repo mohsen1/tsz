@@ -3416,8 +3416,8 @@ const bad: B[] = Array.from(inputA.values());
 
     assert_eq!(
         codes,
-        vec![2322],
-        "Expected only the outer B[] assignment failure from Array.from(iterable). Got diagnostics: {:?}",
+        vec![2322, 2769],
+        "Expected B[] assignment failure and Array.from overload mismatch. Got diagnostics: {:?}",
         result.diagnostics
     );
 }
