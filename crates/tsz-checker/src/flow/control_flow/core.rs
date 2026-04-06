@@ -12,7 +12,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{ParamInfo, QueryDatabase, TupleElement, TypeId, TypePredicate};
+use tsz_solver::{GuardSense, ParamInfo, QueryDatabase, TupleElement, TypeId, TypePredicate};
 
 type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
 type ReferenceMatchCache = RefCell<FxHashMap<(u32, u32), bool>>;
@@ -2091,6 +2091,37 @@ impl<'a> FlowAnalyzer<'a> {
         // e.g., assert(typeof x === "string") narrows x to string.
         if resolved_predicate.type_id.is_none() {
             let antecedent_id = flow.antecedent.first().copied().unwrap_or(FlowNodeId::NONE);
+            
+            // Check if the predicate target is a negated expression (!predicate(x))
+            // If so, we need to extract the inner type guard and apply it with negated sense.
+            if let Some(pred_node) = self.arena.get(predicate_target)
+                && pred_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                && let Some(unary) = self.arena.get_unary_expr(pred_node)
+                && unary.operator == SyntaxKind::ExclamationToken as u16
+            {
+                // The argument is !typeGuardCall, so typeGuardCall is false.
+                // Extract the type guard from the inner call and apply with negative sense.
+                if let Some((guard, guard_target, _is_optional)) =
+                    self.extract_type_guard(unary.operand)
+                {
+                    if self.is_matching_reference(guard_target, reference) {
+                        let env_borrow;
+                        let narrowing = if let Some(env) = &self.type_environment {
+                            env_borrow = env.borrow();
+                            self.make_narrowing_context().with_resolver(&*env_borrow)
+                        } else {
+                            self.make_narrowing_context()
+                        };
+                        // Apply the guard with NEGATIVE sense (because of the !)
+                        return narrowing.narrow_type(
+                            narrowed_pre_type,
+                            &guard,
+                            GuardSense::Negative,
+                        );
+                    }
+                }
+            }
+            
             return self.narrow_type_by_condition(
                 narrowed_pre_type,
                 predicate_target,
