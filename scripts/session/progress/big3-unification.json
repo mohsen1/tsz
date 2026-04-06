@@ -1,7 +1,9 @@
 {
   "campaign": "big3-unification",
   "baseline_at_creation": 11745,
-  "status": "diminishing",
+  "current_pass": 11752,
+  "current_big3_wrong_code": 67,
+  "status": "active",
   "sessions": [
     {
       "date": "2026-04-06",
