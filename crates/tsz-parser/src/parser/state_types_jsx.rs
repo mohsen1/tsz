@@ -1178,12 +1178,7 @@ impl ParserState {
             // When the current token is '}' in JSX context, emit TS1005.
             if self.is_token(SyntaxKind::CloseBraceToken) {
                 use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at(
-                    start_pos,
-                    1,
-                    "'}' expected.",
-                    diagnostic_codes::EXPECTED,
-                );
+                self.parse_error_at(start_pos, 1, "'}' expected.", diagnostic_codes::EXPECTED);
             } else {
                 self.error_identifier_expected();
             }
