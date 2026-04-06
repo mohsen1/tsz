@@ -550,14 +550,20 @@ impl<'a> CheckerState<'a> {
                 {
                     return false;
                 }
-                // Widen literal types for display (e.g. "abc" → string) to match tsc behavior
-                let display_type = self.widen_type_for_display(body_type);
+                // Widen literal types in the function return type for display.
+                // This ensures that `() => "foo"` is displayed as `() => string`
+                // to match tsc's behavior for error messages.
+                let func_type = self.get_type_of_node(arg_idx);
+                let widened_func_type = tsz_solver::widen_type_deep(self.ctx.types, func_type);
                 // For callback return type errors, use the full function types in the error message
                 // instead of just the return types. This produces errors like:
                 // "Type '() => string' is not assignable to type '{ (): number; (i: number): number; }'"
                 // instead of: "Type 'string' is not assignable to type 'number'"
-                let func_type = self.get_type_of_node(arg_idx);
-                self.error_type_not_assignable_at(func_type, param_type, func.body);
+                self.error_type_not_assignable_at_with_display_types(
+                    widened_func_type,
+                    param_type,
+                    arg_idx,
+                );
                 true
             }
             k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
@@ -697,13 +703,16 @@ impl<'a> CheckerState<'a> {
                 // When we have a valid function index, use full function types for error display
                 if func_idx.0 != 0 {
                     let func_type = self.get_type_of_node(func_idx);
+                    // Widen the function type for display to match tsc behavior
+                    // (e.g., show `() => string` instead of `() => "foo"`)
+                    let widened_func_type = tsz_solver::widen_type_deep(self.ctx.types, func_type);
                     !self.check_assignable_or_report_at_with_display_types(
                         return_type,
                         expected_return_type,
-                        func_type,
+                        widened_func_type,
                         param_type,
                         ret.expression,
-                        ret.expression,
+                        func_idx, // Use func_idx as diagnostic anchor to report at function position
                     )
                 } else {
                     !self.check_assignable_or_report_at_without_source_elaboration(
