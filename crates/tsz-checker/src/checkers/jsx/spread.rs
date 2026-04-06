@@ -9,12 +9,18 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Check spread property types against the expected props type.
+    /// 
+    /// When there are multiple spreads, we don't emit TS2739/TS2740 for missing
+    /// properties here because later spreads might provide them. Instead, we let
+    /// the final combined prop validation handle missing property checks.
     pub(crate) fn check_spread_property_types(
         &mut self,
         spread_type: TypeId,
         props_type: TypeId,
         tag_name_idx: NodeIndex,
         overridden_names: &rustc_hash::FxHashSet<&str>,
+        has_later_spreads: bool,
         display_target: &str,
     ) -> bool {
         use crate::query_boundaries::common::PropertyAccessResult;
@@ -112,43 +118,62 @@ impl<'a> CheckerState<'a> {
             return true;
         };
 
-        // Suppress TS2322 when spread also has missing required properties (TS2741 handles those).
-        if let Some(props_shape) =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)
-        {
-            let spread_prop_names: rustc_hash::FxHashSet<String> = spread_shape
-                .properties
-                .iter()
-                .map(|p| self.ctx.types.resolve_atom(p.name))
-                .collect();
-            for req_prop in &props_shape.properties {
-                if req_prop.optional {
-                    continue;
-                }
-                let req_name = self.ctx.types.resolve_atom(req_prop.name).to_string();
-                if req_name == "key" || req_name == "ref" {
-                    continue;
-                }
-                if !spread_prop_names.contains(&req_name)
-                    && !overridden_names.contains(req_name.as_str())
-                {
-                    if spread_has_type_params {
-                        if self.is_assignable_to(spread_type, props_type) {
-                            return false;
-                        }
-                        let spread_name = self.format_type(spread_type);
-                        let message = format_message(
-                            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                            &[&spread_name, &props_display],
-                        );
-                        self.error_at_node(
-                            tag_name_idx,
-                            &message,
-                            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        );
-                        return true;
+        // When there are multiple spreads, we don't emit TS2739 for missing properties
+        // from individual spreads. Later spreads might provide the missing properties,
+        // and the final combined prop validation will catch truly missing properties.
+        // Only check for missing properties when this is the ONLY spread (no later spreads).
+        if !has_later_spreads {
+            if let Some(props_shape) =
+                tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)
+            {
+                let spread_prop_names: rustc_hash::FxHashSet<String> = spread_shape
+                    .properties
+                    .iter()
+                    .map(|p| self.ctx.types.resolve_atom(p.name))
+                    .collect();
+                let mut missing_props: Vec<String> = Vec::new();
+                for req_prop in &props_shape.properties {
+                    if req_prop.optional {
+                        continue;
                     }
-                    return false;
+                    let req_name = self.ctx.types.resolve_atom(req_prop.name).to_string();
+                    if req_name == "key" || req_name == "ref" {
+                        continue;
+                    }
+                    if !spread_prop_names.contains(&req_name)
+                        && !overridden_names.contains(req_name.as_str())
+                    {
+                        missing_props.push(req_name);
+                    }
+                }
+
+                if !missing_props.is_empty() {
+                    // Emit TS2739 (≤5 missing props) or TS2740 (>5 missing props)
+                    let spread_name = self.format_type(spread_type);
+                    let is_truncated = missing_props.len() > 5;
+                    let display_count = if is_truncated { 4 } else { 5.min(missing_props.len()) };
+                    let props_list = missing_props[..display_count].join(", ");
+
+                    let (message, code) = if is_truncated {
+                        let more_count = missing_props.len() - display_count;
+                        (
+                            format_message(
+                                diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                                &[&spread_name, &props_display, &props_list, &more_count.to_string()],
+                            ),
+                            diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                        )
+                    } else {
+                        (
+                            format_message(
+                                diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                                &[&spread_name, &props_display, &props_list],
+                            ),
+                            diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                        )
+                    };
+                    self.error_at_node(tag_name_idx, &message, code);
+                    return true;
                 }
             }
         }
