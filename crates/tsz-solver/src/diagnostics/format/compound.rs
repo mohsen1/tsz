@@ -1202,6 +1202,22 @@ impl<'a> TypeFormatter<'a> {
         {
             return Some(self.format_def_name(&def));
         }
+        // Special case: detect the global Object interface by its characteristic properties.
+        // The Object interface has: constructor, toString, toLocaleString, valueOf,
+        // hasOwnProperty, isPrototypeOf, propertyIsEnumerable.
+        // When we see an object shape with exactly these properties (in any order), display as "Object".
+        if shape.string_index.is_none()
+            && shape.number_index.is_none()
+            && shape.properties.len() >= 6
+            && shape.properties.iter().any(|p| self.atom(p.name).as_ref() == "constructor")
+            && shape.properties.iter().any(|p| self.atom(p.name).as_ref() == "toString")
+            && shape.properties.iter().any(|p| self.atom(p.name).as_ref() == "toLocaleString")
+            && shape.properties.iter().any(|p| self.atom(p.name).as_ref() == "valueOf")
+            && shape.properties.iter().any(|p| self.atom(p.name).as_ref() == "hasOwnProperty")
+            && shape.properties.iter().any(|p| self.atom(p.name).as_ref() == "isPrototypeOf")
+        {
+            return Some("Object".to_string());
+        }
         None
     }
 
