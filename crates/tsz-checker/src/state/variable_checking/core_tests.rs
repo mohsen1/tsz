@@ -91,6 +91,58 @@ mod ts2481_tests {
             "Expected 1 TS2481 for deeply nested var: {errors:?}"
         );
     }
+
+    #[test]
+    fn destructuring_object_binding_emits_ts2481() {
+        // if (true) { let x; if (true) { var { x } = { x: 0 }; } }
+        let source =
+            "if (true) {\n    let x;\n    if (true) {\n        var { x } = { x: 0 };\n    }\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(
+            errors.len(),
+            1,
+            "Expected 1 TS2481 for destructured var: {errors:?}"
+        );
+        assert!(errors[0].1.contains("'x'"));
+    }
+
+    #[test]
+    fn destructuring_object_binding_with_default_emits_ts2481() {
+        // if (true) { let x; if (true) { var { x = 0 } = { x: 0 }; } }
+        let source =
+            "if (true) {\n    let x;\n    if (true) {\n        var { x = 0 } = { x: 0 };\n    }\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(
+            errors.len(),
+            1,
+            "Expected 1 TS2481 for destructured var with default: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn destructuring_renamed_binding_emits_ts2481() {
+        // if (true) { let x; if (true) { var { x: x } = { x: 0 }; } }
+        let source =
+            "if (true) {\n    let x;\n    if (true) {\n        var { x: x } = { x: 0 };\n    }\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(
+            errors.len(),
+            1,
+            "Expected 1 TS2481 for renamed destructured var: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn destructuring_renamed_with_default_emits_ts2481() {
+        // if (true) { let x; if (true) { var { x: x = 0 } = { x: 0 }; } }
+        let source = "if (true) {\n    let x;\n    if (true) {\n        var { x: x = 0 } = { x: 0 };\n    }\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(
+            errors.len(),
+            1,
+            "Expected 1 TS2481 for renamed destructured var with default: {errors:?}"
+        );
+    }
 }
 
 #[cfg(test)]

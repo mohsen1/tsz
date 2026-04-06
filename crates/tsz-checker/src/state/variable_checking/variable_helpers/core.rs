@@ -5,6 +5,7 @@ use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -61,194 +62,240 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Only applies to identifier names (not destructuring patterns)
+        // Collect all bound identifier names and their node indices from the
+        // declaration name. For simple identifiers this is just the one name;
+        // for destructuring patterns we walk the binding elements.
         let Some(name_node) = self.ctx.arena.get(var_decl.name) else {
             return;
         };
-        if name_node.kind != SyntaxKind::Identifier as u16 {
-            return;
-        }
-        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
-            return;
-        };
-        let var_name = ident.escaped_text.as_str();
-
-        // Note: We do NOT check the symbol's flags here. When `const x` and `var x`
-        // appear in the same block, the binder may map the var node to the block-scoped
-        // symbol (since they share a name in the block scope table). The syntactic check
-        // above (parent VariableDeclarationList flags) is the reliable guard.
-
-        // Walk the scope chain from the var's name position, looking for a block-scoped
-        // symbol with the same name in an enclosing scope.
-        let Some(start_scope_id) = self
-            .ctx
-            .binder
-            .find_enclosing_scope(self.ctx.arena, var_decl.name)
-        else {
-            return;
-        };
-
-        let mut scope_id = start_scope_id;
-        let mut found_block_scoped_symbol = None;
-        let mut found_scope_kind = None;
-        let mut found_scope_id = tsz_binder::ScopeId::NONE;
-        let mut depth = 0;
-        while scope_id.is_some() && depth < 50 {
-            let Some(scope) = self.ctx.binder.scopes.get(scope_id.0 as usize) else {
-                break;
-            };
-            if let Some(sym_id) = scope.table.get(var_name)
-                && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
-                && sym.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0
-            {
-                found_block_scoped_symbol = Some(sym_id);
-                found_scope_kind = Some(scope.kind);
-                found_scope_id = scope_id;
-                break;
+        let mut bound_names: Vec<(String, NodeIndex)> = Vec::new();
+        if name_node.kind == SyntaxKind::Identifier as u16 {
+            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                bound_names.push((ident.escaped_text.clone(), var_decl.name));
             }
-            // If we hit a function scope, var hoists to this level — stop searching
-            if scope.is_function_scope() {
-                break;
-            }
-            scope_id = scope.parent;
-            depth += 1;
+        } else {
+            // Destructuring pattern — collect all binding element names
+            self.collect_binding_identifiers(var_decl.name, &mut bound_names);
         }
 
-        let Some(_block_sym_id) = found_block_scoped_symbol else {
-            return;
-        };
-        let Some(scope_kind) = found_scope_kind else {
-            return;
-        };
+        for (var_name, name_node_idx) in &bound_names {
+            let var_name: &str = var_name.as_str();
 
-        // Check if the found scope is at a function-level boundary.
-        // If so, the var hoists to the same level and this is just a
-        // TS2451 duplicate, not a TS2481 initialization conflict.
-        let names_share_scope = if matches!(
-            scope_kind,
-            tsz_binder::ContainerKind::SourceFile
-                | tsz_binder::ContainerKind::Function
-                | tsz_binder::ContainerKind::Module
-        ) {
-            true
-        } else if scope_kind == tsz_binder::ContainerKind::Block {
-            // A function body creates a Block scope inside the Function scope.
-            // When the let/const lives in that function-body Block, the Block's
-            // AST container_node should be a direct child of a function-like node.
-            // Check if this Block scope is a function body by examining the AST.
+            // Note: We do NOT check the symbol's flags here. When `const x` and `var x`
+            // appear in the same block, the binder may map the var node to the block-scoped
+            // symbol (since they share a name in the block scope table). The syntactic check
+            // above (parent VariableDeclarationList flags) is the reliable guard.
 
-            self.ctx
+            // Walk the scope chain from the var's name position, looking for a block-scoped
+            // symbol with the same name in an enclosing scope.
+            let Some(start_scope_id) = self
+                .ctx
                 .binder
-                .scopes
-                .get(found_scope_id.0 as usize)
-                .and_then(|s| {
-                    // Get the AST node that created this scope (the Block node)
-                    let block_node_idx = s.container_node;
-                    // Get the Block's parent in the AST
-                    self.ctx
-                        .arena
-                        .get_extended(block_node_idx)
-                        .map(|ext| ext.parent)
-                })
-                .and_then(|parent_idx| self.ctx.arena.get(parent_idx))
-                .is_some_and(|parent_node| {
-                    use tsz_parser::parser::syntax_kind_ext;
-                    matches!(
-                        parent_node.kind,
-                        k if k == syntax_kind_ext::FUNCTION_DECLARATION
-                            || k == syntax_kind_ext::FUNCTION_EXPRESSION
-                            || k == syntax_kind_ext::METHOD_DECLARATION
-                            || k == syntax_kind_ext::CONSTRUCTOR
-                            || k == syntax_kind_ext::GET_ACCESSOR
-                            || k == syntax_kind_ext::SET_ACCESSOR
-                            || k == syntax_kind_ext::ARROW_FUNCTION
-                    )
-                })
-        } else {
-            false
-        };
-
-        if names_share_scope {
-            // The var hoists to the same scope as the let/const.
-            // tsc uses TS2300 ("Duplicate identifier") when the var declaration
-            // appears before the block-scoped declaration, and TS2451 ("Cannot
-            // redeclare block-scoped variable") when the block-scoped declaration
-            // comes first.
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-
-            // Check if any block-scoped declaration appears before this var.
-            // For cross-file conflicts, skip: duplicate_identifiers handles them.
-            let var_pos = self.ctx.arena.get(decl_idx).map_or(u32::MAX, |n| n.pos);
-            let has_local_block_scoped =
-                self.ctx
-                    .binder
-                    .get_symbol(_block_sym_id)
-                    .is_some_and(|block_sym| {
-                        block_sym.declarations.iter().any(|&block_decl_idx| {
-                            block_decl_idx.is_some()
-                                && self.ctx.arena.get(block_decl_idx).is_some()
-                                && block_decl_idx != decl_idx
-                        })
-                    });
-            if !has_local_block_scoped {
-                // All block-scoped declarations are cross-file;
-                // duplicate_identifiers.rs handles this case.
-                return;
-            }
-            let block_scoped_first =
-                self.ctx
-                    .binder
-                    .get_symbol(_block_sym_id)
-                    .is_some_and(|block_sym| {
-                        block_sym.declarations.iter().any(|&block_decl_idx| {
-                            block_decl_idx.is_some()
-                                && self
-                                    .ctx
-                                    .arena
-                                    .get(block_decl_idx)
-                                    .is_some_and(|n| n.pos < var_pos)
-                        })
-                    });
-
-            let (msg, code) = if block_scoped_first {
-                (
-                    crate::diagnostics::format_message(
-                        diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
-                        &[var_name],
-                    ),
-                    diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
-                )
-            } else {
-                (
-                    crate::diagnostics::format_message(
-                        diagnostic_messages::DUPLICATE_IDENTIFIER,
-                        &[var_name],
-                    ),
-                    diagnostic_codes::DUPLICATE_IDENTIFIER,
-                )
+                .find_enclosing_scope(self.ctx.arena, *name_node_idx)
+            else {
+                continue;
             };
 
-            // Error on the var declaration name
-            self.error_at_node(var_decl.name, &msg, code);
-            // Error on the block-scoped declaration (let/const)
-            if let Some(block_sym) = self.ctx.binder.get_symbol(_block_sym_id) {
-                for &block_decl_idx in &block_sym.declarations {
-                    if !block_decl_idx.is_some() {
-                        continue;
-                    }
-                    let name_node = self
-                        .get_declaration_name_node(block_decl_idx)
-                        .unwrap_or(block_decl_idx);
-                    self.error_at_node(name_node, &msg, code);
+            let mut scope_id = start_scope_id;
+            let mut found_block_scoped_symbol = None;
+            let mut found_scope_kind = None;
+            let mut found_scope_id = tsz_binder::ScopeId::NONE;
+            let mut depth = 0;
+            while scope_id.is_some() && depth < 50 {
+                let Some(scope) = self.ctx.binder.scopes.get(scope_id.0 as usize) else {
+                    break;
+                };
+                if let Some(sym_id) = scope.table.get(var_name)
+                    && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+                    && sym.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0
+                {
+                    found_block_scoped_symbol = Some(sym_id);
+                    found_scope_kind = Some(scope.kind);
+                    found_scope_id = scope_id;
+                    break;
                 }
+                // If we hit a function scope, var hoists to this level — stop searching
+                if scope.is_function_scope() {
+                    break;
+                }
+                scope_id = scope.parent;
+                depth += 1;
             }
-        } else {
-            use crate::diagnostics::diagnostic_codes;
-            self.error_at_node_msg(
-                var_decl.name,
-                diagnostic_codes::CANNOT_INITIALIZE_OUTER_SCOPED_VARIABLE_IN_THE_SAME_SCOPE_AS_BLOCK_SCOPED_DECLAR,
-                &[var_name, var_name],
-            );
+
+            let Some(_block_sym_id) = found_block_scoped_symbol else {
+                continue;
+            };
+            let Some(scope_kind) = found_scope_kind else {
+                continue;
+            };
+
+            // Check if the found scope is at a function-level boundary.
+            // If so, the var hoists to the same level and this is just a
+            // TS2451 duplicate, not a TS2481 initialization conflict.
+            let names_share_scope = if matches!(
+                scope_kind,
+                tsz_binder::ContainerKind::SourceFile
+                    | tsz_binder::ContainerKind::Function
+                    | tsz_binder::ContainerKind::Module
+            ) {
+                true
+            } else if scope_kind == tsz_binder::ContainerKind::Block {
+                // A function body creates a Block scope inside the Function scope.
+                // When the let/const lives in that function-body Block, the Block's
+                // AST container_node should be a direct child of a function-like node.
+                // Check if this Block scope is a function body by examining the AST.
+
+                self.ctx
+                    .binder
+                    .scopes
+                    .get(found_scope_id.0 as usize)
+                    .and_then(|s| {
+                        // Get the AST node that created this scope (the Block node)
+                        let block_node_idx = s.container_node;
+                        // Get the Block's parent in the AST
+                        self.ctx
+                            .arena
+                            .get_extended(block_node_idx)
+                            .map(|ext| ext.parent)
+                    })
+                    .and_then(|parent_idx| self.ctx.arena.get(parent_idx))
+                    .is_some_and(|parent_node| {
+                        use tsz_parser::parser::syntax_kind_ext;
+                        matches!(
+                            parent_node.kind,
+                            k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                                || k == syntax_kind_ext::METHOD_DECLARATION
+                                || k == syntax_kind_ext::CONSTRUCTOR
+                                || k == syntax_kind_ext::GET_ACCESSOR
+                                || k == syntax_kind_ext::SET_ACCESSOR
+                                || k == syntax_kind_ext::ARROW_FUNCTION
+                        )
+                    })
+            } else {
+                false
+            };
+
+            if names_share_scope {
+                // The var hoists to the same scope as the let/const.
+                // tsc uses TS2300 ("Duplicate identifier") when the var declaration
+                // appears before the block-scoped declaration, and TS2451 ("Cannot
+                // redeclare block-scoped variable") when the block-scoped declaration
+                // comes first.
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+                // Check if any block-scoped declaration appears before this var.
+                // For cross-file conflicts, skip: duplicate_identifiers handles them.
+                let var_pos = self.ctx.arena.get(decl_idx).map_or(u32::MAX, |n| n.pos);
+                let has_local_block_scoped =
+                    self.ctx
+                        .binder
+                        .get_symbol(_block_sym_id)
+                        .is_some_and(|block_sym| {
+                            block_sym.declarations.iter().any(|&block_decl_idx| {
+                                block_decl_idx.is_some()
+                                    && self.ctx.arena.get(block_decl_idx).is_some()
+                                    && block_decl_idx != decl_idx
+                            })
+                        });
+                if !has_local_block_scoped {
+                    // All block-scoped declarations are cross-file;
+                    // duplicate_identifiers.rs handles this case.
+                    continue;
+                }
+                let block_scoped_first =
+                    self.ctx
+                        .binder
+                        .get_symbol(_block_sym_id)
+                        .is_some_and(|block_sym| {
+                            block_sym.declarations.iter().any(|&block_decl_idx| {
+                                block_decl_idx.is_some()
+                                    && self
+                                        .ctx
+                                        .arena
+                                        .get(block_decl_idx)
+                                        .is_some_and(|n| n.pos < var_pos)
+                            })
+                        });
+
+                let (msg, code) = if block_scoped_first {
+                    (
+                        crate::diagnostics::format_message(
+                            diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                            &[var_name],
+                        ),
+                        diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                    )
+                } else {
+                    (
+                        crate::diagnostics::format_message(
+                            diagnostic_messages::DUPLICATE_IDENTIFIER,
+                            &[var_name],
+                        ),
+                        diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    )
+                };
+
+                // Error on the var declaration name
+                self.error_at_node(*name_node_idx, &msg, code);
+                // Error on the block-scoped declaration (let/const)
+                if let Some(block_sym) = self.ctx.binder.get_symbol(_block_sym_id) {
+                    for &block_decl_idx in &block_sym.declarations {
+                        if !block_decl_idx.is_some() {
+                            continue;
+                        }
+                        let decl_name_node = self
+                            .get_declaration_name_node(block_decl_idx)
+                            .unwrap_or(block_decl_idx);
+                        self.error_at_node(decl_name_node, &msg, code);
+                    }
+                }
+            } else {
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node_msg(
+                    *name_node_idx,
+                    diagnostic_codes::CANNOT_INITIALIZE_OUTER_SCOPED_VARIABLE_IN_THE_SAME_SCOPE_AS_BLOCK_SCOPED_DECLAR,
+                    &[var_name, var_name],
+                );
+            }
+        }
+    }
+
+    /// Recursively collect all identifier names from a binding pattern (destructuring).
+    /// For `{ x, y: z }` collects `x` and `z`. For `[a, b]` collects `a` and `b`.
+    fn collect_binding_identifiers(
+        &self,
+        node_idx: NodeIndex,
+        names: &mut Vec<(String, NodeIndex)>,
+    ) {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return;
+        };
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            if let Some(ident) = self.ctx.arena.get_identifier(node) {
+                names.push((ident.escaped_text.clone(), node_idx));
+            }
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+            || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+        {
+            for child_idx in self.ctx.arena.get_children(node_idx) {
+                self.collect_binding_identifiers(child_idx, names);
+            }
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::BINDING_ELEMENT {
+            if let Some(binding) = self.ctx.arena.get_binding_element(node) {
+                // The `name` field is the bound identifier or a nested pattern
+                self.collect_binding_identifiers(binding.name, names);
+            }
+            return;
         }
     }
 
