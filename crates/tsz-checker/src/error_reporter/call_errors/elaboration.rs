@@ -714,14 +714,12 @@ impl<'a> CheckerState<'a> {
                     )
                 }
             }
-            syntax_kind_ext::BLOCK => {
-                self.try_elaborate_function_block_returns_with_param_type(
-                    stmt_idx,
-                    expected_return_type,
-                    param_type,
-                    func_idx,
-                )
-            }
+            syntax_kind_ext::BLOCK => self.try_elaborate_function_block_returns_with_param_type(
+                stmt_idx,
+                expected_return_type,
+                param_type,
+                func_idx,
+            ),
             syntax_kind_ext::IF_STATEMENT => {
                 let Some(if_stmt) = self.ctx.arena.get_if_statement(node) else {
                     return false;

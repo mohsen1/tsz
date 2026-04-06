@@ -962,7 +962,78 @@ impl<'a> CheckerState<'a> {
         // spaces inside braces and trailing semicolons for inline object types.
         // Handle both standalone `{...}` and intersection parts `& {...}`.
         formatted = Self::normalize_inline_object_braces(&formatted);
+        // tsc always displays Array<T> as T[] in error messages.
+        // Convert generic Array form to shorthand when reading from source annotations.
+        formatted = Self::normalize_array_generic_to_shorthand(&formatted);
         formatted
+    }
+
+    /// Convert `Array<T>` to `T[]` and `ReadonlyArray<T>` to `readonly T[]`
+    /// in annotation text to match tsc's diagnostic display.
+    fn normalize_array_generic_to_shorthand(text: &str) -> String {
+        if !text.contains("Array<") {
+            return text.to_string();
+        }
+        let mut result = text.to_string();
+        // Process ReadonlyArray<T> first (before Array<T> to avoid partial matches)
+        while let Some(start) = result.find("ReadonlyArray<") {
+            if let Some(inner) = Self::extract_balanced_angle_bracket_content(&result, start + 14) {
+                let needs_parens = inner.contains("=>") || inner.contains(" | ");
+                let replacement = if needs_parens {
+                    format!("readonly ({inner})[]")
+                } else {
+                    format!("readonly {inner}[]")
+                };
+                let end = start + 14 + inner.len() + 1; // "ReadonlyArray<" + inner + ">"
+                result = format!("{}{}{}", &result[..start], replacement, &result[end..]);
+            } else {
+                break;
+            }
+        }
+        // Then Array<T>
+        while let Some(start) = result.find("Array<") {
+            // Make sure it's not part of a longer name (e.g., "ReadonlyArray" already handled)
+            if start > 0 && result.as_bytes()[start - 1].is_ascii_alphanumeric() {
+                // Part of a longer identifier, skip
+                break;
+            }
+            if let Some(inner) = Self::extract_balanced_angle_bracket_content(&result, start + 6) {
+                let needs_parens = inner.contains("=>") || inner.contains(" | ");
+                let replacement = if needs_parens {
+                    format!("({inner})[]")
+                } else {
+                    format!("{inner}[]")
+                };
+                let end = start + 6 + inner.len() + 1; // "Array<" + inner + ">"
+                result = format!("{}{}{}", &result[..start], replacement, &result[end..]);
+            } else {
+                break;
+            }
+        }
+        result
+    }
+
+    /// Extract content between balanced angle brackets starting at `pos`.
+    /// `pos` should point to the character right after the opening `<`.
+    /// Returns the inner content (without brackets) if balanced.
+    fn extract_balanced_angle_bracket_content(text: &str, pos: usize) -> Option<String> {
+        let bytes = text.as_bytes();
+        let mut depth = 1;
+        let mut i = pos;
+        while i < bytes.len() && depth > 0 {
+            match bytes[i] {
+                b'<' => depth += 1,
+                b'>' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(text[pos..i].to_string());
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        None
     }
 
     /// Normalize inline object type braces in annotation text to match TSC's
