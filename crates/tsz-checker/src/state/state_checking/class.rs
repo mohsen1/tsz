@@ -998,26 +998,17 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // tsc suppresses TS2564 per-node via its containsParseError flag propagation.
-        // A parse error only affects the containing node and its ancestors, not the
-        // entire file. We approximate this by checking if any *real* syntax error
-        // position falls within the class node's span. Grammar-level parse errors
-        // (e.g., TS1030 "modifier already seen") don't trigger containsParseError
-        // in tsc, so we use real_syntax_error_positions which only includes actual
-        // parse failures (TS1005, TS1109, TS1128, etc.).
-        if self.ctx.has_real_syntax_errors
-            && let Some(class_node) = self.ctx.arena.get(class_idx)
-        {
-            let class_start = class_node.pos;
-            let class_end = class_node.end;
-            let class_has_parse_error = self
-                .ctx
-                .real_syntax_error_positions
-                .iter()
-                .any(|&pos| pos >= class_start && pos < class_end);
-            if class_has_parse_error {
-                return;
-            }
+        // tsc suppresses TS2564 when the file contains structural parse errors
+        // (errors that set `containsParseError` in tsc's parser). In tsc,
+        // `containsParseError` propagates up through the parent chain to the
+        // source file node, and tsc checks this flag at the source-file level.
+        //
+        // We use `has_structural_parse_errors` which specifically tracks parse
+        // errors that cause AST malformation (TS1005, TS1068, TS1109, etc.)
+        // as opposed to grammar checks (TS1101 "with" in strict mode) that
+        // don't affect AST structure and don't set `containsParseError` in tsc.
+        if self.ctx.has_structural_parse_errors {
+            return;
         }
 
         // Check if this is a derived class (has base class)

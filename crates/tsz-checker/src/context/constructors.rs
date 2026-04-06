@@ -136,6 +136,7 @@ impl<'a> CheckerContext<'a> {
             has_syntax_parse_errors: false,
             syntax_parse_error_positions: Vec::new(),
             has_real_syntax_errors: false,
+            has_structural_parse_errors: false,
             real_syntax_error_positions: Vec::new(),
             all_parse_error_positions: Vec::new(),
             nullable_type_parse_error_positions: Vec::new(),

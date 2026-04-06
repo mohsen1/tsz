@@ -1608,6 +1608,10 @@ pub(super) fn collect_diagnostics(
                 .parse_diagnostics
                 .iter()
                 .any(|d| is_real_syntax_error(d.code));
+            checker.ctx.has_structural_parse_errors = file
+                .parse_diagnostics
+                .iter()
+                .any(|d| is_structural_parse_error(d.code));
             checker.ctx.real_syntax_error_positions = file
                 .parse_diagnostics
                 .iter()
@@ -2185,6 +2189,10 @@ pub(super) fn check_file_for_parallel<'a>(
         .parse_diagnostics
         .iter()
         .any(|d| is_real_syntax_error(d.code));
+    checker.ctx.has_structural_parse_errors = file
+        .parse_diagnostics
+        .iter()
+        .any(|d| is_structural_parse_error(d.code));
     checker.ctx.real_syntax_error_positions = file
         .parse_diagnostics
         .iter()
