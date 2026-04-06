@@ -888,6 +888,17 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn format_excess_property_target_type(&mut self, ty: TypeId) -> String {
+        // If the type is a named alias (e.g., `type ExoticAnimal = CatDog | ManBearPig`),
+        // tsc shows the alias name in excess property messages. Check for Lazy(DefId)
+        // references before evaluation strips the name. The formatter handles Lazy types
+        // by resolving to the definition name.
+        if matches!(
+            self.ctx.types.lookup(ty),
+            Some(tsz_solver::types::TypeData::Lazy(_))
+        ) {
+            return self.format_type_diagnostic(ty);
+        }
+
         if let Some(display) = self.split_wildcard_object_for_excess_display(ty) {
             return display;
         }
