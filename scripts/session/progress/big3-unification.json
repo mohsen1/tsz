@@ -1,8 +1,8 @@
 {
   "campaign": "big3-unification",
   "baseline_at_creation": 11745,
-  "current_pass": 11752,
-  "current_big3_wrong_code": 67,
+  "current_pass": 11753,
+  "current_big3_wrong_code": 68,
   "status": "active",
   "sessions": [
     {
@@ -75,20 +75,17 @@
     },
     {
       "date": "2026-04-06",
-      "summary": "Fixed TS2427 for all primitive type names in interface declarations",
-      "invariant": "Interface names cannot be primitive type names (string, number, boolean, etc.) - tsc emits TS2427 for all primitives, not just void",
+      "summary": "Fixed callback return type error display to show full function types instead of just return types",
+      "invariant": "When reporting callback return type mismatches (TS2322), tsz should display the full function type (e.g., '() => string') instead of just the return type (e.g., 'string'), matching tsc behavior",
       "tests_fixed": [
-        "primitiveTypeAsInterfaceName.ts",
-        "primitiveTypeAsInterfaceNameGeneric.ts",
-        "InterfaceDeclaration8.ts",
-        "parserInterfaceDeclaration8.ts",
-        "symbolType20.ts"
+        "contextualTyping33.ts"
       ],
-      "kpi_impact": "+5 tests passing, Big3 wrong-code maintained at 67",
+      "kpi_impact": "+1 test passing (11752 -> 11753), Big3 maintained at 68, Fingerprint-only reduced",
       "changes": [
-        "crates/tsz-checker/src/error_reporter/mod.rs",
-        "crates/tsz-checker/src/error_reporter/assignability.rs",
-        "crates/tsz-checker/src/state/state_checking_members/interface_checks.rs"
+        "crates/tsz-checker/src/error_reporter/call_errors/elaboration.rs",
+        "crates/tsz-checker/src/assignability/assignability_diagnostics.rs",
+        "crates/tsz-checker/src/error_reporter/assignability_helpers.rs",
+        "crates/tsz-checker/src/error_reporter/render_failure.rs"
       ],
       "regressions": "None detected in full conformance suite"
     }

@@ -974,10 +974,13 @@ impl ParserState {
         if !self.is_token(SyntaxKind::Identifier)
             && !self.is_token(SyntaxKind::ThisKeyword)
             && !self.is_identifier_or_keyword()
-        {
-            // When the current token is '}' in JSX context, emit TS1005 "'}' expected."
+        {            // When the current token is '}' in JSX context, emit TS1005 "'}' expected."
             // instead of TS1003 "Identifier expected." to match tsc behavior.
-            if self.is_token(SyntaxKind::CloseBraceToken) {
+            // Note: In JSX mode, '}' is scanned as JsxText with TS1381, not CloseBraceToken.
+            let is_close_brace = self.is_token(SyntaxKind::CloseBraceToken)
+                || (self.is_token(SyntaxKind::JsxText)
+                    && self.scanner.get_token_value_ref().starts_with("}"));
+            if is_close_brace {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at(
                     self.token_pos(),
