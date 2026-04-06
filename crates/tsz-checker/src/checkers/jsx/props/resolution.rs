@@ -984,11 +984,13 @@ impl<'a> CheckerState<'a> {
                 for prop_name in &earlier_spread_props {
                     overridden.insert(prop_name.as_str());
                 }
-                // Also include explicit attributes that come BEFORE this spread
-                // (they still contribute to the combined props).
+
+                // For missing property checks (TS2741), also include explicit attrs
+                // that come BEFORE this spread - they provide the property.
+                let mut overridden_for_missing = overridden.clone();
                 for (attr_pos, attr_name) in &explicit_attr_names_with_pos {
                     if *attr_pos < spread_pos {
-                        overridden.insert(attr_name.as_str());
+                        overridden_for_missing.insert(attr_name.as_str());
                     }
                 }
 
@@ -996,6 +998,7 @@ impl<'a> CheckerState<'a> {
                 // so spreads that don't include `children` don't trigger TS2741.
                 if children_ctx.as_ref().is_some_and(|ctx| ctx.child_count > 0) {
                     overridden.insert("children");
+                    overridden_for_missing.insert("children");
                 }
 
                 // Check if there are later spreads that could provide missing properties.

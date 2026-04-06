@@ -4,8 +4,8 @@
 use crate::context::TypingRequest;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::state::CheckerState;
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -98,9 +98,13 @@ impl<'a> CheckerState<'a> {
         let Some(spread_shape) =
             tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_spread)
         else {
-            let props_has_type_params =
-                tsz_solver::contains_type_parameters(self.ctx.types, props_type);
-            if (spread_has_type_params && !overridden_names.is_empty()) || props_has_type_params {
+            // For generic spreads without a resolvable object shape, emit TS2322
+            // if the spread type is not assignable to the props type.
+            // This handles cases like `T extends { y: string }` being spread into
+            // an element that requires `{ x: string }` - T doesn't satisfy the requirement.
+            if spread_has_type_params && !overridden_names.is_empty() {
+                // A later explicit attribute overrides this generic spread,
+                // so the spread's type issues are masked.
                 return false;
             }
             if self.is_assignable_to(spread_type, props_type) {
@@ -125,7 +129,9 @@ impl<'a> CheckerState<'a> {
         // Also suppress when TS2710 (children specified twice) will be emitted.
         // Only check for missing properties when this is the ONLY spread (no later spreads)
         // and we're not suppressing missing props.
-        if !has_later_spreads && !suppress_missing_props {
+        // For generic spread types (has_type_params), emit TS2322 instead of TS2741
+        // to match tsc's behavior for intrinsic element type mismatches.
+        if !has_later_spreads && !suppress_missing_props && !spread_has_type_params {
             if let Some(props_shape) =
                 tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)
             {
@@ -199,9 +205,7 @@ impl<'a> CheckerState<'a> {
         for prop in &spread_shape.properties {
             let prop_name = self.ctx.types.resolve_atom(prop.name).to_string();
 
-            if overridden_names.contains(prop_name.as_str()) {
-                continue;
-            }
+            // Skip key/ref as they're handled specially by JSX
             if prop_name == "key" || prop_name == "ref" {
                 continue;
             }
@@ -211,6 +215,8 @@ impl<'a> CheckerState<'a> {
                 PropertyAccessResult::Success { type_id, .. } => {
                     tsz_solver::remove_undefined(self.ctx.types, type_id)
                 }
+                // Property doesn't exist in target - this will be caught as excess
+                // property or missing property elsewhere
                 _ => continue,
             };
 
@@ -226,9 +232,25 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // For generic spreads with per-property type mismatches, still emit TS2322
+        // unless the entire spread type is known to be assignable to the props type.
+        // This handles cases like `T extends { y: string }` being spread into an element
+        // that requires `{ x: string }` - the constraint doesn't satisfy the requirement.
         if has_type_mismatch && spread_has_type_params {
-            if self.is_assignable_to(spread_type, props_type) {
+            // Only suppress if the resolved/evaluated spread type is assignable.
+            // The resolved_spread represents the constraint or instantiated type,
+            // which gives us a concrete type to check against.
+            if self.is_assignable_to(resolved_spread, props_type) {
                 has_type_mismatch = false;
+            }
+        }
+
+        // For generic spreads where no per-property mismatches were found,
+        // still check whole-type assignability. This catches cases where the
+        // spread is missing required properties that aren't covered by per-property checks.
+        if !has_type_mismatch && spread_has_type_params {
+            if !self.is_assignable_to(resolved_spread, props_type) {
+                has_type_mismatch = true;
             }
         }
 

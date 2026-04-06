@@ -892,10 +892,7 @@ impl<'a> CheckerState<'a> {
         // tsc shows the alias name in excess property messages. Check for Lazy(DefId)
         // references before evaluation strips the name. The formatter handles Lazy types
         // by resolving to the definition name.
-        if matches!(
-            self.ctx.types.lookup(ty),
-            Some(tsz_solver::types::TypeData::Lazy(_))
-        ) {
+        if tsz_solver::is_lazy_type(self.ctx.types, ty) {
             return self.format_type_diagnostic(ty);
         }
 
