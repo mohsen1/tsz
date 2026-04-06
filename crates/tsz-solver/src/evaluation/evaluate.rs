@@ -1243,8 +1243,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .entry(prop.name)
                         .and_modify(|existing| {
                             if existing.type_id != prop.type_id {
-                                existing.type_id =
-                                    self.interner.intersect_types_raw2(existing.type_id, prop.type_id);
+                                existing.type_id = self
+                                    .interner
+                                    .intersect_types_raw2(existing.type_id, prop.type_id);
                             }
                         })
                         .or_insert_with(|| prop.clone());
