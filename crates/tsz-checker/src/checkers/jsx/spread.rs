@@ -150,35 +150,51 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if !missing_props.is_empty() {
-                    // Emit TS2739 (≤5 missing props) or TS2740 (>5 missing props)
-                    let spread_name = self.format_type(spread_type);
-                    let is_truncated = missing_props.len() > 5;
-                    let display_count = if is_truncated {
-                        4
+                    if missing_props.len() == 1 {
+                        // TS2741: Property 'X' is missing in type 'Y' but required in type 'Z'.
+                        // tsc uses TS2741 for exactly 1 missing property with the expanded
+                        // structural source type (not the alias name).
+                        let spread_display =
+                            self.format_type_for_assignability_message(spread_type);
+                        let (message, code) = (
+                            format_message(
+                                diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                                &[&missing_props[0], &spread_display, &props_display],
+                            ),
+                            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                        );
+                        self.error_at_node(tag_name_idx, &message, code);
                     } else {
-                        5.min(missing_props.len())
-                    };
-                    let props_list = missing_props[..display_count].join(", ");
+                        // Emit TS2739 (≤5 missing props) or TS2740 (>5 missing props)
+                        let spread_name = self.format_type(spread_type);
+                        let is_truncated = missing_props.len() > 5;
+                        let display_count = if is_truncated {
+                            4
+                        } else {
+                            5.min(missing_props.len())
+                        };
+                        let props_list = missing_props[..display_count].join(", ");
 
-                    let (message, code) = if is_truncated {
-                        let more_count = missing_props.len() - display_count;
-                        (
-                            format_message(
-                                diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
-                                &[&spread_name, &props_display, &props_list, &more_count.to_string()],
-                            ),
-                            diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
-                        )
-                    } else {
-                        (
-                            format_message(
-                                diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
-                                &[&spread_name, &props_display, &props_list],
-                            ),
-                            diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
-                        )
-                    };
-                    self.error_at_node(tag_name_idx, &message, code);
+                        let (message, code) = if is_truncated {
+                            let more_count = missing_props.len() - display_count;
+                            (
+                                format_message(
+                                    diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                                    &[&spread_name, &props_display, &props_list, &more_count.to_string()],
+                                ),
+                                diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                            )
+                        } else {
+                            (
+                                format_message(
+                                    diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                                    &[&spread_name, &props_display, &props_list],
+                                ),
+                                diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                            )
+                        };
+                        self.error_at_node(tag_name_idx, &message, code);
+                    }
                     return true;
                 }
             }
