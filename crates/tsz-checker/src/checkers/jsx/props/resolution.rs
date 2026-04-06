@@ -964,7 +964,8 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            for &(spread_type, _spread_expr_idx, spread_pos) in &spread_entries {
+            let spread_count = spread_entries.len();
+            for (i, &(spread_type, _spread_expr_idx, spread_pos)) in spread_entries.iter().enumerate() {
                 // Only later explicit attributes override the current spread.
                 let overridden: rustc_hash::FxHashSet<&str> = explicit_attr_names_with_pos
                     .iter()
@@ -972,11 +973,15 @@ impl<'a> CheckerState<'a> {
                     .map(|(_, name)| name.as_str())
                     .collect();
 
+                // Check if there are later spreads that could provide missing properties.
+                let has_later_spreads = i < spread_count - 1;
+
                 suppress_missing_props_from_spread |= self.check_spread_property_types(
                     spread_type,
                     props_type,
                     tag_name_idx,
                     &overridden,
+                    has_later_spreads,
                     &display_target,
                 );
             }
