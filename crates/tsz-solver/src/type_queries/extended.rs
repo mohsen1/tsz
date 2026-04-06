@@ -696,6 +696,26 @@ pub fn is_object_with_index_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool
     matches!(db.lookup(type_id), Some(TypeData::ObjectWithIndex(_)))
 }
 
+/// Check whether a type is a composite structural shape (object, function,
+/// callable, tuple, or mapped type).
+///
+/// Used to decide whether a `register_type_to_def` mapping is safe:
+/// composite shapes are unlikely to collide with unrelated type aliases,
+/// while primitive/literal/union types frequently do.
+pub fn is_composite_shape_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(
+        db.lookup(type_id),
+        Some(
+            TypeData::Object(_)
+                | TypeData::ObjectWithIndex(_)
+                | TypeData::Function(_)
+                | TypeData::Callable(_)
+                | TypeData::Tuple(_)
+                | TypeData::Mapped(_)
+        )
+    )
+}
+
 // =============================================================================
 // Array-Like Type Classification (for is_array_like_type)
 // =============================================================================
