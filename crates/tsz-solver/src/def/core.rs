@@ -23,7 +23,7 @@
 //! | LSP  | Content-addressed hash | Stable IDs across edits |
 
 use crate::types::{ObjectFlags, ObjectShape, PropertyInfo, TypeId, TypeParamInfo};
-use dashmap::{DashMap, DashSet};
+use dashmap::DashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -476,13 +476,6 @@ pub struct DefinitionStore {
     /// structural expansions (e.g., "{ r: number; g: number; b: number }").
     body_to_alias: DashMap<TypeId, DefId>,
 
-    /// Set of body `TypeId`s that were produced by type-level computation
-    /// (intersection reduction, conditional evaluation) and should NOT be
-    /// used to display alias names. tsc does not preserve alias names for
-    /// such computed types (e.g., `type T2 = T1 & ("a"|"b")` evaluates to
-    /// `"a"|"b"` but tsc shows the expanded union, not `T2`).
-    computed_alias_bodies: DashSet<TypeId>,
-
     /// Reverse index: `file_id` -> `Vec<DefId>` for per-file definition lookups.
     ///
     /// Populated during `register()` when the `DefinitionInfo` has a `file_id`.
@@ -695,7 +688,6 @@ impl DefinitionStore {
             symbol_def_index: DashMap::new(),
             symbol_only_index: DashMap::new(),
             body_to_alias: DashMap::new(),
-            computed_alias_bodies: DashSet::new(),
             shape_to_def: DashMap::new(),
             file_to_defs: DashMap::new(),
             class_to_constructor: DashMap::new(),
@@ -970,7 +962,6 @@ impl DefinitionStore {
         self.symbol_def_index.clear();
         self.symbol_only_index.clear();
         self.body_to_alias.clear();
-        self.computed_alias_bodies.clear();
         self.shape_to_def.clear();
         self.file_to_defs.clear();
         self.class_to_constructor.clear();
@@ -1104,25 +1095,7 @@ impl DefinitionStore {
     /// (for aliases created with a body) and `set_body()` (for lazily-evaluated aliases),
     /// covering all registration paths.
     pub fn find_type_alias_by_body(&self, type_id: TypeId) -> Option<DefId> {
-        // Skip bodies that were marked as "computed" (produced by intersection
-        // reduction, conditional evaluation, etc.). tsc does not preserve alias
-        // names for such types.
-        if self.computed_alias_bodies.contains(&type_id) {
-            return None;
-        }
         self.body_to_alias.get(&type_id).map(|r| *r)
-    }
-
-    /// Mark a body `TypeId` as "computed" so that `find_type_alias_by_body`
-    /// skips it. Called by the checker when a type alias body is produced by
-    /// intersection reduction or conditional evaluation.
-    pub fn mark_body_as_computed(&self, body: TypeId) {
-        self.computed_alias_bodies.insert(body);
-    }
-
-    /// Check if a body `TypeId` was marked as "computed".
-    pub fn is_computed_body(&self, body: TypeId) -> bool {
-        self.computed_alias_bodies.contains(&body)
     }
 
     /// Find all `DefId`s registered under the given name.
