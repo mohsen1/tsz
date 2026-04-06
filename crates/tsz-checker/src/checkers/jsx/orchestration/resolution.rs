@@ -220,7 +220,7 @@ impl<'a> CheckerState<'a> {
                             .is_some_and(|c| c.is_ascii_uppercase())
                         {
                             use tsz_common::checker_options::JsxMode;
-                            let jsx_mode = self.ctx.compiler_options.jsx_mode;
+                            let jsx_mode = self.effective_jsx_mode();
                             if matches!(jsx_mode, JsxMode::React | JsxMode::ReactJsx | JsxMode::ReactJsxDev) {
                                 self.error_at_node(
                                     tag_name_idx,
@@ -868,7 +868,7 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_common::checker_options::JsxMode;
 
-        let jsx_mode = self.ctx.compiler_options.jsx_mode;
+        let jsx_mode = self.effective_jsx_mode();
         let uses_import_source = jsx_mode == JsxMode::ReactJsx
             || jsx_mode == JsxMode::ReactJsxDev
             || !self.ctx.compiler_options.jsx_import_source.is_empty();
@@ -1199,7 +1199,7 @@ impl<'a> CheckerState<'a> {
         use tsz_common::checker_options::JsxMode;
 
         if matches!(
-            self.ctx.compiler_options.jsx_mode,
+            self.effective_jsx_mode(),
             JsxMode::ReactJsx | JsxMode::ReactJsxDev
         ) {
             return "children".to_string();

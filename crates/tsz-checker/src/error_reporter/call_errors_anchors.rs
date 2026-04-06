@@ -13,6 +13,19 @@ impl<'a> CheckerState<'a> {
         call.arguments.as_ref()?.nodes.first().copied()
     }
 
+    /// If `idx` points to an object literal expression, return its first property element.
+    /// Used to anchor overload errors at the first property name (matching tsc)
+    /// instead of the opening brace.
+    pub(super) fn first_object_literal_property(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let obj = self.ctx.arena.get_literal_expr(node)?;
+        obj.elements.nodes.first().copied()
+    }
+
     /// Returns `true` if the call expression at `idx` has exactly one argument.
     pub(super) fn call_has_single_argument(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(idx) else {
