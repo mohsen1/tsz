@@ -750,6 +750,16 @@ impl<'a> CheckerState<'a> {
         let mut saw_assignment_binary = false;
         let mut var_decl: Option<NodeIndex> = None;
 
+        // When the starting node is itself a VariableDeclaration (e.g.,
+        // when check_variable_declaration passes decl_idx as the diag
+        // anchor), record it immediately so the traversal can find the
+        // enclosing VariableStatement and return the declaration name.
+        if let Some(node) = self.ctx.arena.get(idx)
+            && node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+        {
+            var_decl = Some(idx);
+        }
+
         while current.is_some() {
             let Some(ext) = self.ctx.arena.get_extended(current) else {
                 break;
@@ -780,10 +790,15 @@ impl<'a> CheckerState<'a> {
             // expression itself as the anchor. This matches tsc's behavior for contextual
             // typing failures where the error should point at the entire function rather
             // than the inner expression that triggered the type mismatch.
-            if matches!(
-                parent_node.kind,
-                syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION
-            ) {
+            // However, if we already found a variable declaration (the error originated
+            // from a var-decl initializer inside the function body), the anchor should
+            // stay at the variable name, not jump to the enclosing function.
+            if var_decl.is_none()
+                && matches!(
+                    parent_node.kind,
+                    syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION
+                )
+            {
                 return parent;
             }
 
@@ -819,6 +834,15 @@ impl<'a> CheckerState<'a> {
                     return vd.name;
                 }
                 return parent;
+            }
+
+            // When the parent is a VariableDeclarationList and we already
+            // recorded a var_decl, skip through it without being caught by
+            // the arrow-function/function-expression guard above.
+            if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST && var_decl.is_some()
+            {
+                current = parent;
+                continue;
             }
 
             if parent_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT && saw_assignment_binary {
