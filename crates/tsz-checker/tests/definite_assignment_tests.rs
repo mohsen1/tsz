@@ -1791,3 +1791,82 @@ fn test_ts2564_multiple_type_parameters_mixed_constraints() {
         "Both constrained K and unconstrained V should get TS2564, got: {diags:?}"
     );
 }
+
+/// When a declaration has `!` with an initializer but no type annotation,
+/// tsc emits only TS1263 (initializer conflicts with `!`), NOT TS1264
+/// (needs type annotation). TS1264 is suppressed because TS1263 takes priority.
+#[test]
+fn test_ts1264_suppressed_when_initializer_present_class_property() {
+    let source = r"
+        class C {
+            a! = 1;
+        }
+    ";
+    let diags = diagnostics_with_options(source, CheckerOptions::default());
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::DECLARATIONS_WITH_INITIALIZERS_CANNOT_ALSO_HAVE_DEFINITE_ASSIGNMENT_ASSERTIONS,
+        ),
+        1,
+        "TS1263 should fire for `a! = 1`, got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::DECLARATIONS_WITH_DEFINITE_ASSIGNMENT_ASSERTIONS_MUST_ALSO_HAVE_TYPE_ANNOTATIONS,
+        ),
+        0,
+        "TS1264 should be suppressed when initializer is present, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts1264_suppressed_when_initializer_present_variable() {
+    let source = r"
+        let b! = 1;
+    ";
+    let diags = diagnostics_with_options(source, CheckerOptions::default());
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::DECLARATIONS_WITH_INITIALIZERS_CANNOT_ALSO_HAVE_DEFINITE_ASSIGNMENT_ASSERTIONS,
+        ),
+        1,
+        "TS1263 should fire for `let b! = 1`, got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::DECLARATIONS_WITH_DEFINITE_ASSIGNMENT_ASSERTIONS_MUST_ALSO_HAVE_TYPE_ANNOTATIONS,
+        ),
+        0,
+        "TS1264 should be suppressed when initializer is present, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts1264_emitted_when_no_initializer_and_no_type() {
+    let source = r"
+        class C {
+            d!;
+        }
+    ";
+    let diags = diagnostics_with_options(source, CheckerOptions::default());
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::DECLARATIONS_WITH_DEFINITE_ASSIGNMENT_ASSERTIONS_MUST_ALSO_HAVE_TYPE_ANNOTATIONS,
+        ),
+        1,
+        "TS1264 should fire for `d!` (no initializer, no type), got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::DECLARATIONS_WITH_INITIALIZERS_CANNOT_ALSO_HAVE_DEFINITE_ASSIGNMENT_ASSERTIONS,
+        ),
+        0,
+        "TS1263 should NOT fire (no initializer), got: {diags:?}"
+    );
+}
