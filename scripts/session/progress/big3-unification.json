@@ -72,6 +72,25 @@
         "crates/tsz-checker/src/error_reporter/assignability_helpers.rs"
       ],
       "regressions": "None detected in full conformance suite"
+    },
+    {
+      "date": "2026-04-06",
+      "summary": "Fixed TS2427 for all primitive type names in interface declarations",
+      "invariant": "Interface names cannot be primitive type names (string, number, boolean, etc.) - tsc emits TS2427 for all primitives, not just void",
+      "tests_fixed": [
+        "primitiveTypeAsInterfaceName.ts",
+        "primitiveTypeAsInterfaceNameGeneric.ts",
+        "InterfaceDeclaration8.ts",
+        "parserInterfaceDeclaration8.ts",
+        "symbolType20.ts"
+      ],
+      "kpi_impact": "+5 tests passing, Big3 wrong-code maintained at 67",
+      "changes": [
+        "crates/tsz-checker/src/error_reporter/mod.rs",
+        "crates/tsz-checker/src/error_reporter/assignability.rs",
+        "crates/tsz-checker/src/state/state_checking_members/interface_checks.rs"
+      ],
+      "regressions": "None detected in full conformance suite"
     }
   ],
   "known_dead_ends": [
