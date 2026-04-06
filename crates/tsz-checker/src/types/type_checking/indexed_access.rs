@@ -815,8 +815,25 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get_indexed_access_type(object_node)
                 .is_some()
-            && let Some(object_type_str) = self.node_text(data.object_type)
+            && let Some(raw_object_text) = self.node_text(data.object_type)
         {
+            // Clean up object type text: strip enclosing parens and any trailing
+            // index access syntax that may leak from the object_type node span.
+            let object_type_str = {
+                let trimmed = raw_object_text.trim();
+                let trimmed = trimmed.strip_prefix('(').unwrap_or(trimmed);
+                let trimmed = trimmed.strip_suffix(')').unwrap_or(trimmed);
+                if let Some(pos) = trimmed.find(")[") {
+                    trimmed[..pos].trim().to_string()
+                } else {
+                    trimmed.trim().to_string()
+                }
+            };
+            let object_type_str = if object_type_str.is_empty() || object_type_str.contains('[') {
+                self.format_type(object_type)
+            } else {
+                object_type_str
+            };
             let index_type_str = self.format_type(index_type);
             let message_2536 = format_message(
                 diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
