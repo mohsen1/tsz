@@ -29,18 +29,21 @@ impl<'a> CheckerState<'a> {
         self.check_const_type_parameter_on_non_function(iface.type_parameters.as_ref());
 
         // Check for reserved interface names (error 2427)
-        // tsc only emits TS2427 for 'void' — other predefined type names
-        // (string, number, boolean, etc.) are allowed as interface names.
         if iface.name.is_some()
             && let Some(name_node) = self.ctx.arena.get(iface.name)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-            && ident.escaped_text.as_str() == "void"
         {
-            self.error_at_node(
-                iface.name,
-                &format!("Interface name cannot be '{}'.", ident.escaped_text),
-                diagnostic_codes::INTERFACE_NAME_CANNOT_BE,
-            );
+            match ident.escaped_text.as_str() {
+                "string" | "number" | "boolean" | "symbol" | "void" | "object" | "any"
+                | "unknown" | "never" | "bigint" | "intrinsic" | "undefined" | "null" => {
+                    self.error_at_node(
+                        iface.name,
+                        &format!("Interface name cannot be '{}'.", ident.escaped_text),
+                        diagnostic_codes::INTERFACE_NAME_CANNOT_BE,
+                    );
+                }
+                _ => {}
+            }
         }
 
         // NOTE: TSC does NOT emit TS1212 for interface declaration names.
