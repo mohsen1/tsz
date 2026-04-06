@@ -21,7 +21,7 @@ use crate::query_boundaries::type_checking_utilities as query_utils;
 
 impl<'a> CheckerState<'a> {
     /// Recursively render a `SubtypeFailureReason` into a Diagnostic.
-    pub(super) fn render_failure_reason(
+    pub(crate) fn render_failure_reason(
         &mut self,
         reason: &tsz_solver::SubtypeFailureReason,
         source: TypeId,

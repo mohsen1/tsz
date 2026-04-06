@@ -552,7 +552,12 @@ impl<'a> CheckerState<'a> {
                 }
                 // Widen literal types for display (e.g. "abc" → string) to match tsc behavior
                 let display_type = self.widen_type_for_display(body_type);
-                self.error_type_not_assignable_at(display_type, expected_return_type, func.body);
+                // For callback return type errors, use the full function types in the error message
+                // instead of just the return types. This produces errors like:
+                // "Type '() => string' is not assignable to type '{ (): number; (i: number): number; }'"
+                // instead of: "Type 'string' is not assignable to type 'number'"
+                let func_type = self.get_type_of_node(arg_idx);
+                self.error_type_not_assignable_at(func_type, param_type, func.body);
                 true
             }
             k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
@@ -567,7 +572,13 @@ impl<'a> CheckerState<'a> {
                 self.try_elaborate_object_literal_arg_error(paren.expression, expected_return_type)
             }
             k if k == syntax_kind_ext::BLOCK => {
-                self.try_elaborate_function_block_returns(func.body, expected_return_type)
+                // Pass param_type for proper error message display
+                self.try_elaborate_function_block_returns_with_param_type(
+                    func.body,
+                    expected_return_type,
+                    param_type,
+                    arg_idx,
+                )
             }
             k if k == syntax_kind_ext::NEW_EXPRESSION => {
                 // Expression-bodied arrow: () => new Animal()
@@ -610,6 +621,21 @@ impl<'a> CheckerState<'a> {
         block_idx: NodeIndex,
         expected_return_type: TypeId,
     ) -> bool {
+        self.try_elaborate_function_block_returns_with_param_type(
+            block_idx,
+            expected_return_type,
+            expected_return_type,
+            NodeIndex(0), // dummy
+        )
+    }
+
+    fn try_elaborate_function_block_returns_with_param_type(
+        &mut self,
+        block_idx: NodeIndex,
+        expected_return_type: TypeId,
+        param_type: TypeId,
+        func_idx: NodeIndex,
+    ) -> bool {
         let Some(block_node) = self.ctx.arena.get(block_idx) else {
             return false;
         };
@@ -619,8 +645,12 @@ impl<'a> CheckerState<'a> {
 
         let mut elaborated = false;
         for &stmt_idx in &block.statements.nodes {
-            elaborated |=
-                self.try_elaborate_return_statements_in_stmt(stmt_idx, expected_return_type);
+            elaborated |= self.try_elaborate_return_statements_in_stmt_with_param_type(
+                stmt_idx,
+                expected_return_type,
+                param_type,
+                func_idx,
+            );
         }
         elaborated
     }
@@ -629,6 +659,21 @@ impl<'a> CheckerState<'a> {
         &mut self,
         stmt_idx: NodeIndex,
         expected_return_type: TypeId,
+    ) -> bool {
+        self.try_elaborate_return_statements_in_stmt_with_param_type(
+            stmt_idx,
+            expected_return_type,
+            expected_return_type,
+            NodeIndex(0), // dummy
+        )
+    }
+
+    fn try_elaborate_return_statements_in_stmt_with_param_type(
+        &mut self,
+        stmt_idx: NodeIndex,
+        expected_return_type: TypeId,
+        param_type: TypeId,
+        func_idx: NodeIndex,
     ) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
@@ -649,28 +694,50 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let return_type = self.get_type_of_node(ret.expression);
-                !self.check_assignable_or_report_at_without_source_elaboration(
-                    return_type,
-                    expected_return_type,
-                    ret.expression,
-                    ret.expression,
-                )
+                // When we have a valid function index, use full function types for error display
+                if func_idx.0 != 0 {
+                    let func_type = self.get_type_of_node(func_idx);
+                    !self.check_assignable_or_report_at_with_display_types(
+                        return_type,
+                        expected_return_type,
+                        func_type,
+                        param_type,
+                        ret.expression,
+                        ret.expression,
+                    )
+                } else {
+                    !self.check_assignable_or_report_at_without_source_elaboration(
+                        return_type,
+                        expected_return_type,
+                        ret.expression,
+                        ret.expression,
+                    )
+                }
             }
             syntax_kind_ext::BLOCK => {
-                self.try_elaborate_function_block_returns(stmt_idx, expected_return_type)
+                self.try_elaborate_function_block_returns_with_param_type(
+                    stmt_idx,
+                    expected_return_type,
+                    param_type,
+                    func_idx,
+                )
             }
             syntax_kind_ext::IF_STATEMENT => {
                 let Some(if_stmt) = self.ctx.arena.get_if_statement(node) else {
                     return false;
                 };
-                let mut elaborated = self.try_elaborate_return_statements_in_stmt(
+                let mut elaborated = self.try_elaborate_return_statements_in_stmt_with_param_type(
                     if_stmt.then_statement,
                     expected_return_type,
+                    param_type,
+                    func_idx,
                 );
                 if if_stmt.else_statement.is_some() {
-                    elaborated |= self.try_elaborate_return_statements_in_stmt(
+                    elaborated |= self.try_elaborate_return_statements_in_stmt_with_param_type(
                         if_stmt.else_statement,
                         expected_return_type,
+                        param_type,
+                        func_idx,
                     );
                 }
                 elaborated
