@@ -315,37 +315,46 @@ impl<'a> TypeFormatter<'a> {
             if let Some(def_id) = def_store.find_def_for_type(type_id)
                 && let Some(def) = def_store.get(def_id)
             {
-                let name = self.format_def_name(&def);
-                // Enum and namespace value types are displayed as `typeof Name` by tsc.
-                // Class instance types and interfaces use just the name.
+                // Skip type aliases whose body was computed by intersection
+                // reduction or conditional evaluation. tsc shows the expanded
+                // form for these types, not the alias name.
                 use crate::def::DefKind;
-                if matches!(
-                    def.kind,
-                    DefKind::Enum | DefKind::Namespace | DefKind::ClassConstructor
-                ) {
-                    return format!("typeof {name}").into();
-                }
-                // For generic types, prefer the display_alias (which has the actual
-                // instantiated type arguments like `A<number>`) over appending raw
-                // type parameter names from the definition (like `A<T>`).
-                // The display_alias is set when an Application type is evaluated,
-                // and preserves the concrete type arguments from the instantiation.
-                if !def.type_params.is_empty() {
-                    if let Some(alias_origin) = self.interner.get_display_alias(type_id)
-                        && self.display_alias_visiting.insert(alias_origin)
-                    {
-                        let result = self.format(alias_origin);
-                        self.display_alias_visiting.remove(&alias_origin);
-                        return result;
+                if def.kind == DefKind::TypeAlias
+                    && def.body.is_some_and(|b| def_store.is_computed_body(b))
+                {
+                    // Fall through to format the structural type
+                } else {
+                    let name = self.format_def_name(&def);
+                    // Enum and namespace value types are displayed as `typeof Name` by tsc.
+                    // Class instance types and interfaces use just the name.
+                    if matches!(
+                        def.kind,
+                        DefKind::Enum | DefKind::Namespace | DefKind::ClassConstructor
+                    ) {
+                        return format!("typeof {name}").into();
                     }
-                    let params: Vec<String> = def
-                        .type_params
-                        .iter()
-                        .map(|tp| self.atom(tp.name).to_string())
-                        .collect();
-                    return format!("{}<{}>", name, params.join(", ")).into();
+                    // For generic types, prefer the display_alias (which has the actual
+                    // instantiated type arguments like `A<number>`) over appending raw
+                    // type parameter names from the definition (like `A<T>`).
+                    // The display_alias is set when an Application type is evaluated,
+                    // and preserves the concrete type arguments from the instantiation.
+                    if !def.type_params.is_empty() {
+                        if let Some(alias_origin) = self.interner.get_display_alias(type_id)
+                            && self.display_alias_visiting.insert(alias_origin)
+                        {
+                            let result = self.format(alias_origin);
+                            self.display_alias_visiting.remove(&alias_origin);
+                            return result;
+                        }
+                        let params: Vec<String> = def
+                            .type_params
+                            .iter()
+                            .map(|tp| self.atom(tp.name).to_string())
+                            .collect();
+                        return format!("{}<{}>", name, params.join(", ")).into();
+                    }
+                    return name.into();
                 }
-                return name.into();
             }
         }
 
