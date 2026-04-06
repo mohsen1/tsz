@@ -302,7 +302,7 @@ impl<'a> CheckerState<'a> {
                     | diagnostic_codes::EXPECTED_AT_LEAST_ARGUMENTS_BUT_GOT
             )
         });
-        let _all_failures_are_argument_mismatches = !failures.is_empty()
+        let all_failures_are_argument_mismatches = !failures.is_empty()
             && failures.iter().all(|failure| {
                 failure.code
                     == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
