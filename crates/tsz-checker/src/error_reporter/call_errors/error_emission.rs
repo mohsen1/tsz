@@ -310,7 +310,7 @@ impl<'a> CheckerState<'a> {
         let anchor_argument_from_mixed_failures = shared_argument_anchor.is_some()
             && !remaining_failures.is_empty()
             && remaining_failures_are_count_mismatches;
-        let _anchor_argument_from_all_failures =
+        let anchor_argument_from_all_failures =
             all_failures_are_argument_mismatches && shared_argument_anchor.is_some();
         let anchor_first_argument = identical_argument_failures
             && !remaining_failures.is_empty()
