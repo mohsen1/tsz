@@ -201,6 +201,22 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // Return Lazy wrapper for regular interfaces
+                    // But if the interface has default type parameters, create an Application
+                    // type with the default arguments applied (matching tsc behavior).
+                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+                    let all_have_defaults = !type_params.is_empty()
+                        && type_params.iter().all(|p| p.default.is_some());
+                    if all_have_defaults {
+                        let default_args: Vec<TypeId> = type_params
+                            .iter()
+                            .map(|p| p.default.unwrap_or(TypeId::ERROR))
+                            .collect();
+                        let lazy_type = self.ctx.create_lazy_type_ref(sym_id);
+                        let app_type = self.ctx.types.application(lazy_type, default_args);
+                        self.ctx.leave_recursion();
+                        return app_type;
+                    }
                     let lazy_type = self.ctx.create_lazy_type_ref(sym_id);
                     self.ctx.leave_recursion();
                     return lazy_type;
