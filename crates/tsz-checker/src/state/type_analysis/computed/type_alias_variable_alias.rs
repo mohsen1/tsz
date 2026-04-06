@@ -323,30 +323,6 @@ impl<'a> CheckerState<'a> {
                 // This enables Lazy type resolution via TypeResolver during narrowing operations
                 let def_id = self.ctx.get_or_create_def_id(sym_id);
 
-                // Mark type aliases whose AST body is an intersection or conditional
-                // AND whose resolved type is a simple union of literals/primitives.
-                // tsc drops alias tracking when intersections reduce to simple
-                // literal unions (e.g., `type T2 = T1 & ("number" | "boolean")`
-                // simplifies to `"number" | "boolean"` and tsc does NOT show T2).
-                // However, tsc PRESERVES alias names when the intersection distributes
-                // into a union of object types (e.g., `type B = Common & { bar: 1 }`).
-                if params.is_empty() {
-                    if let Some(body_node) = self.ctx.arena.get(type_alias.type_node) {
-                        if matches!(
-                            body_node.kind,
-                            syntax_kind_ext::INTERSECTION_TYPE | syntax_kind_ext::CONDITIONAL_TYPE
-                        ) {
-                            // Only mark as computed if the resolved type is a simple
-                            // literal/primitive union — not a complex union of objects.
-                            let is_simple_result =
-                                self.is_simple_literal_or_primitive_type(alias_type);
-                            if is_simple_result {
-                                self.ctx.definition_store.mark_computed_alias(def_id);
-                            }
-                        }
-                    }
-                }
-
                 // Cache type parameters for Application expansion (Priority 1 fix)
                 // This enables ExtractState<NumberReducer> to expand correctly
                 if !params.is_empty() {
@@ -1705,49 +1681,5 @@ impl<'a> CheckerState<'a> {
         // Fallback: return ANY for unresolved symbols to prevent cascading errors
         // The actual "cannot find" error should already be emitted elsewhere
         (TypeId::ANY, Vec::new())
-    }
-
-    /// Check if a type is a "simple" literal/primitive type or a union of such types.
-    ///
-    /// Used to determine whether an intersection type alias should be treated as
-    /// "computed" (alias dropped). tsc drops alias tracking when intersections
-    /// simplify to simple literal unions like `"number" | "boolean"`, but preserves
-    /// aliases when the result is a complex union of object types.
-    fn is_simple_literal_or_primitive_type(&self, type_id: TypeId) -> bool {
-        use tsz_solver::types::TypeData;
-
-        // Check for well-known primitive TypeIds
-        if matches!(
-            type_id,
-            TypeId::NEVER
-                | TypeId::UNKNOWN
-                | TypeId::ANY
-                | TypeId::VOID
-                | TypeId::UNDEFINED
-                | TypeId::NULL
-                | TypeId::BOOLEAN
-                | TypeId::NUMBER
-                | TypeId::STRING
-                | TypeId::BIGINT
-                | TypeId::SYMBOL
-        ) {
-            return true;
-        }
-
-        let Some(data) = self.ctx.types.lookup(type_id) else {
-            return false;
-        };
-
-        match &data {
-            TypeData::Literal(_) | TypeData::Intrinsic(_) => true,
-            TypeData::Union(members) => {
-                let members = self.ctx.types.type_list(*members);
-                members
-                    .as_ref()
-                    .iter()
-                    .all(|&m| self.is_simple_literal_or_primitive_type(m))
-            }
-            _ => false,
-        }
     }
 }

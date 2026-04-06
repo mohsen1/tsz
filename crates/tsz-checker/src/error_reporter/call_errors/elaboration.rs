@@ -1005,94 +1005,6 @@ impl<'a> CheckerState<'a> {
                 } else {
                     target_prop_type
                 };
-
-                // Try to elaborate INTO the arrow function body: tsc reports the
-                // return type mismatch on the body expression (e.g., `"b"`) instead
-                // of the property name when the arrow has an expression body.
-                let elaborated_into_body = self
-                    .ctx
-                    .arena
-                    .get(prop_value_idx)
-                    .and_then(|n| {
-                        if n.kind == syntax_kind_ext::ARROW_FUNCTION {
-                            self.ctx.arena.get_function(n)
-                        } else {
-                            None
-                        }
-                    })
-                    .and_then(|func| {
-                        let expected_return = self.first_callable_return_type(target_prop_type)?;
-                        if expected_return == TypeId::VOID
-                            || expected_return == TypeId::ANY
-                            || expected_return == TypeId::ERROR
-                        {
-                            return None;
-                        }
-                        let body_node = self.ctx.arena.get(func.body)?;
-                        // Only elaborate expression-bodied arrows (not block bodies)
-                        if body_node.kind == syntax_kind_ext::BLOCK {
-                            return None;
-                        }
-                        let body_type = self.get_type_of_node(func.body);
-                        if body_type == TypeId::ERROR
-                            || body_type == TypeId::ANY
-                            || self.is_assignable_to(body_type, expected_return)
-                        {
-                            return None;
-                        }
-                        Some((func.body, body_type, expected_return))
-                    });
-
-                if let Some((body_idx, _body_type, expected_return)) = elaborated_into_body {
-                    // Emit TS2322 directly at the body expression node.
-                    // We must NOT use error_type_not_assignable_at() because its
-                    // anchor resolution walks UP the AST to the arrow function,
-                    // defeating the purpose of pointing at the inner expression.
-                    // Prefer the literal type for display (e.g., '"b"' not 'string')
-                    // since tsc preserves literal types in elaborated return errors.
-                    let actual_body_type = self
-                        .ctx
-                        .arena
-                        .get(body_idx)
-                        .and_then(|n| {
-                            use tsz_scanner::SyntaxKind;
-                            match n.kind {
-                                k if k == SyntaxKind::StringLiteral as u16
-                                    || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
-                                {
-                                    let lit = self.ctx.arena.get_literal(n)?;
-                                    Some(self.ctx.types.factory().literal_string(&lit.text))
-                                }
-                                k if k == SyntaxKind::NumericLiteral as u16 => {
-                                    let lit = self.ctx.arena.get_literal(n)?;
-                                    let val: f64 = lit.text.parse().ok()?;
-                                    Some(self.ctx.types.factory().literal_number(val))
-                                }
-                                k if k == SyntaxKind::TrueKeyword as u16 => {
-                                    Some(TypeId::BOOLEAN_TRUE)
-                                }
-                                k if k == SyntaxKind::FalseKeyword as u16 => {
-                                    Some(TypeId::BOOLEAN_FALSE)
-                                }
-                                _ => None,
-                            }
-                        })
-                        .unwrap_or_else(|| self.get_type_of_node(body_idx));
-                    let source_str = self.format_type_for_assignability_message(actual_body_type);
-                    let target_str = self.format_type_for_assignability_message(expected_return);
-                    let message = crate::diagnostics::format_message(
-                        crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        &[&source_str, &target_str],
-                    );
-                    self.error_at_node(
-                        body_idx,
-                        &message,
-                        crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    );
-                    elaborated = true;
-                    continue;
-                }
-
                 // For method declarations, emit TS2322 directly to avoid triggering
                 // name resolution on the method name identifier (which would cause
                 // a spurious TS2552 "Cannot find name" error). The anchor-based
@@ -1116,48 +1028,11 @@ impl<'a> CheckerState<'a> {
                         crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     );
                 } else {
-                    // For arrow/function expression property values, try deeper
-                    // elaboration first. tsc's elaborateElementwise recurses
-                    // into function return expressions so the error points at
-                    // the body expression (e.g., `"hello"` in `b: () => "hello"`)
-                    // rather than the property name. Unlike the callback argument
-                    // path (try_elaborate_function_arg_return_error), the property
-                    // context reports the return type mismatch, not the full
-                    // function type mismatch.
-                    let elaborated_body = (|| {
-                        let func_node = self.ctx.arena.get(prop_value_idx)?;
-                        let func = self.ctx.arena.get_function(func_node)?;
-                        let expected_ret = self.first_callable_return_type(target_prop_type)?;
-                        if expected_ret == TypeId::VOID || expected_ret == TypeId::ANY {
-                            return None;
-                        }
-                        let body_node = self.ctx.arena.get(func.body)?;
-                        // Only expression-bodied arrows (not block bodies)
-                        if body_node.kind == syntax_kind_ext::BLOCK {
-                            return None;
-                        }
-                        let body_type = self.get_type_of_node(func.body);
-                        if body_type == TypeId::ERROR
-                            || body_type == TypeId::ANY
-                            || self.is_assignable_to(body_type, expected_ret)
-                        {
-                            return None;
-                        }
-                        Some((body_type, expected_ret, func.body))
-                    })();
-                    if let Some((body_type, expected_ret, body_idx)) = elaborated_body {
-                        self.error_type_not_assignable_at_with_anchor(
-                            body_type,
-                            expected_ret,
-                            body_idx,
-                        );
-                    } else {
-                        self.error_type_not_assignable_at_with_anchor(
-                            source_prop_type_for_diagnostic,
-                            target_for_diag,
-                            prop_name_idx,
-                        );
-                    }
+                    self.error_type_not_assignable_at_with_anchor(
+                        source_prop_type_for_diagnostic,
+                        target_for_diag,
+                        prop_name_idx,
+                    );
                 }
                 elaborated = true;
                 continue;
