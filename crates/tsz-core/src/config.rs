@@ -306,6 +306,13 @@ pub struct CompilerOptions {
         deserialize_with = "deserialize_bool_or_string"
     )]
     pub strict_bind_call_apply: Option<bool>,
+    /// Built-in iterators use `undefined` for TReturn instead of `any`
+    #[serde(
+        default,
+        alias = "strictBuiltinIteratorReturn",
+        deserialize_with = "deserialize_bool_or_string"
+    )]
+    pub strict_builtin_iterator_return: Option<bool>,
     /// Report errors on unused local variables
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_unused_locals: Option<bool>,
@@ -863,6 +870,9 @@ pub fn resolve_compiler_options(
     }
     if let Some(v) = options.no_unchecked_side_effect_imports {
         resolved.checker.no_unchecked_side_effect_imports = v;
+    }
+    if let Some(v) = options.strict_builtin_iterator_return {
+        resolved.checker.strict_builtin_iterator_return = v;
     }
 
     if let Some(no_emit) = options.no_emit {

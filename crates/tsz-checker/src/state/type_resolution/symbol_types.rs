@@ -35,6 +35,20 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        // Compiler-provided intrinsic type aliases whose body is `intrinsic` cannot
+        // be resolved from the AST. Intercept BuiltinIteratorReturn early, before
+        // any fallback/delegation logic that might treat ANY as "unresolved".
+        if let Some((ref name, flags, _, _)) = symbol_meta {
+            if name == "BuiltinIteratorReturn" && (flags & symbol_flags::TYPE_ALIAS) != 0 {
+                self.ctx.leave_recursion();
+                return if self.ctx.compiler_options.strict_builtin_iterator_return {
+                    TypeId::UNDEFINED
+                } else {
+                    TypeId::ANY
+                };
+            }
+        }
+
         if let Some((ref escaped_name, flags, ref declarations, value_declaration)) = symbol_meta {
             // For classes, return Lazy(DefId) to preserve class names in error messages
             // (e.g., "type MyClass" instead of expanded object shape)
