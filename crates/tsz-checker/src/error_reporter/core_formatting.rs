@@ -44,6 +44,13 @@ impl<'a> CheckerState<'a> {
                     let name = self.ctx.types.resolve_atom_ref(def.name);
                     return name.to_string();
                 }
+                // For non-generic interfaces referenced via Lazy(DefId), preserve the
+                // interface name. tsc displays "Num" instead of the expanded structural
+                // form "{ constraint: Constraint<this>; witness: number; tag: string; }".
+                if def.kind == tsz_solver::def::DefKind::Interface && def.type_params.is_empty() {
+                    let name = self.ctx.types.resolve_atom_ref(def.name);
+                    return name.to_string();
+                }
             }
         }
 

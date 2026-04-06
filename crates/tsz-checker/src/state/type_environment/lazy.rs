@@ -916,6 +916,21 @@ impl<'a> CheckerState<'a> {
                     && resolved != type_id
                 {
                     drop(env);
+                    // Register resolved type → DefId so TypeFormatter can recover
+                    // the named display (e.g., "Num" instead of structural expansion).
+                    if resolved != TypeId::ERROR
+                        && resolved != TypeId::ANY
+                        && resolved != TypeId::UNKNOWN
+                        && self
+                            .ctx
+                            .definition_store
+                            .find_def_for_type(resolved)
+                            .is_none()
+                    {
+                        self.ctx
+                            .definition_store
+                            .register_type_to_def(resolved, def_id);
+                    }
                     return self.resolve_lazy_type_inner(resolved, visited);
                 }
             }

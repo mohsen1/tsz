@@ -792,6 +792,19 @@ impl<'a> CheckerState<'a> {
             return self.format_assignability_type_for_message(source, target);
         }
 
+        // For Lazy(DefId) source types representing named interfaces (non-generic),
+        // return the interface name directly. This prevents get_type_of_node from
+        // resolving the Lazy to its structural form, losing the name (e.g., showing
+        // "{ constraint: Constraint<this>; ... }" instead of "Num").
+        if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, source) {
+            if let Some(def) = self.ctx.definition_store.get(def_id) {
+                if def.kind == tsz_solver::def::DefKind::Interface && def.type_params.is_empty() {
+                    let name = self.ctx.types.resolve_atom_ref(def.name);
+                    return name.to_string();
+                }
+            }
+        }
+
         if let Some(display) = self.jsdoc_annotated_expression_display(anchor_idx, target) {
             return display;
         }
