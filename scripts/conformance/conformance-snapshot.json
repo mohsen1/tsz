@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-04-06T15:51:28Z",
-  "git_sha": "31cc60e4fa09294c3a61810128bfcd2e511536b8",
+  "timestamp": "2026-04-06T16:54:10Z",
+  "git_sha": "a658cbed59934c488929eb38b9c50662de411a93",
   "summary": {
     "total_tests": 12581,
-    "passed": 11758,
-    "failed": 823,
+    "passed": 11764,
+    "failed": 817,
     "pass_rate": 93.5
   },
   "areas_by_pass_rate": [
@@ -44,13 +44,6 @@
       "pass_rate": 75.0
     },
     {
-      "area": "types/intersection",
-      "total": 24,
-      "passed": 18,
-      "failed": 6,
-      "pass_rate": 75.0
-    },
-    {
       "area": "types/tuple",
       "total": 34,
       "passed": 26,
@@ -63,6 +56,13 @@
       "passed": 57,
       "failed": 16,
       "pass_rate": 78.08
+    },
+    {
+      "area": "types/intersection",
+      "total": 24,
+      "passed": 19,
+      "failed": 5,
+      "pass_rate": 79.17
     },
     {
       "area": "jsx",
@@ -163,13 +163,6 @@
       "pass_rate": 85.96
     },
     {
-      "area": "types/typeRelationships",
-      "total": 264,
-      "passed": 227,
-      "failed": 37,
-      "pass_rate": 85.98
-    },
-    {
       "area": "jsdoc",
       "total": 249,
       "passed": 215,
@@ -191,6 +184,13 @@
       "pass_rate": 86.67
     },
     {
+      "area": "types/typeRelationships",
+      "total": 264,
+      "passed": 229,
+      "failed": 35,
+      "pass_rate": 86.74
+    },
+    {
       "area": "expressions/functionCalls",
       "total": 24,
       "passed": 21,
@@ -210,13 +210,6 @@
       "passed": 29,
       "failed": 4,
       "pass_rate": 87.88
-    },
-    {
-      "area": "types/members",
-      "total": 34,
-      "passed": 30,
-      "failed": 4,
-      "pass_rate": 88.24
     },
     {
       "area": "salsa",
@@ -259,6 +252,13 @@
       "passed": 28,
       "failed": 3,
       "pass_rate": 90.32
+    },
+    {
+      "area": "types/members",
+      "total": 34,
+      "passed": 31,
+      "failed": 3,
+      "pass_rate": 91.18
     },
     {
       "area": "types/spread",
@@ -326,9 +326,9 @@
     {
       "area": "compiler",
       "total": 6519,
-      "passed": 6142,
-      "failed": 377,
-      "pass_rate": 94.22
+      "passed": 6143,
+      "failed": 376,
+      "pass_rate": 94.23
     },
     {
       "area": "functions",
@@ -457,18 +457,18 @@
       "pass_rate": 97.62
     },
     {
-      "area": "parser/ecmascript5",
-      "total": 687,
-      "passed": 672,
-      "failed": 15,
-      "pass_rate": 97.82
-    },
-    {
       "area": "es6/Symbols",
       "total": 95,
       "passed": 93,
       "failed": 2,
       "pass_rate": 97.89
+    },
+    {
+      "area": "parser/ecmascript5",
+      "total": 687,
+      "passed": 673,
+      "failed": 14,
+      "pass_rate": 97.96
     },
     {
       "area": "types/objectTypeLiteral",
@@ -1328,11 +1328,11 @@
   ],
   "top_extra_codes": [
     {
-      "code": "TS2322",
-      "count": 10
+      "code": "TS2339",
+      "count": 11
     },
     {
-      "code": "TS2339",
+      "code": "TS2322",
       "count": 10
     },
     {
@@ -1492,7 +1492,7 @@
     "false_positive": 1,
     "all_missing": 45,
     "wrong_code": 169,
-    "fingerprint_only": 606,
+    "fingerprint_only": 600,
     "close_to_passing": 89
   }
 }
