@@ -95,7 +95,6 @@ FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFu
 FAIL TypeScript/tests/cases/compiler/genericCloneReturnTypes2.ts | expected:[TS2322,TS2454] actual:[TS2322,TS2454]
 FAIL TypeScript/tests/cases/compiler/genericCombinators2.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/genericConstructorFunction1.ts | expected:[TS2348] actual:[TS2348]
-FAIL TypeScript/tests/cases/compiler/genericDefaults.ts | expected:[TS2744] actual:[TS2339,TS2744]
 FAIL TypeScript/tests/cases/compiler/genericDefaultsErrors.ts | expected:[TS2304,TS2344,TS2345,TS2428,TS2558,TS2706,TS2707,TS2716] actual:[TS2304,TS2344,TS2345,TS2428,TS2558,TS2706,TS2707,TS2716]
 FAIL TypeScript/tests/cases/compiler/genericFunctionInference1.ts | expected:[TS2345] actual:[TS2322,TS2345,TS2362]
 FAIL TypeScript/tests/cases/compiler/genericMappedTypeAsClause.ts | expected:[TS2312,TS2322,TS2353] actual:[TS2312,TS2322,TS2741]
@@ -162,6 +161,7 @@ FAIL TypeScript/tests/cases/compiler/jsxFragmentFactoryNoUnusedLocals.tsx | expe
 FAIL TypeScript/tests/cases/compiler/jsxFragmentWrongType.tsx | expected:[TS2304,TS2874,TS2879] actual:[TS2304,TS2874,TS2879]
 FAIL TypeScript/tests/cases/compiler/jsxIntrinsicElementsTypeArgumentErrors.tsx | expected:[TS1009,TS1099,TS2304,TS2344,TS2558] actual:[TS1099]
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixIntrinsics.tsx | expected:[TS2322,TS2339] actual:[TS2322,TS2339]
+FAIL TypeScript/tests/cases/compiler/jsxRuntimePragma.ts | expected:[] actual:[TS2739,TS2740]
 FAIL TypeScript/tests/cases/compiler/keyRemappingKeyofResult.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/keyofIsLiteralContexualType.ts | expected:[TS2322,TS2339] actual:[TS2322,TS2339]
 FAIL TypeScript/tests/cases/compiler/lambdaArgCrash.ts | expected:[TS2304,TS2345] actual:[TS2304,TS2345]
@@ -3638,6 +3638,7 @@ PASS TypeScript/tests/cases/compiler/genericConstraintSatisfaction1.ts
 PASS TypeScript/tests/cases/compiler/genericConstructInvocationWithNoTypeArg.ts
 PASS TypeScript/tests/cases/compiler/genericConstructSignatureInInterface.ts
 PASS TypeScript/tests/cases/compiler/genericContextualTypingSpecialization.ts
+PASS TypeScript/tests/cases/compiler/genericDefaults.ts
 PASS TypeScript/tests/cases/compiler/genericDefaultsJs.ts
 PASS TypeScript/tests/cases/compiler/genericDerivedTypeWithSpecializedBase.ts
 PASS TypeScript/tests/cases/compiler/genericDerivedTypeWithSpecializedBase2.ts
@@ -4553,7 +4554,6 @@ PASS TypeScript/tests/cases/compiler/jsxNestedWithinTernaryParsesCorrectly.tsx
 PASS TypeScript/tests/cases/compiler/jsxPartialSpread.tsx
 PASS TypeScript/tests/cases/compiler/jsxPreserveWithJsInput.ts
 PASS TypeScript/tests/cases/compiler/jsxPropsAsIdentifierNames.tsx
-PASS TypeScript/tests/cases/compiler/jsxRuntimePragma.ts
 PASS TypeScript/tests/cases/compiler/jsxSpreadFirstUnionNoErrors.tsx
 PASS TypeScript/tests/cases/compiler/jsxSpreadTag.ts
 PASS TypeScript/tests/cases/compiler/jsxViaImport.2.tsx
