@@ -975,7 +975,19 @@ impl ParserState {
             && !self.is_token(SyntaxKind::ThisKeyword)
             && !self.is_identifier_or_keyword()
         {
-            self.error_identifier_expected();
+            // When the current token is '}' in JSX context, emit TS1005 "'}' expected."
+            // instead of TS1003 "Identifier expected." to match tsc behavior.
+            if self.is_token(SyntaxKind::CloseBraceToken) {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    self.token_pos(),
+                    1,
+                    "'}' expected.",
+                    diagnostic_codes::EXPECTED,
+                );
+            } else {
+                self.error_identifier_expected();
+            }
             // Create a missing identifier node
             let end_pos = self.token_end();
             return self.arena.add_identifier(
@@ -1129,7 +1141,18 @@ impl ParserState {
                 // Match tsc's JSX-attribute list recovery: report an identifier
                 // at the unexpected token, consume one token, and keep parsing the
                 // tag until we reach `>` or `/>`.
-                self.error_identifier_expected();
+                // When the current token is '}' in JSX context, emit TS1005.
+                if self.is_token(SyntaxKind::CloseBraceToken) {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at(
+                        self.token_pos(),
+                        1,
+                        "'}' expected.",
+                        diagnostic_codes::EXPECTED,
+                    );
+                } else {
+                    self.error_identifier_expected();
+                }
                 self.next_token();
             }
         }
@@ -1152,7 +1175,18 @@ impl ParserState {
         // Error recovery: if the current token can't start an attribute name,
         // report error and skip to next attribute or end of attributes
         if !self.is_token(SyntaxKind::Identifier) && !self.is_identifier_or_keyword() {
-            self.error_identifier_expected();
+            // When the current token is '}' in JSX context, emit TS1005.
+            if self.is_token(SyntaxKind::CloseBraceToken) {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    start_pos,
+                    1,
+                    "'}' expected.",
+                    diagnostic_codes::EXPECTED,
+                );
+            } else {
+                self.error_identifier_expected();
+            }
             // Skip the invalid token to prevent infinite loops
             self.next_token();
             // Return a dummy attribute with missing name
