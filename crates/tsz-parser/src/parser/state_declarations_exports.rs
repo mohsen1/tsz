@@ -1266,9 +1266,18 @@ impl ParserState {
         } else {
             let cond = self.parse_expression();
 
-            // Check for missing for condition: for (init; ; incr) when there was content to parse
+            // Check for missing for condition: for (init; ; incr) when there was content to parse.
+            // Use companion error to bypass position-based deduplication: the earlier
+            // parse_expected(SemicolonToken) may have emitted TS1005 at the same
+            // token position, and parse_error_at suppresses a second diagnostic at
+            // the same start. tsc emits both TS1005 and TS1109 in this scenario
+            // because its dedup only suppresses same-position + same-error repeats.
             if cond == NodeIndex::NONE {
-                self.error_expression_expected();
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_companion_error_at_current_token(
+                    "Expression expected.",
+                    diagnostic_codes::EXPRESSION_EXPECTED,
+                );
             }
 
             cond
@@ -1290,9 +1299,15 @@ impl ParserState {
         } else {
             let incr = self.parse_expression();
 
-            // Check for missing for incrementor: for (init; cond; ) when there was content to parse
+            // Check for missing for incrementor: for (init; cond; ) when there was content to parse.
+            // Use companion error to bypass position-based deduplication (same
+            // rationale as the condition case above).
             if incr == NodeIndex::NONE {
-                self.error_expression_expected();
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_companion_error_at_current_token(
+                    "Expression expected.",
+                    diagnostic_codes::EXPRESSION_EXPECTED,
+                );
             }
 
             incr
