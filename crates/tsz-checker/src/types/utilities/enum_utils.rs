@@ -1208,6 +1208,17 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Two callable/function types always overlap because they are both objects
+        // at runtime. tsc's Comparable relation treats all function/callable types
+        // as comparable even when their call signatures are structurally incompatible
+        // (e.g., due to constrained generic type parameters). Without this check,
+        // comparisons like `{fn<T, U extends T>(x: T, y: U): T}` vs
+        // `{fn(x: Base, y: C): Base}` would incorrectly report TS2367.
+        if self.both_callable_types_overlap(effective_left, effective_right) {
+            tracing::trace!("callable/function types overlap");
+            return false;
+        }
+
         tracing::trace!("no overlap detected");
         // No other overlap detected
         true
@@ -1274,6 +1285,24 @@ impl<'a> CheckerState<'a> {
         };
 
         is_constructor_only(self, left) && is_constructor_only(self, right)
+    }
+
+    /// Check if both types are callable/function types that always overlap.
+    ///
+    /// In tsc, all function/callable types are objects at runtime and are considered
+    /// comparable even when their call signatures are structurally incompatible.
+    /// This handles cases where generic constraints prevent assignability but the
+    /// types should still be comparable (e.g., `<T, U extends T>(x: T, y: U) => T`
+    /// vs `(x: Base, y: C) => Base`).
+    fn both_callable_types_overlap(&self, left: TypeId, right: TypeId) -> bool {
+        use tsz_solver::types::TypeData;
+        let is_callable_like = |type_id: TypeId| -> bool {
+            matches!(
+                self.ctx.types.lookup(type_id),
+                Some(TypeData::Function(_) | TypeData::Callable(_))
+            )
+        };
+        is_callable_like(left) && is_callable_like(right)
     }
 
     /// Check if two object types have all common properties with independently
