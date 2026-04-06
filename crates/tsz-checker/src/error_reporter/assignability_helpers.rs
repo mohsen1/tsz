@@ -79,6 +79,25 @@ impl<'a> CheckerState<'a> {
             ));
     }
 
+    /// Report a type not assignable error using a pre-computed failure reason.
+    /// This renders the failure reason with the provided display types and pushes the diagnostic.
+    pub(crate) fn error_type_not_assignable_with_reason_and_display(
+        &mut self,
+        source_for_display: TypeId,
+        target_for_display: TypeId,
+        reason: &tsz_solver::SubtypeFailureReason,
+        anchor_idx: NodeIndex,
+    ) {
+        let diag = self.render_failure_reason(
+            reason,
+            source_for_display,
+            target_for_display,
+            anchor_idx,
+            0,
+        );
+        self.ctx.push_diagnostic(diag);
+    }
+
     /// Report constructor accessibility mismatch error.
     pub(crate) fn error_constructor_accessibility_not_assignable(
         &mut self,
