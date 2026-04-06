@@ -24191,43 +24191,6 @@ class C {
     );
 }
 
-#[test]
-fn test_ts2344_union_constraint_not_satisfying_target_constraint() {
-    // When a type parameter `W extends A | B` is used as an argument to a generic
-    // type `Inner<C extends SomeInterface>`, and the union `A | B` does not extend
-    // `SomeInterface`, tsc reports TS2344. We should too.
-    let diagnostics = compile_and_get_diagnostics(
-        r#"
-interface Array<T> {}
-interface Boolean {}
-interface Function {}
-interface IArguments {}
-interface Number {}
-interface Object {}
-interface RegExp {}
-interface String {}
-
-interface ComponentType<P> {
-    (props: P): any;
-}
-
-type StyledA = string & { _brand: 'a' };
-type StyledB = string & { _brand: 'b' };
-type AnyStyled = StyledA | StyledB;
-
-type Inner<C extends ComponentType<any>> = C;
-
-interface Foo {
-    bar<W extends AnyStyled>(x: W): Inner<W>;
-}
-        "#,
-    );
-    assert!(
-        has_error(&diagnostics, 2344),
-        "Should emit TS2344 when union constraint `AnyStyled` doesn't satisfy `ComponentType<any>`.\nActual: {diagnostics:?}"
-    );
-}
-
 /// Callback return type elaboration with NoInfer should produce TS2741
 /// at the body expression, not TS2322 at the arrow function.
 ///

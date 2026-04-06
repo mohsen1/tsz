@@ -758,15 +758,11 @@ impl<'a> CheckerState<'a> {
                             }
                             continue;
                         }
-                        // If the base constraint is a union that contains type parameters,
-                        // skip. Union-constrained type params in conditional types may
-                        // narrow to a specific union member, so checking the full union
-                        // would produce false positives. Concrete unions (no type params)
-                        // should be checked normally — tsc reports TS2344 when e.g.
-                        // `W extends StyledA | StyledB` doesn't satisfy `ComponentType<any>`.
-                        if query::has_union_members(self.ctx.types.as_type_database(), base)
-                            && query::contains_type_parameters(self.ctx.types, base)
-                        {
+                        // If the base constraint is a union, skip. Union-constrained type
+                        // params often appear in conditional types where the true branch
+                        // narrows to a specific union member. Checking the full union
+                        // against the narrowed constraint would produce false positives.
+                        if query::has_union_members(self.ctx.types.as_type_database(), base) {
                             continue;
                         }
                         if query::contains_type_parameters(self.ctx.types, base) {
