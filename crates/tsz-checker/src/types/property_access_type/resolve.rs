@@ -1704,7 +1704,7 @@ impl<'a> CheckerState<'a> {
                             .arena
                             .get(access.expression)
                             .is_some_and(|n| n.kind == syntax_kind_ext::NEW_EXPRESSION);
-                        
+
                         if is_new_expression {
                             self.error_property_not_exist_at(
                                 property_name,

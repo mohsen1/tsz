@@ -245,8 +245,8 @@ impl<'a> FlowAnalyzer<'a> {
                                     if let Some(inner_callee_type) =
                                         node_types.get(&inner_call.expression.0)
                                     {
-                                        if let Some(inner_sig) = self
-                                            .predicate_signature_for_type(*inner_callee_type)
+                                        if let Some(inner_sig) =
+                                            self.predicate_signature_for_type(*inner_callee_type)
                                         {
                                             if let Some(inner_target) = self
                                                 .predicate_target_expression(
@@ -269,11 +269,13 @@ impl<'a> FlowAnalyzer<'a> {
                                                         );
                                                     // Invert the sense: `!isB(foo)` being truthy
                                                     // means `isB(foo)` is falsy, so narrow negatively
-                                                    return Some(self.apply_type_predicate_narrowing(
-                                                        type_id,
-                                                        &resolved_inner_pred,
-                                                        !is_true_branch,
-                                                    ));
+                                                    return Some(
+                                                        self.apply_type_predicate_narrowing(
+                                                            type_id,
+                                                            &resolved_inner_pred,
+                                                            !is_true_branch,
+                                                        ),
+                                                    );
                                                 }
                                             }
                                         }
