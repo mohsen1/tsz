@@ -12,13 +12,11 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn format_type_for_assignability_message(&mut self, ty: TypeId) -> String {
-        // If the type is a TypeParameter (not Infer), format it directly as
+        // If the type is a TypeParameter or Infer, format it directly as
         // its name.  This must happen before any evaluation/resolution that
         // could replace the type parameter with its constraint type.
         // tsc always displays type parameters by name in assignability messages.
-        if let Some(tsz_solver::TypeData::TypeParameter(info)) =
-            self.ctx.types.as_type_database().lookup(ty)
-        {
+        if let Some(info) = tsz_solver::type_param_info(self.ctx.types.as_type_database(), ty) {
             return self.ctx.types.resolve_atom_ref(info.name).to_string();
         }
 

@@ -101,7 +101,10 @@ fn tuple_type_alias_preserved_in_format() {
     // Register a type alias T1 = [number, string, boolean]
     let name = db.intern_string("T1");
     let info = crate::def::DefinitionInfo::type_alias(name, vec![], tuple_id);
-    let _def_id = def_store.register(info);
+    let def_id = def_store.register(info);
+    // Map the tuple TypeId back to the alias definition so the formatter can
+    // resolve tuple_id -> T1 via find_def_for_type (type_to_def index).
+    def_store.register_type_to_def(tuple_id, def_id);
 
     // Without def_store: should show structural form
     let mut fmt = TypeFormatter::new(&db);
