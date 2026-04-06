@@ -527,7 +527,13 @@ impl<'a> CheckerState<'a> {
 
         // Class field initializers execute later (instance construction), so a
         // variable read there is not a same-point definite-assignment use.
-        if self.is_inside_class_property_initializer(idx) {
+        // However, variables declared inside a function/arrow within the
+        // initializer are scoped to that function, and TS2454 should apply.
+        // We check if the usage is DIRECTLY in a class property initializer
+        // (no function/arrow boundary between the usage and the property).
+        // If the usage is behind a function/arrow boundary, TS2454 should
+        // still apply because the variable lives in that function's scope.
+        if self.is_directly_inside_class_property_initializer(idx) {
             return false;
         }
 
@@ -597,6 +603,9 @@ impl<'a> CheckerState<'a> {
             decl_node = parent;
             decl_id_to_check = info.parent;
         }
+
+        // (Class property initializer suppression was applied above using
+        // is_directly_inside_class_property_initializer on the usage site.)
 
         // If the declaration is a binding element that is ultimately a parameter,
         // we should not perform definite assignment checking. Parameters are
@@ -913,6 +922,43 @@ impl<'a> CheckerState<'a> {
             current = ext.parent;
         }
 
+        false
+    }
+
+    /// Like `is_inside_class_property_initializer` but stops at ALL function
+    /// boundaries including arrow functions. This is used for checking the
+    /// declaration site: a variable declared inside an arrow function body within
+    /// a property initializer is scoped to the arrow, not the class property.
+    fn is_directly_inside_class_property_initializer(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..MAX_TREE_WALK_ITERATIONS {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            // Stop at any function boundary including arrows
+            if node.is_function_like() {
+                return false;
+            }
+            if node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                return self
+                    .ctx
+                    .arena
+                    .get_property_decl(node)
+                    .is_some_and(|prop| prop.initializer.is_some());
+            }
+            if node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+                || node.kind == syntax_kind_ext::SOURCE_FILE
+            {
+                return false;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
         false
     }
 
