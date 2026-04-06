@@ -12,6 +12,19 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn format_type_for_assignability_message(&mut self, ty: TypeId) -> String {
+        // For non-generic type alias references (Lazy(DefId)), format the alias name
+        // directly before evaluation resolves it to its body (which loses the alias
+        // identity). tsc preserves alias names like "ExoticAnimal" in error messages
+        // instead of expanding to "CatDog | ManBearPig | Platypus".
+        if let Some(tsz_solver::types::TypeData::Lazy(def_id)) = self.ctx.types.lookup(ty) {
+            if let Some(def) = self.ctx.definition_store.get(def_id) {
+                if def.kind == tsz_solver::def::DefKind::TypeAlias && def.type_params.is_empty() {
+                    let name = self.ctx.types.resolve_atom_ref(def.name);
+                    return name.to_string();
+                }
+            }
+        }
+
         if let Some(collapsed) = self.format_union_with_collapsed_enum_display(ty) {
             return collapsed;
         }
