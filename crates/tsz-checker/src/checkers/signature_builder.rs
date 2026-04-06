@@ -289,6 +289,82 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Partially instantiate a signature with fewer type arguments than type
+    /// parameters.  The explicitly supplied type arguments are substituted
+    /// throughout the signature body, while the remaining type parameters are
+    /// preserved (with their constraints/defaults updated to reflect the
+    /// supplied args).  This allows the solver to infer the remaining
+    /// parameters from call-site arguments before falling back to defaults.
+    pub(crate) fn partially_instantiate_signature(
+        &self,
+        sig: &tsz_solver::CallSignature,
+        supplied_args: &[TypeId],
+    ) -> tsz_solver::CallSignature {
+        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
+        use tsz_solver::{ParamInfo, TypeParamInfo};
+
+        debug_assert!(supplied_args.len() < sig.type_params.len());
+
+        // Build substitution from only the supplied type arguments.
+        let substitution = TypeSubstitution::from_args(
+            self.ctx.types,
+            &sig.type_params[..supplied_args.len()],
+            supplied_args,
+        );
+
+        // Remaining type params — update constraints/defaults that may reference
+        // the supplied type parameters.
+        let remaining_type_params: Vec<TypeParamInfo> = sig.type_params[supplied_args.len()..]
+            .iter()
+            .map(|tp| TypeParamInfo {
+                name: tp.name,
+                is_const: tp.is_const,
+                constraint: tp
+                    .constraint
+                    .map(|c| instantiate_type(self.ctx.types, c, &substitution)),
+                default: tp
+                    .default
+                    .map(|d| instantiate_type(self.ctx.types, d, &substitution)),
+            })
+            .collect();
+
+        let params: Vec<ParamInfo> = sig
+            .params
+            .iter()
+            .map(|param| ParamInfo {
+                name: param.name,
+                type_id: instantiate_type(self.ctx.types, param.type_id, &substitution),
+                optional: param.optional,
+                rest: param.rest,
+            })
+            .collect();
+
+        let this_type = sig
+            .this_type
+            .map(|type_id| instantiate_type(self.ctx.types, type_id, &substitution));
+        let return_type = instantiate_type(self.ctx.types, sig.return_type, &substitution);
+        let type_predicate =
+            sig.type_predicate
+                .as_ref()
+                .map(|predicate| tsz_solver::TypePredicate {
+                    asserts: predicate.asserts,
+                    target: predicate.target,
+                    type_id: predicate
+                        .type_id
+                        .map(|type_id| instantiate_type(self.ctx.types, type_id, &substitution)),
+                    parameter_index: predicate.parameter_index,
+                });
+
+        tsz_solver::CallSignature {
+            type_params: remaining_type_params,
+            params,
+            this_type,
+            return_type,
+            type_predicate,
+            is_method: sig.is_method,
+        }
+    }
+
     // =========================================================================
     // Parameter Extraction
     // =========================================================================

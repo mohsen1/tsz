@@ -880,3 +880,20 @@ f18<A>(a, b, b);
         "Expected TS2744 errors for forward-referencing defaults"
     );
 }
+
+/// When type arguments are partially supplied and remaining params have defaults
+/// that are fully resolved (no remaining type param references), the defaults
+/// should be applied eagerly. `f12<number>("a")` should error because U defaults
+/// to T=number and "a" (string) is not assignable to number.
+#[test]
+fn test_partial_type_args_apply_resolved_defaults() {
+    let source = r#"
+declare function f12<T, U = T>(a?: U): void;
+f12<number>("a");  // U = T = number; "a" is string -> TS2345
+"#;
+    let codes = crate::test_utils::check_source_codes(source);
+    assert!(
+        codes.contains(&2345),
+        "Expected TS2345: 'string' not assignable to 'number' when U defaults to T=number. Got: {codes:?}"
+    );
+}

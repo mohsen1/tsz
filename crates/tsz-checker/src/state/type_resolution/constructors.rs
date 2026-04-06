@@ -12,52 +12,6 @@ use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-/// Fill missing type arguments with defaults, matching tsc's
-/// `fillMissingTypeArguments`.
-///
-/// When any default resolves to ERROR (forward reference to a later type
-/// parameter), ALL remaining unsupplied params stay as ERROR.  In tsc,
-/// errorType propagates through the signature and suppresses downstream
-/// argument-assignability diagnostics for the entire call.  Rather than
-/// replicating that per-call suppression logic, we keep every unsupplied
-/// slot as ERROR so that every argument is checked against `error | …`,
-/// which the solver's subtype cache trivially accepts.
-fn fill_missing_type_args(
-    types: &dyn tsz_solver::TypeDatabase,
-    type_params: &[tsz_solver::TypeParamInfo],
-    args: &mut Vec<TypeId>,
-) {
-    let first_default_index = args.len();
-    // Phase 1: pre-fill unsupplied slots with ERROR
-    for _ in first_default_index..type_params.len() {
-        args.push(TypeId::ERROR);
-    }
-
-    // Phase 2: resolve defaults in order.  If any default resolves to
-    // ERROR (forward reference), we stop resolving further defaults and
-    // leave everything as ERROR.  This matches tsc's observable behavior
-    // where a forward-referencing default causes the whole call's argument
-    // checking to be suppressed.
-    let mut has_error_default = false;
-    for (param_index, param) in type_params.iter().enumerate().skip(first_default_index) {
-        if has_error_default {
-            break; // leave remaining as ERROR
-        }
-        let fallback = param
-            .default
-            .or(param.constraint)
-            .unwrap_or(TypeId::UNKNOWN);
-        let substitution = tsz_solver::TypeSubstitution::from_args(types, type_params, args);
-        let resolved = tsz_solver::instantiate_type_preserving_meta(types, fallback, &substitution);
-        if resolved == TypeId::ERROR {
-            has_error_default = true;
-            // leave args[param_index] as ERROR
-        } else {
-            args[param_index] = resolved;
-        }
-    }
-}
-
 #[inline]
 const fn should_cache_base_expr_result(
     type_argument_count: usize,
@@ -309,20 +263,53 @@ impl<'a> CheckerState<'a> {
                     return callee_type;
                 }
 
-                // Instantiate each matching signature with the type arguments
+                // Instantiate each matching signature with the type arguments.
+                // When type arguments are partially supplied (fewer than type params),
+                // fill in defaults that are fully determined (no remaining type param
+                // references after substituting explicit args).  Type parameters whose
+                // defaults still reference other unsupplied params are left for the
+                // solver to infer from call-site arguments.
                 let instantiated_calls: Vec<tsz_solver::CallSignature> = matching
                     .iter()
                     .map(|sig| {
                         let mut args = type_args.clone();
-                        // Fill in default type arguments for partially-supplied
-                        // type params, matching tsc's `fillMissingTypeArguments`.
-                        if args.len() < sig.type_params.len() {
-                            fill_missing_type_args(self.ctx.types, &sig.type_params, &mut args);
-                        }
                         if args.len() > sig.type_params.len() {
                             args.truncate(sig.type_params.len());
                         }
-                        self.instantiate_signature(sig, &args)
+                        if args.len() < sig.type_params.len() {
+                            // Check if all remaining defaults are fully determined.
+                            let all_defaults_resolved =
+                                self.all_remaining_defaults_resolved(sig, &args);
+                            if all_defaults_resolved {
+                                // All defaults are fully resolved — apply them eagerly
+                                // (e.g., `f12<number>("a")` where U = T = number).
+                                for (param_index, param) in
+                                    sig.type_params.iter().enumerate().skip(args.len())
+                                {
+                                    let fallback = param
+                                        .default
+                                        .or(param.constraint)
+                                        .unwrap_or(TypeId::UNKNOWN);
+                                    let substitution = tsz_solver::TypeSubstitution::from_args(
+                                        self.ctx.types,
+                                        &sig.type_params[..param_index],
+                                        &args,
+                                    );
+                                    args.push(tsz_solver::instantiate_type_preserving_meta(
+                                        self.ctx.types,
+                                        fallback,
+                                        &substitution,
+                                    ));
+                                }
+                                self.instantiate_signature(sig, &args)
+                            } else {
+                                // Some defaults reference unsupplied type params —
+                                // leave those for solver inference.
+                                self.partially_instantiate_signature(sig, &args)
+                            }
+                        } else {
+                            self.instantiate_signature(sig, &args)
+                        }
                     })
                     .collect();
 
@@ -343,24 +330,43 @@ impl<'a> CheckerState<'a> {
                     return callee_type;
                 }
 
-                // Fill in default type arguments for partially-supplied type params,
-                // matching tsc's fillMissingTypeArguments behavior.
-                let mut args = type_args.clone();
-                if args.len() < shape.type_params.len() {
-                    fill_missing_type_args(self.ctx.types, &shape.type_params, &mut args);
-                }
-
-                let instantiated_call = self.instantiate_signature(
-                    &tsz_solver::CallSignature {
-                        type_params: shape.type_params.clone(),
-                        params: shape.params.clone(),
-                        this_type: None,
-                        return_type: shape.return_type,
-                        type_predicate: None,
-                        is_method: shape.is_method,
-                    },
-                    &args,
-                );
+                let sig = tsz_solver::CallSignature {
+                    type_params: shape.type_params.clone(),
+                    params: shape.params.clone(),
+                    this_type: None,
+                    return_type: shape.return_type,
+                    type_predicate: None,
+                    is_method: shape.is_method,
+                };
+                let instantiated_call = if type_args.len() < shape.type_params.len() {
+                    if self.all_remaining_defaults_resolved(&sig, &type_args) {
+                        // Defaults fully resolved — apply eagerly.
+                        let mut args = type_args.clone();
+                        for (param_index, param) in
+                            sig.type_params.iter().enumerate().skip(args.len())
+                        {
+                            let fallback = param
+                                .default
+                                .or(param.constraint)
+                                .unwrap_or(TypeId::UNKNOWN);
+                            let substitution = tsz_solver::TypeSubstitution::from_args(
+                                self.ctx.types,
+                                &sig.type_params[..param_index],
+                                &args,
+                            );
+                            args.push(tsz_solver::instantiate_type_preserving_meta(
+                                self.ctx.types,
+                                fallback,
+                                &substitution,
+                            ));
+                        }
+                        self.instantiate_signature(&sig, &args)
+                    } else {
+                        self.partially_instantiate_signature(&sig, &type_args)
+                    }
+                } else {
+                    self.instantiate_signature(&sig, &type_args)
+                };
 
                 // Convert single signature to callable
                 let new_shape = CallableShape {
@@ -376,6 +382,54 @@ impl<'a> CheckerState<'a> {
             }
             _ => callee_type,
         }
+    }
+
+    /// Check whether all remaining (unsupplied) type parameter defaults in a
+    /// signature are fully resolved after substituting the supplied type args.
+    /// A default is "fully resolved" if it contains no references to type
+    /// parameters that belong to the unsupplied portion of the signature.
+    fn all_remaining_defaults_resolved(
+        &self,
+        sig: &tsz_solver::CallSignature,
+        supplied_args: &[TypeId],
+    ) -> bool {
+        // Collect the names of unsupplied type parameters.
+        let unsupplied_names: std::collections::HashSet<_> = sig.type_params[supplied_args.len()..]
+            .iter()
+            .map(|tp| tp.name)
+            .collect();
+
+        for (param_index, param) in sig.type_params.iter().enumerate().skip(supplied_args.len()) {
+            let fallback = match param.default.or(param.constraint) {
+                Some(f) => f,
+                None => return true, // No default/constraint → treat as resolved (will be UNKNOWN)
+            };
+            // Substitute the already-resolved args into the default.
+            let substitution = tsz_solver::TypeSubstitution::from_args(
+                self.ctx.types,
+                &sig.type_params[..param_index],
+                supplied_args,
+            );
+            let resolved = tsz_solver::instantiate_type_preserving_meta(
+                self.ctx.types,
+                fallback,
+                &substitution,
+            );
+            // Check if the resolved default still references any unsupplied type param.
+            if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, resolved) {
+                // Check specifically for unsupplied param names
+                for &name in &unsupplied_names {
+                    if tsz_solver::visitor::contains_type_parameter_named(
+                        self.ctx.types.as_type_database(),
+                        resolved,
+                        name,
+                    ) {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
     }
 
     pub(crate) fn base_constructor_type_from_expression(
