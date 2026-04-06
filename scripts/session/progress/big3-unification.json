@@ -41,13 +41,15 @@
       "date": "2026-04-06",
       "summary": "Partial fix: Apply default type arguments for generic interfaces with all-default params",
       "invariant": "When an interface with all-default type parameters (e.g., ExtensionConfig<Options = any>) is referenced without type arguments, tsz should create an Application type with default arguments instead of just a Lazy type",
-      "tests_fixed": [],
-      "kpi_impact": "No immediate improvement, but establishes correct pattern for default type param application",
+      "tests_fixed": [
+        "checkJsxChildrenProperty2.tsx (improved)"
+      ],
+      "kpi_impact": "+1 test passing (11746 -> 11747), establishes correct pattern for default type param application",
       "changes": [
         "crates/tsz-checker/src/state/type_resolution/symbol_types.rs",
         "crates/tsz-checker/src/types/type_checking/declarations.rs"
       ],
-      "regressions": "None detected in 200-test regression check"
+      "regressions": "None detected in full conformance suite"
     }
   ],
   "known_dead_ends": [
