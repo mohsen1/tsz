@@ -1370,7 +1370,14 @@ pub(super) fn collect_diagnostics(
                 IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
                 ParallelIterator,
             };
-            if work_items.len() <= 1 {
+            // Use sequential checking for small projects (<=4 files) to avoid
+            // non-deterministic false positives from concurrent type interning.
+            // The TypeInterner uses DashMap for thread-safe access, but concurrent
+            // type evaluation can produce different results depending on thread
+            // scheduling when multiple files resolve the same lib types (e.g.,
+            // React JSX types). Sequential checking is also faster for small
+            // projects due to avoiding rayon thread pool overhead.
+            if work_items.len() <= 4 {
                 work_items
                     .iter()
                     .zip(per_file_binders)
