@@ -284,7 +284,8 @@ impl<'a> CheckerState<'a> {
                     if self
                         .ctx
                         .binder
-                        .get_symbol_with_libs(resolved_file, &lib_binders).is_none_or(|s| (s.flags & symbol_flags::TYPE_PARAMETER) == 0)
+                        .get_symbol_with_libs(resolved_file, &lib_binders)
+                        .is_none_or(|s| (s.flags & symbol_flags::TYPE_PARAMETER) == 0)
                     {
                         left_sym = resolved_file;
                     }
