@@ -550,16 +550,30 @@ impl<'a> CheckerState<'a> {
 
         // Check if the type matches the global Function interface type.
         // The Function type annotation resolves to a Lazy(DefId) pointing to the
-        // Function symbol. We look up the global Function symbol and compare.
+        // Function symbol. Compare via DefId to avoid triggering expensive
+        // cross-file symbol resolution (which can cause hangs on recursive types
+        // like `typeof C.g` where g's parameter type references `typeof C.g`).
         let lib_binders = self.get_lib_binders();
         if let Some(func_sym_id) = self
             .ctx
             .binder
             .get_global_type_with_libs("Function", &lib_binders)
         {
-            let func_type = self.type_reference_symbol_type(func_sym_id);
-            if type_id == func_type {
-                return true;
+            // Compare via DefId: both the candidate type and the Function symbol
+            // should have the same DefId if they refer to the same global interface.
+            let func_def_id = self.ctx.get_or_create_def_id(func_sym_id);
+            if let Some(candidate_def_id) =
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
+            {
+                if candidate_def_id == func_def_id {
+                    return true;
+                }
+            }
+            // Also check if the type_id was already cached as the symbol type
+            if let Some(&cached) = self.ctx.symbol_types.get(&func_sym_id) {
+                if type_id == cached {
+                    return true;
+                }
             }
         }
 
