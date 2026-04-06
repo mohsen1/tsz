@@ -480,6 +480,14 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Suppress TS2304 for `super` — when `super` appears in invalid contexts
+        // (e.g., non-constructor class members, property initializers), the parser
+        // or grammar checker emits context-specific errors (TS1068, TS1441, etc.).
+        // tsc never emits TS2304 "Cannot find name 'super'" alongside those.
+        if name == "super" {
+            return;
+        }
+
         // TS1212/TS1213/TS1214: Emit strict-mode reserved word diagnostic
         // before any TS2304 suppression logic. This fires independently of TS2304.
         // tsc emits these only when the identifier is used as a DECLARATION name
@@ -1038,7 +1046,10 @@ impl<'a> CheckerState<'a> {
         // Keep TS2304 (no TS2552 suggestion) for `arguments` lookups.
         // TypeScript does not offer spelling suggestions for unresolved `arguments`.
         let is_arguments_name = name == "arguments";
-        let suppress_spelling_suggestion = is_accessibility_modifier_name || is_arguments_name;
+        // `super` is a keyword, never suggest alternatives for it.
+        let is_super_name = name == "super";
+        let suppress_spelling_suggestion =
+            is_accessibility_modifier_name || is_arguments_name || is_super_name;
 
         if suppress_spelling_suggestion {
             return Vec::new();
