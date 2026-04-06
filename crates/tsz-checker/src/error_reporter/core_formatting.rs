@@ -26,9 +26,21 @@ impl<'a> CheckerState<'a> {
         // directly before evaluation resolves it to its body (which loses the alias
         // identity). tsc preserves alias names like "ExoticAnimal" in error messages
         // instead of expanding to "CatDog | ManBearPig | Platypus".
+        //
+        // Exception: when the alias body was computed (intersection reduction,
+        // conditional evaluation), tsc shows the expanded form instead. We detect
+        // this via the computed_alias_bodies set in the DefinitionStore.
         if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, ty) {
             if let Some(def) = self.ctx.definition_store.get(def_id) {
                 if def.kind == tsz_solver::def::DefKind::TypeAlias && def.type_params.is_empty() {
+                    // Check if the body was computed — if so, evaluate and format
+                    // the expanded form instead of the alias name.
+                    if let Some(body) = def.body {
+                        if self.ctx.definition_store.is_computed_body(body) {
+                            let evaluated = self.evaluate_type_with_env(ty);
+                            return self.format_type_diagnostic(evaluated);
+                        }
+                    }
                     let name = self.ctx.types.resolve_atom_ref(def.name);
                     return name.to_string();
                 }
@@ -773,6 +785,13 @@ impl<'a> CheckerState<'a> {
         // need type argument display (e.g., B<string> not B).
         if !def.type_params.is_empty() {
             return None;
+        }
+        // Skip aliases whose body was computed by intersection reduction or
+        // conditional evaluation. tsc shows the expanded form for these.
+        if let Some(body) = def.body {
+            if self.ctx.definition_store.is_computed_body(body) {
+                return None;
+            }
         }
         let name = self.ctx.types.resolve_atom_ref(def.name);
         Some(name.to_string())
