@@ -1480,9 +1480,18 @@ impl<'a> CheckerState<'a> {
                                 let trimmed = text.trim();
                                 let trimmed = trimmed.strip_prefix('(').unwrap_or(trimmed);
                                 let trimmed = trimmed.strip_suffix(')').unwrap_or(trimmed);
+                                // Strip trailing index access syntax that may leak from
+                                // the object_type node span (e.g., "Foo | Bar)['foo']")
+                                let trimmed = if let Some(bracket_pos) = trimmed.find(")[") {
+                                    trimmed[..bracket_pos].trim()
+                                } else if let Some(bracket_pos) = trimmed.find("]['") {
+                                    trimmed[..bracket_pos].trim()
+                                } else {
+                                    trimmed
+                                };
                                 trimmed.trim().to_string()
                             })
-                            .filter(|text| !text.is_empty())
+                            .filter(|text| !text.is_empty() && !text.contains('['))
                             .unwrap_or_else(|| self.format_type(object_type));
                         let message = format_message(
                             diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
