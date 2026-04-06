@@ -1931,7 +1931,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // Check if this parameter's type contains a type parameter that
                     // fell back to its default. If so, skip the error - the default is
                     // a fallback when inference fails, not a constraint.
-                    let param_type = self.param_type_for_arg_index(&func.params, index, final_args.len())
+                    let param_type = self
+                        .param_type_for_arg_index(&func.params, index, final_args.len())
                         .unwrap_or(expected);
                     let should_skip = default_fallback_tp_names.iter().any(|&tp_name| {
                         crate::visitors::visitor_predicates::contains_type_parameter_named(
@@ -1941,10 +1942,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         )
                     });
                     if should_skip {
-                        tracing::debug!("Skipping argument mismatch at index {} - parameter type uses default fallback", index);
+                        tracing::debug!(
+                            "Skipping argument mismatch at index {} - parameter type uses default fallback",
+                            index
+                        );
                         return CallResult::Success(return_type);
                     }
-                    
+
                     let expected = self
                         .param_type_for_arg_index(&func.params, index, final_args.len())
                         .filter(|raw_expected| {
