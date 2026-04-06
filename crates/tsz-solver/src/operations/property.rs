@@ -577,6 +577,21 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         }
                     }
 
+                    // Before giving up, try narrowing discriminated union intersections.
+                    // E.g., `(A | B) & { kind: "one" }` — filter union to matching members
+                    // and retry property access on the narrowed type.
+                    if let Some(narrowed) =
+                        self.try_narrow_discriminated_intersection(members.as_ref())
+                    {
+                        if narrowed != obj_type {
+                            return self.resolve_property_access_inner(
+                                narrowed,
+                                prop_name,
+                                Some(prop_atom),
+                            );
+                        }
+                    }
+
                     return PropertyAccessResult::PropertyNotFound {
                         type_id: obj_type,
                         property_name: prop_atom,
@@ -955,6 +970,106 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // in resolve_string_property, resolve_number_property, etc.
         // We return the original type here and let the normal resolution handle it.
         type_id
+    }
+
+    /// For intersections of a discriminated union with a literal discriminant object
+    /// (e.g. `(A | B) & { kind: "one" }`), narrow the union by filtering members
+    /// whose discriminant property conflicts with the literal, then return the
+    /// simplified intersection. Returns `None` if the pattern doesn't apply.
+    fn try_narrow_discriminated_intersection(&self, members: &[TypeId]) -> Option<TypeId> {
+        // Find union members and object members with literal discriminant properties.
+        let mut union_idx = None;
+        let mut discriminant_props: smallvec::SmallVec<[(Atom, TypeId); 4]> =
+            smallvec::SmallVec::new();
+        let mut other_members: Vec<TypeId> = Vec::new();
+
+        for (i, &member) in members.iter().enumerate() {
+            match self.interner().lookup(member) {
+                Some(TypeData::Union(_)) => {
+                    if union_idx.is_some() {
+                        // Multiple unions - too complex, bail
+                        return None;
+                    }
+                    union_idx = Some(i);
+                }
+                Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                    let shape = self.interner().object_shape(shape_id);
+                    for prop in &shape.properties {
+                        if crate::type_queries::is_unit_type(self.interner(), prop.type_id) {
+                            discriminant_props.push((prop.name, prop.type_id));
+                        }
+                    }
+                    other_members.push(member);
+                }
+                _ => {
+                    other_members.push(member);
+                }
+            }
+        }
+
+        let union_idx = union_idx?;
+        if discriminant_props.is_empty() {
+            return None;
+        }
+
+        let union_member = members[union_idx];
+        let TypeData::Union(union_list) = self.interner().lookup(union_member)? else {
+            return None;
+        };
+        let union_members = self.interner().type_list(union_list);
+
+        // Filter union members: keep only those whose discriminant properties don't
+        // conflict with the literal values from the non-union objects.
+        let mut filtered: Vec<TypeId> = Vec::new();
+        for &um in union_members.iter() {
+            let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
+                self.interner().lookup(um)
+            else {
+                // Non-object union member — can't narrow, keep it
+                filtered.push(um);
+                continue;
+            };
+            let shape = self.interner().object_shape(shape_id);
+            let mut dominated = false;
+            for &(disc_name, disc_value) in &discriminant_props {
+                if let Some(prop) = shape.properties.iter().find(|p| p.name == disc_name) {
+                    if crate::type_queries::is_unit_type(self.interner(), prop.type_id)
+                        && prop.type_id != disc_value
+                    {
+                        // Conflicting discriminant — this member is eliminated
+                        dominated = true;
+                        break;
+                    }
+                }
+            }
+            if !dominated {
+                filtered.push(um);
+            }
+        }
+
+        // Only produce a result if we actually narrowed something
+        if filtered.len() == union_members.len() {
+            return None;
+        }
+
+        // Build the narrowed type
+        let narrowed_union = if filtered.is_empty() {
+            TypeId::NEVER
+        } else if filtered.len() == 1 {
+            filtered[0]
+        } else {
+            self.interner().union(filtered)
+        };
+
+        // Reconstruct the intersection with the narrowed union
+        let mut new_members = other_members;
+        new_members.push(narrowed_union);
+
+        if new_members.len() == 1 {
+            Some(new_members[0])
+        } else {
+            Some(self.interner().intersection(new_members))
+        }
     }
 
     // Resolution helpers (mapped types, primitives, arrays, applications, etc.)

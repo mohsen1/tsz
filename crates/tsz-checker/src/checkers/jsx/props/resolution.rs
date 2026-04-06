@@ -965,15 +965,38 @@ impl<'a> CheckerState<'a> {
             }
 
             let spread_count = spread_entries.len();
+            // Collect property names from each spread so later iterations know
+            // what properties earlier spreads already provide.
+            let mut earlier_spread_props: rustc_hash::FxHashSet<String> =
+                rustc_hash::FxHashSet::default();
             for (i, &(spread_type, _spread_expr_idx, spread_pos)) in
                 spread_entries.iter().enumerate()
             {
                 // Only later explicit attributes override the current spread.
-                let overridden: rustc_hash::FxHashSet<&str> = explicit_attr_names_with_pos
+                let mut overridden: rustc_hash::FxHashSet<&str> = explicit_attr_names_with_pos
                     .iter()
                     .filter(|(attr_pos, _)| *attr_pos > spread_pos)
                     .map(|(_, name)| name.as_str())
                     .collect();
+                // Also include properties already provided by earlier spreads.
+                // This prevents false TS2739 on the last spread when earlier spreads
+                // cover some of the required properties.
+                for prop_name in &earlier_spread_props {
+                    overridden.insert(prop_name.as_str());
+                }
+                // Also include explicit attributes that come BEFORE this spread
+                // (they still contribute to the combined props).
+                for (attr_pos, attr_name) in &explicit_attr_names_with_pos {
+                    if *attr_pos < spread_pos {
+                        overridden.insert(attr_name.as_str());
+                    }
+                }
+
+                // When JSX body children exist, treat `children` as already provided
+                // so spreads that don't include `children` don't trigger TS2741.
+                if children_ctx.as_ref().is_some_and(|ctx| ctx.child_count > 0) {
+                    overridden.insert("children");
+                }
 
                 // Check if there are later spreads that could provide missing properties.
                 let has_later_spreads = i < spread_count - 1;
@@ -989,7 +1012,9 @@ impl<'a> CheckerState<'a> {
                 } else {
                     false
                 };
-                let has_body_children = children_ctx.as_ref().map_or(false, |ctx| ctx.child_count > 0);
+                let has_body_children = children_ctx
+                    .as_ref()
+                    .map_or(false, |ctx| ctx.child_count > 0);
                 let suppress_missing_props = spread_has_children && has_body_children;
 
                 let had_error = self.check_spread_property_types(
@@ -1002,6 +1027,18 @@ impl<'a> CheckerState<'a> {
                     &display_target,
                 );
                 suppress_missing_props_from_spread |= had_error || suppress_missing_props;
+
+                // Record this spread's property names for later iterations.
+                let resolved_spread = self.evaluate_type_with_env(spread_type);
+                let resolved_spread = self.resolve_type_for_property_access(resolved_spread);
+                if let Some(shape) =
+                    tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_spread)
+                {
+                    for prop in &shape.properties {
+                        earlier_spread_props
+                            .insert(self.ctx.types.resolve_atom(prop.name).to_string());
+                    }
+                }
             }
 
             if suppress_missing_props_from_spread {

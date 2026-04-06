@@ -894,7 +894,9 @@ impl Server {
             ignore_deprecations: false,
             allow_umd_global_access: false,
             preserve_const_enums: false,
-            strict_builtin_iterator_return: options.strict_builtin_iterator_return.unwrap_or(options.strict),
+            strict_builtin_iterator_return: options
+                .strict_builtin_iterator_return
+                .unwrap_or(options.strict),
             erasable_syntax_only: false,
         }
     }
