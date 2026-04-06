@@ -33,7 +33,9 @@ impl<'a> CheckerState<'a> {
         if iface.name.is_some()
             && let Some(name_node) = self.ctx.arena.get(iface.name)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-            && crate::error_reporter::assignability::is_primitive_type_name(ident.escaped_text.as_str())
+            && crate::error_reporter::assignability::is_primitive_type_name(
+                ident.escaped_text.as_str(),
+            )
         {
             self.error_at_node(
                 iface.name,
