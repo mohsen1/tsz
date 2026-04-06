@@ -684,13 +684,18 @@ impl<'a> CheckerState<'a> {
     /// TypeId is the body of a non-generic type alias.  This must be called
     /// BEFORE `normalize_assignability_display_type`, which creates a new TypeId
     /// that won't match the stored body.
-    fn lookup_type_alias_name_for_display(&self, ty: TypeId) -> Option<String> {
+    pub(crate) fn lookup_type_alias_name_for_display(&self, ty: TypeId) -> Option<String> {
         // Only check composite types — tsc does NOT preserve alias names for
-        // primitive types (number, string, etc.), literal types, or simple unions
-        // of primitives.  Restricting to object/function/callable types avoids
+        // primitive types (number, string, etc.) or literal types.
+        // Restricting to object/function/callable/union/intersection types avoids
         // regressions like `number` → `TypeOfInfinity`.
         let is_object = tsz_solver::type_queries::get_object_shape(self.ctx.types, ty).is_some();
-        let is_function = if !is_object {
+        let is_union = if !is_object {
+            tsz_solver::type_queries::get_union_members(self.ctx.types, ty).is_some()
+        } else {
+            false
+        };
+        let is_function = if !is_object && !is_union {
             if let Some(fn_shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, ty)
             {
                 // Skip function types that have their own type parameters — these
@@ -707,7 +712,7 @@ impl<'a> CheckerState<'a> {
         } else {
             false
         };
-        if !is_object && !is_function {
+        if !is_object && !is_function && !is_union {
             return None;
         }
 

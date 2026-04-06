@@ -69,6 +69,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         decls: &[NodeIndex],
     ) -> bool {
+        #[allow(clippy::type_complexity)]
         let profiles: Vec<Vec<(String, Option<TypeId>, Option<TypeId>)>> = decls
             .iter()
             .filter_map(|&d| self.interface_type_parameter_profile(d))
@@ -94,6 +95,7 @@ impl<'a> CheckerState<'a> {
         for i in 0..profiles.len() {
             for j in (i + 1)..profiles.len() {
                 let min_len = profiles[i].len().min(profiles[j].len());
+                #[allow(clippy::needless_range_loop)] // pos indexes into two different slices
                 for pos in 0..min_len {
                     let (name_i, constraint_i, default_i) = &profiles[i][pos];
                     let (name_j, constraint_j, default_j) = &profiles[j][pos];

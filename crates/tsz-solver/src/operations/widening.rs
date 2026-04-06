@@ -16,6 +16,21 @@
 
 use crate::types::{TypeData, TypeId};
 
+/// Propagate `display_alias` from the original type to the widened type.
+///
+/// When a type produced by evaluating a generic Application (e.g., `Record<string, 1>`)
+/// is widened (e.g., to `Record<string, number>`-shaped object), the new TypeId loses
+/// its `display_alias` mapping. This function copies the mapping forward so the formatter
+/// can still show the alias name instead of the expanded structural form.
+#[inline]
+fn propagate_display_alias(db: &dyn crate::TypeDatabase, original: TypeId, widened: TypeId) {
+    if original != widened
+        && let Some(alias) = db.get_display_alias(original)
+    {
+        db.store_display_alias(widened, alias);
+    }
+}
+
 /// Public API to widen a literal type to its primitive.
 ///
 /// This is the main entry point for type widening in the checker.
@@ -196,7 +211,9 @@ fn widen_type_cached(
                         widen_type_cached(db, m, cache, widen_boolean_intrinsics, widen_functions)
                     })
                     .collect();
-                db.union(widened_members)
+                let widened = db.union(widened_members);
+                propagate_display_alias(db, type_id, widened);
+                widened
             } else {
                 type_id
             }
@@ -259,6 +276,7 @@ fn widen_type_cached(
                 if let Some(display_props) = db.get_display_properties(type_id) {
                     db.store_display_properties(widened_type_id, display_props.as_ref().clone());
                 }
+                propagate_display_alias(db, type_id, widened_type_id);
 
                 widened_type_id
             } else {
@@ -276,7 +294,9 @@ fn widen_type_cached(
                 widen_functions,
             );
             if widened != element_type {
-                db.array(widened)
+                let widened_arr = db.array(widened);
+                propagate_display_alias(db, type_id, widened_arr);
+                widened_arr
             } else {
                 type_id
             }
@@ -303,7 +323,9 @@ fn widen_type_cached(
                 new_elements.push(new_elem);
             }
             if changed {
-                db.tuple(new_elements)
+                let widened_tuple = db.tuple(new_elements);
+                propagate_display_alias(db, type_id, widened_tuple);
+                widened_tuple
             } else {
                 type_id
             }
@@ -358,7 +380,9 @@ fn widen_type_cached(
             widened_shape.return_type = widened_return;
 
             if changed {
-                db.function(widened_shape)
+                let widened_fn = db.function(widened_shape);
+                propagate_display_alias(db, type_id, widened_fn);
+                widened_fn
             } else {
                 type_id
             }
@@ -421,7 +445,9 @@ fn widen_type_cached(
                 .collect();
 
             if changed {
-                db.callable(widened_shape)
+                let widened_callable = db.callable(widened_shape);
+                propagate_display_alias(db, type_id, widened_callable);
+                widened_callable
             } else {
                 type_id
             }
