@@ -404,6 +404,74 @@ impl<'a> CheckerState<'a> {
         self.check_assignable_or_report_at_with_options(source, target, source_idx, diag_idx, true)
     }
 
+    /// Like `check_assignable_or_report_at_without_source_elaboration`, but allows
+    /// specifying separate types for display purposes. This is used when checking
+    /// assignability of return types but displaying the full function types in error
+    /// messages (e.g., "Type '() => string' is not assignable to type
+    /// '{ (): number; (i: number): number; }'").
+    pub(crate) fn check_assignable_or_report_at_with_display_types(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_for_display: TypeId,
+        target_for_display: TypeId,
+        source_idx: NodeIndex,
+        diag_idx: NodeIndex,
+    ) -> bool {
+        let source = self.narrow_this_from_enclosing_typeof_guard(source_idx, source);
+        if self.should_suppress_assignability_diagnostic(source, target) {
+            return true;
+        }
+        if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
+            return true;
+        }
+
+        // Check assignability using the actual types (return types)
+        if self.is_assignable_to(source, target) {
+            return true;
+        }
+
+        // Get the failure reason using the check types
+        let analysis = self.analyze_assignability_failure(source, target);
+        
+        // Try to elaborate the source error first
+        if self.try_elaborate_assignment_source_error(source_idx, target) {
+            return false;
+        }
+        
+        // Report the error using the display types (full function types)
+        if let Some(ref reason) = analysis.failure_reason {
+            // For simple type mismatches (TypeMismatch, IntrinsicTypeMismatch, LiteralTypeMismatch),
+            // use the error_reporter method to render with display types
+            if matches!(reason, 
+                tsz_solver::SubtypeFailureReason::TypeMismatch { .. } |
+                tsz_solver::SubtypeFailureReason::IntrinsicTypeMismatch { .. } |
+                tsz_solver::SubtypeFailureReason::LiteralTypeMismatch { .. }
+            ) {
+                // Use the error_reporter method to respect architecture contract
+                self.error_type_not_assignable_at_with_display_types(
+                    source_for_display,
+                    target_for_display,
+                    diag_idx,
+                );
+            } else {
+                // For other failure reasons, use the standard renderer with display types
+                let diag = self.render_failure_reason(
+                    reason,
+                    source_for_display,
+                    target_for_display,
+                    diag_idx,
+                    0,
+                );
+                self.ctx.push_diagnostic(diag);
+            }
+        } else {
+            // No specific failure reason, use generic error with display types
+            self.error_type_not_assignable_with_reason_at(source_for_display, target_for_display, diag_idx);
+        }
+        false
+    }
+
     fn check_assignable_or_report_at_with_options(
         &mut self,
         source: TypeId,

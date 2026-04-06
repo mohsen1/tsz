@@ -43,6 +43,42 @@ impl<'a> CheckerState<'a> {
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
     }
 
+    /// Report a type not assignable error using pre-computed display types.
+    /// This is used for callback return type errors where we want to show the full
+    /// function types in the error message (e.g., "Type '() => string' is not assignable
+    /// to type '{ (): number; (i: number): number; }'") instead of just the return types.
+    pub(crate) fn error_type_not_assignable_at_with_display_types(
+        &mut self,
+        source_for_display: TypeId,
+        target_for_display: TypeId,
+        anchor_idx: NodeIndex,
+    ) {
+        let (start, length) = self
+            .resolve_diagnostic_anchor(
+                anchor_idx,
+                super::fingerprint_policy::DiagnosticAnchorKind::Exact,
+            )
+            .map(|anchor| (anchor.start, anchor.length))
+            .unwrap_or_else(|| {
+                let (pos, end) = self.get_node_span(anchor_idx).unwrap_or((0, 0));
+                self.normalized_anchor_span(anchor_idx, pos, end.saturating_sub(pos))
+            });
+        let source_str = self.format_type_diagnostic(source_for_display);
+        let target_str = self.format_type_diagnostic(target_for_display);
+        let message = crate::diagnostics::format_message(
+            crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        );
+        self.ctx
+            .push_diagnostic(crate::diagnostics::Diagnostic::error(
+                self.ctx.file_name.clone(),
+                start,
+                length,
+                message,
+                crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            ));
+    }
+
     /// Report constructor accessibility mismatch error.
     pub(crate) fn error_constructor_accessibility_not_assignable(
         &mut self,
