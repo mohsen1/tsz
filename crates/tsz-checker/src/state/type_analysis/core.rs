@@ -40,7 +40,12 @@ impl<'a> CheckerState<'a> {
             }
 
             let Some(body) = self.ctx.definition_store.get_body(def_id) else {
-                return false;
+                // Member body not set yet (e.g., forward-declared interface).
+                // Skip instead of rejecting — we can still safely evaluate the
+                // alias body; unresolved members will stay as Lazy and won't
+                // cause incorrect registrations.  The evaluation machinery has
+                // its own recursion limits to prevent infinite loops.
+                continue;
             };
 
             steps += 1;
