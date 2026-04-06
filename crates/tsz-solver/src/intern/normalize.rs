@@ -1508,31 +1508,32 @@ impl TypeInterner {
         &self,
         flat: &TypeListBuffer,
     ) -> Option<TypeId> {
-        // Find all union members in the intersection and calculate total combinations
+        // Find all union members in the intersection and calculate total combinations.
+        // Two-pass approach: first compute the full cross-product size to check TS2590,
+        // then apply the conservative distribution guard.
         let mut union_indices = Vec::new();
-        let mut total_combinations = 1;
+        let mut total_combinations: usize = 1;
 
         for (i, &id) in flat.iter().enumerate() {
             if let Some(TypeData::Union(members)) = self.lookup(id) {
                 let member_count = self.type_list(members).len();
-
-                // Calculate total combinations: product of all union sizes
-                // e.g., (A|B|C) & (D|E) → 3 * 2 = 6 combinations
-                total_combinations *= member_count;
-
-                // TS2590: tsc checkCrossProductUnion bails at 100,000.
-                if total_combinations >= 100_000 {
-                    self.set_union_too_complex();
-                    return None;
-                }
-
-                // Conservative guard: abort early if would exceed 25 members
-                if total_combinations > 25 {
-                    return None; // Too many combinations, skip distribution
-                }
-
+                total_combinations = total_combinations.saturating_mul(member_count);
                 union_indices.push(i);
             }
+        }
+
+        // TS2590: tsc checkCrossProductUnion bails at 100,000.
+        // Must check BEFORE the conservative distribution guard so that
+        // intersections like `(A|B) & (C|D) & ... & (Y|Z)` (18+ unions)
+        // correctly trigger the too-complex flag even though we won't distribute.
+        if total_combinations >= 100_000 {
+            self.set_union_too_complex();
+            return None;
+        }
+
+        // Conservative guard: skip distribution if would produce > 25 members
+        if total_combinations > 25 {
+            return None;
         }
 
         // No unions to distribute
