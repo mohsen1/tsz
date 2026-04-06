@@ -266,6 +266,12 @@ pub(crate) struct InferenceContext<'a> {
     /// After the mapped type loop completes, these are flushed into a single
     /// object candidate for T.
     pub(crate) reverse_mapped_properties: FxHashMap<InferenceVar, Vec<(Atom, TypeId)>>,
+    /// When true, literal type candidates are marked as non-fresh (not eligible
+    /// for widening). This is set when constraining from type annotation contexts
+    /// (e.g., type predicate types like `x is 'B'`) where the literal comes from
+    /// a type annotation rather than a fresh expression. Matches tsc's model where
+    /// only types with `RequiresWidening` (from expression context) are widened.
+    pub(crate) source_is_type_annotation: bool,
 }
 
 impl<'a> InferenceContext<'a> {
@@ -287,6 +293,7 @@ impl<'a> InferenceContext<'a> {
             app_expansion_depth: 0,
             in_contra_mode: false,
             reverse_mapped_properties: FxHashMap::default(),
+            source_is_type_annotation: false,
         }
     }
 
@@ -305,6 +312,7 @@ impl<'a> InferenceContext<'a> {
             app_expansion_depth: 0,
             in_contra_mode: false,
             reverse_mapped_properties: FxHashMap::default(),
+            source_is_type_annotation: false,
         }
     }
 
@@ -1117,7 +1125,8 @@ impl<'a> InferenceContext<'a> {
             type_id: ty,
             priority,
             is_fresh_literal: (!context.from_object_property || context.source_is_fresh)
-                && is_literal_type(self.interner, ty),
+                && is_literal_type(self.interner, ty)
+                && !self.source_is_type_annotation,
             from_object_property: context.from_object_property,
             from_index_signature: context.from_index_signature,
             object_property_index: context.object_property_index,
