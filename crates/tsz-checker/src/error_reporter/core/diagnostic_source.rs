@@ -658,14 +658,39 @@ impl<'a> CheckerState<'a> {
             // when the target property type accepts literals (e.g., discriminated
             // unions: `tag: "A" | "B" | "C"`). Otherwise it widens (e.g., `string`).
             // Check the target property type to decide.
+            // When the target is a union (e.g., discriminated union ADT), check
+            // each union member's properties for literal acceptance.
             let target_accepts_literal = property_name
                 .and_then(|name| {
-                    let shape = target_shape.as_ref()?;
-                    shape
-                        .properties
-                        .iter()
-                        .find(|p| p.name == name)
-                        .map(|p| p.type_id)
+                    // First try the direct object shape
+                    if let Some(shape) = target_shape.as_ref() {
+                        return shape
+                            .properties
+                            .iter()
+                            .find(|p| p.name == name)
+                            .map(|p| p.type_id);
+                    }
+                    // For union targets, check each member's properties
+                    let target = target?;
+                    let members =
+                        crate::query_boundaries::common::union_members(self.ctx.types, target)?;
+                    for member in &members {
+                        if let Some(member_shape) =
+                            crate::query_boundaries::common::object_shape_for_type(
+                                self.ctx.types,
+                                *member,
+                            )
+                        {
+                            if let Some(prop) =
+                                member_shape.properties.iter().find(|p| p.name == name)
+                            {
+                                if self.type_contains_string_literal(prop.type_id) {
+                                    return Some(prop.type_id);
+                                }
+                            }
+                        }
+                    }
+                    None
                 })
                 .is_some_and(|target_prop_type| {
                     self.type_contains_string_literal(target_prop_type)
