@@ -151,35 +151,44 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if !missing_props.is_empty() {
-                    // Emit TS2739 (≤5 missing props) or TS2740 (>5 missing props)
                     let spread_name = self.format_type(spread_type);
-                    let is_truncated = missing_props.len() > 5;
-                    let display_count = if is_truncated {
-                        4
+                    if missing_props.len() == 1 {
+                        // TS2741: Property 'x' is missing in type 'A' but required in type 'B'.
+                        let message = format_message(
+                            diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                            &[&missing_props[0], &spread_name, &props_display],
+                        );
+                        self.error_at_node(
+                            tag_name_idx,
+                            &message,
+                            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                        );
                     } else {
-                        5.min(missing_props.len())
-                    };
-                    let props_list = missing_props[..display_count].join(", ");
+                        // TS2739 (≤4 missing props) or TS2740 (>4 missing props)
+                        let is_truncated = missing_props.len() > 4;
+                        let display_count = if is_truncated { 4 } else { missing_props.len() };
+                        let props_list = missing_props[..display_count].join(", ");
 
-                    let (message, code) = if is_truncated {
-                        let more_count = missing_props.len() - display_count;
-                        (
-                            format_message(
-                                diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
-                                &[&spread_name, &props_display, &props_list, &more_count.to_string()],
-                            ),
-                            diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
-                        )
-                    } else {
-                        (
-                            format_message(
-                                diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
-                                &[&spread_name, &props_display, &props_list],
-                            ),
-                            diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
-                        )
-                    };
-                    self.error_at_node(tag_name_idx, &message, code);
+                        let (message, code) = if is_truncated {
+                            let more_count = missing_props.len() - display_count;
+                            (
+                                format_message(
+                                    diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                                    &[&spread_name, &props_display, &props_list, &more_count.to_string()],
+                                ),
+                                diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                            )
+                        } else {
+                            (
+                                format_message(
+                                    diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                                    &[&spread_name, &props_display, &props_list],
+                                ),
+                                diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                            )
+                        };
+                        self.error_at_node(tag_name_idx, &message, code);
+                    }
                     return true;
                 }
             }
