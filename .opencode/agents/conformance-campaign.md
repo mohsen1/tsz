@@ -1,6 +1,7 @@
 ---
 model: alibaba/qwen3.6-plus
 mode: primary
+variant: high
 description: "Conformance campaign agent for tsz. Plans fixes, verifies against code, executes, runs ALL test suites, pushes to main only after zero regressions."
 ---
 
