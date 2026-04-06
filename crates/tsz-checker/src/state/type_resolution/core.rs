@@ -729,8 +729,10 @@ impl<'a> CheckerState<'a> {
                             // references itself in the template (e.g.,
                             // `type Circular<T> = {[P in keyof T]: Circular<T>}`),
                             // any concrete instantiation is infinitely recursive.
-                            let circular_mapped = !exceeded
-                                && query::get_application_info(self.ctx.types, result)
+                            // Check unconditionally (even when exceeded) so we can
+                            // emit TS2615 alongside TS2589.
+                            let circular_mapped =
+                                query::get_application_info(self.ctx.types, result)
                                     .and_then(|(base, _)| {
                                         query::get_lazy_def_id(self.ctx.types, base)
                                     })
@@ -755,6 +757,13 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
                                     diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
                                 );
+
+                                // TS2615: When a circular mapped type is involved,
+                                // also emit the property-circularity diagnostic.
+                                if circular_mapped {
+                                    self.emit_ts2615_for_circular_mapped_type(idx, result);
+                                }
+
                                 // tsc returns `any` for excessively deep types to
                                 // suppress cascading errors (e.g., TS2322).
                                 result = TypeId::ANY;
