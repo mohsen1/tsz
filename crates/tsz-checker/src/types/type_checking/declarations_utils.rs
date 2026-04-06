@@ -57,6 +57,70 @@ impl<'a> CheckerState<'a> {
         true
     }
 
+
+    /// Check if ALL interface declarations in a merge group have compatible
+    /// type parameters.
+    ///
+    /// tsc considers the merge group as a whole: a type parameter position has a
+    /// default if ANY declaration in the group provides one.  Shorter declarations
+    /// are compatible with longer ones when the extra positions all have defaults
+    /// somewhere in the group.  Overlapping positions must agree on names (and on
+    /// constraints/defaults when both declarations provide them).
+    pub(crate) fn interface_type_parameters_are_group_merge_compatible(
+        &mut self,
+        decls: &[NodeIndex],
+    ) -> bool {
+        let profiles: Vec<Vec<(String, Option<TypeId>, Option<TypeId>)>> = decls
+            .iter()
+            .filter_map(|&d| self.interface_type_parameter_profile(d))
+            .collect();
+        if profiles.len() < 2 {
+            return true;
+        }
+
+        let max_len = profiles.iter().map(|p| p.len()).max().unwrap_or(0);
+
+        for pos in 0..max_len {
+            let all_have_pos = profiles.iter().all(|p| p.len() > pos);
+            if !all_have_pos {
+                let has_default = profiles
+                    .iter()
+                    .any(|p| p.get(pos).is_some_and(|(_, _, default)| default.is_some()));
+                if !has_default {
+                    return false;
+                }
+            }
+        }
+
+        for i in 0..profiles.len() {
+            for j in (i + 1)..profiles.len() {
+                let min_len = profiles[i].len().min(profiles[j].len());
+                for pos in 0..min_len {
+                    let (name_i, constraint_i, default_i) = &profiles[i][pos];
+                    let (name_j, constraint_j, default_j) = &profiles[j][pos];
+
+                    if name_i != name_j {
+                        return false;
+                    }
+
+                    if let (Some(ci), Some(cj)) = (constraint_i, constraint_j) {
+                        if ci != cj {
+                            return false;
+                        }
+                    }
+
+                    if let (Some(di), Some(dj)) = (default_i, default_j) {
+                        if di != dj {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+
+        true
+    }
+
     /// Check if class+interface merged declarations have compatible type
     /// parameters. Unlike the interface-only check, this allows different
     /// arity when the declaration with more params has defaults for the
