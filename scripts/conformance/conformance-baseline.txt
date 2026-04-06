@@ -30,7 +30,6 @@ FAIL TypeScript/tests/cases/compiler/controlFlowForFunctionLike1.ts | expected:[
 FAIL TypeScript/tests/cases/compiler/controlFlowFunctionLikeCircular1.ts | expected:[TS1155,TS2345,TS2355,TS2393,TS2411,TS2448,TS2451,TS2454,TS2456,TS2502,TS2554,TS2749] actual:[TS1155,TS2355,TS2448,TS2451,TS2454,TS2502,TS2749]
 FAIL TypeScript/tests/cases/compiler/convertKeywordsYes.ts | expected:[TS1212,TS1213,TS5024,TS18006] actual:[TS1139,TS1212,TS2300,TS2749,TS5024,TS18006]
 FAIL TypeScript/tests/cases/compiler/crashDeclareGlobalTypeofExport.ts | expected:[TS2451,TS2502] actual:[TS2440,TS2451]
-FAIL TypeScript/tests/cases/compiler/crashInsourcePropertyIsRelatableToTargetProperty.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/declarationEmitForGlobalishSpecifierSymlink.ts | expected:[TS2307] actual:[TS2307,TS2694]
 FAIL TypeScript/tests/cases/compiler/declarationEmitMixinPrivateProtected.ts | expected:[TS4094] actual:[TS4094]
 FAIL TypeScript/tests/cases/compiler/declarationEmitObjectAssignedDefaultExport.ts | expected:[TS2883] actual:[TS2883]
@@ -163,7 +162,6 @@ FAIL TypeScript/tests/cases/compiler/jsxFragmentFactoryNoUnusedLocals.tsx | expe
 FAIL TypeScript/tests/cases/compiler/jsxFragmentWrongType.tsx | expected:[TS2304,TS2874,TS2879] actual:[TS2304,TS2874,TS2879]
 FAIL TypeScript/tests/cases/compiler/jsxIntrinsicElementsTypeArgumentErrors.tsx | expected:[TS1009,TS1099,TS2304,TS2344,TS2558] actual:[TS1099]
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixIntrinsics.tsx | expected:[TS2322,TS2339] actual:[TS2322,TS2339]
-FAIL TypeScript/tests/cases/compiler/jsxRuntimePragma.ts | expected:[] actual:[TS2339,TS2747]
 FAIL TypeScript/tests/cases/compiler/keyRemappingKeyofResult.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/keyofIsLiteralContexualType.ts | expected:[TS2322,TS2339] actual:[TS2322,TS2339]
 FAIL TypeScript/tests/cases/compiler/lambdaArgCrash.ts | expected:[TS2304,TS2345] actual:[TS2304,TS2345]
@@ -271,7 +269,7 @@ FAIL TypeScript/tests/cases/compiler/reachabilityChecks8.ts | expected:[TS7027] 
 FAIL TypeScript/tests/cases/compiler/reachabilityChecksNoCrash1.ts | expected:[TS1005,TS1011,TS1109,TS1128,TS1136,TS1138] actual:[TS1005]
 FAIL TypeScript/tests/cases/compiler/reactDefaultPropsInferenceSuccess.tsx | expected:[TS2769] actual:[TS2769]
 FAIL TypeScript/tests/cases/compiler/reactNamespaceInvalidInput.tsx | expected:[TS5059] actual:[TS2874,TS7026]
-FAIL TypeScript/tests/cases/compiler/reactTransitiveImportHasValidDeclaration.ts | expected:[TS2883] actual:[TS2536]
+FAIL TypeScript/tests/cases/compiler/reactTransitiveImportHasValidDeclaration.ts | expected:[TS2883] actual:[]
 FAIL TypeScript/tests/cases/compiler/recursiveBaseCheck5.ts | expected:[TS2310,TS2339] actual:[TS2310,TS2339]
 FAIL TypeScript/tests/cases/compiler/recursiveComplicatedClasses.ts | expected:[TS2300,TS2322,TS2345,TS2454,TS2507,TS2564] actual:[TS2300,TS2322,TS2345,TS2454,TS2507,TS2564]
 FAIL TypeScript/tests/cases/compiler/recursiveConditionalCrash4.ts | expected:[TS2304,TS2503,TS2589] actual:[TS2503]
@@ -2177,6 +2175,7 @@ PASS TypeScript/tests/cases/compiler/crashInGetTextOfComputedPropertyName.ts
 PASS TypeScript/tests/cases/compiler/crashInResolveInterface.ts
 PASS TypeScript/tests/cases/compiler/crashInYieldStarInAsyncFunction.ts
 PASS TypeScript/tests/cases/compiler/crashInresolveReturnStatement.ts
+PASS TypeScript/tests/cases/compiler/crashInsourcePropertyIsRelatableToTargetProperty.ts
 PASS TypeScript/tests/cases/compiler/crashIntypeCheckInvocationExpression.ts
 PASS TypeScript/tests/cases/compiler/crashIntypeCheckObjectCreationExpression.ts
 PASS TypeScript/tests/cases/compiler/crashOnMethodSignatures.ts
@@ -4550,6 +4549,7 @@ PASS TypeScript/tests/cases/compiler/jsxNestedWithinTernaryParsesCorrectly.tsx
 PASS TypeScript/tests/cases/compiler/jsxPartialSpread.tsx
 PASS TypeScript/tests/cases/compiler/jsxPreserveWithJsInput.ts
 PASS TypeScript/tests/cases/compiler/jsxPropsAsIdentifierNames.tsx
+PASS TypeScript/tests/cases/compiler/jsxRuntimePragma.ts
 PASS TypeScript/tests/cases/compiler/jsxSpreadFirstUnionNoErrors.tsx
 PASS TypeScript/tests/cases/compiler/jsxSpreadTag.ts
 PASS TypeScript/tests/cases/compiler/jsxViaImport.2.tsx
