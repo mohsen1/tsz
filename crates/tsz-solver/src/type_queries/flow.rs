@@ -1767,7 +1767,7 @@ mod tests {
     }
 
     /// Verify that enum structural union types are comparable to their
-    /// base primitive type via is_primitive_comparable union decomposition.
+    /// base primitive type via `is_primitive_comparable` union decomposition.
     #[test]
     fn enum_structural_union_comparable_to_base_primitive() {
         use crate::def::DefId;
