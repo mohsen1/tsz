@@ -310,7 +310,7 @@ impl<'a> CheckerState<'a> {
         let anchor_argument_from_mixed_failures = shared_argument_anchor.is_some()
             && !remaining_failures.is_empty()
             && remaining_failures_are_count_mismatches;
-        let anchor_argument_from_all_failures =
+        let _anchor_argument_from_all_failures =
             all_failures_are_argument_mismatches && shared_argument_anchor.is_some();
         // tsc anchors TS2769 at the call expression (function name), not at
         // arguments. Only anchor at the first argument when there's a literal
