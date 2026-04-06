@@ -144,6 +144,13 @@ impl<'a> CheckerState<'a> {
                 && let Some(sym_id) =
                     self.resolve_unqualified_name_in_enclosing_namespace(type_name_idx, name)
             {
+                // Validate type arguments against constraints (TS2344)
+                if has_type_args
+                    && let Some(args) = &type_ref.type_arguments
+                    && !self.is_inside_type_parameter_declaration(idx)
+                {
+                    self.validate_type_reference_type_arguments(sym_id, args, idx);
+                }
                 // Stable-identity helper: resolve symbol body + create Lazy(DefId)
                 let base_type = self.resolve_symbol_as_lazy_type(sym_id);
                 if has_type_args {
@@ -281,6 +288,18 @@ impl<'a> CheckerState<'a> {
                         return factory.readonly_type(array_type);
                     }
                     return array_type;
+                }
+
+                // Validate type arguments against constraints (TS2344)
+                // This mirrors the check in get_type_from_type_reference for the
+                // normal type resolution path. Without this, type references inside
+                // interface/type literal bodies (e.g., method return types) would
+                // not check that type arguments satisfy their constraints.
+                if let Some(sym_id) = sym_id
+                    && let Some(args) = &type_ref.type_arguments
+                    && !self.is_inside_type_parameter_declaration(idx)
+                {
+                    self.validate_type_reference_type_arguments(sym_id, args, idx);
                 }
 
                 let base_type = if let Some(type_param) = type_param {

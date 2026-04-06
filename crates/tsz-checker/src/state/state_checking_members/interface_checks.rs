@@ -157,6 +157,28 @@ impl<'a> CheckerState<'a> {
                         self.get_type_from_type_node(accessor.type_annotation);
                     }
                 }
+                // TS2344: Resolve method signature return type and parameter type
+                // annotations to trigger constraint validation on type references.
+                // Without this, `Inner<W>` in `bar<W extends X>(): Inner<W>` would
+                // never be checked against Inner's constraint.
+                if member_node.kind == syntax_kind_ext::METHOD_SIGNATURE {
+                    if let Some(sig) = self.ctx.arena.get_signature(member_node) {
+                        let (_type_params, type_param_updates) =
+                            self.push_type_parameters(&sig.type_parameters);
+                        if sig.type_annotation.is_some() {
+                            self.get_type_from_type_node(sig.type_annotation);
+                        }
+                        for &param_idx in sig.parameters.as_ref().map_or(&[][..], |p| &p.nodes) {
+                            if let Some(param_node) = self.ctx.arena.get(param_idx)
+                                && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                                && param.type_annotation.is_some()
+                            {
+                                self.get_type_from_type_node(param.type_annotation);
+                            }
+                        }
+                        self.pop_type_parameters(type_param_updates);
+                    }
+                }
             }
             // TS2502 + TS2615: Check if property type annotation circularly
             // references itself through a mapped type applied to the enclosing interface.
