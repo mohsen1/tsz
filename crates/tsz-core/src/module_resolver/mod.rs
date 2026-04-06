@@ -517,7 +517,14 @@ impl ModuleResolver {
             Ok(resolved_module) => {
                 // TS6263: Module resolved to a .d.*.ts arbitrary extension declaration
                 // file but --allowArbitraryExtensions is not set.
+                // Skip this check when the containing file is itself a declaration
+                // file (.d.ts / .d.mts / .d.cts). tsc allows declaration files to
+                // reference arbitrary extension declaration files without the flag
+                // because they are already in the type-declaration layer.
+                let containing_is_declaration =
+                    ModuleExtension::from_path(containing_file).is_declaration();
                 if !self.allow_arbitrary_extensions
+                    && !containing_is_declaration
                     && is_arbitrary_extension_declaration(specifier, &resolved_module.resolved_path)
                 {
                     // Compute the resolved name relative to the containing file's directory,

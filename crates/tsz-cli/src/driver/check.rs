@@ -417,9 +417,8 @@ fn post_process_checker_diagnostics(
         let file_path = file.file_name.as_str();
         let test_path = conformance_test_name.as_deref().unwrap_or(file_path);
 
-        let suppress = test_path.contains("declarationFileForHtmlFileWithinDeclarationFile")
-            || test_path.contains("mixinAccessModifiers")
-            || test_path.contains("mixinAccessors1");
+        let suppress =
+            test_path.contains("mixinAccessModifiers") || test_path.contains("mixinAccessors1");
 
         if suppress {
             checker_diagnostics.retain(|diag| !matches!(diag.code, 6263 | 2416 | 5088));
