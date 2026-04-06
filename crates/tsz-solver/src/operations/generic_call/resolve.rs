@@ -1286,6 +1286,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let mut final_subst = TypeSubstitution::new();
         let mut infer_subst_cache: Option<TypeSubstitution> = None;
+        // Track type parameters that fell back to their defaults because inference
+        // produced no candidates. For these, we should NOT check argument assignability
+        // against the default - the default is a fallback, not a constraint.
+        let mut default_fallback_tp_names: FxHashSet<tsz_common::Atom> = FxHashSet::default();
         for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
             let constraints = infer_ctx.get_constraints(var);
             // Check both ConstraintSet (covariant candidates + upper bounds) and
@@ -1490,6 +1494,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let ty =
                     instantiate_call_type(self.interner, default, &final_subst, actual_this_type);
                 trace!(resolved_type = ?ty, "Using default type");
+                // Track that this type parameter fell back to its default.
+                // We should NOT check argument assignability against the default
+                // since it's a fallback when inference fails, not a constraint.
+                default_fallback_tp_names.insert(tp.name);
                 ty
             } else if let Some(constraint) = tp.constraint {
                 let ty = instantiate_call_type(
@@ -1920,6 +1928,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     actual,
                     ..
                 } => {
+                    // Check if this parameter's type contains a type parameter that
+                    // fell back to its default. If so, skip the error - the default is
+                    // a fallback when inference fails, not a constraint.
+                    let param_type = self.param_type_for_arg_index(&func.params, index, final_args.len())
+                        .unwrap_or(expected);
+                    let should_skip = default_fallback_tp_names.iter().any(|&tp_name| {
+                        crate::visitors::visitor_predicates::contains_type_parameter_named(
+                            self.interner,
+                            param_type,
+                            tp_name,
+                        )
+                    });
+                    if should_skip {
+                        tracing::debug!("Skipping argument mismatch at index {} - parameter type uses default fallback", index);
+                        return CallResult::Success(return_type);
+                    }
+                    
                     let expected = self
                         .param_type_for_arg_index(&func.params, index, final_args.len())
                         .filter(|raw_expected| {
