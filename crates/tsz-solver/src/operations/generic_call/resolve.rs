@@ -1727,9 +1727,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             // Direct TypeParameter rest param (e.g., `...args: T`)
             if let Some(crate::TypeData::TypeParameter(tp_info)) = self.interner.lookup(p.type_id)
-                && constraint_fallback_tp_names.contains(&tp_info.name) {
-                    return true;
-                }
+                && constraint_fallback_tp_names.contains(&tp_info.name)
+            {
+                return true;
+            }
             // Variadic tuple rest param (e.g., `...args: readonly [...S, number]`)
             // where S is a type parameter that fell back to its constraint.
             let unwrapped = self.unwrap_readonly(p.type_id);
@@ -1739,9 +1740,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     if elem.rest
                         && let Some(crate::TypeData::TypeParameter(tp_info)) =
                             self.interner.lookup(elem.type_id)
-                        {
-                            return constraint_fallback_tp_names.contains(&tp_info.name);
-                        }
+                    {
+                        return constraint_fallback_tp_names.contains(&tp_info.name);
+                    }
                     false
                 });
             }

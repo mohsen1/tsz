@@ -511,11 +511,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
                             type_id,
                             from_index_signature,
                             ..
-                        } = self.resolve_property_access_inner(
-                            apparent,
-                            prop_name,
-                            Some(prop_atom),
-                        )
+                        } =
+                            self.resolve_property_access_inner(apparent, prop_name, Some(prop_atom))
                         && type_id != TypeId::ANY
                     {
                         results.push(type_id);
@@ -579,13 +576,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     // and retry property access on the narrowed type.
                     if let Some(narrowed) =
                         self.try_narrow_discriminated_intersection(members.as_ref())
-                        && narrowed != obj_type {
-                            return self.resolve_property_access_inner(
-                                narrowed,
-                                prop_name,
-                                Some(prop_atom),
-                            );
-                        }
+                        && narrowed != obj_type
+                    {
+                        return self.resolve_property_access_inner(
+                            narrowed,
+                            prop_name,
+                            Some(prop_atom),
+                        );
+                    }
 
                     return PropertyAccessResult::PropertyNotFound {
                         type_id: obj_type,
@@ -1029,12 +1027,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
             for &(disc_name, disc_value) in &discriminant_props {
                 if let Some(prop) = shape.properties.iter().find(|p| p.name == disc_name)
                     && crate::type_queries::is_unit_type(self.interner(), prop.type_id)
-                        && prop.type_id != disc_value
-                    {
-                        // Conflicting discriminant — this member is eliminated
-                        dominated = true;
-                        break;
-                    }
+                    && prop.type_id != disc_value
+                {
+                    // Conflicting discriminant — this member is eliminated
+                    dominated = true;
+                    break;
+                }
             }
             if !dominated {
                 filtered.push(um);
