@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-04-06T03:10:15Z",
-  "git_sha": "50788559e4fe70146a60f3c4b2248a27df723770",
+  "timestamp": "2026-04-06T03:57:30Z",
+  "git_sha": "95060364e77d1d6a79506049d5004b56dcf075c1",
   "summary": {
     "total_tests": 12581,
-    "passed": 11742,
-    "failed": 839,
+    "passed": 11739,
+    "failed": 842,
     "pass_rate": 93.3
   },
   "areas_by_pass_rate": [
@@ -65,13 +65,6 @@
       "pass_rate": 78.08
     },
     {
-      "area": "types/typeParameters",
-      "total": 46,
-      "passed": 36,
-      "failed": 10,
-      "pass_rate": 78.26
-    },
-    {
       "area": "types/thisType",
       "total": 30,
       "passed": 24,
@@ -98,6 +91,13 @@
       "passed": 8,
       "failed": 2,
       "pass_rate": 80.0
+    },
+    {
+      "area": "types/typeParameters",
+      "total": 46,
+      "passed": 37,
+      "failed": 9,
+      "pass_rate": 80.43
     },
     {
       "area": "jsx",
@@ -296,6 +296,13 @@
       "pass_rate": 93.75
     },
     {
+      "area": "externalModules/typeOnly",
+      "total": 65,
+      "passed": 61,
+      "failed": 4,
+      "pass_rate": 93.85
+    },
+    {
       "area": "es6/yieldExpressions",
       "total": 99,
       "passed": 93,
@@ -312,9 +319,9 @@
     {
       "area": "compiler",
       "total": 6519,
-      "passed": 6131,
-      "failed": 388,
-      "pass_rate": 94.05
+      "passed": 6130,
+      "failed": 389,
+      "pass_rate": 94.03
     },
     {
       "area": "declarationEmit",
@@ -434,13 +441,6 @@
       "passed": 30,
       "failed": 1,
       "pass_rate": 96.77
-    },
-    {
-      "area": "externalModules/typeOnly",
-      "total": 65,
-      "passed": 63,
-      "failed": 2,
-      "pass_rate": 96.92
     },
     {
       "area": "classes/constructorDeclarations",
@@ -754,11 +754,11 @@
       "count": 1
     },
     {
-      "code": "TS2307",
+      "code": "TS9006",
       "count": 1
     },
     {
-      "code": "TS9006",
+      "code": "TS2307",
       "count": 1
     },
     {
@@ -1092,11 +1092,11 @@
       "count": 1
     },
     {
-      "code": "TS2307",
+      "code": "TS9006",
       "count": 1
     },
     {
-      "code": "TS9006",
+      "code": "TS2307",
       "count": 1
     },
     {
@@ -1146,6 +1146,10 @@
       "count": 1
     },
     {
+      "code": "TS2345",
+      "count": 1
+    },
+    {
       "code": "TS2305",
       "count": 1
     },
@@ -1154,7 +1158,7 @@
       "count": 1
     },
     {
-      "code": "TS2739",
+      "code": "TS2740",
       "count": 1
     },
     {
@@ -1166,13 +1170,33 @@
       "count": 1
     },
     {
-      "code": "TS2345",
+      "code": "TS2339",
+      "count": 1
+    },
+    {
+      "code": "TS2555",
       "count": 1
     }
   ],
   "false_positive_codes": [
     {
-      "code": "TS2739",
+      "code": "TS2721",
+      "count": 1
+    },
+    {
+      "code": "TS2769",
+      "count": 1
+    },
+    {
+      "code": "TS2345",
+      "count": 1
+    },
+    {
+      "code": "TS2740",
+      "count": 1
+    },
+    {
+      "code": "TS2339",
       "count": 1
     }
   ],
@@ -1340,11 +1364,11 @@
   ],
   "top_extra_codes": [
     {
-      "code": "TS2322",
-      "count": 10
+      "code": "TS2339",
+      "count": 11
     },
     {
-      "code": "TS2339",
+      "code": "TS2322",
       "count": 10
     },
     {
@@ -1368,16 +1392,16 @@
       "count": 5
     },
     {
+      "code": "TS2769",
+      "count": 4
+    },
+    {
       "code": "TS1109",
       "count": 4
     },
     {
       "code": "TS2684",
       "count": 4
-    },
-    {
-      "code": "TS2769",
-      "count": 3
     },
     {
       "code": "TS2349",
@@ -1464,6 +1488,10 @@
       "count": 2
     },
     {
+      "code": "TS2555",
+      "count": 2
+    },
+    {
       "code": "TS2846",
       "count": 2
     },
@@ -1488,23 +1516,19 @@
       "count": 1
     },
     {
+      "code": "TS2721",
+      "count": 1
+    },
+    {
       "code": "TS2440",
-      "count": 1
-    },
-    {
-      "code": "TS1128",
-      "count": 1
-    },
-    {
-      "code": "TS1183",
       "count": 1
     }
   ],
   "categories": {
-    "false_positive": 1,
+    "false_positive": 3,
     "all_missing": 45,
     "wrong_code": 176,
-    "fingerprint_only": 614,
+    "fingerprint_only": 615,
     "close_to_passing": 96
   }
 }
