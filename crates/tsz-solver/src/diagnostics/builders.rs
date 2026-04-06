@@ -10,10 +10,10 @@
 //! - [`SourceLocation`]: Tracks source positions for AST nodes
 
 use super::format::TypeFormatter;
-use crate::TypeDatabase;
 use crate::def::DefinitionStore;
-use crate::diagnostics::{DiagnosticSeverity, SourceSpan, TypeDiagnostic, codes};
+use crate::diagnostics::{codes, DiagnosticSeverity, SourceSpan, TypeDiagnostic};
 use crate::types::TypeId;
+use crate::TypeDatabase;
 use std::sync::Arc;
 
 // =============================================================================
@@ -30,7 +30,9 @@ impl<'a> DiagnosticBuilder<'a> {
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         DiagnosticBuilder {
             interner,
-            formatter: TypeFormatter::new(interner).with_diagnostic_mode(),
+            formatter: TypeFormatter::new(interner)
+                .with_diagnostic_mode()
+                .with_display_properties(),
         }
     }
 
@@ -44,7 +46,9 @@ impl<'a> DiagnosticBuilder<'a> {
     ) -> Self {
         DiagnosticBuilder {
             interner,
-            formatter: TypeFormatter::with_symbols(interner, symbol_arena).with_diagnostic_mode(),
+            formatter: TypeFormatter::with_symbols(interner, symbol_arena)
+                .with_diagnostic_mode()
+                .with_display_properties(),
         }
     }
 

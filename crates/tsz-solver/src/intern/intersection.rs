@@ -628,14 +628,39 @@ impl TypeInterner {
         };
 
         let shape_id = self.intern_object_shape(shape);
-        // Preserve index signatures when present.
-        if self.object_shape(shape_id).string_index.is_some()
+        let result = if self.object_shape(shape_id).string_index.is_some()
             || self.object_shape(shape_id).number_index.is_some()
         {
-            Some(self.intern(TypeData::ObjectWithIndex(shape_id)))
+            self.intern(TypeData::ObjectWithIndex(shape_id))
         } else {
-            Some(self.intern(TypeData::Object(shape_id)))
+            self.intern(TypeData::Object(shape_id))
+        };
+
+        // Propagate display properties from input objects to the merged result.
+        let mut merged_display_props: rustc_hash::FxHashMap<Atom, PropertyInfo> =
+            rustc_hash::FxHashMap::default();
+        for &member in members {
+            if let Some(props) = self.get_display_properties(member) {
+                for prop in props.as_ref() {
+                    merged_display_props
+                        .entry(prop.name)
+                        .and_modify(|existing| {
+                            if existing.type_id != prop.type_id {
+                                existing.type_id =
+                                    self.intersect_types_raw2(existing.type_id, prop.type_id);
+                            }
+                        })
+                        .or_insert_with(|| prop.clone());
+                }
+            }
         }
+        if !merged_display_props.is_empty() {
+            let mut display_vec: Vec<PropertyInfo> = merged_display_props.into_values().collect();
+            display_vec.sort_by_key(|p| p.name.0);
+            self.store_display_properties(result, display_vec);
+        }
+
+        Some(result)
     }
 
     /// Task #43: Extract objects from a mixed intersection, merge them, and return

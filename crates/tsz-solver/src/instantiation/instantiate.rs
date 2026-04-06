@@ -643,7 +643,10 @@ impl<'a> TypeInstantiator<'a> {
                     })
                     .collect();
                 if changed {
-                    self.interner.intersection(instantiated)
+                    let result = self.interner.intersection(instantiated);
+                    // Propagate display properties from original members to the result.
+                    self.propagate_display_properties_for_intersection(members.as_ref(), result);
+                    result
                 } else {
                     self.interner.intern(*key)
                 }
