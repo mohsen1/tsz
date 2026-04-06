@@ -2075,24 +2075,10 @@ impl<'a> CheckerState<'a> {
                         .is_some_and(|s| s.flags & symbol_flags::TYPE_ALIAS != 0)
                 });
             if let Some(def_id) = alias_def_id {
-                // Check if the type alias was marked as computed (intersection/
-                // conditional body) by the alias resolver. tsc drops alias
-                // tracking for these, so skip type_to_def and body_to_alias
-                // registration to avoid false alias matches in diagnostics.
-                let is_computed = self.ctx.definition_store.is_computed_alias(def_id);
-
-                if !is_computed {
-                    self.ctx
-                        .definition_store
-                        .register_type_to_def(result, def_id);
-                }
-                if is_computed {
-                    self.ctx
-                        .definition_store
-                        .set_body_no_alias_index(def_id, result);
-                } else {
-                    self.ctx.definition_store.set_body(def_id, result);
-                }
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(result, def_id);
+                self.ctx.definition_store.set_body(def_id, result);
                 // Also register the evaluated form of the type.
                 // Type aliases with union/intersection bodies often contain Lazy
                 // members (e.g., `type Exotic = CatDog | ManBearPig`). When these
@@ -2100,7 +2086,7 @@ impl<'a> CheckerState<'a> {
                 // producing a new TypeId.  Register this evaluated TypeId too so
                 // diagnostic formatting can display the alias name regardless of
                 // whether the raw or evaluated form is referenced.
-                if !is_computed && self.can_register_evaluated_alias_form(def_id, result) {
+                if self.can_register_evaluated_alias_form(def_id, result) {
                     let evaluated = self.evaluate_type_with_env(result);
                     if evaluated != result {
                         self.ctx
