@@ -29,6 +29,19 @@ impl<'a> CheckerState<'a> {
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
         // Type alias - resolve using checker's get_type_from_type_node to properly resolve symbols
         if flags & symbol_flags::TYPE_ALIAS != 0 {
+            // Compiler-provided intrinsic type aliases (e.g., `type BuiltinIteratorReturn = intrinsic`)
+            // cannot be resolved from their body—the `intrinsic` keyword has no type semantics
+            // on its own. Intercept known intrinsic names and resolve them directly.
+            // No lib_contexts guard needed: BuiltinIteratorReturn is a compiler-defined name
+            // and cross-arena child contexts may not carry lib_contexts forward.
+            if escaped_name == "BuiltinIteratorReturn" {
+                let ty = if self.ctx.compiler_options.strict_builtin_iterator_return {
+                    TypeId::UNDEFINED
+                } else {
+                    TypeId::ANY
+                };
+                return (ty, Vec::new());
+            }
             // When a type alias name collides with a global value declaration
             // (e.g., user-defined `type Proxy<T>` vs global `declare var Proxy`),
             // the merged symbol's value_declaration points to the var decl, not the

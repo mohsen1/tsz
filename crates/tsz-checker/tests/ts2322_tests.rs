@@ -3366,3 +3366,53 @@ fn test_missing_properties_not_suppressed_by_number_index_signatures() {
         "Expected TS2740, not TS2322, when source is missing named properties. Got: {diagnostics:?}"
     );
 }
+
+/// When `strictBuiltinIteratorReturn` is true, `BuiltinIteratorReturn` resolves to `undefined`.
+/// Assigning `undefined` to `number` must produce TS2322.
+#[test]
+fn test_strict_builtin_iterator_return_ts2322() {
+    // Use BuiltinIteratorReturn directly — it's defined as `type BuiltinIteratorReturn = intrinsic`
+    // in lib.es2015.iterable.d.ts and resolves to `undefined` when strict.
+    let source = r#"
+type R = BuiltinIteratorReturn;
+const x: number = undefined as R;
+"#;
+    let mut options = CheckerOptions::default();
+    options.strict_builtin_iterator_return = true;
+    options.strict_null_checks = true;
+    let diagnostics = compile_with_libs_for_ts(source, "test.ts", options);
+
+    let ts2322_count = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .count();
+    assert!(
+        ts2322_count >= 1,
+        "Expected TS2322 for assigning BuiltinIteratorReturn (=undefined) to number when \
+         strictBuiltinIteratorReturn is true. Got: {diagnostics:?}"
+    );
+}
+
+/// When `strictBuiltinIteratorReturn` is false, `BuiltinIteratorReturn` resolves to `any`.
+/// Assigning `any` to `number` is always allowed, so no error.
+#[test]
+fn test_no_error_without_strict_builtin_iterator_return() {
+    let source = r#"
+declare const x: BuiltinIteratorReturn;
+const r1: number = x;
+"#;
+    let mut options = CheckerOptions::default();
+    options.strict_builtin_iterator_return = false;
+    options.strict_null_checks = true;
+    let diagnostics = compile_with_libs_for_ts(source, "test.ts", options);
+
+    let ts2322_count = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .count();
+    assert!(
+        ts2322_count == 0,
+        "Expected no TS2322 when strictBuiltinIteratorReturn is false \
+         (BuiltinIteratorReturn=any). Got: {diagnostics:?}"
+    );
+}
