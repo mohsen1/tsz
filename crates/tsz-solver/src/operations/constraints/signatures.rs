@@ -241,7 +241,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     t_pred_type = ?t_pred_type,
                     "constrain_function_to_call_signature: adding constraint"
                 );
+                let was = ctx.source_is_type_annotation;
+                ctx.source_is_type_annotation = true;
                 self.constrain_types(ctx, var_map, s_pred_type, t_pred_type, priority);
+                ctx.source_is_type_annotation = was;
             }
         }
     }
@@ -269,7 +272,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if let (Some(s_pred), Some(t_pred)) = (&source.type_predicate, &target.type_predicate)
             && let (Some(s_pred_type), Some(t_pred_type)) = (s_pred.type_id, t_pred.type_id)
         {
+            let was = ctx.source_is_type_annotation;
+            ctx.source_is_type_annotation = true;
             self.constrain_types(ctx, var_map, s_pred_type, t_pred_type, priority);
+            ctx.source_is_type_annotation = was;
         }
     }
 
@@ -292,11 +298,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             target.return_type,
             priority,
         );
-        // Constrain type predicates if both have them
+        // Constrain type predicates if both have them.
+        // Mark as type annotation source so literal types from predicates
+        // (e.g., `x is 'B'`) are NOT marked as fresh and won't be widened.
         if let (Some(s_pred), Some(t_pred)) = (&source.type_predicate, &target.type_predicate)
             && let (Some(s_pred_type), Some(t_pred_type)) = (s_pred.type_id, t_pred.type_id)
         {
+            let was = ctx.source_is_type_annotation;
+            ctx.source_is_type_annotation = true;
             self.constrain_types(ctx, var_map, s_pred_type, t_pred_type, priority);
+            ctx.source_is_type_annotation = was;
         }
     }
 
