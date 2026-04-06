@@ -240,7 +240,7 @@ fn test_intersection_type_params_assignable_to_constraint_union_intersection() {
 }
 
 /// Test that indexed access on intersection with unconstrained type parameter
-/// correctly produces a deferred IndexAccess that blocks assignability.
+/// correctly produces a deferred `IndexAccess` that blocks assignability.
 /// This is the core of the indexedAccessRelation.ts test case.
 #[test]
 fn test_indexed_access_intersection_with_unconstrained_type_param() {
@@ -295,14 +295,14 @@ fn test_indexed_access_intersection_with_unconstrained_type_param() {
     let index_access = interner.index_access(intersection, index_a);
     let result = evaluator.evaluate(index_access);
 
-    println!("Result of (S & State<T>)['a']: {:?}", result);
+    println!("Result of (S & State<T>)['a']: {result:?}");
     println!("Result type data: {:?}", interner.lookup(result));
 
     // Check if T is assignable to the result - it should NOT be
     // The result should be S["a"] & (T | undefined), and T is not assignable to S["a"]
     let mut checker = SubtypeChecker::new(&interner);
     let is_subtype = checker.is_subtype_of(t_param, result);
-    println!("T <: result? {} (should be false)", is_subtype);
+    println!("T <: result? {is_subtype} (should be false)");
 
     // T should NOT be assignable to (S & State<T>)["a"] because S["a"] is unknown
     assert!(
