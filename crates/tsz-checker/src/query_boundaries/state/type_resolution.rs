@@ -12,6 +12,10 @@ pub(crate) fn is_object_with_index_type(db: &dyn TypeDatabase, type_id: TypeId) 
     tsz_solver::type_queries::is_object_with_index_type(db, type_id)
 }
 
+pub(crate) fn is_composite_shape_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_composite_shape_type(db, type_id)
+}
+
 pub(crate) fn classify_for_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> SignatureTypeKind {
     tsz_solver::type_queries::classify_for_signatures(db, type_id)
 }
