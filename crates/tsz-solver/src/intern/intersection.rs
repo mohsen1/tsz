@@ -3,67 +3,6 @@
 use super::*;
 
 impl TypeInterner {
-    fn object_property_names(&self, type_id: TypeId) -> smallvec::SmallVec<[Atom; 4]> {
-        let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
-            self.lookup(type_id)
-        else {
-            return smallvec::SmallVec::new();
-        };
-        let shape = self.object_shape(shape_id);
-        shape.properties.iter().map(|prop| prop.name).collect()
-    }
-
-    fn union_has_matching_object_discriminant(
-        &self,
-        union_type: TypeId,
-        candidate_names: &[Atom],
-    ) -> bool {
-        let Some(TypeData::Union(list_id)) = self.lookup(union_type) else {
-            return false;
-        };
-        let members = self.type_list(list_id);
-        if members.len() < 2 {
-            return false;
-        }
-
-        candidate_names.iter().copied().any(|name| {
-            let mut seen = smallvec::SmallVec::<[TypeId; 4]>::new();
-            for &member in members.iter() {
-                let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
-                    self.lookup(member)
-                else {
-                    return false;
-                };
-                let shape = self.object_shape(shape_id);
-                let Some(prop) = shape.properties.iter().find(|prop| prop.name == name) else {
-                    return false;
-                };
-                if !crate::type_queries::is_unit_type(self, prop.type_id) {
-                    return false;
-                }
-                if !seen.contains(&prop.type_id) {
-                    seen.push(prop.type_id);
-                }
-            }
-            seen.len() > 1
-        })
-    }
-
-    fn should_preserve_discriminated_object_intersection(&self, flat: &TypeListBuffer) -> bool {
-        let candidate_names: smallvec::SmallVec<[Atom; 8]> = flat
-            .iter()
-            .filter(|&&id| !matches!(self.lookup(id), Some(TypeData::Union(_))))
-            .flat_map(|&id| self.object_property_names(id))
-            .collect();
-        if candidate_names.is_empty() {
-            return false;
-        }
-
-        flat.iter().copied().any(|member| {
-            self.union_has_matching_object_discriminant(member, candidate_names.as_slice())
-        })
-    }
-
     /// Check if a type is an empty object type (no properties, no index signatures).
     ///
     /// Empty objects like `{}` represent "any non-nullish value" in TypeScript.
@@ -299,10 +238,6 @@ impl TypeInterner {
             .iter()
             .any(|&id| !matches!(self.lookup(id), Some(TypeData::Union(_))));
         if has_non_union {
-            if self.should_preserve_discriminated_object_intersection(&flat) {
-                let list_id = self.intern_type_list_from_slice(&flat);
-                return self.intern(TypeData::Intersection(list_id));
-            }
             if let Some(distributed) = self.distribute_intersection_over_unions(&flat) {
                 return distributed;
             }

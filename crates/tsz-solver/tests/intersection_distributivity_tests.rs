@@ -113,3 +113,79 @@ fn test_intersection_distributes_with_object_types() {
         }
     }
 }
+
+#[test]
+fn test_discriminated_union_intersection_distributes() {
+    // Repro from typeVariableConstraintIntersections.ts (#30581):
+    // (OptionOne | OptionTwo) & { kind: "one" } should distribute and narrow to OptionOne.
+    //
+    // OptionOne = { kind: "one", s: string }
+    // OptionTwo = { kind: "two", x: number, y: number }
+    //
+    // Distribution:
+    //   (OptionOne & { kind: "one" }) | (OptionTwo & { kind: "one" })
+    //   = { kind: "one", s: string } | never  (because "two" & "one" = never → object = never)
+    //   = { kind: "one", s: string }
+    //
+    // Previously, `should_preserve_discriminated_object_intersection` incorrectly
+    // prevented this distribution, keeping the raw intersection form. This made
+    // property access like `option.s` fail with TS2339 ("Property does not exist").
+    let interner = TypeInterner::new();
+
+    let kind_atom = interner.intern_string("kind");
+    let s_atom = interner.intern_string("s");
+    let x_atom = interner.intern_string("x");
+    let y_atom = interner.intern_string("y");
+
+    let lit_one = interner.literal_string("one");
+    let lit_two = interner.literal_string("two");
+
+    // OptionOne = { kind: "one", s: string }
+    let option_one = interner.object(vec![
+        PropertyInfo::new(kind_atom, lit_one),
+        PropertyInfo::new(s_atom, TypeId::STRING),
+    ]);
+
+    // OptionTwo = { kind: "two", x: number, y: number }
+    let option_two = interner.object(vec![
+        PropertyInfo::new(kind_atom, lit_two),
+        PropertyInfo::new(x_atom, TypeId::NUMBER),
+        PropertyInfo::new(y_atom, TypeId::NUMBER),
+    ]);
+
+    // Options = OptionOne | OptionTwo
+    let options = interner.union(vec![option_one, option_two]);
+
+    // Discriminant object = { kind: "one" }
+    let discriminant = interner.object(vec![PropertyInfo::new(kind_atom, lit_one)]);
+
+    // Options & { kind: "one" } — should distribute and narrow
+    let result = interner.intersection(vec![options, discriminant]);
+
+    // The result should NOT be a raw intersection — it should be distributed.
+    // After distribution and simplification, it should be an object type
+    // containing the 's' property (from OptionOne).
+    match interner.lookup(result) {
+        Some(TypeData::Intersection(_)) => {
+            panic!(
+                "Expected distribution to narrow the discriminated union, \
+                 but got a raw intersection. The intersection (OptionOne | OptionTwo) & \
+                 {{ kind: \"one\" }} should distribute to OptionOne."
+            );
+        }
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = interner.object_shape(shape_id);
+            // Should have the 's' property from OptionOne
+            assert!(
+                shape.properties.iter().any(|p| p.name == s_atom),
+                "Distributed result should contain property 's' from OptionOne"
+            );
+        }
+        Some(TypeData::Union(_)) => {
+            // Acceptable if never hasn't been fully removed yet
+        }
+        other => {
+            panic!("Expected object or union after distribution, got {other:?}");
+        }
+    }
+}
