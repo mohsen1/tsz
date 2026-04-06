@@ -451,6 +451,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let mut saw_deferred_any_fallback = false;
                 let mut nullable_causes = Vec::new();
                 let mut saw_unknown = false;
+                let mut not_found_members: Vec<TypeId> = Vec::new();
 
                 // Suppress `this` binding during intersection member resolution.
                 // Each member would otherwise bind `ThisType` to itself (e.g. Thing1),
@@ -491,34 +492,35 @@ impl<'a> PropertyAccessEvaluator<'a> {
                             saw_unknown = true;
                         }
                         PropertyAccessResult::PropertyNotFound { .. } => {
-                            // When a union member of an intersection doesn't have the
-                            // property on ALL its constituents, the union as a whole
-                            // returns PropertyNotFound. But other intersection members
-                            // may guarantee the property exists (e.g. a mapped type
-                            // `{ length: unknown }`). In that case, we should still
-                            // collect property types from union members that DO have
-                            // the property, so they participate in the intersection.
-                            // This matches tsc behavior for patterns like:
-                            //   (ArrayLike<any> | Iterable<any>) & { length: unknown }
-                            if let Some(TypeData::Union(list_id)) = self.interner().lookup(member) {
-                                let union_members = self.interner().type_list(list_id);
-                                for &union_member in union_members.iter() {
-                                    if let PropertyAccessResult::Success {
-                                        type_id,
-                                        from_index_signature,
-                                        ..
-                                    } = self.resolve_property_access_inner(
-                                        union_member,
-                                        prop_name,
-                                        Some(prop_atom),
-                                    ) {
-                                        results.push(type_id);
-                                        if from_index_signature {
-                                            any_from_index = true;
-                                        }
+                            // Track members that didn't have the property for fallback apparent type resolution.
+                            // Some members like type parameters or lazy types may have the property on their apparent type.
+                            not_found_members.push(member);
+                        }
+                    }
+                }
+
+                // Second pass: for members that didn't have the property, try their apparent types.
+                // This handles cases like `Window & typeof globalThis` where `Window` has the property
+                // but `typeof globalThis` needs apparent type resolution to find it.
+                for &member in &not_found_members {
+                    // Try apparent type for type parameters and primitives
+                    let apparent = self.try_resolve_apparent_type(member);
+                    if apparent != member && apparent != TypeId::ANY {
+                        match self.resolve_property_access_inner(apparent, prop_name, Some(prop_atom))
+                        {
+                            PropertyAccessResult::Success {
+                                type_id,
+                                from_index_signature,
+                                ..
+                            } => {
+                                if type_id != TypeId::ANY {
+                                    results.push(type_id);
+                                    if from_index_signature {
+                                        any_from_index = true;
                                     }
                                 }
                             }
+                            _ => {}
                         }
                     }
                 }
@@ -928,6 +930,28 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 PropertyAccessResult::simple(TypeId::ANY)
             }
         }
+    }
+
+    /// Try to resolve the apparent type for a given type.
+    ///
+    /// This is used by intersection property resolution to find properties that may
+    /// only exist on the apparent type (e.g., type parameters with constraints).
+    /// Returns the original type if no apparent type can be determined.
+    fn try_resolve_apparent_type(&self, type_id: TypeId) -> TypeId {
+        use crate::type_queries::get_type_parameter_constraint;
+
+        if let Some(constraint) = get_type_parameter_constraint(self.interner(), type_id) {
+            // For type parameters, return the constraint (or unknown if none)
+            if constraint == TypeId::UNKNOWN {
+                return TypeId::UNKNOWN;
+            }
+            return constraint;
+        }
+
+        // For primitive types, the solver already handles apparent types
+        // in resolve_string_property, resolve_number_property, etc.
+        // We return the original type here and let the normal resolution handle it.
+        type_id
     }
 
     // Resolution helpers (mapped types, primitives, arrays, applications, etc.)

@@ -766,6 +766,23 @@ impl<'a> CheckerState<'a> {
         allow_unknown_property_fallback: bool,
         base_display: &str,
     ) -> TypeId {
+        // For "Window & typeof globalThis", first try to resolve the property
+        // from the Window interface (the more specific type member).
+        // This ensures properties like `name` on Window are found before
+        // falling back to globalThis resolution.
+        if base_display == "Window & typeof globalThis" {
+            if let Some(window_type) = self.resolve_lib_type_by_name("Window") {
+                let prop_result = crate::query_boundaries::property_access::resolve_property_access(
+                    self.ctx.types,
+                    window_type,
+                    name,
+                );
+                if let Some(type_id) = prop_result.success_type() {
+                    return type_id;
+                }
+            }
+        }
+
         if let Some(sym_id) = self.resolve_global_value_symbol(name) {
             if self.alias_resolves_to_type_only(sym_id) {
                 // Route through wrong-meaning boundary: alias resolves to type-only

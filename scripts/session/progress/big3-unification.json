@@ -1,0 +1,22 @@
+{
+  "campaign": "big3-unification",
+  "baseline_at_creation": 11745,
+  "status": "active",
+  "sessions": [
+    {
+      "date": "2026-04-06",
+      "summary": "Fixed globalThis property resolution for Window & typeof globalThis intersection types",
+      "invariant": "When resolving properties on intersection types like Window & typeof globalThis, tsz should check properties from ALL intersection members (Window interface first), not just shortcut to globalThis property resolution",
+      "tests_fixed": ["globalMergeWithCommonJSAssignmentDeclaration.ts"],
+      "kpi_impact": "+2 conformance tests passing, overall 11747/12581 (93.4%)",
+      "changes": ["crates/tsz-checker/src/state/type_environment/type_node_resolution.rs"],
+      "regressions": "None detected in 200-test regression check"
+    }
+  ],
+  "known_dead_ends": [],
+  "promising_leads": [
+    "Other merged type property resolution issues may share similar patterns",
+    "Prototype assignment merge issues (chainedPrototypeAssignment.ts) may need separate solver-level fix"
+  ],
+  "cross_cutting_blockers": []
+}
