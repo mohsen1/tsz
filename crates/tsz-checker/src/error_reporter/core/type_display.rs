@@ -1146,6 +1146,13 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // For TypeQuery (typeof X), don't use evaluated display - preserve the
+        // typeof syntax instead of expanding to the full function type.
+        // This prevents double function arrows like `() => () => typeof fn`.
+        if tsz_solver::type_queries::is_type_query_type(self.ctx.types, ty) {
+            return false;
+        }
+
         if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
             || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, evaluated)
         {

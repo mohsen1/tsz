@@ -1047,7 +1047,16 @@ impl<'a> CheckerState<'a> {
                 }
             }
             Some(ref name) if name.is_empty() => {
-                // Empty ElementAttributesProperty -> instance type IS the props
+                // Empty/invalid ElementAttributesProperty -> fall back to first construct param
+                // This matches tsc behavior: when ElementAttributesProperty is invalid,
+                // use the first parameter of the construct signature as the props type.
+                if let Some(first_param) = first_param_type {
+                    let param_type = self.evaluate_type_with_env(first_param);
+                    if param_type != TypeId::ANY && param_type != TypeId::ERROR {
+                        return Some(param_type);
+                    }
+                }
+                // Fall back to instance type if no valid first param
                 let evaluated_instance = self.evaluate_type_with_env(instance_type);
                 Some(evaluated_instance)
             }
@@ -1247,13 +1256,17 @@ impl<'a> CheckerState<'a> {
             }
             // TS2608: ElementAttributesProperty may not have more than one property
             if shape.properties.len() > 1 {
-                if let Some(elem_idx) = element_idx {
-                    use crate::diagnostics::diagnostic_codes;
-                    self.error_at_node_msg(
-                        elem_idx,
-                        diagnostic_codes::THE_GLOBAL_TYPE_JSX_MAY_NOT_HAVE_MORE_THAN_ONE_PROPERTY,
-                        &["ElementAttributesProperty"],
-                    );
+                // Emit at the ElementAttributesProperty declaration, not the JSX element
+                // Look up the symbol to get its declaration position
+                if let Some(eap_symbol) = self.ctx.binder.get_symbol(eap_sym_id) {
+                    if let Some(&decl_idx) = eap_symbol.declarations.first() {
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node_msg(
+                            decl_idx,
+                            diagnostic_codes::THE_GLOBAL_TYPE_JSX_MAY_NOT_HAVE_MORE_THAN_ONE_PROPERTY,
+                            &["ElementAttributesProperty"],
+                        );
+                    }
                 }
                 return Some(String::new());
             }
