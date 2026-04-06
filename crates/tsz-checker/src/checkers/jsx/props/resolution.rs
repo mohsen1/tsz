@@ -978,14 +978,30 @@ impl<'a> CheckerState<'a> {
                 // Check if there are later spreads that could provide missing properties.
                 let has_later_spreads = i < spread_count - 1;
 
-                suppress_missing_props_from_spread |= self.check_spread_property_types(
+                // Check if TS2710 will be emitted: spread has children property AND there are body children
+                let spread_has_children = if let Some(spread_shape) =
+                    tsz_solver::type_queries::get_object_shape(self.ctx.types, spread_type)
+                {
+                    spread_shape.properties.iter().any(|p| {
+                        let name = self.ctx.types.resolve_atom(p.name);
+                        name == "children"
+                    })
+                } else {
+                    false
+                };
+                let has_body_children = children_ctx.as_ref().map_or(false, |ctx| ctx.child_count > 0);
+                let suppress_missing_props = spread_has_children && has_body_children;
+
+                let had_error = self.check_spread_property_types(
                     spread_type,
                     props_type,
                     tag_name_idx,
                     &overridden,
                     has_later_spreads,
+                    suppress_missing_props,
                     &display_target,
                 );
+                suppress_missing_props_from_spread |= had_error || suppress_missing_props;
             }
 
             if suppress_missing_props_from_spread {

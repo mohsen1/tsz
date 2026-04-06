@@ -21,6 +21,7 @@ impl<'a> CheckerState<'a> {
         tag_name_idx: NodeIndex,
         overridden_names: &rustc_hash::FxHashSet<&str>,
         has_later_spreads: bool,
+        suppress_missing_props: bool,
         display_target: &str,
     ) -> bool {
         use crate::query_boundaries::common::PropertyAccessResult;
@@ -121,8 +122,10 @@ impl<'a> CheckerState<'a> {
         // When there are multiple spreads, we don't emit TS2739 for missing properties
         // from individual spreads. Later spreads might provide the missing properties,
         // and the final combined prop validation will catch truly missing properties.
-        // Only check for missing properties when this is the ONLY spread (no later spreads).
-        if !has_later_spreads {
+        // Also suppress when TS2710 (children specified twice) will be emitted.
+        // Only check for missing properties when this is the ONLY spread (no later spreads)
+        // and we're not suppressing missing props.
+        if !has_later_spreads && !suppress_missing_props {
             if let Some(props_shape) =
                 tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)
             {
