@@ -57,6 +57,113 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// TS1274: Check for modifiers that can never appear on type parameters
+    /// (public, private, protected, static, readonly, async, declare, abstract, override,
+    /// export, default, accessor). These are invalid on ALL type parameters regardless
+    /// of context (type alias, interface, class, or function).
+    pub(crate) fn check_never_valid_type_parameter_modifiers(
+        &mut self,
+        type_params: Option<&tsz_parser::parser::NodeList>,
+    ) {
+        let Some(type_params) = type_params else {
+            return;
+        };
+        for &param_idx in &type_params.nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(tp) = self.ctx.arena.get_type_parameter(param_node) else {
+                continue;
+            };
+            if let Some(ref modifiers) = tp.modifiers {
+                for &mod_idx in &modifiers.nodes {
+                    let Some(mod_node) = self.ctx.arena.get(mod_idx) else {
+                        continue;
+                    };
+                    let kind = mod_node.kind;
+                    // Modifiers that can NEVER appear on any type parameter
+                    let is_invalid = matches!(
+                        kind,
+                        x if x == SyntaxKind::PublicKeyword as u16
+                            || x == SyntaxKind::PrivateKeyword as u16
+                            || x == SyntaxKind::ProtectedKeyword as u16
+                            || x == SyntaxKind::StaticKeyword as u16
+                            || x == SyntaxKind::ReadonlyKeyword as u16
+                            || x == SyntaxKind::AsyncKeyword as u16
+                            || x == SyntaxKind::DeclareKeyword as u16
+                            || x == SyntaxKind::AbstractKeyword as u16
+                            || x == SyntaxKind::OverrideKeyword as u16
+                            || x == SyntaxKind::AccessorKeyword as u16
+                            || x == SyntaxKind::ExportKeyword as u16
+                            || x == SyntaxKind::DefaultKeyword as u16
+                    );
+                    if is_invalid {
+                        let modifier_text = match kind {
+                            x if x == SyntaxKind::PublicKeyword as u16 => "public",
+                            x if x == SyntaxKind::PrivateKeyword as u16 => "private",
+                            x if x == SyntaxKind::ProtectedKeyword as u16 => "protected",
+                            x if x == SyntaxKind::StaticKeyword as u16 => "static",
+                            x if x == SyntaxKind::ReadonlyKeyword as u16 => "readonly",
+                            x if x == SyntaxKind::AsyncKeyword as u16 => "async",
+                            x if x == SyntaxKind::DeclareKeyword as u16 => "declare",
+                            x if x == SyntaxKind::AbstractKeyword as u16 => "abstract",
+                            x if x == SyntaxKind::OverrideKeyword as u16 => "override",
+                            x if x == SyntaxKind::AccessorKeyword as u16 => "accessor",
+                            x if x == SyntaxKind::ExportKeyword as u16 => "export",
+                            x if x == SyntaxKind::DefaultKeyword as u16 => "default",
+                            _ => continue,
+                        };
+                        self.error_at_node_msg(
+                            mod_idx,
+                            crate::diagnostics::diagnostic_codes::MODIFIER_CAN_ONLY_APPEAR_ON_A_TYPE_PARAMETER_OF_A_CLASS_INTERFACE_OR_TYPE_ALIAS,
+                            &[modifier_text],
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// TS1274: Check that variance modifiers (`in`, `out`) are not used on
+    /// function/method type parameters. They are only valid on class, interface,
+    /// and type alias type parameters.
+    pub(crate) fn check_variance_on_function_type_parameters(
+        &mut self,
+        type_params: Option<&tsz_parser::parser::NodeList>,
+    ) {
+        let Some(type_params) = type_params else {
+            return;
+        };
+        for &param_idx in &type_params.nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(tp) = self.ctx.arena.get_type_parameter(param_node) else {
+                continue;
+            };
+            if let Some(ref modifiers) = tp.modifiers {
+                for &mod_idx in &modifiers.nodes {
+                    let Some(mod_node) = self.ctx.arena.get(mod_idx) else {
+                        continue;
+                    };
+                    let kind = mod_node.kind;
+                    if kind == SyntaxKind::InKeyword as u16 || kind == SyntaxKind::OutKeyword as u16 {
+                        let modifier_text = if kind == SyntaxKind::InKeyword as u16 {
+                            "in"
+                        } else {
+                            "out"
+                        };
+                        self.error_at_node_msg(
+                            mod_idx,
+                            crate::diagnostics::diagnostic_codes::MODIFIER_CAN_ONLY_APPEAR_ON_A_TYPE_PARAMETER_OF_A_CLASS_INTERFACE_OR_TYPE_ALIAS,
+                            &[modifier_text],
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     pub(crate) fn lookup_member_access_in_class(
         &self,
         class_idx: NodeIndex,
