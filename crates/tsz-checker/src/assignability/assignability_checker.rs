@@ -332,7 +332,7 @@ impl<'a> CheckerState<'a> {
             // Without this, the Application gets expanded to an Object whose inner
             // methods may have type params with the same name, causing shadowing
             // that blocks the alpha-renaming substitution.
-            let skip = !own_tp_names.is_empty()
+            let skip_for_type_params = !own_tp_names.is_empty()
                 && own_tp_names.iter().any(|&name| {
                     tsz_solver::visitor::contains_type_parameter_named(
                         self.ctx.types,
@@ -340,6 +340,12 @@ impl<'a> CheckerState<'a> {
                         name,
                     )
                 });
+            // Skip normalization for TypeQuery return types to preserve the typeof
+            // syntax. Resolving TypeQuery to the full function type causes double
+            // arrows like `() => () => typeof fn` instead of `() => typeof fn`.
+            let skip_for_type_query =
+                tsz_solver::type_queries::is_type_query_type(self.ctx.types, shape.return_type);
+            let skip = skip_for_type_params || skip_for_type_query;
             let evaluated = if skip {
                 shape.return_type
             } else {
@@ -379,10 +385,14 @@ impl<'a> CheckerState<'a> {
 
     fn normalize_callable_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
         if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id) {
-            return self
+            let result = self
                 .normalize_function_shape_for_assignability(&shape)
-                .map(|shape| self.ctx.types.factory().function(shape))
+                .map(|shape| {
+                    let func_type = self.ctx.types.factory().function(shape);
+                    func_type
+                })
                 .unwrap_or(type_id);
+            return result;
         }
         if let Some(shape) = tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id) {
             let mut changed = false;

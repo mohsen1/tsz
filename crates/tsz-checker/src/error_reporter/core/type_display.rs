@@ -452,11 +452,21 @@ impl<'a> CheckerState<'a> {
                             ..*param
                         })
                         .collect();
-                    let return_type = self.normalize_assignability_display_type_inner(
+                    // Skip normalizing TypeQuery return types to preserve the typeof
+                    // syntax. Resolving TypeQuery to the full function type causes double
+                    // arrows like `() => () => typeof fn` instead of `() => typeof fn`.
+                    let return_type = if tsz_solver::type_queries::is_type_query_type(
+                        self.ctx.types,
                         shape.return_type,
-                        visiting,
-                        depth + 1,
-                    );
+                    ) {
+                        shape.return_type
+                    } else {
+                        self.normalize_assignability_display_type_inner(
+                            shape.return_type,
+                            visiting,
+                            depth + 1,
+                        )
+                    };
                     let return_type =
                         crate::query_boundaries::common::widen_type(self.ctx.types, return_type);
                     if params.iter().zip(shape.params.iter()).all(|(a, b)| a == b)
@@ -645,11 +655,21 @@ impl<'a> CheckerState<'a> {
                         ..*param
                     })
                     .collect();
-                let return_type = self.normalize_assignability_display_type_inner(
+                // Skip normalizing TypeQuery return types to preserve the typeof
+                // syntax. Resolving TypeQuery to the full function type causes double
+                // arrows like `() => () => typeof fn` instead of `() => typeof fn`.
+                let return_type = if tsz_solver::type_queries::is_type_query_type(
+                    self.ctx.types,
                     shape.return_type,
-                    visiting,
-                    depth + 1,
-                );
+                ) {
+                    shape.return_type
+                } else {
+                    self.normalize_assignability_display_type_inner(
+                        shape.return_type,
+                        visiting,
+                        depth + 1,
+                    )
+                };
                 let return_type =
                     crate::query_boundaries::common::widen_type(self.ctx.types, return_type);
                 if params.iter().zip(shape.params.iter()).all(|(a, b)| a == b)
