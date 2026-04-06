@@ -760,8 +760,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 if !self
                                     .checker
                                     .is_assignable_to(contextual_arg_type, inst_check_type)
-                                    && !self
-                                        .is_function_union_compat(contextual_arg_type, inst_check_type)
+                                    && !self.is_function_union_compat(
+                                        contextual_arg_type,
+                                        inst_check_type,
+                                    )
                                 {
                                     return CallResult::ArgumentTypeMismatch {
                                         index: i,
