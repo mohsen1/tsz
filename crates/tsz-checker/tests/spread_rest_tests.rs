@@ -1239,3 +1239,122 @@ var z = { ...x };
         "Expected TS2698 for spreading undefined in expression context, got {ts2698_count}"
     );
 }
+
+// TS2783 spread-overwrite detection for property access spread expressions
+// with generic type parameters inferred from contextual `this` types.
+
+#[test]
+fn test_spread_property_access_no_false_ts2339_with_contextual_type() {
+    // When a spread expression like `...this.options.suggestion` is inside an
+    // object literal with a contextual type (e.g., function argument), the
+    // contextual type must NOT flow into the spread's property access resolution.
+    // Previously, the non-empty typing request bypassed the node cache and
+    // triggered a fresh computation that couldn't resolve the type parameter.
+    let source = r#"
+interface Opts {
+    editor: string;
+    char?: string;
+}
+declare function Fn(options: Opts): void;
+interface Config<Options = any> {
+    addOptions?: () => Options;
+    useOptions?: (this: { options: Options; editor: string }) => void;
+}
+declare function create<O = any>(config: Config<O>): void;
+create({
+    addOptions() {
+        return { suggestion: { char: "/" } as Opts };
+    },
+    useOptions() {
+        Fn({
+            editor: this.editor,
+            ...this.options.suggestion,
+        });
+    },
+});
+"#;
+    let diagnostics = check_source(source);
+    let ts2339_count = diagnostics.iter().filter(|d| d.code == 2339).count();
+    assert_eq!(
+        ts2339_count,
+        0,
+        "Expected no TS2339 for spread of this.options.suggestion with contextual type, got: {:?}",
+        diagnostics
+            .iter()
+            .filter(|d| d.code == 2339)
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_spread_property_access_emits_ts2783_with_inferred_generic() {
+    // After fixing the contextual type issue, the spread should resolve the
+    // correct type and detect that `editor` is overwritten by the spread.
+    let source = r#"
+interface Opts {
+    editor: string;
+    char?: string;
+}
+declare function Fn(options: Opts): void;
+interface Config<Options = any> {
+    addOptions?: () => Options;
+    useOptions?: (this: { options: Options; editor: string }) => void;
+}
+declare function create<O = any>(config: Config<O>): void;
+create({
+    addOptions() {
+        return { suggestion: { char: "/" } as Opts };
+    },
+    useOptions() {
+        Fn({
+            editor: this.editor,
+            ...this.options.suggestion,
+        });
+    },
+});
+"#;
+    let diagnostics = check_source(source);
+    let ts2783_count = diagnostics.iter().filter(|d| d.code == 2783).count();
+    assert!(
+        ts2783_count >= 1,
+        "Expected TS2783 for spread overwriting explicit 'editor' property, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_spread_stale_error_cache_invalidation() {
+    // When the spread expression's type was cached as ERROR from an early
+    // call-resolution pass (before the method's `this` type was established),
+    // the spread should invalidate the stale cache and re-evaluate correctly.
+    let source = r#"
+interface Opts { editor: string; }
+interface Config<T = any> {
+    getVal?: () => T;
+    useVal?: (this: { val: T }) => void;
+}
+declare function create<T = any>(config: Config<T>): void;
+create({
+    getVal() { return { x: { editor: "hi" } as Opts }; },
+    useVal() {
+        const obj = { extra: 1, ...this.val.x };
+    },
+});
+"#;
+    let diagnostics = check_source(source);
+    let ts2339_count = diagnostics.iter().filter(|d| d.code == 2339).count();
+    assert_eq!(
+        ts2339_count,
+        0,
+        "Expected no TS2339 — stale ERROR cache should be invalidated, got: {:?}",
+        diagnostics
+            .iter()
+            .filter(|d| d.code == 2339)
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+}
