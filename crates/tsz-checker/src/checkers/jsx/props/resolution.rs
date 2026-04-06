@@ -994,10 +994,7 @@ impl<'a> CheckerState<'a> {
 
                 // When JSX body children exist, treat `children` as already provided
                 // so spreads that don't include `children` don't trigger TS2741.
-                if children_ctx
-                    .as_ref()
-                    .is_some_and(|ctx| ctx.child_count > 0)
-                {
+                if children_ctx.as_ref().is_some_and(|ctx| ctx.child_count > 0) {
                     overridden.insert("children");
                 }
 
@@ -1033,8 +1030,7 @@ impl<'a> CheckerState<'a> {
 
                 // Record this spread's property names for later iterations.
                 let resolved_spread = self.evaluate_type_with_env(spread_type);
-                let resolved_spread =
-                    self.resolve_type_for_property_access(resolved_spread);
+                let resolved_spread = self.resolve_type_for_property_access(resolved_spread);
                 if let Some(shape) =
                     tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_spread)
                 {
