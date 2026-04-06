@@ -1688,6 +1688,33 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ERROR;
                     }
 
+                    // For JS files with checkJs enabled, when accessing properties on
+                    // new expression results that don't exist, emit TS2339 instead of
+                    // falling through to expando/any fallbacks. This ensures proper
+                    // error reporting for imported class instances like `new A().foo`.
+                    if self.is_js_file()
+                        && self.ctx.compiler_options.check_js
+                        && !skip_flow_narrowing
+                        && !accessibility_error_emitted
+                        && !property_name.starts_with('#')
+                    {
+                        // Check if the object expression is a new expression
+                        let is_new_expression = self
+                            .ctx
+                            .arena
+                            .get(access.expression)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::NEW_EXPRESSION);
+                        
+                        if is_new_expression {
+                            self.error_property_not_exist_at(
+                                property_name,
+                                object_type_for_access,
+                                access.name_or_argument,
+                            );
+                            return TypeId::ERROR;
+                        }
+                    }
+
                     let resolved_class_access =
                         self.resolve_class_for_access(access.expression, object_type_for_access);
                     let class_chain_summary = resolved_class_access
