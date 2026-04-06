@@ -1703,15 +1703,35 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // its constraint during the fallback path above. This only matches when
         // the constraint check FAILED and the code fell through to the fallback
         // (not when the constraint was naturally resolved as the inferred type).
+        // Also handles variadic tuple rest params like `readonly [...S, number]`
+        // where S is a type parameter from constraint fallback.
         let rest_param_from_constraint_fallback = func.params.last().is_some_and(|p| {
             if !p.rest {
                 return false;
             }
+            // Direct TypeParameter rest param (e.g., `...args: T`)
             if let Some(crate::TypeData::TypeParameter(tp_info)) = self.interner.lookup(p.type_id) {
-                constraint_fallback_tp_names.contains(&tp_info.name)
-            } else {
-                false
+                if constraint_fallback_tp_names.contains(&tp_info.name) {
+                    return true;
+                }
             }
+            // Variadic tuple rest param (e.g., `...args: readonly [...S, number]`)
+            // where S is a type parameter that fell back to its constraint.
+            let unwrapped = self.unwrap_readonly(p.type_id);
+            if let Some(crate::TypeData::Tuple(elements)) = self.interner.lookup(unwrapped) {
+                let elements = self.interner.tuple_list(elements);
+                return elements.iter().any(|elem| {
+                    if elem.rest {
+                        if let Some(crate::TypeData::TypeParameter(tp_info)) =
+                            self.interner.lookup(elem.type_id)
+                        {
+                            return constraint_fallback_tp_names.contains(&tp_info.name);
+                        }
+                    }
+                    false
+                });
+            }
+            false
         });
 
         let instantiated_params: Vec<ParamInfo> = func
