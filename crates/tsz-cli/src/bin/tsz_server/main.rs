@@ -388,6 +388,8 @@ struct CheckOptions {
     no_unchecked_side_effect_imports: bool,
     #[serde(default)]
     no_implicit_override: bool,
+    #[serde(default)]
+    strict_builtin_iterator_return: Option<bool>,
 }
 
 /// Legacy response to client
