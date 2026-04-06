@@ -110,24 +110,25 @@ echo "============================================="
 echo "Quick Start ($NUM_AGENTS agents):"
 echo "============================================="
 echo ""
-echo "For each of $NUM_AGENTS terminal tabs, run:"
+echo "Option A — Launch all agents headlessly:"
+echo ""
+echo "  scripts/session/launch-agents-opencode.sh --max $NUM_AGENTS"
+echo ""
+echo "Option B — Interactive mode (one terminal per agent):"
 echo ""
 echo '  # Pick an AVAILABLE campaign from the list above'
 echo '  scripts/session/start-campaign.sh <campaign-name>'
 echo '  cd .worktrees/<campaign-name>'
-echo '  claude  # Start Claude Code interactive session'
+echo '  opencode -m alibaba/qwen3.6-plus'
 echo ""
-echo "In Claude Code, tell the agent:"
-echo '  "Start working on the <campaign-name> campaign.'
-echo '   Read scripts/session/AGENT_PROTOCOL.md and scripts/session/campaigns.yaml'
-echo '   for your campaign definition. Follow the discipline cycle."'
+echo "Each agent will plan, implement, verify ALL test suites, and push to main."
 echo ""
 echo "Designate one session as the integrator:"
 echo '  scripts/session/start-campaign.sh integrator'
 echo '  cd .worktrees/integrator'
-echo '  claude'
-echo '  # Then: /loop 30m run scripts/session/integrate.sh --auto'
+echo '  opencode -m alibaba/qwen3.6-plus'
 echo ""
-echo "Set up periodic cleanup:"
-echo '  /loop 4h run scripts/session/cleanup.sh --auto'
+echo "Monitor headless agents:"
+echo '  tail -f scripts/session/logs/<campaign>.log'
+echo '  cat scripts/session/logs/agent-pids.txt'
 echo ""

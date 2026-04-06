@@ -72,6 +72,8 @@ yarn.lock
 !/Cargo.toml
 !/LICENSE.txt
 !/README.md
+!/AGENTS.md
+!/opencode.json
 !/yek.yaml
 
 
@@ -92,6 +94,9 @@ yarn.lock
 
 .env
 logs/
+!scripts/session/logs/
+scripts/session/logs/*.log
+scripts/session/logs/agent-pids.txt
 scripts/conformance/.tsc-cache
 
 # TSC conformance cache files (ignore generated, keep the committed one)
