@@ -147,6 +147,14 @@ fn post_process_checker_diagnostics(
             .retain(|diag| keep_checker_diagnostic_when_program_has_real_syntax_errors(diag.code));
     }
 
+    // TS2754 ("super may not use type arguments") indicates a fundamental class
+    // hierarchy error. tsc suppresses all other semantic diagnostics when TS2754
+    // is present. TS2754 is emitted by the parser, so check parse diagnostics.
+    let has_ts2754 = file.parse_diagnostics.iter().any(|d| d.code == 2754);
+    if has_ts2754 {
+        checker_diagnostics.retain(|diag| diag.code < 2000);
+    }
+
     // When TS5107/TS5101 deprecation diagnostics are present, suppress the most
     // common type relationship errors that tsc would not emit. Parser errors
     // (<2000) are handled separately and not affected by this filter.

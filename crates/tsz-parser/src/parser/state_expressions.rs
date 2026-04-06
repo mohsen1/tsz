@@ -2167,6 +2167,15 @@ impl ParserState {
                                     arguments: Some(arguments),
                                 },
                             );
+                        } else if !self.is_token(SyntaxKind::DotToken)
+                            && !self.is_token(SyntaxKind::OpenBracketToken)
+                        {
+                            // TS1034: super<T> followed by something other than
+                            // call/member access (e.g., tagged template literal)
+                            self.parse_error_at_current_token(
+                                tsz_common::diagnostics::diagnostic_messages::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
+                                tsz_common::diagnostics::diagnostic_codes::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
+                            );
                         }
                         continue;
                     }
