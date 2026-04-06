@@ -1167,19 +1167,10 @@ impl<'a> TypeVisitor for ParameterExtractor<'a> {
     fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.callable_shape(CallableShapeId(shape_id));
 
-        // tsc's getIntersectedSignatures returns undefined when multiple
-        // signatures are present and ANY is generic. A single generic signature
-        // still provides contextual types (type params act as contextual types).
-        if shape.call_signatures.len() > 1
-            && shape
-                .call_signatures
-                .iter()
-                .any(|sig| !sig.type_params.is_empty())
-        {
-            return None;
-        }
-
-        // Collect parameter types from all signatures at the given index
+        // Collect parameter types from all signatures at the given index.
+        // Even when signatures have type parameters, we can still extract the
+        // parameter type if all signatures agree on it (e.g., overloaded generic
+        // functions where all overloads have the same parameter type at a position).
         let param_types: Vec<TypeId> = shape
             .call_signatures
             .iter()
