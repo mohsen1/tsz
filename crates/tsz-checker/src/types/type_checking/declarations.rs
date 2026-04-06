@@ -771,13 +771,20 @@ impl<'a> CheckerState<'a> {
                             let value_resolver = |node_idx: tsz_parser::parser::NodeIndex| {
                                 self.resolve_value_symbol_for_lowering(node_idx)
                             };
-                            let lowering = TypeLowering::with_resolvers(
+                            let def_id_resolver = |_node_idx: tsz_parser::parser::NodeIndex| {
+                                None::<tsz_solver::def::DefId>
+                            };
+                            let lazy_type_params_resolver =
+                                |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
+                            let lowering = TypeLowering::with_hybrid_resolver(
                                 symbol_arena,
                                 self.ctx.types,
                                 &type_resolver,
+                                &def_id_resolver,
                                 &value_resolver,
                             )
-                            .with_type_param_bindings(type_param_bindings);
+                            .with_type_param_bindings(type_param_bindings)
+                            .with_lazy_type_params_resolver(&lazy_type_params_resolver);
                             let alias_type = lowering.lower_type(alias.type_node);
 
                             // The lowered type might be a conditional, mapped, or other deferred type.
