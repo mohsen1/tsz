@@ -965,7 +965,9 @@ impl<'a> CheckerState<'a> {
             }
 
             let spread_count = spread_entries.len();
-            for (i, &(spread_type, _spread_expr_idx, spread_pos)) in spread_entries.iter().enumerate() {
+            for (i, &(spread_type, _spread_expr_idx, spread_pos)) in
+                spread_entries.iter().enumerate()
+            {
                 // Only later explicit attributes override the current spread.
                 let overridden: rustc_hash::FxHashSet<&str> = explicit_attr_names_with_pos
                     .iter()

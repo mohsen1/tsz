@@ -914,7 +914,11 @@ impl<'a> CheckerState<'a> {
             return self.format_type_diagnostic(param_type);
         }
 
-        self.format_type_for_assignability_message(param_type)
+        // Use format_assignability_type_for_message to strip `| undefined` from
+        // optional parameter types when the argument is non-nullable.  tsc shows
+        // the declared parameter type without `| undefined` in TS2345 messages
+        // when the user actually provided an argument.
+        self.format_assignability_type_for_message(param_type, arg_type)
     }
 
     fn expanded_rest_tuple_parameter_display_for_call(
