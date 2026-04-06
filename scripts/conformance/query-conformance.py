@@ -55,9 +55,44 @@ DETAIL_FILE = Path(__file__).parent / "conformance-detail.json"
 # =============================================================================
 
 CAMPAIGNS = {
+    # =========================================================================
+    # TIER 1 — FINGERPRINT PARITY (50% of agent capacity)
+    # =========================================================================
+    "type-display-parity": {
+        "title": "Type display parity — match tsc's error message formatting (Tier 1)",
+        "description": "~310 fingerprint-only tests fail because error message text differs from tsc. The type printer makes different choices about alias-vs-expansion, function sig display, literal preservation, and intersection/union formatting. One printer fix can flip 50+ tests.",
+        "codes": ["TS2322", "TS2345", "TS2339", "TS2741", "TS2769", "TS2416"],
+        "keywords": [],
+        "areas": [],
+        "focus": [
+            "Fix type printer to match tsc's alias-vs-expansion display policy.",
+            "Fix function signature display (typeof foo vs full function type).",
+            "Preserve literal types in error messages where tsc preserves them.",
+            "Match tsc's intersection/union display formatting.",
+            "KPI: fingerprint-only count for TS2322+TS2345+TS2339.",
+        ],
+        "match_mode": "fingerprint_only",
+    },
+    "diagnostic-count": {
+        "title": "Diagnostic count accuracy — match tsc's emission rules (Tier 1)",
+        "description": "~130 fingerprint-only tests fail because we emit a different number of instances of the same error code. Over-emitting (extra assignability checks, duplicate elaboration) or under-emitting (missing super-before-this, control-flow narrowed checks).",
+        "codes": ["TS2322", "TS2345", "TS2339", "TS17009", "TS2564", "TS1264"],
+        "keywords": [],
+        "areas": [],
+        "focus": [
+            "Match tsc's diagnostic emission count for common error codes.",
+            "Fix redundant elaboration/assignability checks that cause over-emission.",
+            "Add missing control-flow and super-before-this checks for under-emission.",
+            "KPI: fingerprint-only count where instance counts differ per code.",
+        ],
+        "match_mode": "fingerprint_only",
+    },
+    # =========================================================================
+    # TIER 2 — WRONG-CODE CAMPAIGNS (30% of agent capacity)
+    # =========================================================================
     "big3": {
-        "title": "Big 3 relation kernel unification (Tier 1)",
-        "description": "Route ALL TS2322/TS2339/TS2345 checks through one canonical relation boundary. The same semantic question is being answered through multiple routes — unify them.",
+        "title": "Big 3 relation kernel unification (Tier 2)",
+        "description": "Route ALL TS2322/TS2339/TS2345 checks through one canonical relation boundary. 65 tests emit wrong error codes.",
         "codes": ["TS2322", "TS2339", "TS2345", "TS2416", "TS2769"],
         "keywords": [
             "contextual",
@@ -79,11 +114,11 @@ CAMPAIGNS = {
             "Route TS2322/TS2345-family checks through one assignability boundary and remove checker-local forks.",
             "Find invariants that fix BOTH missing AND extra diagnostics in the same family.",
             "Delete checker-local re-derivations of EPC, missing-property, weak-union, property-shape classification.",
-            "KPI: wrong-code count for TS2322+TS2339+TS2345.",
+            "KPI: wrong-code count for TS2322+TS2339+TS2345 (currently 71).",
         ],
     },
     "contextual-typing": {
-        "title": "Request/context transport completion (Tier 1)",
+        "title": "Request/context transport completion (Tier 2)",
         "description": "Complete TypingRequest migration. Push request object through all hot paths. Eliminate raw contextual_type mutations from CheckerContext.",
         "codes": ["TS2322", "TS2345", "TS7006", "TS2769", "TS2416"],
         "keywords": [
@@ -101,56 +136,11 @@ CAMPAIGNS = {
         "focus": [
             "Every contextual-type flow should use TypingRequest, not raw ctx.contextual_type mutations.",
             "Hot paths: call inference, JSX props/children, JSDoc callbacks, generic constructors, object-literal callbacks.",
-            "Treat TS7006 and TS2769 as secondary signals of the same transport bug, not separate work items.",
             "KPI: count of raw contextual-state mutations outside TypingRequest.",
         ],
     },
-    "property-resolution": {
-        "title": "Property and index resolution on unions/intersections",
-        "description": "Property lookup and index access diverge from tsc on merged shapes, symbols, and partial member presence.",
-        "codes": ["TS2339", "TS7053", "TS2538", "TS7017", "TS2304"],
-        "keywords": [
-            "property",
-            "index",
-            "computed",
-            "symbol",
-            "intersection",
-            "union",
-            "member",
-            "indexed",
-        ],
-        "areas": ["types", "expressions", "classes", "externalModules"],
-        "focus": [
-            "Centralize property/index lookup semantics in solver visitors instead of checker-side shape matching.",
-            "Match tsc precedence rules for numeric vs string index signatures and partial union member absence.",
-            "Use one path for property lookup so TS2339/TS7053/TS7017 move together.",
-        ],
-    },
-    "module-resolution": {
-        "title": "Node/declaration-emit coordination (Tier 2)",
-        "description": "Resolver diagnostics, driver-provided mode facts, package self-name/exports semantics, and declaration-emit coordination. NOT big3 work.",
-        "codes": ["TS2307", "TS2835", "TS2792", "TS1479", "TS2883", "TS5107", "TS1192", "TS5101"],
-        "keywords": [
-            "node",
-            "nodenext",
-            "exports",
-            "imports",
-            "self",
-            "specifier",
-            "resolution-mode",
-            "declarationemit",
-            "symlink",
-            "packagejson",
-        ],
-        "areas": ["externalModules", "node", "compiler", "declarationEmit"],
-        "focus": [
-            "Keep TS2307/TS2792/TS2834/TS2835 selection owned by resolver+driver plumbing.",
-            "Treat file-format facts, import-mode attributes, and package exports/self-name semantics as coordination inputs.",
-            "Node lane KPI: projects/NodeModulesSearch + projects/jsFileCompilation + node + declarationEmit pass rate.",
-        ],
-    },
     "narrowing-flow": {
-        "title": "Narrowing boundary cleanup (Tier 1)",
+        "title": "Narrowing boundary cleanup (Tier 2)",
         "description": "Finish narrowing.rs as boundary-clean. Zero direct solver calls from narrowing code. Add boundary helpers for all narrowing queries.",
         "codes": ["TS2339", "TS18048", "TS2454", "TS7022", "TS1360", "TS2322", "TS2345"],
         "keywords": [
@@ -169,6 +159,30 @@ CAMPAIGNS = {
             "Add boundary helpers for predicate extraction, lazy-def resolution, truthiness, type-param queries.",
             "Re-add narrowing.rs to architecture_contract_tests.rs when clean.",
             "KPI: direct solver query calls remaining in narrowing code.",
+        ],
+    },
+    # =========================================================================
+    # TIER 3 — SUBSYSTEM & LEAF (20% of agent capacity)
+    # =========================================================================
+    "module-resolution": {
+        "title": "Node/declaration-emit coordination (Tier 3)",
+        "description": "Resolver diagnostics, driver-provided mode facts, package self-name/exports semantics, and declaration-emit coordination. ~26 real Node lane failures. NOT big3 work.",
+        "codes": ["TS2307", "TS2835", "TS2792", "TS1479", "TS2883", "TS5107", "TS1192", "TS5101"],
+        "keywords": [
+            "nodemodules",
+            "nodenext",
+            "packageexports",
+            "specifier",
+            "resolution-mode",
+            "declarationemit",
+            "symlink",
+            "packagejson",
+        ],
+        "areas": ["externalModules", "node", "declarationEmit", "moduleResolution"],
+        "focus": [
+            "Keep TS2307/TS2792/TS2834/TS2835 selection owned by resolver+driver plumbing.",
+            "Treat file-format facts, import-mode attributes, and package exports/self-name semantics as coordination inputs.",
+            "Node lane KPI: projects/NodeModulesSearch + projects/jsFileCompilation + node + declarationEmit pass rate.",
         ],
     },
     "parser-recovery": {
@@ -192,13 +206,13 @@ CAMPAIGNS = {
     },
     "jsdoc-jsx-salsa": {
         "title": "Semantic integration areas (Tier 3)",
-        "description": "These areas are broad consumers of the same solver/checker mechanics. Most improvements come from Tier 1 campaigns.",
+        "description": "These areas are broad consumers of the same solver/checker mechanics. Most improvements come from Tier 1/2 campaigns.",
         "codes": ["TS2322", "TS2339", "TS2345", "TS7006", "TS2353", "TS2786"],
         "keywords": ["jsdoc", "jsx", "salsa", "defaultprops", "component", "typedef", "callback"],
         "areas": ["jsdoc", "jsx", "salsa"],
         "focus": [
-            "Use these suites as regression baskets for Tier 1 fixes (big3, request-transport, narrowing).",
-            "Only work area-local gaps after Tier 1 progress stabilizes.",
+            "Use these suites as regression baskets for Tier 1/2 fixes.",
+            "Only work area-local gaps after Tier 1/2 progress stabilizes.",
             "Reserve area-local fixes for true syntax or feature-surface gaps after semantic root causes are addressed.",
         ],
     },
@@ -254,6 +268,17 @@ def count_codes(failure):
 
 
 def match_campaign(path, failure, config):
+    # Fingerprint-only campaigns match only FP-only tests containing their codes
+    if config.get("match_mode") == "fingerprint_only":
+        if not is_fingerprint_only(failure):
+            return False, 0, [], area_of(path)
+        codes_in_test = set(failure.get("e", []))
+        matched_codes = [c for c in config.get("codes", []) if c in codes_in_test]
+        if not matched_codes:
+            return False, 0, [], area_of(path)
+        score = len(matched_codes) * 3
+        return True, score, matched_codes, area_of(path)
+
     low = path.lower()
     area = area_of(path)
     score = 0
@@ -405,20 +430,34 @@ def show_dashboard(data):
         print(f"    Close to passing (diff <= 2):           {cats.get('close_to_passing', '?')}")
     print()
 
-    # Campaign impact summary
-    print("  Campaign impact (Tier 1 — highest leverage):")
-    for name in ["big3", "contextual-typing", "narrowing-flow"]:
-        result = build_campaign_result(data, name)
-        print(f"    {name}: {len(result['tests'])} failing tests")
+    # KPI 6: Fingerprint breakdown (the dominant failure category)
+    fp_tests = [f for f in failures.values() if is_fingerprint_only(f)]
+    fp_code_counts = Counter()
+    for f in fp_tests:
+        fp_code_counts.update(f.get("e", []))
+    big3_fp = sum(fp_code_counts.get(c, 0) for c in ["TS2322", "TS2345", "TS2339"])
+    print(f"  KPI 6: Fingerprint-only breakdown ({len(fp_tests)} tests, {len(fp_tests)/max(len(failures),1)*100:.0f}% of failures):")
+    print(f"    TS2322+TS2345+TS2339 in FP-only: {big3_fp} test-codes")
+    for code in ["TS2322", "TS2345", "TS2339", "TS2564", "TS2454"]:
+        count = fp_code_counts.get(code, 0)
+        if count > 0:
+            print(f"    {code}: {count} tests")
     print()
-    print("  Campaign impact (Tier 2 — subsystem lanes):")
-    for name in ["module-resolution"]:
+
+    # Campaign impact summary
+    print("  Campaign impact (Tier 1 — fingerprint parity):")
+    print(f"    type-display-parity: ~{len(fp_tests) * 50 // 100} est. tests (50% of FP-only)")
+    print(f"    diagnostic-count: ~{len(fp_tests) * 21 // 100} est. tests (21% of FP-only)")
+    print()
+    print("  Campaign impact (Tier 2 — wrong-code):")
+    for name in ["big3", "contextual-typing", "narrowing-flow"]:
         result = build_campaign_result(data, name)
         print(f"    {name}: {len(result['tests'])} failing tests")
     print()
 
     print("=" * 70)
-    print("  Track KPIs, not overall %. Fix invariants, not individual tests.")
+    print("  Fingerprint parity is 73.6% of remaining work.")
+    print("  Track KPIs, not overall %. Fix patterns, not individual tests.")
     print("=" * 70)
 
 

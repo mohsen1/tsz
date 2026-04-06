@@ -1,4 +1,4 @@
-# Agent Campaign Protocol — v2 (Post-90% Operating Model)
+# Agent Campaign Protocol — v3 (Post-93% Fingerprint Era)
 
 ultrathink
 
@@ -16,24 +16,27 @@ it leads — across crate boundaries, across files, across crates. The mission
 defines your goal, not a file list.**
 
 **Multi-crate changes are EXPECTED at this stage, not exceptional.**
-The remaining failures are architecture-shaped. If your fix needs solver +
-checker + boundary changes, that's normal — do it.
 
 ---
 
-## The 90% Wall: Why We Changed the Model
+## The 93% Reality: Why We Changed the Model Again
 
-Above 90% conformance, the remaining failures are mostly:
-- **Wrong-code drift** in the big3 (TS2322/TS2339/TS2345) — the same semantic
-  question is being answered through multiple routes
-- **Half-migrated context transport** — TypingRequest exists but raw
-  contextual_type mutations still dominate
-- **Narrowing boundary debt** — narrowing.rs still makes direct solver calls
-- **Node/declaration-emit coordination gaps** — not big3, but its own lane
-- **Crashes masking real shapes** — every crash is a measurement corruption
+At **93.3% conformance** (11741/12579), the remaining 838 failures break down:
 
-The old model rewarded leaf fixes and told agents to reroll broad-surface work.
-That created churn instead of slope. **Campaign work is now the default.**
+| Category | Count | % | What's wrong |
+|----------|-------|---|-------------|
+| **Fingerprint-only** | **617** | **73.6%** | Right error codes, wrong message/position/count |
+| Wrong codes | 174 | 20.8% | Different error codes than tsc |
+| Crashes / all-missing | 44 | 5.3% | We emit 0, tsc expects diagnostics |
+| False positives | 3 | 0.4% | We emit errors, tsc expects 0 |
+
+**Three-quarters of remaining failures already emit the correct error codes.**
+The diagnostics just have wrong message text (~310 tests), different instance
+counts (~130 tests), or wrong line/column positions (~90 tests).
+
+The v2 model focused on wrong-code drift and architecture campaigns. That was
+right at 90-92%. At 93%+, **fingerprint parity is the dominant remaining
+problem** and requires a different methodology.
 
 ---
 
@@ -41,9 +44,9 @@ That created churn instead of slope. **Campaign work is now the default.**
 
 | Tier | Allocation | Campaigns | Focus |
 |------|-----------|-----------|-------|
-| **1** | 50% of agents | big3-unification, request-transport, narrowing-boundary | Trunk work: relation kernel, context transport, boundary cleanup |
-| **2** | 30% of agents | node-declaration-emit, crash-zero, stable-identity | Subsystem lanes: resolver, crashes, identity |
-| **3** | 20% of agents | parser-diagnostics, false-positives, jsdoc-jsx-salsa | Leaf cleanup, parser, integration areas |
+| **1** | 50% of agents | type-display-parity, diagnostic-count | Fingerprint parity: match tsc's error message text and diagnostic counts |
+| **2** | 30% of agents | big3-unification, narrowing-boundary, request-transport | Wrong-code: relation kernel, context transport, boundary cleanup |
+| **3** | 20% of agents | crash-zero, diagnostic-position, parser-diagnostics, module-resolution, jsdoc-jsx-salsa | Subsystem and leaf work |
 
 **Tier 1 campaigns are always staffed first.** Only assign agents to Tier 2/3
 after Tier 1 has adequate coverage.
@@ -52,16 +55,13 @@ after Tier 1 has adequate coverage.
 
 ## KPIs (What We Track Instead of Overall %)
 
-Stop using overall conformance % as the primary daily signal. Track these:
-
 | KPI | Command | Target |
 |-----|---------|--------|
-| Wrong-code count TS2322/TS2339/TS2345 | `query-conformance.py --dashboard` | Reduce by 50% |
-| Crash count | `query-conformance.py --dashboard` | Zero |
-| Node lane pass rate | `query-conformance.py --dashboard` | >75% |
-| Close-to-passing (diff 0/1/2) | `query-conformance.py --close 2` | Reduce by 50% |
-| Direct solver calls in narrowing | `rg "type_queries\." crates/tsz-checker/src/flow/` | Zero |
-| Raw contextual mutations | `rg "contextual_type\b" crates/tsz-checker/src/` | Zero outside TypingRequest |
+| **Fingerprint-only count** | `query-conformance.py --dashboard` | Reduce from 617 |
+| FP-only for TS2322+TS2345+TS2339 | `query-conformance.py --fingerprint-only` | Reduce from 410 |
+| Big3 wrong-code count | `query-conformance.py --dashboard` | Reduce from 71 |
+| Crash count | `query-conformance.py --dashboard` | Zero (44) |
+| Tests per fix commit | git log analysis | >1.0 (currently 0.32) |
 
 ---
 
@@ -85,7 +85,6 @@ If a progress file exists, **read it carefully**:
 - **Known dead ends**: Don't re-investigate these approaches
 - **Promising leads**: Start here, not from scratch
 - **Cross-cutting blockers**: Issues that need work in other subsystems
-- **Session history**: What previous sessions accomplished
 
 If no progress file exists, initialize one:
 ```bash
@@ -98,214 +97,181 @@ scripts/session/campaign-checkpoint.sh <your-campaign> --init
 python3 scripts/conformance/query-conformance.py --dashboard
 ```
 
-Know your campaign's specific KPI before starting work. Your progress is
-measured by your KPI, not by overall conformance %.
+Know your campaign's specific KPI before starting work.
 
 ---
 
 ## The Discipline Cycle
 
-### 1. Research (30-40% of your time)
+### For Fingerprint Campaigns (Tier 1)
 
-This is the most important phase. Do NOT skip to implementation.
+Fingerprint work has a fundamentally different methodology than wrong-code work.
+You are NOT looking for missing/extra error codes. You are looking for **why
+the error message text, position, or count differs** from tsc.
+
+**1. Research (30-40%)**
 
 ```bash
-# Start with your campaign's research command (see campaigns.yaml)
-python3 scripts/conformance/query-conformance.py --campaign <your-campaign>
+# See which codes have the most fingerprint-only failures
+python3 scripts/conformance/query-conformance.py --fingerprint-only
 
-# Pick 8-15 representative failing tests spanning both missing AND extra diagnostics
-# Read the actual TypeScript test files
+# Pick a code (e.g., TS2322) and list affected tests
+python3 scripts/conformance/query-conformance.py --fingerprint-only --code TS2322
 
-# Check what tsc expects:
-python3 -c "
-import json
-with open('scripts/conformance/tsc-cache-full.json') as f:
-    cache = json.load(f)
-print(json.dumps(cache.get('<test-path>', {}), indent=2))
-"
-
-# Run a few tests verbosely to see expected vs actual:
-./scripts/conformance/conformance.sh run --filter "<pattern>" --verbose --max 10
+# Run 10-15 tests with fingerprint detail
+./scripts/conformance/conformance.sh run --filter "test1|test2|test3" --verbose
 ```
 
-**Find the shared semantic invariant**: What does tsc do that we don't?
-Write it down before touching any code.
+The verbose output shows `missing-fingerprints:` (tsc has, we don't) and
+`extra-fingerprints:` (we have, tsc doesn't). Compare the `message_key` and
+`line:column` fields.
 
-**For Tier 1 campaigns**: Pick tests that span both missing AND extra
-diagnostics in the same family. The goal is to find the single invariant
-that fixes both directions, not to patch one side.
+**Classify the mismatch pattern**:
+- Message differs, position same → type display bug → fix the printer
+- Position differs, message similar → diagnostic anchor bug → fix the error site
+- Count differs → emission/suppression rule bug → fix the checker logic
 
-### 2. Plan (10-15% of your time)
+**2. Plan (10-15%)**
 
-State the invariant clearly:
-> "tsc does X when condition Y holds. We currently do Z instead.
-> The fix belongs in [solver/checker layer] because [WHAT vs WHERE reasoning]."
+State the divergence pattern:
+> "tsc displays type X as `Foo<T>` (alias form). We display it as
+> `{ a: string; b: number }` (expanded form). The decision point is in
+> display.rs at the TypeData::Application branch."
 
-Check the architecture rules:
-- Is this WHAT (type algorithm) → Solver
-- Is this WHERE (diagnostic location) → Checker calling Solver
-- Does it introduce TypeKey access in checker? → Reject, find a query
+**3. Implement (20-25%)**
 
-Predict:
-- Which tests will flip to passing?
-- Which areas might be affected (regression risk)?
-- Does this fix reduce BOTH missing and extra in the same family?
+For type-display-parity: Fix the printer code in `crates/tsz-solver/src/display/`.
+For diagnostic-count: Fix emission guards in `crates/tsz-checker/src/checkers/`.
 
-### 3. Implement (20-25% of your time)
-
-- **Follow the root cause wherever it goes.** Multi-crate changes are expected.
-- Fix the invariant in the correct architectural layer
-- **Write the shared semantic invariant first**, then make the code match it
-- One coherent change, not stacked patches
-- Prefer solver/boundary-helper fixes over checker heuristics
-- Keep changes minimal and focused
-
-**For Tier 1 big3-unification**: Every fix should route through
-`query_boundaries/assignability`. If you find yourself adding checker-local
-classification logic, stop and move it to a boundary helper.
-
-**For Tier 1 request-transport**: Every fix should use TypingRequest. If you
-find yourself reading/writing `ctx.contextual_type` directly, stop and use
-the request path.
-
-**For Tier 1 narrowing-boundary**: Every fix should add a boundary helper.
-If you find yourself calling solver queries directly from narrowing code,
-stop and create a boundary query.
-
-### 4. Verify (15-20% of your time)
+**4. Measure batch impact (critical for fingerprint work)**
 
 ```bash
-# Run targeted conformance tests
-./scripts/conformance/conformance.sh run --filter "<pattern>" --verbose
+# Run ALL fingerprint-only tests for your code family (not just the 10 you researched)
+python3 scripts/conformance/query-conformance.py --fingerprint-only --code TS2322 --paths-only | head -30
+# Use those paths to run a broader sample
+./scripts/conformance/conformance.sh run --filter "BROAD_PATTERN" --max 50
+```
 
-# Run broader tests to check for regressions
-./scripts/conformance/conformance.sh run --filter "<related-area>" --max 200
+**A good fingerprint fix should flip 5+ tests at once.** If your fix only
+affects 1 test, you're fixing a symptom, not the pattern. Go back to research.
 
-# Run unit tests on affected crates
-cargo test -p tsz-solver -- --nocapture 2>&1 | tail -20
-cargo test -p tsz-checker -- --nocapture 2>&1 | tail -20
+### For Wrong-Code Campaigns (Tier 2)
 
-# Check KPI movement
+**1. Research (30-40%)**
+
+```bash
+python3 scripts/conformance/query-conformance.py --campaign <your-campaign>
+
+# Pick 8-15 tests spanning BOTH missing AND extra diagnostics
+./scripts/conformance/conformance.sh run --filter "<pattern>" --verbose --max 15
+```
+
+**2. Plan: Find the shared invariant**
+
+Write it down before touching code:
+> "tsc does X when condition Y holds. We currently do Z instead."
+
+For wrong-code campaigns, the invariant must explain BOTH missing AND extra
+diagnostics. If it only explains one direction, keep researching.
+
+**3. Implement**
+
+- Fix the invariant in the correct architectural layer
+- Follow root cause across crate boundaries (expected for Tier 2)
+- Every big3 fix routes through `query_boundaries/assignability`
+- Every request-transport fix uses TypingRequest, not raw mutations
+- Every narrowing-boundary fix adds a boundary helper
+
+**4. Verify**
+
+```bash
+# Targeted test
+./scripts/conformance/conformance.sh run --filter "TESTNAME" --verbose
+
+# Regression check
+./scripts/conformance/conformance.sh run --max 200
+
+# Unit tests
+cargo nextest run --package tsz-checker --lib
+cargo nextest run --package tsz-solver --lib
+
+# KPI check
 python3 scripts/conformance/query-conformance.py --dashboard
 ```
 
-**No regressions allowed.** If your fix regresses other tests, the invariant
-is wrong or incomplete. Go back to research.
+### For Leaf Fixes (Tier 3)
 
-### 5. Commit
+```bash
+python3 scripts/conformance/query-conformance.py --one-extra
+python3 scripts/conformance/query-conformance.py --one-missing
+python3 scripts/conformance/query-conformance.py --close 2
+```
 
-One clean commit per invariant fix. Message format:
+Tier 3 agents may reroll if a target needs multi-crate changes.
+
+---
+
+## Efficiency Rules
+
+The last 100 commits achieved +24 tests from 75 fix commits (0.32 tests/commit)
+with 35% regression churn. This is unsustainable.
+
+**Batch, don't scatter**: One printer fix that flips 20 tests > 20 checker
+tweaks that each flip 1.
+
+**Minimize snapshot commits**: Don't commit a snapshot after every single fix.
+Batch fixes, then snapshot once per session.
+
+**Check for regressions before committing**: If your fix causes any PASS→FAIL
+flips, investigate even if the net is positive.
+
+**Track your efficiency**: Before pushing, count tests fixed vs commits made.
+Target >1.0 tests per commit.
+
+---
+
+## Commit Format
+
+One clean commit per invariant fix:
 
 ```
-fix(solver): propagate contextual return type through conditional expressions
+fix(solver): match tsc alias-vs-expansion display for generic mapped types
 
-tsc propagates the contextual type into both branches of a conditional
-expression. We were only propagating into the true branch. This fixes
-the root cause behind 15 tests in the contextual-typing family.
+tsc displays `Id<{x: string}>` in expanded form for error messages while
+preserving the alias for hover. Our printer was using the alias form in
+both contexts. Match tsc's display policy for Application types.
 
-Campaign: request-transport
-KPI impact: -3 raw contextual mutations, +15 contextual-typing tests
-Tests fixed: ~15
+Campaign: type-display-parity
+KPI impact: fingerprint-only TS2322 reduced by ~30
+Tests fixed: ~30
 ```
 
 **NOT**: `fix: make test xyz pass` or `fix TS2322 in foo.ts`
 
-### 6. Push
-
-```bash
-git push origin campaign/<your-campaign>
-```
-
-The integrator will validate and merge to main.
+Push to `campaign/<your-campaign>`. The integrator merges to main.
 
 ---
 
 ## Session End: Mandatory Checkpoint
 
-**Before claiming your session is done, you MUST run:**
-
 ```bash
+export CHECKPOINT_TRIED="tried fixing alias expansion in display.rs — only covers Application, not Conditional"
+export CHECKPOINT_LEADS="ConditionalType display also needs alias-vs-expansion logic; see conditionalTypes2.ts"
 scripts/session/campaign-checkpoint.sh <your-campaign>
 ```
 
-This records your conformance delta and session notes. Set environment
-variables to document what you learned:
-
-```bash
-export CHECKPOINT_BLOCKED_ON="root cause is in solver narrowing — conditional type distribution doesn't preserve contextual type"
-export CHECKPOINT_TRIED="tried suppressing TS2322 in checker error_reporter — caused 8 regressions"
-export CHECKPOINT_LEADS="inferFromContextualType needs to handle ConditionalType branches; see test conditionalTypes2.ts line 45"
-scripts/session/campaign-checkpoint.sh <your-campaign>
-```
-
-### Session Status Rules
-
-You can NEVER declare a campaign "complete." Only the integrator can do that
-after verifying the numbers. Instead, your session ends with one of:
-
-| Status | Meaning | What to record |
-|--------|---------|----------------|
-| `active` | Made progress, more to do | Promising leads for next session |
-| `blocked` | Root cause identified but fix is non-trivial | What blocks you and why |
-| `diminishing` | Auto-set after 3 low-progress sessions | Consider switching approach |
+You can NEVER declare a campaign "complete." Only the integrator can.
 
 ---
 
 ## Cross-Cutting Work
 
-### Follow the root cause, don't leave notes
+**Follow the root cause, don't leave notes.** If the fix is in another
+subsystem, just fix it there (< 300 lines). Only coordinate when another
+agent is actively modifying the same file.
 
-**If the root cause is in another subsystem, fix it there.**
-
-- If the fix is small-medium (< 300 lines): just do it
-- If the fix is large and conflicts with active work on that file: coordinate
-  via the notes system AND ping in your commit message
-- If you're unsure: check `git log --oneline -5 <file>` to see if another
-  agent recently touched it
-
-### Multi-crate changes are normal
-
-At this stage, most meaningful fixes will touch 2-3 crates. This is expected.
-Do NOT treat "needs solver + checker + boundary changes" as a reason to reroll.
-That IS the work.
-
-The old rule was to reroll if a target was "broad-surface." That rule is
-**retired** for Tier 1 and Tier 2 campaigns. Only Tier 3 agents should prefer
-single-file targets.
-
-### When to use notes (rare)
-
-Only leave a note when:
-1. Another agent is **actively** modifying the same file (check git log)
-2. The fix requires deep context you don't have about that subsystem
-3. You've already made progress on your own campaign's tests this session
-
-Format: `scripts/session/notes/<your-campaign>-to-<other-campaign>.md`
-
----
-
-## Coordination Rules
-
-### 1. Never push to main
-
-Always push to `campaign/<your-campaign>`. The integrator merges to main.
-
-### 2. Rebase periodically
-
-```bash
-git fetch origin
-git rebase origin/main
-```
-
-### 3. Use /loop for awareness
-
-```bash
-# Worker agents — rebase and check status every 30 minutes:
-/loop 30m run scripts/session/check-status.sh, then rebase my campaign branch on origin/main if there are new commits
-
-# Integrator agent — validate, merge, and report KPIs:
-/loop 30m run scripts/session/integrate.sh --auto && python3 scripts/conformance/query-conformance.py --dashboard
-```
+Multi-crate changes are normal. Do NOT reroll for "broad-surface" targets
+(Tier 1/2). Only Tier 3 agents should prefer single-file targets.
 
 ---
 
@@ -313,18 +279,18 @@ git rebase origin/main
 
 | Don't | Why | Instead |
 |-------|-----|---------|
-| Chase individual test failures | Whack-a-mole, low yield | Find shared root cause across 8-15 tests |
-| Add checker heuristics to suppress errors | Architecture violation | Fix the invariant in solver/boundary |
-| Declare the campaign "complete" | Only integrator can | Run checkpoint, set status |
-| Drift to cleanup/refactoring | Not your mission | Stay on conformance improvement |
+| Chase individual test failures | 0.32 tests/commit | Fix patterns that flip 5+ tests |
+| Ignore fingerprint-only failures | They're 73.6% of remaining work | Prioritize display/count fixes |
+| Add checker heuristics to suppress errors | Architecture violation | Fix in solver/boundary |
+| Declare the campaign "complete" | Only integrator can | Run checkpoint |
 | Re-investigate known dead ends | Wasted session | Read progress file first |
 | Push to main directly | Regressions break all agents | Push to campaign branch |
-| Commit without testing | Regressions compound | Run conformance filter + cargo test |
-| Run the full conformance suite for research | Takes minutes, wasteful | Use offline query tools (instant) |
-| Reroll because fix needs multi-crate changes | That IS the work now | Follow the root cause |
-| Track progress by overall conformance % | Hides the real frontier | Track your campaign's KPI |
-| Fix one direction (missing OR extra) only | Creates drift | Find invariants that fix BOTH |
-| Optimize for quick-win count | Leaf fixes create churn above 90% | Optimize for KPI movement |
+| Run full conformance for research | Takes minutes, wasteful | Use offline query tools |
+| Reroll for multi-crate changes (Tier 1/2) | That IS the work | Follow the root cause |
+| Track progress by overall % | Hides the real frontier | Track your campaign's KPI |
+| Fix one direction (missing OR extra) only | Creates drift | Find invariants for both |
+| Accept 1-test-per-commit efficiency | Unsustainable | Aim for batch fixes |
+| Commit snapshots after every single fix | 25% noise commits | Batch snapshots |
 
 ---
 
