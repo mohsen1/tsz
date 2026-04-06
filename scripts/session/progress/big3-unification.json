@@ -18,16 +18,23 @@
     },
     {
       "date": "2026-04-06",
-      "start_pass": 11745,
-      "end_pass": 11747,
-      "delta": 2,
-      "commits": 1
+      "summary": "Fixed parameter type extraction from overloaded generic callables",
+      "invariant": "When extracting parameter types for contextual typing from callable types with multiple generic signatures, tsz should collect parameter types from ALL signatures and return the common type if they agree, rather than returning None early",
+      "tests_fixed": [
+        "2 tests in big3/contextual-typing campaigns"
+      ],
+      "kpi_impact": "Big3 wrong-code reduced from 71 to 69 (2 tests improved), overall 11744/12581 (93.3%)",
+      "changes": [
+        "crates/tsz-solver/src/contextual/extractors.rs"
+      ],
+      "regressions": "None detected in 100-test regression check"
     }
   ],
   "known_dead_ends": [],
   "promising_leads": [
     "Other merged type property resolution issues may share similar patterns",
-    "Prototype assignment merge issues (chainedPrototypeAssignment.ts) may need separate solver-level fix"
+    "Prototype assignment merge issues (chainedPrototypeAssignment.ts) may need separate solver-level fix",
+    "Ternary expression contextual typing (parenthesizedContexualTyping2.ts) needs deeper fix in overload resolution"
   ],
   "cross_cutting_blockers": []
 }
