@@ -774,8 +774,9 @@ impl<'a> CheckerState<'a> {
                             let def_id_resolver = |_node_idx: tsz_parser::parser::NodeIndex| {
                                 None::<tsz_solver::def::DefId>
                             };
-                            let lazy_type_params_resolver =
-                                |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
+                            let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
+                                self.ctx.get_def_type_params(def_id)
+                            };
                             let lowering = TypeLowering::with_hybrid_resolver(
                                 symbol_arena,
                                 self.ctx.types,
