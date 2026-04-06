@@ -450,34 +450,46 @@ impl<'a> CheckerState<'a> {
         target_type: TypeId,
         property_names: &[tsz_common::interner::Atom],
     ) -> Vec<tsz_common::interner::Atom> {
-        let mut property_ranks: FxHashMap<tsz_common::interner::Atom, (u32, usize)> =
+        // Track (declaration_order, shape_index, is_own_property) for each property.
+        // `is_own_property` = true when the property's parent_id matches the target
+        // type's symbol, meaning it was declared directly on the target type (not
+        // inherited). tsc lists own properties before inherited ones in TS2739/TS2741.
+        let target_symbol =
+            tsz_solver::type_queries::get_object_symbol(self.ctx.types, target_type);
+        let mut property_ranks: FxHashMap<tsz_common::interner::Atom, (u32, usize, bool)> =
             FxHashMap::default();
 
-        let mut collect_ranks = |ty: TypeId| {
+        let mut collect_ranks = |ty: TypeId, tgt_sym: Option<tsz_binder::SymbolId>| {
             if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, ty) {
                 for (index, prop) in shape.properties.iter().enumerate() {
-                    property_ranks
-                        .entry(prop.name)
-                        .or_insert((prop.declaration_order, index));
+                    let is_own = tgt_sym.is_some() && prop.parent_id == tgt_sym;
+                    property_ranks.entry(prop.name).or_insert((
+                        prop.declaration_order,
+                        index,
+                        is_own,
+                    ));
                 }
             }
             if let Some(shape) = tsz_solver::type_queries::get_callable_shape(self.ctx.types, ty) {
                 for (index, prop) in shape.properties.iter().enumerate() {
-                    property_ranks
-                        .entry(prop.name)
-                        .or_insert((prop.declaration_order, index));
+                    let is_own = tgt_sym.is_some() && prop.parent_id == tgt_sym;
+                    property_ranks.entry(prop.name).or_insert((
+                        prop.declaration_order,
+                        index,
+                        is_own,
+                    ));
                 }
             }
         };
 
-        collect_ranks(target_type);
+        collect_ranks(target_type, target_symbol);
         let resolved = self.resolve_type_for_property_access(target_type);
         if resolved != target_type {
-            collect_ranks(resolved);
+            collect_ranks(resolved, target_symbol);
         }
         let evaluated = self.evaluate_type_for_assignability(target_type);
         if evaluated != target_type && evaluated != resolved {
-            collect_ranks(evaluated);
+            collect_ranks(evaluated, target_symbol);
         }
 
         let array_like_target = matches!(
@@ -560,7 +572,17 @@ impl<'a> CheckerState<'a> {
             let left_rank = property_ranks.get(left_name).copied();
             let right_rank = property_ranks.get(right_name).copied();
             match (left_rank, right_rank) {
-                (Some((left_order, left_pos)), Some((right_order, right_pos))) => {
+                (
+                    Some((left_order, left_pos, left_own)),
+                    Some((right_order, right_pos, right_own)),
+                ) => {
+                    // Own properties (declared directly on the target type) come
+                    // before inherited ones, matching tsc behavior for TS2739/TS2741.
+                    match (left_own, right_own) {
+                        (true, false) => return std::cmp::Ordering::Less,
+                        (false, true) => return std::cmp::Ordering::Greater,
+                        _ => {}
+                    }
                     match (
                         left_order > 0,
                         right_order > 0,
