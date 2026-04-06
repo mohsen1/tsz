@@ -108,3 +108,45 @@ fn intersection_constructor_callable_no_ts2349() {
         "Intersection of constructors should be callable"
     );
 }
+
+#[test]
+fn discriminated_union_intersection_property_access() {
+    // When an intersection narrows a discriminated union with a literal discriminant,
+    // properties from the matching branch should be accessible.
+    // Regression test for typeVariableConstraintIntersections.ts conformance.
+    let source = r#"
+        type OptionOne = { kind: "one"; s: string; };
+        type OptionTwo = { kind: "two"; x: number; y: number; };
+        type Options = OptionOne | OptionTwo;
+
+        type OptionHandlers = {
+            [K in Options['kind']]: (option: Options & { kind: K }) => string;
+        }
+
+        const optionHandlers: OptionHandlers = {
+            "one": option => option.s,
+            "two": option => option.x + "," + option.y,
+        };
+    "#;
+    assert!(
+        !has_error_code(source, 2339),
+        "Property access on narrowed discriminated union intersection should succeed"
+    );
+}
+
+#[test]
+fn discriminated_union_intersection_simple() {
+    // Simple case: direct intersection of a union with a discriminant literal object.
+    let source = r#"
+        type A = { tag: "a"; valA: string; };
+        type B = { tag: "b"; valB: number; };
+        type AB = A | B;
+
+        declare const x: AB & { tag: "a" };
+        const v: string = x.valA;
+    "#;
+    assert!(
+        !has_error_code(source, 2339),
+        "Property 'valA' should be accessible on (A | B) & {{tag: 'a'}}"
+    );
+}
