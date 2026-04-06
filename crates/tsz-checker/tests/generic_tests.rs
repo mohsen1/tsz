@@ -803,3 +803,80 @@ s = map("", (identity));
         "Expected no TS2322/TS2345 errors for generic function ref as callback, got: {errors:?}"
     );
 }
+
+#[test]
+fn test_forward_referencing_type_param_defaults_no_spurious_ts2345() {
+    // When type parameter defaults forward-reference later-declared type parameters
+    // (flagged by TS2744), the defaults should resolve to error for type-checking
+    // purposes, matching tsc's fillMissingTypeArguments behavior. This should NOT
+    // produce spurious TS2345 errors on call arguments.
+    let source = r#"
+interface A { a: number; }
+interface B { b: number; }
+interface C { c: number; }
+
+declare const a: A;
+declare const b: B;
+
+// U defaults to V (forward reference), V defaults to C
+declare function f14<T, U = V, V = C>(a?: T, b?: U, c?: V): [T, U, V];
+
+// These should NOT produce TS2345
+f14<A>(a, b);
+f14<A>(a, b, b);
+
+// Mutually referencing defaults (U = V, V = U)
+declare function f16<T, U = V, V = U>(a?: T, b?: U, c?: V): [T, U, V];
+
+// These should NOT produce TS2345
+f16<A>(a, b);
+f16<A>(a, b, b);
+
+// Forward reference in union default
+declare function f18<T, U = V, V = U | C>(a?: T, b?: U, c?: V): [T, U, V];
+
+f18<A>(a, b);
+f18<A>(a, b, b);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Should only have TS2744 (forward reference warnings), no TS2345
+    let ts2345_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2345)
+        .map(|d| d.message_text.clone())
+        .collect();
+    assert!(
+        ts2345_errors.is_empty(),
+        "Expected no TS2345 errors for forward-referencing type param defaults, got: {ts2345_errors:?}"
+    );
+
+    // Should have TS2744 errors for the forward references
+    let ts2744_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2744)
+        .count();
+    assert!(
+        ts2744_count > 0,
+        "Expected TS2744 errors for forward-referencing defaults"
+    );
+}
