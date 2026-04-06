@@ -977,9 +977,10 @@ impl ParserState {
         {            // When the current token is '}' in JSX context, emit TS1005 "'}' expected."
             // instead of TS1003 "Identifier expected." to match tsc behavior.
             // Note: In JSX mode, '}' is scanned as JsxText with TS1381, not CloseBraceToken.
+            // The JsxText may contain just '}' or '}' followed by other characters.
+            let token_value = self.scanner.get_token_value_ref();
             let is_close_brace = self.is_token(SyntaxKind::CloseBraceToken)
-                || (self.is_token(SyntaxKind::JsxText)
-                    && self.scanner.get_token_value_ref().starts_with("}"));
+                || (self.is_token(SyntaxKind::JsxText) && token_value.starts_with("}"));
             if is_close_brace {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at(
