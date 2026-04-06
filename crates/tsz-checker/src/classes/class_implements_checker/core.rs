@@ -972,6 +972,29 @@ impl<'a> CheckerState<'a> {
                             type_idx,
                             &interface_display_name,
                         );
+                    // tsc shows the expanded intersection form (e.g., "Foo & Bar")
+                    // instead of the type alias name (e.g., "Wrapper") when the
+                    // implements target resolves to an intersection type.
+                    // Check if the symbol is a type alias whose body is an
+                    // intersection — use the AST source text since the type
+                    // formatter resolves back to the alias name.
+                    let interface_display_name = {
+                        let mut intersection_text = None;
+                        for &decl_idx in &symbol.declarations {
+                            if let Some(node) = self.ctx.arena.get(decl_idx)
+                                && node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                && let Some(ta) = self.ctx.arena.get_type_alias(node)
+                                && let Some(type_node) = self.ctx.arena.get(ta.type_node)
+                                && type_node.kind == syntax_kind_ext::INTERSECTION_TYPE
+                            {
+                                intersection_text = self.node_text(ta.type_node);
+                                break;
+                            }
+                        }
+                        intersection_text
+                            .map(|t| t.trim().trim_end_matches(';').trim().to_string())
+                            .unwrap_or(interface_display_name)
+                    };
                     // Compute the derived class instance type for `this` substitution.
                     // Interface methods may use `this` type (e.g. `view(vnode: Vnode<A, this>)`).
                     // When checking if the class implements the interface, `this` must be
