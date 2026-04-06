@@ -456,14 +456,12 @@ impl<'a> CheckerState<'a> {
                 );
             } else {
                 // For other failure reasons, use the standard renderer with display types
-                let diag = self.render_failure_reason(
-                    reason,
+                self.error_type_not_assignable_with_reason_and_display(
                     source_for_display,
                     target_for_display,
+                    reason,
                     diag_idx,
-                    0,
                 );
-                self.ctx.push_diagnostic(diag);
             }
         } else {
             // No specific failure reason, use generic error with display types
