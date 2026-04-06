@@ -210,20 +210,6 @@ impl<'a> CheckerState<'a> {
                         || query::is_object_with_index_type(self.ctx.types, structural_type)
                         || structural_type == TypeId::UNKNOWN
                     {
-                        // For interfaces with index signatures (e.g. String, Array),
-                        // register type → DefId so the TypeFormatter can display the
-                        // interface name instead of the full structural expansion.
-                        // Skip for namespace-merged and forced paths to avoid incorrect
-                        // name associations.
-                        if !is_merged_with_namespace
-                            && !should_force_interface_decl_path
-                            && structural_type != TypeId::ERROR
-                            && structural_type != TypeId::UNKNOWN
-                        {
-                            self.ctx
-                                .definition_store
-                                .register_type_to_def(structural_type, def_id);
-                        }
                         self.ctx.leave_recursion();
                         return structural_type;
                     }
