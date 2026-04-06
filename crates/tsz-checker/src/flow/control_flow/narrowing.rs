@@ -227,6 +227,64 @@ impl<'a> FlowAnalyzer<'a> {
                 let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
                 return Some(narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED));
             }
+            // Handle assertion predicates with negated type guard arguments.
+            // For `assert(!isB(foo))` where `isB` has predicate `arg is 'B'`:
+            // The predicate_target is `!isB(foo)` (PREFIX_UNARY_EXPRESSION).
+            // We need to look through the `!` and find the inner type guard call,
+            // then apply its narrowing in the NEGATIVE sense (since `!` inverts).
+            if signature.predicate.asserts {
+                if let Some(pred_node) = self.arena.get(predicate_target) {
+                    // Check if predicate target is a `!` expression
+                    if pred_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+                        if let Some(unary) = self.arena.get_unary_expr(pred_node) {
+                            if unary.operator == SyntaxKind::ExclamationToken as u16 {
+                                let inner_expr = unary.operand;
+                                // Check if the inner expression is a call with a type predicate
+                                let inner_node = self.arena.get(inner_expr)?;
+                                if let Some(inner_call) = self.arena.get_call_expr(inner_node) {
+                                    if let Some(inner_callee_type) =
+                                        node_types.get(&inner_call.expression.0)
+                                    {
+                                        if let Some(inner_sig) = self
+                                            .predicate_signature_for_type(*inner_callee_type)
+                                        {
+                                            if let Some(inner_target) = self
+                                                .predicate_target_expression(
+                                                    inner_call,
+                                                    &inner_sig.predicate,
+                                                    &inner_sig.params,
+                                                )
+                                            {
+                                                if self.is_matching_reference(inner_target, target)
+                                                {
+                                                    // Found a negated type guard targeting our variable.
+                                                    // Resolve generic predicates and apply with inverted sense.
+                                                    let resolved_inner_pred = self
+                                                        .resolve_generic_predicate(
+                                                            &inner_sig.predicate,
+                                                            &inner_sig.params,
+                                                            inner_call,
+                                                            *inner_callee_type,
+                                                            node_types,
+                                                        );
+                                                    // Invert the sense: `!isB(foo)` being truthy
+                                                    // means `isB(foo)` is falsy, so narrow negatively
+                                                    return Some(self.apply_type_predicate_narrowing(
+                                                        type_id,
+                                                        &resolved_inner_pred,
+                                                        !is_true_branch,
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             return None;
         }
 
