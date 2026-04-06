@@ -796,3 +796,91 @@ fn no_ts2363_for_constrained_type_parameter() {
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn ts2860_instanceof_lhs_not_assignable_to_symbol_hasinstance_param() {
+    // TS2860: LHS must be assignable to the first parameter of [Symbol.hasInstance]
+    let diags = check_source_diagnostics(
+        r#"
+declare var Symbol: { hasInstance: symbol };
+declare var o4: {[Symbol.hasInstance](value: { x: number }): boolean;};
+declare var o5: { y: string };
+var ra10 = o5 instanceof o4;
+"#,
+    );
+    let has_2860 = diags.iter().any(|d| d.code == 2860);
+    assert!(
+        has_2860,
+        "Expected TS2860 when LHS is not assignable to [Symbol.hasInstance] first param, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ts2861_instanceof_symbol_hasinstance_must_return_boolean() {
+    // TS2861: [Symbol.hasInstance] must return boolean
+    let diags = check_source_diagnostics(
+        r#"
+declare var Symbol: { hasInstance: symbol };
+declare var o6: {[Symbol.hasInstance](value: unknown): number;};
+declare var x: any;
+var rb11 = x instanceof o6;
+"#,
+    );
+    let has_2861 = diags.iter().any(|d| d.code == 2861);
+    assert!(
+        has_2861,
+        "Expected TS2861 when [Symbol.hasInstance] returns non-boolean, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ts2860_no_error_when_lhs_assignable_to_hasinstance_param() {
+    // No TS2860 when LHS is assignable to the first parameter
+    let diags = check_source_diagnostics(
+        r#"
+declare var Symbol: { hasInstance: symbol };
+declare var o4: {[Symbol.hasInstance](value: { x: number }): boolean;};
+declare var o5: { x: number; y: string };
+var r = o5 instanceof o4;
+"#,
+    );
+    let has_2860 = diags.iter().any(|d| d.code == 2860);
+    assert!(
+        !has_2860,
+        "Should NOT emit TS2860 when LHS is assignable to [Symbol.hasInstance] param, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ts2861_no_error_when_hasinstance_returns_boolean() {
+    // No TS2861 when [Symbol.hasInstance] returns boolean
+    let diags = check_source_diagnostics(
+        r#"
+declare var Symbol: { hasInstance: symbol };
+declare var o4: {[Symbol.hasInstance](value: unknown): boolean;};
+declare var x: any;
+var r = x instanceof o4;
+"#,
+    );
+    let has_2861 = diags.iter().any(|d| d.code == 2861);
+    assert!(
+        !has_2861,
+        "Should NOT emit TS2861 when [Symbol.hasInstance] returns boolean, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
