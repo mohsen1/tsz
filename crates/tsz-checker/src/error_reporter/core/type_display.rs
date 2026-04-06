@@ -1153,6 +1153,25 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // For function types with a return type that is a TypeQuery, don't use
+        // the evaluated display. The evaluation would resolve the TypeQuery to
+        // the full function type, causing double arrows like `() => () => typeof fn`.
+        if let Some(fn_shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, ty) {
+            if tsz_solver::type_queries::is_type_query_type(self.ctx.types, fn_shape.return_type) {
+                return false;
+            }
+        }
+
+        // Also check callable types (single call signature)
+        if let Some(callable) = tsz_solver::type_queries::get_callable_shape(self.ctx.types, ty) {
+            if callable.call_signatures.len() == 1 {
+                let sig = &callable.call_signatures[0];
+                if tsz_solver::type_queries::is_type_query_type(self.ctx.types, sig.return_type) {
+                    return false;
+                }
+            }
+        }
+
         if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
             || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, evaluated)
         {
