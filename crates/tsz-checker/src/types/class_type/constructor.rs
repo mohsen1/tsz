@@ -1986,13 +1986,14 @@ impl<'a> CheckerState<'a> {
                     // and no substitution is provided yet, preserve the base's
                     // return type so generic resolution can instantiate it properly.
                     // Otherwise use the derived instance type.
-                    let return_type = if inherited_substitution.is_none() && !sig.type_params.is_empty() {
-                        sig.return_type
-                    } else {
-                        inherited_substitution.map_or(instance_type, |subst| {
-                            instantiate_type(self.ctx.types, sig.return_type, subst)
-                        })
-                    };
+                    let return_type =
+                        if inherited_substitution.is_none() && !sig.type_params.is_empty() {
+                            sig.return_type
+                        } else {
+                            inherited_substitution.map_or(instance_type, |subst| {
+                                instantiate_type(self.ctx.types, sig.return_type, subst)
+                            })
+                        };
                     CallSignature {
                         type_params,
                         params,

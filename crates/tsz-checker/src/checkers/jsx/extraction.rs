@@ -1226,7 +1226,7 @@ impl<'a> CheckerState<'a> {
     /// Returns None/Some("")/Some("name"); emits TS2608 if >1 property.
     pub(super) fn get_element_attributes_property_name_with_check(
         &mut self,
-        element_idx: Option<NodeIndex>,
+        _element_idx: Option<NodeIndex>,
     ) -> Option<String> {
         let jsx_sym_id = self.get_jsx_namespace_type()?;
         let lib_binders = self.get_lib_binders();
