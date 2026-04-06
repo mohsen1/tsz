@@ -989,7 +989,9 @@ impl<'a> CheckerState<'a> {
                 } else {
                     false
                 };
-                let has_body_children = children_ctx.as_ref().map_or(false, |ctx| ctx.child_count > 0);
+                let has_body_children = children_ctx
+                    .as_ref()
+                    .map_or(false, |ctx| ctx.child_count > 0);
                 let suppress_missing_props = spread_has_children && has_body_children;
 
                 let had_error = self.check_spread_property_types(
