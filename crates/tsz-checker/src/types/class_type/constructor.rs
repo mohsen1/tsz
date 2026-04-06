@@ -1975,8 +1975,15 @@ impl<'a> CheckerState<'a> {
                         inherited_substitution
                             .map_or(t, |subst| instantiate_type(self.ctx.types, t, subst))
                     });
+                    // Preserve the base signature's type parameters so that generic
+                    // call resolution can infer them from arguments.
+                    let type_params = if sig.type_params.is_empty() {
+                        class_type_params.to_vec()
+                    } else {
+                        sig.type_params.clone()
+                    };
                     CallSignature {
-                        type_params: class_type_params.to_vec(),
+                        type_params,
                         params,
                         this_type,
                         return_type: instance_type,
