@@ -7,7 +7,7 @@ use std::borrow::Cow;
 
 use crate::caches::db::TypeDatabase;
 use crate::types::{ObjectShapeId, ParamInfo, PropertyInfo, PropertyLookup, TupleElement, TypeId};
-use crate::visitor::{array_element_type, tuple_list_id};
+use crate::visitor::{array_element_type, readonly_inner_type, tuple_list_id};
 use tsz_common::interner::Atom;
 
 /// Count the number of required (non-optional, non-rest) parameters.
@@ -323,6 +323,10 @@ pub(crate) struct TupleRestExpansion {
 /// Nested rest elements are recursively expanded, so:
 /// - `[A, ...[...B[], C]]` → fixed: [A], variadic: Some(B), tail: [C]
 pub(crate) fn expand_tuple_rest(db: &dyn TypeDatabase, type_id: TypeId) -> TupleRestExpansion {
+    // Unwrap ReadonlyType wrapper (e.g., `readonly [A, B, ...C[]]` → `[A, B, ...C[]]`)
+    // so that readonly tuples/arrays in spread positions are correctly expanded.
+    let type_id = readonly_inner_type(db, type_id).unwrap_or(type_id);
+
     if let Some(elem) = array_element_type(db, type_id) {
         return TupleRestExpansion {
             fixed: Vec::new(),
