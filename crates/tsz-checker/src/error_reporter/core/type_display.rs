@@ -450,8 +450,7 @@ impl<'a> CheckerState<'a> {
                     {
                         evaluated
                     } else {
-                        let new_ty = self
-                            .ctx
+                        self.ctx
                             .types
                             .factory()
                             .function(tsz_solver::FunctionShape {
@@ -462,16 +461,7 @@ impl<'a> CheckerState<'a> {
                                 type_predicate: shape.type_predicate,
                                 is_constructor: shape.is_constructor,
                                 is_method: shape.is_method,
-                            });
-                        // Carry forward the type_to_def mapping so the formatter
-                        // can still display named types after normalization.
-                        if let Some(def_id) = self.ctx.definition_store.find_def_for_type(evaluated)
-                        {
-                            self.ctx
-                                .definition_store
-                                .register_type_to_def(new_ty, def_id);
-                        }
-                        new_ty
+                            })
                     }
                 } else if let Some(shape) =
                     tsz_solver::type_queries::get_object_shape(self.ctx.types, evaluated)
@@ -520,14 +510,6 @@ impl<'a> CheckerState<'a> {
                             self.ctx
                                 .types
                                 .store_display_properties(new_ty, display_props.as_ref().clone());
-                        }
-                        // Carry forward the type_to_def mapping so the formatter
-                        // can still display named types after normalization.
-                        if let Some(def_id) = self.ctx.definition_store.find_def_for_type(evaluated)
-                        {
-                            self.ctx
-                                .definition_store
-                                .register_type_to_def(new_ty, def_id);
                         }
                         new_ty
                     } else {
