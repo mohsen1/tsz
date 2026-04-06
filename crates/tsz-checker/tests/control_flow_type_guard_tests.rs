@@ -927,7 +927,7 @@ function test(foo: Foo): {type: 'A', a: number} {
 /// When calling `capture<V>(pred: (x: unknown) => x is V)` with a predicate
 /// like `isB: (x: unknown) => x is 'B'`, V should be inferred as `'B'` (literal),
 /// not widened to `string`. This matches tsc's behavior where types from type
-/// annotations don't carry the RequiresWidening flag.
+/// annotations don't carry the `RequiresWidening` flag.
 #[test]
 fn test_generic_inference_preserves_literal_from_type_predicate() {
     let source = r#"
