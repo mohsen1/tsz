@@ -1728,8 +1728,13 @@ impl<'a> NarrowingContext<'a> {
                             // (the function throws if the assertion fails), so we don't narrow
                             source_type
                         } else {
-                            // False branch for regular type guards: exclude the target type
-                            self.narrow_excluding_type(source_type, *target_type)
+                            // False branch for regular type guards: exclude the target type.
+                            // Resolve Lazy/Application types first so exclusion can see
+                            // through opaque wrappers (e.g. Readonly<Record<K,V>>).
+                            let resolved_source = self.resolve_for_exclusion_narrowing(source_type);
+                            let resolved_target =
+                                self.resolve_for_exclusion_narrowing(*target_type);
+                            self.narrow_excluding_type(resolved_source, resolved_target)
                         }
                     }
                     None => {
