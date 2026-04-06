@@ -63,7 +63,62 @@ pub(crate) fn extract_jsx_pragma(source: &str) -> Option<String> {
     None
 }
 
+/// Extract the `@jsxRuntime` pragma from a source file's comments.
+///
+/// Scans ALL block comments for `@jsxRuntime classic` or `@jsxRuntime automatic`.
+/// The last occurrence wins (matching tsc behavior).
+pub(crate) fn extract_jsx_runtime_pragma(source: &str) -> Option<&'static str> {
+    let mut result = None;
+    let bytes = source.as_bytes();
+    let mut pos = 0;
+    while pos + 1 < bytes.len() {
+        if bytes[pos] == b'/' && bytes[pos + 1] == b'*' {
+            let comment_start = pos + 2;
+            if let Some(end_offset) = source[comment_start..].find("*/") {
+                let comment_body = &source[comment_start..comment_start + end_offset];
+                if let Some(idx) = comment_body.find("@jsxRuntime") {
+                    let after = comment_body[idx + "@jsxRuntime".len()..].trim_start();
+                    if after.starts_with("classic") {
+                        result = Some("classic");
+                    } else if after.starts_with("automatic") {
+                        result = Some("automatic");
+                    }
+                }
+                pos = comment_start + end_offset + 2;
+            } else {
+                break;
+            }
+            continue;
+        }
+        pos += 1;
+    }
+    result
+}
+
 impl<'a> CheckerState<'a> {
+    /// Return the effective JSX mode for the current file, taking the
+    /// `@jsxRuntime` pragma into account.
+    pub(crate) fn effective_jsx_mode(&self) -> tsz_common::checker_options::JsxMode {
+        use tsz_common::checker_options::JsxMode;
+        let pragma = self
+            .ctx
+            .arena
+            .source_files
+            .first()
+            .and_then(|sf| extract_jsx_runtime_pragma(&sf.text));
+        match pragma {
+            Some("classic") => JsxMode::React,
+            Some("automatic") => {
+                if self.ctx.compiler_options.jsx_mode == JsxMode::ReactJsxDev {
+                    JsxMode::ReactJsxDev
+                } else {
+                    JsxMode::ReactJsx
+                }
+            }
+            _ => self.ctx.compiler_options.jsx_mode,
+        }
+    }
+
     fn should_prefer_jsx_import_source_anchor(
         &self,
         candidate_idx: NodeIndex,
@@ -125,7 +180,8 @@ impl<'a> CheckerState<'a> {
         // When `@jsxImportSource` pragma is present, it overrides jsx mode
         // and forces react-jsx behavior even in preserve mode.
         let pragma_source = self.extract_jsx_import_source_pragma();
-        let runtime_suffix = match self.ctx.compiler_options.jsx_mode {
+        let effective_mode = self.effective_jsx_mode();
+        let runtime_suffix = match effective_mode {
             JsxMode::ReactJsx => "jsx-runtime",
             JsxMode::ReactJsxDev => "jsx-dev-runtime",
             _ if pragma_source.is_some() => "jsx-runtime",
@@ -273,7 +329,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_jsx_fragment_factory(&mut self, node_idx: NodeIndex) {
         use tsz_common::checker_options::JsxMode;
 
-        if self.ctx.compiler_options.jsx_mode != JsxMode::React {
+        if self.effective_jsx_mode() != JsxMode::React {
             return;
         }
 
@@ -369,7 +425,7 @@ impl<'a> CheckerState<'a> {
         use tsz_common::checker_options::JsxMode;
 
         // Only classic "react" mode requires the factory in scope
-        if self.ctx.compiler_options.jsx_mode != JsxMode::React {
+        if self.effective_jsx_mode() != JsxMode::React {
             return;
         }
 

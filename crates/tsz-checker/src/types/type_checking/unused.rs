@@ -324,7 +324,7 @@ impl<'a> CheckerState<'a> {
             // so an unused React import should be flagged.
             if name == "React" {
                 use tsz_common::checker_options::JsxMode;
-                let jsx_mode = self.ctx.compiler_options.jsx_mode;
+                let jsx_mode = self.effective_jsx_mode();
                 if jsx_mode == JsxMode::React || jsx_mode == JsxMode::Preserve {
                     continue;
                 }

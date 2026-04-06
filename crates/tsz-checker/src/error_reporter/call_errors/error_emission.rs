@@ -304,13 +304,8 @@ impl<'a> CheckerState<'a> {
         });
         let all_failures_are_argument_mismatches = !failures.is_empty()
             && failures.iter().all(|failure| {
-                matches!(
-                    failure.code,
-                    diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
-                        | diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
-                        | diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID
-                        | diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                )
+                failure.code
+                    == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
             });
         let anchor_argument_from_mixed_failures = shared_argument_anchor.is_some()
             && !remaining_failures.is_empty()
@@ -336,9 +331,14 @@ impl<'a> CheckerState<'a> {
         let anchor_idx = if let Some(anchor_idx) = literal_anchor {
             anchor_idx
         } else if anchor_first_argument {
-            shared_argument_anchor
+            let raw_anchor = shared_argument_anchor
                 .or_else(|| self.first_call_argument_anchor(idx))
-                .unwrap_or(idx)
+                .unwrap_or(idx);
+            // When the anchor is an object literal expression, tsc drills down
+            // to the first property so the TS2769 diagnostic points at the
+            // first property name (e.g. `z` in `{ z: 3 }`) rather than `{`.
+            self.first_object_literal_property(raw_anchor)
+                .unwrap_or(raw_anchor)
         } else {
             idx
         };
