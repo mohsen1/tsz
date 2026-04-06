@@ -544,6 +544,35 @@ impl<'a> NarrowingContext<'a> {
                     break;
                 }
 
+                // 8. Conditional types — resolve inner Lazy/Application types,
+                // then re-evaluate to allow distribution/simplification.
+                Some(TypeData::Conditional(cond_id)) => {
+                    let cond = self.db.get_conditional(cond_id);
+                    let resolved_check = self.resolve_type(cond.check_type);
+                    let resolved_extends = self.resolve_type(cond.extends_type);
+                    if resolved_check != cond.check_type || resolved_extends != cond.extends_type {
+                        let new_cond = self.db.conditional(crate::types::ConditionalType {
+                            check_type: resolved_check,
+                            extends_type: resolved_extends,
+                            true_type: cond.true_type,
+                            false_type: cond.false_type,
+                            is_distributive: cond.is_distributive,
+                        });
+                        let evaluated = self.db.evaluate_type(new_cond);
+                        if evaluated != new_cond && evaluated != type_id {
+                            type_id = evaluated;
+                            continue;
+                        }
+                    }
+                    // Try evaluating the original conditional
+                    let evaluated = self.db.evaluate_type(type_id);
+                    if evaluated != type_id {
+                        type_id = evaluated;
+                        continue;
+                    }
+                    break;
+                }
+
                 // Structural types (Object, Union, Primitive, etc.) — done
                 _ => break,
             }
@@ -1495,7 +1524,7 @@ impl<'a> NarrowingContext<'a> {
     /// Must NOT be called globally at the `narrow_type` entry point because
     /// Instanceof guards with type parameters would break.
     fn resolve_for_exclusion_narrowing(&self, source_type: TypeId) -> TypeId {
-        if matches!(
+        let resolved = if matches!(
             self.db.lookup(source_type),
             Some(TypeData::Lazy(_) | TypeData::Application(_))
         ) {
@@ -1507,7 +1536,25 @@ impl<'a> NarrowingContext<'a> {
             }
         } else {
             source_type
+        };
+
+        // Conditional types (e.g. from type predicates using Extract<T, U> or
+        // similar mapped/conditional patterns) must be evaluated to their
+        // concrete result before exclusion narrowing can match them against
+        // union members. Without this, the exclusion sees an opaque
+        // Conditional and returns the source unchanged, preventing narrowing
+        // in the false branch of type predicate guards.
+        if let Some(TypeData::Conditional(_)) = self.db.lookup(resolved) {
+            // Try resolving through the resolve_type pipeline which now
+            // handles Conditional types by resolving inner Lazy types
+            // and re-evaluating.
+            let further_resolved = self.resolve_type(resolved);
+            if further_resolved != resolved && further_resolved != TypeId::ERROR {
+                return further_resolved;
+            }
         }
+
+        resolved
     }
 
     pub fn narrow_type(&self, source_type: TypeId, guard: &TypeGuard, sense: GuardSense) -> TypeId {
