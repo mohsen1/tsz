@@ -354,7 +354,9 @@ impl<'a> CheckerState<'a> {
             }
 
             // TS1264: ! without type annotation is meaningless
-            if var_decl.type_annotation.is_none() {
+            // Only emit when there is no initializer — if an initializer is present,
+            // TS1263 already fires and tsc suppresses TS1264 in that case.
+            if var_decl.type_annotation.is_none() && var_decl.initializer.is_none() {
                 if let Some(pos) = excl_pos {
                     self.emit_error_at(
                         pos,
