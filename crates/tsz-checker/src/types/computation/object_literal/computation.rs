@@ -878,18 +878,26 @@ impl<'a> CheckerState<'a> {
                             && !is_obviously_invalid_name
                             && !self.ctx.has_parse_errors
                         {
-                            // TS18004: Missing value binding for shorthand property name
-                            // Example: `({ arguments })` inside arrow function where `arguments`
-                            // is not in scope as a value.
-                            let message = format_message(
-                                diagnostic_messages::NO_VALUE_EXISTS_IN_SCOPE_FOR_THE_SHORTHAND_PROPERTY_EITHER_DECLARE_ONE_OR_PROVID,
-                                &[&name],
-                            );
-                            self.error_at_node(
-                                elem_idx,
-                                &message,
-                                diagnostic_codes::NO_VALUE_EXISTS_IN_SCOPE_FOR_THE_SHORTHAND_PROPERTY_EITHER_DECLARE_ONE_OR_PROVID,
-                            );
+                            if shorthand.equals_token && !self.ctx.in_destructuring_target {
+                                // TS1312: shorthand `{ s = 5 }` in non-destructuring context.
+                                // tsc suggests using `:` instead of `=`.
+                                self.error_at_node(
+                                    shorthand.name,
+                                    "Did you mean to use a ':'? An '=' can only follow a property name when the containing object literal is part of a destructuring pattern.",
+                                    1312,
+                                );
+                            } else {
+                                // TS18004: Missing value binding for shorthand property name
+                                let message = format_message(
+                                    diagnostic_messages::NO_VALUE_EXISTS_IN_SCOPE_FOR_THE_SHORTHAND_PROPERTY_EITHER_DECLARE_ONE_OR_PROVID,
+                                    &[&name],
+                                );
+                                self.error_at_node(
+                                    elem_idx,
+                                    &message,
+                                    diagnostic_codes::NO_VALUE_EXISTS_IN_SCOPE_FOR_THE_SHORTHAND_PROPERTY_EITHER_DECLARE_ONE_OR_PROVID,
+                                );
+                            }
                         }
 
                         // In destructuring assignment targets, unresolved shorthand names
