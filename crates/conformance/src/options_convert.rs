@@ -641,6 +641,7 @@ fn directive_to_field_name(key: &str) -> Option<&'static str> {
         "resolvejsonmodule" => "resolveJsonModule",
         "nouncheckedsideeffectimports" => "noUncheckedSideEffectImports",
         "noimplicitoverride" => "noImplicitOverride",
+        "strictbuiltiniteratorreturn" => "strictBuiltinIteratorReturn",
         _ => return None,
     })
 }
