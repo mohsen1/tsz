@@ -1180,15 +1180,62 @@ impl<'a> CheckerState<'a> {
                 true,
             );
 
-            if left_type != TypeId::UNKNOWN
-                && let Some(right_node) = self.ctx.arena.get(right_idx)
-                && right_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-            {
-                self.check_object_literal_excess_properties(right_type, left_type, right_idx);
+            if left_type != TypeId::UNKNOWN {
+                // Check excess properties when the RHS is a direct object literal
+                // OR when the RHS type is fresh (e.g., from a chained assignment
+                // like `obj1 = obj2 = { x: 1, y: 2 }` where the inner assignment
+                // preserves the freshness of the object literal).
+                let is_direct_literal = self
+                    .ctx
+                    .arena
+                    .get(right_idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
+                if is_direct_literal {
+                    self.check_object_literal_excess_properties(right_type, left_type, right_idx);
+                } else if crate::query_boundaries::common::is_fresh_object_type(
+                    self.ctx.types,
+                    right_type,
+                ) {
+                    // Fresh type from non-literal RHS (e.g., chained assignment).
+                    // Walk through the RHS to find the underlying object literal
+                    // so the diagnostic points at the excess property name.
+                    let literal_idx = self.find_rhs_object_literal(right_idx);
+                    self.check_object_literal_excess_properties(
+                        right_type,
+                        left_type,
+                        literal_idx.unwrap_or(right_idx),
+                    );
+                }
             }
         }
 
         right_type
+    }
+
+    /// Walk through the RHS of an assignment to find the underlying object literal.
+    /// For chained assignments like `obj1 = obj2 = { x: 1, y: 2 }`, this walks
+    /// through binary `=` expressions to reach the object literal at the end.
+    pub(crate) fn find_rhs_object_literal(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = idx;
+        for _ in 0..10 {
+            let node = self.ctx.arena.get(current)?;
+            if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                return Some(current);
+            }
+            if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                let bin = self.ctx.arena.get_binary_expr(node)?;
+                current = bin.right;
+                continue;
+            }
+            // Parenthesized expression
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                let paren = self.ctx.arena.get_parenthesized(node)?;
+                current = paren.expression;
+                continue;
+            }
+            break;
+        }
+        None
     }
 
     /// Check if an assignment to `this.prop` violates polymorphic `this` type semantics.

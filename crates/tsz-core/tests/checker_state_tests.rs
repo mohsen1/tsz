@@ -19931,6 +19931,67 @@ const config: Config = { ...base };
     );
 }
 
+/// Freshness preservation through assignment expressions.
+///
+/// In TypeScript, the type of `x = y` is `y` with freshness preserved.
+/// So `obj1 = obj2 = { x: 1, y: 2 }` should trigger excess property checks
+/// for `obj1` when it doesn't have a `y` property.
+///
+/// Similarly, `return obj = { x: 1, y: 2 }` should trigger excess property
+/// checks against the function's return type.
+#[test]
+fn test_freshness_preserved_through_chained_assignment() {
+    use crate::parser::ParserState;
+
+    let source = r#"
+function fx10(obj1: { x?: number }, obj2: { x?: number, y?: number }) {
+    obj1 = obj2 = { x: 1, y: 2 };
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let excess_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2353)
+        .collect();
+
+    assert_eq!(
+        excess_errors.len(),
+        1,
+        "Chained assignment should trigger excess property check for 'y': {:?}",
+        checker.ctx.diagnostics
+    );
+    assert!(
+        excess_errors[0].message_text.contains("'y'"),
+        "Excess property error should mention 'y', got: {}",
+        excess_errors[0].message_text
+    );
+}
+
 /// TS Unsoundness #19: Covariant `this` Types - Basic class subtyping
 ///
 /// In TypeScript, the polymorphic `this` type is treated as Covariant,
