@@ -181,9 +181,9 @@ fn jsx_attribute_with_leading_spread_in_initializer_reports_expression_then_iden
                 "Expression expected.".to_string(),
             ),
             (
-                diagnostic_codes::IDENTIFIER_EXPECTED,
+                diagnostic_codes::EXPECTED,
                 identifier_pos,
-                "Identifier expected.".to_string(),
+                "'}' expected.".to_string(),
             ),
         ],
         "expected tsc-style recovery for attribute initializer spread syntax, got {diagnostics:?}"

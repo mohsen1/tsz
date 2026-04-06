@@ -743,7 +743,21 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let def_id = self.ctx.definition_store.find_type_alias_by_body(ty)?;
+        // Try body_to_alias first (raw alias body), then fall back to
+        // type_to_def (evaluated alias form registered by the checker).
+        let def_id = self
+            .ctx
+            .definition_store
+            .find_type_alias_by_body(ty)
+            .or_else(|| {
+                let def_id = self.ctx.definition_store.find_def_for_type(ty)?;
+                let def = self.ctx.definition_store.get(def_id)?;
+                if def.kind == tsz_solver::def::DefKind::TypeAlias {
+                    Some(def_id)
+                } else {
+                    None
+                }
+            })?;
         let def = self.ctx.definition_store.get(def_id)?;
         // Only use the alias for non-generic type aliases.  Generic aliases
         // need type argument display (e.g., B<string> not B).

@@ -896,6 +896,13 @@ impl<'a> CheckerState<'a> {
             return self.format_type_diagnostic(ty);
         }
 
+        // For already-evaluated types, check if a type alias name can be recovered
+        // via body_to_alias or type_to_def. This handles cases where the Lazy
+        // reference was resolved before reaching this function.
+        if let Some(alias_name) = self.lookup_type_alias_name_for_display(ty) {
+            return alias_name;
+        }
+
         if let Some(display) = self.split_wildcard_object_for_excess_display(ty) {
             return display;
         }
