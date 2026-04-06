@@ -22,6 +22,7 @@ impl<'a> CheckerState<'a> {
         overridden_names: &rustc_hash::FxHashSet<&str>,
         has_later_spreads: bool,
         display_target: &str,
+        all_provided_names: &rustc_hash::FxHashSet<&str>,
     ) -> bool {
         use crate::query_boundaries::common::PropertyAccessResult;
 
@@ -142,6 +143,7 @@ impl<'a> CheckerState<'a> {
                     }
                     if !spread_prop_names.contains(&req_name)
                         && !overridden_names.contains(req_name.as_str())
+                        && !all_provided_names.contains(req_name.as_str())
                     {
                         missing_props.push(req_name);
                     }

@@ -964,11 +964,37 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // Collect ALL explicit attribute names for the missing-property check.
+            // Earlier attributes already provide their properties, and later attributes
+            // override the spread — both should be considered "provided" when checking
+            // whether the spread is missing required properties (TS2739).
+            let all_explicit_attr_names: rustc_hash::FxHashSet<&str> = explicit_attr_names_with_pos
+                .iter()
+                .map(|(_, name)| name.as_str())
+                .collect();
+
+            // Also collect properties from all spreads (earlier spreads provide properties
+            // that should not be counted as "missing" from later spreads).
+            let all_spread_prop_names: rustc_hash::FxHashSet<String> = spread_entries
+                .iter()
+                .filter_map(|&(spread_type, _, _)| {
+                    tsz_solver::type_queries::get_object_shape(self.ctx.types, spread_type)
+                })
+                .flat_map(|shape| {
+                    shape
+                        .properties
+                        .iter()
+                        .map(|p| self.ctx.types.resolve_atom(p.name))
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+
             let spread_count = spread_entries.len();
             for (i, &(spread_type, _spread_expr_idx, spread_pos)) in
                 spread_entries.iter().enumerate()
             {
-                // Only later explicit attributes override the current spread.
+                // For per-property type checking (TS2322), only later explicit attributes
+                // override the current spread's property values.
                 let overridden: rustc_hash::FxHashSet<&str> = explicit_attr_names_with_pos
                     .iter()
                     .filter(|(attr_pos, _)| *attr_pos > spread_pos)
@@ -978,6 +1004,20 @@ impl<'a> CheckerState<'a> {
                 // Check if there are later spreads that could provide missing properties.
                 let has_later_spreads = i < spread_count - 1;
 
+                // Build the set of all already-provided attribute names for the
+                // missing-property check: all explicit attributes + all spread
+                // properties across all spreads + children (if JSX body provides them).
+                let mut all_provided: rustc_hash::FxHashSet<&str> = all_explicit_attr_names.clone();
+                for name in &all_spread_prop_names {
+                    all_provided.insert(name.as_str());
+                }
+                // JSX body children provide the "children" prop — account for this
+                // before checking spreads for missing properties to avoid false
+                // TS2739 when children are specified via JSX body, not attributes.
+                if children_ctx.is_some() {
+                    all_provided.insert("children");
+                }
+
                 suppress_missing_props_from_spread |= self.check_spread_property_types(
                     spread_type,
                     props_type,
@@ -985,6 +1025,7 @@ impl<'a> CheckerState<'a> {
                     &overridden,
                     has_later_spreads,
                     &display_target,
+                    &all_provided,
                 );
             }
 
