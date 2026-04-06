@@ -57,7 +57,6 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-
     /// Check if ALL interface declarations in a merge group have compatible
     /// type parameters.
     ///
