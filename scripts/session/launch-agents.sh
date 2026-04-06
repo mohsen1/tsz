@@ -10,12 +10,6 @@
 #   scripts/session/launch-agents.sh --dry-run          # Show what would launch
 #   scripts/session/launch-agents.sh --campaigns "narrowing false-positives"
 #
-# Prevents the "10 agents all hit rate limits" failure mode by:
-#   - Capping concurrent agents (default: 3)
-#   - Staggering launches (default: 2 minutes apart)
-#   - Skipping campaigns with status "diminishing" in progress files
-#   - Running health check before first launch
-#
 # =============================================================================
 set -euo pipefail
 
@@ -49,50 +43,11 @@ if ! $DRY_RUN; then
     echo ""
 fi
 
-# --- Determine which campaigns to launch ---
-if [[ -n "$SPECIFIC_CAMPAIGNS" ]]; then
-    # shellcheck disable=SC2206
-    available=($SPECIFIC_CAMPAIGNS)
-else
-    available=()
-    all_campaigns=$(grep -E '^  [a-z][a-z-]*:$' "$CAMPAIGNS_FILE" | sed 's/://' | tr -d ' ')
+# --- Select campaigns using shared logic ---
+# shellcheck source=_select-campaigns.sh
+source "$SCRIPT_DIR/_select-campaigns.sh"
 
-    for campaign in $all_campaigns; do
-        # Skip integrator and performance (special campaigns)
-        [[ "$campaign" == "integrator" ]] && continue
-
-        # Skip if already claimed on remote
-        if git -C "$REPO_ROOT" rev-parse --verify "origin/campaign/$campaign" &>/dev/null 2>&1; then
-            ahead=$(git -C "$REPO_ROOT" rev-list --count "origin/main..origin/campaign/$campaign" 2>/dev/null || echo "0")
-            if [[ "$ahead" -gt 0 ]]; then
-                echo "Skipping $campaign — active on remote ($ahead commits ahead)"
-                continue
-            fi
-        fi
-
-        # Skip if progress file says diminishing
-        progress_file="$PROGRESS_DIR/${campaign}.json"
-        if [[ -f "$progress_file" ]]; then
-            status=$(python3 -c "
-import json
-with open('$progress_file') as f:
-    print(json.load(f).get('status', 'active'))
-" 2>/dev/null || echo "active")
-
-            if [[ "$status" == "diminishing" ]]; then
-                echo "Skipping $campaign — status is 'diminishing'"
-                continue
-            fi
-        fi
-
-        available+=("$campaign")
-    done
-fi
-
-# Cap to max agents
-if [[ ${#available[@]} -gt $MAX_AGENTS ]]; then
-    available=("${available[@]:0:$MAX_AGENTS}")
-fi
+mapfile -t available < <(_select_campaigns)
 
 echo ""
 echo "============================================="
@@ -102,6 +57,11 @@ for c in "${available[@]}"; do
     echo "  - $c"
 done
 echo ""
+
+if [[ ${#available[@]} -eq 0 ]]; then
+    echo "No campaigns available to launch."
+    exit 0
+fi
 
 if $DRY_RUN; then
     echo "(dry run — no agents launched)"
@@ -127,7 +87,8 @@ for campaign in "${available[@]}"; do
     "$SCRIPT_DIR/start-campaign.sh" "$campaign" <<< "1" 2>/dev/null || true
 
     echo "  Worktree ready at .worktrees/$campaign"
-    echo "  Start Claude Code in that directory to begin work."
+    echo "  Start OpenCode in that directory:"
+    echo "    cd .worktrees/$campaign && opencode -m alibaba/qwen3.6-plus"
     echo ""
 
     LAUNCHED=$((LAUNCHED + 1))
@@ -135,5 +96,6 @@ done
 
 echo "============================================="
 echo "Launched $LAUNCHED agents."
-echo "Start Claude Code in each worktree directory."
+echo "Start OpenCode in each worktree directory, or use:"
+echo "  scripts/session/launch-agents-opencode.sh  # headless mode"
 echo "============================================="

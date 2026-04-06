@@ -386,6 +386,25 @@ pub fn get_union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<T
     }
 }
 
+/// Returns `true` if `type_id` is a union or intersection whose members are
+/// all primitive intrinsics or literal types (string/number/boolean literals).
+/// tsc expands such type aliases in error messages instead of preserving the
+/// alias name — e.g. `type T2 = "a" | "b"` displays as `"a" | "b"`, not `T2`.
+pub fn is_primitive_or_literal_compound(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let members_id = match db.lookup(type_id) {
+        Some(TypeData::Union(m)) | Some(TypeData::Intersection(m)) => m,
+        _ => return false,
+    };
+    let members = db.type_list(members_id);
+    members.iter().all(|m| {
+        m.is_intrinsic()
+            || matches!(
+                db.lookup(*m),
+                Some(TypeData::Literal(_) | TypeData::Intrinsic(_))
+            )
+    })
+}
+
 /// Get the members of an intersection type.
 ///
 /// Returns None if the type is not an intersection.
