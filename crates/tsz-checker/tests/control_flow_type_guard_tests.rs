@@ -860,7 +860,7 @@ if (isA(v)) {
 /// When `assert(!isB(foo))` where `isB` uses a conditional type predicate like
 /// `Extract<T, U>`, the false branch should exclude matching union members.
 ///
-/// This exercises the resolve_type_uncached path for Conditional types in the
+/// This exercises the `resolve_type_uncached` path for `Conditional` types in the
 /// solver's narrowing context — ensuring inner Lazy types are resolved before
 /// the conditional is evaluated/distributed.
 #[test]
