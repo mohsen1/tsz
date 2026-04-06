@@ -38,6 +38,22 @@ impl<'a> CheckerState<'a> {
                             let evaluated = self.evaluate_type_with_env(ty);
                             return self.format_type_diagnostic(evaluated);
                         }
+                        // tsc expands type aliases whose body is a union of literal
+                        // types (e.g., `type IAxisType = "linear" | "categorical"`)
+                        // showing `"linear" | "categorical"` instead of `IAxisType`.
+                        if let Some(members) =
+                            crate::query_boundaries::common::union_members(self.ctx.types, body)
+                        {
+                            let all_literals = !members.is_empty()
+                                && members.iter().all(|&m| {
+                                    tsz_solver::literal_value(self.ctx.types, m).is_some()
+                                        || m == TypeId::BOOLEAN_TRUE
+                                        || m == TypeId::BOOLEAN_FALSE
+                                });
+                            if all_literals {
+                                return self.format_type_diagnostic(body);
+                            }
+                        }
                     }
                     let name = self.ctx.types.resolve_atom_ref(def.name);
                     return name.to_string();
@@ -795,6 +811,22 @@ impl<'a> CheckerState<'a> {
         // conditional evaluation. tsc shows the expanded form for these.
         if let Some(body) = def.body {
             if self.ctx.definition_store.is_computed_body(body) {
+                return None;
+            }
+        }
+        // tsc expands type aliases whose body is a union of literal types
+        // (e.g., `type IAxisType = "linear" | "categorical"`) — show the
+        // expanded form instead of the alias name. Check the actual type `ty`
+        // (which may be the evaluated body) rather than `def.body` (which
+        // may be a different TypeId).
+        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, ty) {
+            let all_literals = !members.is_empty()
+                && members.iter().all(|&m| {
+                    tsz_solver::literal_value(self.ctx.types, m).is_some()
+                        || m == TypeId::BOOLEAN_TRUE
+                        || m == TypeId::BOOLEAN_FALSE
+                });
+            if all_literals {
                 return None;
             }
         }

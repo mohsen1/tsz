@@ -918,6 +918,9 @@ impl<'a> CheckerState<'a> {
                     drop(env);
                     // Register resolved type → DefId so TypeFormatter can recover
                     // the named display (e.g., "Num" instead of structural expansion).
+                    // Only register for interfaces and classes — NOT type aliases.
+                    // tsc expands type alias bodies in error messages but preserves
+                    // interface/class names.
                     if resolved != TypeId::ERROR
                         && resolved != TypeId::ANY
                         && resolved != TypeId::UNKNOWN
@@ -926,6 +929,13 @@ impl<'a> CheckerState<'a> {
                             .definition_store
                             .find_def_for_type(resolved)
                             .is_none()
+                        && self.ctx.definition_store.get(def_id).is_some_and(|def| {
+                            matches!(
+                                def.kind,
+                                tsz_solver::def::DefKind::Interface
+                                    | tsz_solver::def::DefKind::Class
+                            )
+                        })
                     {
                         self.ctx
                             .definition_store
