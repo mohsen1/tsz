@@ -1,7 +1,7 @@
 {
   "campaign": "big3-unification",
   "baseline_at_creation": 11745,
-  "current_pass": 11753,
+  "current_pass": 11754,
   "current_big3_wrong_code": 68,
   "status": "active",
   "sessions": [
@@ -80,7 +80,7 @@
       "tests_fixed": [
         "contextualTyping33.ts"
       ],
-      "kpi_impact": "+1 test passing (11752 -> 11753), Big3 maintained at 68, Fingerprint-only reduced",
+      "kpi_impact": "+1 test passing (11753 -> 11754), Big3 maintained at 68, 3138 checker tests passing",
       "changes": [
         "crates/tsz-checker/src/error_reporter/call_errors/elaboration.rs",
         "crates/tsz-checker/src/assignability/assignability_diagnostics.rs",
