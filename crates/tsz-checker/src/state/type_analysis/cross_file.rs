@@ -665,6 +665,13 @@ impl<'a> CheckerState<'a> {
         Self::leave_cross_arena_delegation();
 
         if result != TypeId::UNKNOWN && result != TypeId::ERROR {
+            // Register instance type → DefId so the TypeFormatter can display
+            // the interface name (e.g., "Date") instead of the structural form.
+            // This mirrors the class registration in symbol_types.rs.
+            let def_id = self.ctx.get_or_create_def_id(sym_id);
+            self.ctx
+                .definition_store
+                .register_type_to_def(result, def_id);
             Some(result)
         } else {
             None
