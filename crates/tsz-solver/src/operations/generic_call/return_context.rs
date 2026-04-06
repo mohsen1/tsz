@@ -685,7 +685,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// Unlike `collect_return_context_substitution`, this does NOT apply the
     /// `target_contains_untracked_type_params` or `type_references_other_tracked_params`
     /// guards. Those guards exist to prevent contamination from nested generic
-    /// signatures (e.g., `Promise.catch`'s TResult), but when the target is the
+    /// signatures (e.g., `Promise.catch`'s `TResult`), but when the target is the
     /// contextual type's own generic function, its type params (like `A` in
     /// `<A>(a: A[]) => Box<A>[]`) are legitimate substitution targets.
     fn collect_return_context_for_generic_target(

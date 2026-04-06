@@ -12,14 +12,16 @@ use crate::span::Span;
 use std::path::Path;
 
 impl ModuleResolver {
-    fn suggested_runtime_extension(&self, resolved_ext: ModuleExtension) -> &'static str {
+    const fn suggested_runtime_extension(&self, resolved_ext: ModuleExtension) -> &'static str {
         match resolved_ext {
-            ModuleExtension::Ts | ModuleExtension::Dts | ModuleExtension::Unknown => ".js",
+            ModuleExtension::Ts
+            | ModuleExtension::Dts
+            | ModuleExtension::Unknown
+            | ModuleExtension::Js => ".js",
             ModuleExtension::Tsx => match self.jsx {
                 Some(crate::config::JsxEmit::Preserve) => ".jsx",
                 _ => ".js",
             },
-            ModuleExtension::Js => ".js",
             ModuleExtension::Jsx => ".jsx",
             ModuleExtension::Mts | ModuleExtension::Mjs | ModuleExtension::DmTs => ".mjs",
             ModuleExtension::Cts | ModuleExtension::Cjs | ModuleExtension::DCts => ".cjs",
@@ -106,7 +108,7 @@ impl ModuleResolver {
                 // compiled to .jsx (preserve) or .js (react/react-jsx/etc.).
                 if resolved_ext == ModuleExtension::Tsx && self.jsx.is_some() {
                     return Ok(ResolvedModule {
-                        resolved_path: resolved.clone(),
+                        resolved_path: resolved,
                         resolved_using_ts_extension: false,
                         is_external: false,
                         package_name: None,

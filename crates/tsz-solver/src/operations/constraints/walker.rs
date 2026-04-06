@@ -1600,34 +1600,33 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     || s_shape
                         .flags
                         .contains(crate::types::ObjectFlags::ENUM_NAMESPACE);
-                if source_has_implicit_index {
-                    if let (Some(s_idx), Some(t_idx)) =
+                if source_has_implicit_index
+                    && let (Some(s_idx), Some(t_idx)) =
                         (&s_shape.number_index, &t_shape.string_index)
-                    {
-                        // Use MappedType priority for number-to-string cross inference so
-                        // candidates combine with property-to-index candidates via union.
-                        // Without this, the number index contribution (e.g., `string` from
-                        // enum reverse mapping) would use a higher priority than property
-                        // contributions, causing the resolver to pick only the number index
-                        // type instead of the union of all candidates.
-                        let idx_priority = crate::types::InferencePriority::MappedType;
-                        if let Some(&var) = var_map.get(&t_idx.value_type) {
-                            ctx.add_index_signature_candidate_with_index(
-                                var,
-                                s_idx.value_type,
-                                idx_priority,
-                                u32::MAX, // sentinel index for number-index cross inference
-                                false,
-                            );
-                        } else {
-                            self.constrain_types(
-                                ctx,
-                                var_map,
-                                s_idx.value_type,
-                                t_idx.value_type,
-                                idx_priority,
-                            );
-                        }
+                {
+                    // Use MappedType priority for number-to-string cross inference so
+                    // candidates combine with property-to-index candidates via union.
+                    // Without this, the number index contribution (e.g., `string` from
+                    // enum reverse mapping) would use a higher priority than property
+                    // contributions, causing the resolver to pick only the number index
+                    // type instead of the union of all candidates.
+                    let idx_priority = crate::types::InferencePriority::MappedType;
+                    if let Some(&var) = var_map.get(&t_idx.value_type) {
+                        ctx.add_index_signature_candidate_with_index(
+                            var,
+                            s_idx.value_type,
+                            idx_priority,
+                            u32::MAX, // sentinel index for number-index cross inference
+                            false,
+                        );
+                    } else {
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            s_idx.value_type,
+                            t_idx.value_type,
+                            idx_priority,
+                        );
                     }
                 }
                 if let (Some(s_idx), Some(t_idx)) = (&s_shape.string_index, &t_shape.number_index) {

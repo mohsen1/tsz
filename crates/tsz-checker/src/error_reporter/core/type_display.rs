@@ -378,6 +378,12 @@ impl<'a> CheckerState<'a> {
                 } else {
                     ty
                 }
+            } else if query::union_members(self.ctx.types, ty).is_none() {
+                // Non-generic intersection that isn't also a union: preserve as-is.
+                // Evaluation would lose display_properties (literal values) on fresh
+                // object members. tsc shows `{ fooProp: "frizzlebizzle"; } & Bar`
+                // not `{ fooProp: string; } & Bar`.
+                ty
             } else if let Some(members) = query::union_members(self.ctx.types, ty) {
                 let normalized: Vec<_> = members
                     .iter()

@@ -139,7 +139,7 @@ impl<'a> AsyncES5Transformer<'a> {
     }
 
     /// Get the helpers needed after transformation
-    pub(crate) fn suspension_kind(&self) -> u16 {
+    pub(crate) const fn suspension_kind(&self) -> u16 {
         if self.generator_mode {
             syntax_kind_ext::YIELD_EXPRESSION
         } else {

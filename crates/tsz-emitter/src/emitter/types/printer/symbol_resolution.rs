@@ -1,4 +1,4 @@
-//! Symbol resolution and object type printing for the TypePrinter.
+//! Symbol resolution and object type printing for the `TypePrinter`.
 
 use tsz_binder::{Symbol, SymbolId, symbol_flags};
 use tsz_common::interner::Atom;

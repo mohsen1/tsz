@@ -15,8 +15,8 @@ impl BinderState {
     /// Check if `idx` is nested inside an ambient module (one with `declare` or
     /// a string-literal name). Walks up through `MODULE_BLOCK` / `MODULE_DECLARATION`
     /// ancestors until it finds one that is ambient or reaches the source file.
-    /// Check if the given node is inside a namespace (identifier-named ModuleDeclaration),
-    /// as opposed to an ambient module (string-literal-named ModuleDeclaration) or at the
+    /// Check if the given node is inside a namespace (identifier-named `ModuleDeclaration`),
+    /// as opposed to an ambient module (string-literal-named `ModuleDeclaration`) or at the
     /// file top level.
     fn is_inside_namespace(arena: &NodeArena, idx: NodeIndex) -> bool {
         let mut current = idx;

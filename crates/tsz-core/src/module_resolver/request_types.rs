@@ -156,7 +156,7 @@ impl ModuleLookupResult {
         }
     }
 
-    pub fn with_resolved_using_ts_extension(mut self, value: bool) -> Self {
+    pub const fn with_resolved_using_ts_extension(mut self, value: bool) -> Self {
         self.resolved_using_ts_extension = value;
         self
     }

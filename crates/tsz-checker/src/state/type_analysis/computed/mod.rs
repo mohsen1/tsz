@@ -676,6 +676,22 @@ impl<'a> CheckerState<'a> {
                     self.ctx.definition_store.set_instance_shape(def_id, shape);
                 }
 
+                // Register the TypeId→DefId mapping so the type formatter can
+                // display "ObjectConstructor", "SymbolConstructor", etc. instead
+                // of expanding the full object literal.  Guard: only register
+                // when no mapping exists yet, to avoid overwriting a mapping
+                // established by a prior, more specific resolution.
+                if self
+                    .ctx
+                    .definition_store
+                    .find_def_for_type(lib_type)
+                    .is_none()
+                {
+                    self.ctx
+                        .definition_store
+                        .register_type_to_def(lib_type, def_id);
+                }
+
                 return (lib_type, Vec::new());
             }
 
