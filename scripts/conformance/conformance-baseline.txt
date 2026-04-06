@@ -297,7 +297,7 @@ FAIL TypeScript/tests/cases/compiler/reverseMappedTypeIntersectionConstraint.ts 
 FAIL TypeScript/tests/cases/compiler/reverseMappedTypeLimitedConstraint.ts | expected:[TS2353] actual:[TS2353]
 FAIL TypeScript/tests/cases/compiler/scopeCheckStaticInitializer.ts | expected:[TS2449,TS2729] actual:[TS2449,TS2729]
 FAIL TypeScript/tests/cases/compiler/selfNameAndImportsEmitInclusion.ts | expected:[TS2307] actual:[TS2209]
-FAIL TypeScript/tests/cases/compiler/shorthandPropertyAssignmentsInDestructuring_ES6.ts | expected:[TS1312,TS2322] actual:[TS2322,TS18004]
+FAIL TypeScript/tests/cases/compiler/shorthandPropertyAssignmentsInDestructuring_ES6.ts | expected:[TS1312,TS2322] actual:[TS1312,TS2322]
 FAIL TypeScript/tests/cases/compiler/signatureCombiningRestParameters3.ts | expected:[TS2345] actual:[TS2339,TS2684]
 FAIL TypeScript/tests/cases/compiler/signatureCombiningRestParameters4.ts | expected:[TS2345] actual:[TS2339,TS2684]
 FAIL TypeScript/tests/cases/compiler/signatureCombiningRestParameters5.ts | expected:[TS2345] actual:[TS2345]
