@@ -70,6 +70,58 @@ impl<'a> CheckerState<'a> {
             return record_and_return(sym_id);
         }
 
+        // Cross-binder wildcard re-export resolution: when the target file
+        // has `export * from "./other"`, and `./other` lives in a separate
+        // file (bound separately), the single-binder re-export walk above
+        // won't find the member.  Follow the wildcard targets across files.
+        {
+            let wildcards = target_binder
+                .wildcard_reexports
+                .get(&target_file_name)
+                .or_else(|| target_binder.wildcard_reexports.get(module_specifier))
+                .cloned();
+            if let Some(wildcard_sources) = wildcards {
+                for source_module in &wildcard_sources {
+                    let reexport_target_idx = self
+                        .ctx
+                        .resolve_import_target_from_file_with_mode(
+                            target_file_idx,
+                            source_module,
+                            resolution_mode_override,
+                        )
+                        .or_else(|| self.ctx.resolve_import_target(source_module));
+                    if let Some(reexport_idx) = reexport_target_idx
+                        && let Some(reexport_binder) = self.ctx.get_binder_for_file(reexport_idx)
+                    {
+                        let reexport_arena = self.ctx.get_arena_for_file(reexport_idx as u32);
+                        if let Some(reexport_file_name) = reexport_arena
+                            .source_files
+                            .first()
+                            .map(|sf| sf.file_name.clone())
+                        {
+                            if let Some((sym_id, _)) = reexport_binder
+                                .resolve_import_with_reexports_type_only(
+                                    &reexport_file_name,
+                                    member_name,
+                                )
+                            {
+                                self.ctx.register_symbol_file_target(sym_id, reexport_idx);
+                                return Some(sym_id);
+                            }
+                            if let Some(exports) =
+                                reexport_binder.module_exports.get(&reexport_file_name)
+                                && let Some(sym_id) = exports.get(member_name)
+                                && reexport_binder.get_symbol(sym_id).is_some()
+                            {
+                                self.ctx.register_symbol_file_target(sym_id, reexport_idx);
+                                return Some(sym_id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if let Some(sym_id) = target_binder.file_locals.get(member_name)
             && let Some(symbol) = target_binder.get_symbol(sym_id)
         {
