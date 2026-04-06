@@ -1010,6 +1010,17 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .lib_type_resolution_cache
                 .insert(name.to_string(), Some(ty));
+
+            // Register the final merged type in type_to_def so the formatter can
+            // display "Date" instead of expanding all members. The initial
+            // registration uses the pre-merge TypeId which changes after heritage
+            // merging and global augmentations add more members.
+            let name_atom = self.ctx.types.intern_string(name);
+            if let Some(defs) = self.ctx.definition_store.find_defs_by_name(name_atom) {
+                if let Some(&def_id) = defs.first() {
+                    self.ctx.definition_store.register_type_to_def(ty, def_id);
+                }
+            }
         }
 
         // Process heritage clauses from global augmentations.
