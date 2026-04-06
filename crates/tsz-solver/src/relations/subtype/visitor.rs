@@ -258,6 +258,20 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             }
         }
 
+        // Evaluate the intersection to simplify discriminated union intersections.
+        // For example, `(A | B) & { kind: "one" }` where A has `kind: "one"` and B has
+        // `kind: "two"` should simplify to just `A`. Without this, property collection
+        // only sees the common properties of the union (just `kind`), missing `A`'s
+        // unique properties like `s: string`.
+        {
+            let evaluated = self.checker.evaluate_type(self.source);
+            if evaluated != self.source
+                && self.checker.check_subtype(evaluated, self.target).is_true()
+            {
+                return SubtypeResult::True;
+            }
+        }
+
         // Special case: If target is an object type, check if MERGED properties satisfy it
         // This handles cases like: { a: string } & { b: number } <: { a: string; b: number }
         if object_shape_id(self.checker.interner, self.target).is_some()
