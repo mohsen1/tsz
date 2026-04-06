@@ -165,29 +165,29 @@ Skill usage rules:
 - Reuse scripts/assets/templates from skill directories when available.
 - If blocked/missing, state issue briefly and proceed with best fallback.
 
-## 20.25) Multi-Session Work (Campaign System — v2 Post-90%)
+## 20.25) Multi-Session Work (Campaign System — v3 Post-93% Fingerprint Era)
 - **Always use `ultrathink` at the start of every agent prompt.**
 - **Max 3 concurrent agents** to avoid rate limit cascades. Use `launch-agents.sh`.
-- **Campaign work is the DEFAULT**, not the exception. The remaining failures are architecture-shaped.
+- **Fingerprint parity is the #1 priority.** 617 tests (73.6% of failures) emit right codes but wrong message/position/count.
 - **Multi-crate changes are EXPECTED.** Do not reroll because a fix touches solver + checker + boundary.
 - Read `scripts/session/AGENT_PROTOCOL.md` for the full protocol.
+- Read `scripts/session/conformance-agent-prompt.md` for detailed campaign guidance.
 
 ### Campaign Tiers and Agent Allocation
 | Tier | Allocation | Campaigns | Focus |
 |------|-----------|-----------|-------|
-| **1** | 50% of agents | big3-unification, request-transport, narrowing-boundary | Trunk: relation kernel, context transport, boundary cleanup |
-| **2** | 30% of agents | node-declaration-emit, crash-zero, stable-identity | Subsystem: resolver, crashes, identity |
-| **3** | 20% of agents | parser-diagnostics, false-positives, jsdoc-jsx-salsa | Leaf cleanup, parser, integration areas |
+| **1** | 50% of agents | type-display-parity, diagnostic-count | Fingerprint parity: match tsc's error message text and diagnostic counts (~440 tests) |
+| **2** | 30% of agents | big3-unification, narrowing-boundary, request-transport | Wrong-code: relation kernel, context transport, boundary cleanup (~174 tests) |
+| **3** | 20% of agents | crash-zero, diagnostic-position, parser-diagnostics, module-resolution | Subsystem and leaf work (~130 tests) |
 
 ### KPIs (Track These, Not Overall %)
 | KPI | Command | Target |
 |-----|---------|--------|
-| Wrong-code TS2322+TS2339+TS2345 | `query-conformance.py --dashboard` | Reduce by 50% |
-| Crash count | `query-conformance.py --dashboard` | Zero |
-| Node lane pass rate | `query-conformance.py --dashboard` | >75% |
-| Close-to-passing (diff 0/1/2) | `query-conformance.py --close 2` | Reduce by 50% |
-| Direct solver calls in narrowing | `rg "type_queries\." crates/tsz-checker/src/flow/` | Zero |
-| Raw contextual mutations | `rg "contextual_type\b" crates/tsz-checker/src/` | Zero outside TypingRequest |
+| **Fingerprint-only count** | `query-conformance.py --dashboard` | Reduce from 617 |
+| FP-only for TS2322+TS2345+TS2339 | `query-conformance.py --fingerprint-only` | Reduce from 410 |
+| Big3 wrong-code count | `query-conformance.py --dashboard` | Reduce from 71 |
+| Crash count | `query-conformance.py --dashboard` | Zero (44) |
+| Tests per fix commit | git log analysis | >1.0 (currently 0.32) |
 
 ### Quick Reference
 ```bash
@@ -222,11 +222,12 @@ scripts/session/setup-machine.sh
 ```
 
 ### Key Rules
+- **Fingerprint parity is the #1 lever.** 73.6% of remaining failures need display/count/position fixes, not code changes.
+- **Batch, don't scatter.** One printer fix that flips 20 tests > 20 individual tweaks. Target >1.0 tests per commit.
 - **Campaign work is default.** Leaf fixes are only for Tier 3 agents.
 - **Follow root causes across crate boundaries.** Campaigns define missions, not file ownership.
 - **Multi-crate changes are normal.** Do NOT reroll for "broad-surface" targets (Tier 1/2).
 - **Track KPIs, not overall %.** Each campaign has a specific KPI in campaigns.yaml.
-- **Find invariants that fix BOTH missing AND extra diagnostics.** One-directional fixes create drift.
 - **Never declare a campaign "complete."** Only the integrator can. Run the checkpoint script.
 - **Read the progress file before starting.** Don't re-investigate known dead ends.
 - **Max 3 concurrent agents** to avoid rate limit cascades. Use `launch-agents.sh`.
@@ -268,26 +269,23 @@ Two snapshot files contain everything needed for analysis:
 - **`scripts/conformance/conformance-snapshot.json`** — high-level aggregates (summary, areas, top failures, quick wins).
 - **`scripts/conformance/conformance-detail.json`** — per-test failure data (expected/actual/missing/extra codes for every failing test, ~400KB).
 
-### Preferred strategy: campaign-first, not whack-a-mole
-- **Campaign work is the default.** Leaf fixes are only for Tier 3 agents.
-- Start with the **KPI dashboard**, then deep-dive your assigned campaign:
+### Preferred strategy: fingerprint parity first, then wrong-code campaigns
+- **Fingerprint parity is the #1 lever.** 617 tests (73.6%) already emit the right codes but wrong message/position/count.
+- Start with the **KPI dashboard**, then check fingerprint-only failures:
   ```bash
   python3 scripts/conformance/query-conformance.py --dashboard
+  python3 scripts/conformance/query-conformance.py --fingerprint-only
+  python3 scripts/conformance/query-conformance.py --fingerprint-only --code TS2322
+  python3 scripts/conformance/query-conformance.py --campaign type-display-parity
+  python3 scripts/conformance/query-conformance.py --campaign diagnostic-count
   python3 scripts/conformance/query-conformance.py --campaign big3
-  python3 scripts/conformance/query-conformance.py --campaign contextual-typing
   python3 scripts/conformance/query-conformance.py --campaign narrowing-flow
-  python3 scripts/conformance/query-conformance.py --campaign module-resolution
-  python3 scripts/conformance/query-conformance.py --campaign parser-recovery
-  python3 scripts/conformance/query-conformance.py --campaign jsdoc-jsx-salsa
   ```
-- Treat **`TS2322` / `TS2339` / `TS2345`** as one family. Find invariants that fix BOTH missing AND extra.
+- **Fingerprint campaigns (Tier 1)**: Fix type printer display, diagnostic emission counts, or position anchoring.
+  One good printer fix can flip 50+ tests. Target >1.0 tests per commit.
+- **Wrong-code campaigns (Tier 2)**: Find invariants that fix BOTH missing AND extra diagnostics.
+  Fix in Solver or boundary helpers, not checker-local heuristics.
 - Do **not** pick work solely from one-extra/one-missing/close lists. Those are Tier 3 tools.
-- For each campaign:
-  1. Pick 8-15 representative failures spanning both missing and extra diagnostics.
-  2. Write the shared semantic invariant first.
-  3. Fix the invariant in Solver or a boundary helper, not in checker-local heuristics.
-  4. Use targeted filtered runs only after code changes.
-- `JSDoc`, `JSX`, and `Salsa` are **regression baskets** — most fixes come from Tier 1 campaigns.
 
 **Query tool** (`python3 scripts/conformance/query-conformance.py`):
 ```bash
