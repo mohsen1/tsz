@@ -433,20 +433,21 @@ impl<'a> CheckerState<'a> {
 
         // Get the failure reason using the check types
         let analysis = self.analyze_assignability_failure(source, target);
-        
+
         // Try to elaborate the source error first
         if self.try_elaborate_assignment_source_error(source_idx, target) {
             return false;
         }
-        
+
         // Report the error using the display types (full function types)
         if let Some(ref reason) = analysis.failure_reason {
             // For simple type mismatches (TypeMismatch, IntrinsicTypeMismatch, LiteralTypeMismatch),
             // use the error_reporter method to render with display types
-            if matches!(reason, 
-                tsz_solver::SubtypeFailureReason::TypeMismatch { .. } |
-                tsz_solver::SubtypeFailureReason::IntrinsicTypeMismatch { .. } |
-                tsz_solver::SubtypeFailureReason::LiteralTypeMismatch { .. }
+            if matches!(
+                reason,
+                tsz_solver::SubtypeFailureReason::TypeMismatch { .. }
+                    | tsz_solver::SubtypeFailureReason::IntrinsicTypeMismatch { .. }
+                    | tsz_solver::SubtypeFailureReason::LiteralTypeMismatch { .. }
             ) {
                 // Use the error_reporter method to respect architecture contract
                 self.error_type_not_assignable_at_with_display_types(
@@ -467,7 +468,11 @@ impl<'a> CheckerState<'a> {
             }
         } else {
             // No specific failure reason, use generic error with display types
-            self.error_type_not_assignable_with_reason_at(source_for_display, target_for_display, diag_idx);
+            self.error_type_not_assignable_with_reason_at(
+                source_for_display,
+                target_for_display,
+                diag_idx,
+            );
         }
         false
     }
