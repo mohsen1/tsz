@@ -2091,7 +2091,7 @@ impl<'a> FlowAnalyzer<'a> {
         // e.g., assert(typeof x === "string") narrows x to string.
         if resolved_predicate.type_id.is_none() {
             let antecedent_id = flow.antecedent.first().copied().unwrap_or(FlowNodeId::NONE);
-            
+
             // Check if the predicate target is a negated expression (!predicate(x))
             // If so, we need to extract the inner type guard and apply it with negated sense.
             if let Some(pred_node) = self.arena.get(predicate_target)
@@ -2121,7 +2121,7 @@ impl<'a> FlowAnalyzer<'a> {
                     }
                 }
             }
-            
+
             return self.narrow_type_by_condition(
                 narrowed_pre_type,
                 predicate_target,

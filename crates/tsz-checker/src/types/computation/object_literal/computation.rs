@@ -145,7 +145,7 @@ impl<'a> CheckerState<'a> {
             .enumerate()
             .filter_map(|(pos, &elem_idx)| {
                 let elem_node = self.ctx.arena.get(elem_idx)?;
-                
+
                 // Case 1: Method declaration like `get() {}`
                 if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
                     let name = self.get_property_name(method.name)?;
@@ -154,7 +154,7 @@ impl<'a> CheckerState<'a> {
                         (elem_idx, (pos + 1) as u32),
                     ));
                 }
-                
+
                 // Case 2: Property assignment with function value like `set: function() {}`
                 if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
                     let initializer_is_function_like = self
@@ -176,7 +176,7 @@ impl<'a> CheckerState<'a> {
                         ));
                     }
                 }
-                
+
                 None
             })
             .collect();
