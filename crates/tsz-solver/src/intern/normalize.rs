@@ -1520,6 +1520,12 @@ impl TypeInterner {
                 // e.g., (A|B|C) & (D|E) → 3 * 2 = 6 combinations
                 total_combinations *= member_count;
 
+                // TS2590: tsc checkCrossProductUnion bails at 100,000.
+                if total_combinations >= 100_000 {
+                    self.set_union_too_complex();
+                    return None;
+                }
+
                 // Conservative guard: abort early if would exceed 25 members
                 if total_combinations > 25 {
                     return None; // Too many combinations, skip distribution

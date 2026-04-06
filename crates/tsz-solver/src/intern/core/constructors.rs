@@ -1071,6 +1071,23 @@ impl TypeInterner {
             return TypeId::NEVER;
         }
 
+        // TS2590: Cross-product union size check for raw intersections.
+        // When an intersection contains union members, the cross-product
+        // can grow exponentially. tsc bails at 100,000 constituents.
+        {
+            let mut cross_product_size: u64 = 1;
+            for &id in flat.iter() {
+                if let Some(TypeData::Union(members)) = self.lookup(id) {
+                    cross_product_size =
+                        cross_product_size.saturating_mul(self.type_list(members).len() as u64);
+                    if cross_product_size >= 100_000 {
+                        self.set_union_too_complex();
+                        break;
+                    }
+                }
+            }
+        }
+
         // =========================================================
         // Final Construction
         // =========================================================
