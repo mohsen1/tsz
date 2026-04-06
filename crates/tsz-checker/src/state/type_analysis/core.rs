@@ -2084,65 +2084,6 @@ impl<'a> CheckerState<'a> {
                     .definition_store
                     .register_type_to_def(result, def_id);
                 self.ctx.definition_store.set_body(def_id, result);
-
-                // Mark the body as "computed" if the declared type alias body
-                // is a non-generic intersection or conditional type. These reduce
-                // during evaluation (e.g., `type T2 = T1 & ("a"|"b")` reduces to
-                // `"a"|"b"`), and tsc does not preserve the alias name for such
-                // types. Generic aliases (with type params) are kept as-is since
-                // the intersection is part of the definition, not a simplification.
-                if self
-                    .ctx
-                    .definition_store
-                    .get(def_id)
-                    .is_some_and(|d| d.type_params.is_empty())
-                {
-                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                        for &decl_idx in &symbol.declarations {
-                            if let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                                && let Some(type_alias) = self.ctx.arena.get_type_alias(decl_node)
-                                && let Some(body_node) = self.ctx.arena.get(type_alias.type_node)
-                            {
-                                use tsz_parser::parser::syntax_kind_ext;
-                                if body_node.kind == syntax_kind_ext::INTERSECTION_TYPE
-                                    || body_node.kind == syntax_kind_ext::CONDITIONAL_TYPE
-                                {
-                                    // Only mark if the result is a union of purely
-                                    // primitive/literal types (no objects, functions, etc.).
-                                    // When an intersection distributes and produces object-
-                                    // typed members, tsc preserves the alias name for
-                                    // readability. Only trivial reductions like
-                                    // `T1 & ("a"|"b")` → `"a"|"b"` should expand.
-                                    let is_trivial_reduction =
-                                        crate::query_boundaries::common::union_members(
-                                            self.ctx.types,
-                                            result,
-                                        )
-                                        .is_some_and(
-                                            |members| {
-                                                members.iter().all(|&m| {
-                                                    tsz_solver::literal_value(self.ctx.types, m)
-                                                        .is_some()
-                                                        || m == TypeId::STRING
-                                                        || m == TypeId::NUMBER
-                                                        || m == TypeId::BOOLEAN
-                                                        || m == TypeId::BIGINT
-                                                        || m == TypeId::SYMBOL
-                                                        || m == TypeId::UNDEFINED
-                                                        || m == TypeId::NULL
-                                                        || m == TypeId::VOID
-                                                        || m == TypeId::NEVER
-                                                })
-                                            },
-                                        );
-                                    if is_trivial_reduction {
-                                        self.ctx.definition_store.mark_body_as_computed(result);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
                 // Also register the evaluated form of the type.
                 // Type aliases with union/intersection bodies often contain Lazy
                 // members (e.g., `type Exotic = CatDog | ManBearPig`). When these
