@@ -506,8 +506,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     // Try apparent type for type parameters and primitives
                     let apparent = self.try_resolve_apparent_type(member);
                     if apparent != member && apparent != TypeId::ANY {
-                        match self.resolve_property_access_inner(apparent, prop_name, Some(prop_atom))
-                        {
+                        match self.resolve_property_access_inner(
+                            apparent,
+                            prop_name,
+                            Some(prop_atom),
+                        ) {
                             PropertyAccessResult::Success {
                                 type_id,
                                 from_index_signature,
