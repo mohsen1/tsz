@@ -950,17 +950,80 @@ impl<'a> CheckerState<'a> {
                         is_valid_rhs = true;
                     }
 
-                    // TypeScript also allows types with [Symbol.hasInstance] as valid instanceof RHS.
-                    // This is checked even when the standard callable/Function checks fail.
-                    if !is_valid_rhs {
+                    // Check for [Symbol.hasInstance] on the RHS type.
+                    // This both validates the RHS (making it valid even without Function
+                    // assignability) AND performs additional checks:
+                    //   TS2860: LHS must be assignable to the first parameter
+                    //   TS2861: The method must return a boolean
+                    // These checks run regardless of whether is_valid_rhs is already true,
+                    // because tsc always validates Symbol.hasInstance semantics when present.
+                    {
                         use crate::query_boundaries::common::PropertyAccessResult;
-                        is_valid_rhs = matches!(
-                            self.resolve_property_access_with_env(
-                                eval_right,
-                                "[Symbol.hasInstance]"
-                            ),
-                            PropertyAccessResult::Success { .. }
-                        );
+                        if let PropertyAccessResult::Success {
+                            type_id: has_instance_type,
+                            ..
+                        } = self
+                            .resolve_property_access_with_env(eval_right, "[Symbol.hasInstance]")
+                        {
+                            is_valid_rhs = true;
+
+                            // Extract params and return type from the [Symbol.hasInstance] method.
+                            // The method can be either a Function type or a Callable type.
+                            let sig_info: Option<(Vec<tsz_solver::ParamInfo>, tsz_solver::TypeId)> =
+                                if let Some(fn_id) =
+                                    tsz_solver::function_shape_id(self.ctx.types, has_instance_type)
+                                {
+                                    let shape = self.ctx.types.function_shape(fn_id);
+                                    Some((shape.params.clone(), shape.return_type))
+                                } else if let Some(shape_id) =
+                                    tsz_solver::callable_shape_id(self.ctx.types, has_instance_type)
+                                {
+                                    let shape = self.ctx.types.callable_shape(shape_id);
+                                    shape
+                                        .call_signatures
+                                        .first()
+                                        .map(|sig| (sig.params.clone(), sig.return_type))
+                                } else {
+                                    None
+                                };
+
+                            if let Some((params, return_type)) = sig_info {
+                                // TS2861: return type must be boolean
+                                let ret = self.evaluate_type_for_assignability(return_type);
+                                if ret != TypeId::BOOLEAN
+                                    && ret != TypeId::ANY
+                                    && ret != TypeId::ERROR
+                                    && !self.is_assignable_to(ret, TypeId::BOOLEAN)
+                                {
+                                    self.error_at_node_msg(
+                                        right_idx,
+                                        diagnostic_codes::AN_OBJECTS_SYMBOL_HASINSTANCE_METHOD_MUST_RETURN_A_BOOLEAN_VALUE_FOR_IT_TO_BE_US,
+                                        &[],
+                                    );
+                                }
+
+                                // TS2860: LHS must be assignable to first parameter
+                                if let Some(first_param) = params.first() {
+                                    let param_type =
+                                        self.evaluate_type_for_assignability(first_param.type_id);
+                                    let lhs_type = self
+                                        .declared_instanceof_left_operand_type(left_idx, left_type);
+                                    if lhs_type != TypeId::ANY
+                                        && lhs_type != TypeId::ERROR
+                                        && param_type != TypeId::ANY
+                                        && param_type != TypeId::UNKNOWN
+                                        && param_type != TypeId::ERROR
+                                        && !self.is_assignable_to(lhs_type, param_type)
+                                    {
+                                        self.error_at_node_msg(
+                                            left_idx,
+                                            diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_ASSIGNABLE_TO_THE_FIRST_A,
+                                            &[],
+                                        );
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     if !is_valid_rhs {
