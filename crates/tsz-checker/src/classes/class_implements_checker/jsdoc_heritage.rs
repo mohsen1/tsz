@@ -613,7 +613,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 None
             };
-            
+
             let Some(sym_id) = sym_id else {
                 continue;
             };

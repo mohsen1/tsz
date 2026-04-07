@@ -1132,7 +1132,10 @@ impl<'a> CheckerState<'a> {
         (resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN).then_some(resolved)
     }
 
-    pub(crate) fn resolve_jsdoc_entity_name_symbol(&self, name: &str) -> Option<tsz_binder::SymbolId> {
+    pub(crate) fn resolve_jsdoc_entity_name_symbol(
+        &self,
+        name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
         let mut segments = name.split('.');
         let root_name = segments.next()?;
         let mut current_sym = self.ctx.binder.file_locals.get(root_name).or_else(|| {
