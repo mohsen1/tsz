@@ -1299,6 +1299,11 @@ impl<'a> TypeFormatter<'a> {
         // Using `format_symbol_name` here causes cross-binder SymbolId
         // collisions where the def's symbol_id maps to a namespace-qualified
         // symbol in the current binder (e.g., `A.B` instead of just `B`).
+        //
+        // NOTE: Namespace qualification (e.g., `m.variable` vs `variable`) requires
+        // scope-aware disambiguation that the formatter lacks. tsc only qualifies
+        // when the short name would be ambiguous at the diagnostic location's scope.
+        // A future enhancement could pass scope context from the checker.
         self.atom(def.name).to_string()
     }
 }
