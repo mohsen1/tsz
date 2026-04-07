@@ -602,8 +602,10 @@ impl<'a> CheckerState<'a> {
         if !skip_source_elaboration
             && self.try_elaborate_assignment_source_error(source_idx, target)
         {
+            eprintln!("DEBUG: elaborated error at source_idx={:?}", source_idx);
             return false;
         }
+        eprintln!("DEBUG: calling error_type_not_assignable_with_reason_at at diag_idx={:?}", diag_idx);
         self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
         false
     }

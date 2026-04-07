@@ -1968,6 +1968,7 @@ impl<'a> CheckerState<'a> {
                         if conditional_branch_mismatch
                             && let Some(loc) = self.get_source_location(body)
                         {
+                            eprintln!("DEBUG function_type: conditional_branch_mismatch at start={}", loc.start);
                             let src_str = self.format_type(actual_return);
                             let tgt_str = self.format_type(expected_return_type);
                             let message = format_message(
@@ -1990,12 +1991,18 @@ impl<'a> CheckerState<'a> {
                         // the arrow function itself.
                         // For conditional bodies, use source elaboration so TS2322 is
                         // reported at the specific failing branch.
+                        // EXCEPTION: When the function expression is the RHS of an
+                        // assignment (e.g., `A.prototype.foo = function() {}`), use
+                        // assignment anchor rewriting so the error is reported at the
+                        // assignment level, matching tsc behavior.
                         let body_is_conditional = self
                             .ctx
                             .arena
                             .get(body)
                             .is_some_and(|n| n.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION);
-                        let assignability_ok = if body_is_conditional {
+                        let is_rhs_assignment = is_closure && self.is_rhs_of_assignment(idx);
+                        eprintln!("DEBUG: is_closure={}, is_rhs_assignment={}", is_closure, is_rhs_assignment);
+                        let assignability_ok = if body_is_conditional || is_rhs_assignment {
                             self.check_assignable_or_report_at(
                                 actual_return,
                                 expected_return_type,

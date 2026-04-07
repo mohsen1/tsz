@@ -1823,6 +1823,7 @@ impl<'a> CheckerState<'a> {
 
         // TS2322 anchoring should point at the assignment target (LHS), not the RHS expression.
         // This aligns diagnostic fingerprints with tsc for assignment-compatibility suites.
+        eprintln!("DEBUG check_assignment_compatibility: left_idx={:?}, right_idx={:?}", left_idx, right_idx);
         let _ = self.check_assignable_or_report_at(source_type, target_type, right_idx, left_idx);
     }
 

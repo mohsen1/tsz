@@ -498,8 +498,10 @@ impl<'a> CheckerState<'a> {
 
     /// Diagnose why an assignment failed and report a detailed error.
     pub fn diagnose_assignment_failure(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
+        eprintln!("DEBUG diagnose_assignment_failure: idx={:?}", idx);
         let anchor_idx =
             self.resolve_diagnostic_anchor_node(idx, DiagnosticAnchorKind::RewriteAssignment);
+        eprintln!("DEBUG diagnose_assignment_failure: resolved anchor_idx={:?}", anchor_idx);
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
     }
 

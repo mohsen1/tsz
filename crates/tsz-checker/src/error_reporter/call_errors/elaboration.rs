@@ -706,13 +706,24 @@ impl<'a> CheckerState<'a> {
                     // Widen the function type for display to match tsc behavior
                     // (e.g., show `() => string` instead of `() => "foo"`)
                     let widened_func_type = tsz_solver::widen_type_deep(self.ctx.types, func_type);
+                    // For functions that are the RHS of an assignment (e.g., `A.prototype.foo = function() {}`),
+                    // use the assignment LHS as the anchor to match tsc behavior.
+                    // Otherwise, use the function position as the anchor.
+                    let diag_anchor = if self.is_rhs_of_assignment(func_idx) {
+                        let lhs = self.find_assignment_lhs_for_rhs(func_idx);
+                        eprintln!("DEBUG: func is RHS of assignment, lhs={:?}", lhs);
+                        lhs.unwrap_or(func_idx)
+                    } else {
+                        eprintln!("DEBUG: func is NOT RHS of assignment");
+                        func_idx
+                    };
                     !self.check_assignable_or_report_at_with_display_types(
                         return_type,
                         expected_return_type,
                         widened_func_type,
                         param_type,
                         ret.expression,
-                        func_idx, // Use func_idx as diagnostic anchor to report at function position
+                        diag_anchor, // Use appropriate anchor based on context
                     )
                 } else {
                     !self.check_assignable_or_report_at_without_source_elaboration(

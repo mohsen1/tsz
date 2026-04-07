@@ -40,6 +40,79 @@ impl<'a> CheckerState<'a> {
         self.js_prototype_owner_expression_for_node(func_idx)
     }
 
+    /// Check if a function expression is the right-hand side of an assignment expression.
+    /// This is used to determine if return type errors should be anchored at the assignment
+    /// level (matching tsc behavior for `A.prototype.foo = function() {}`).
+    pub(crate) fn is_rhs_of_assignment(&self, func_idx: NodeIndex) -> bool {
+        let mut current = func_idx;
+        for _ in 0..6 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            match parent_node.kind {
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                | syntax_kind_ext::PROPERTY_ASSIGNMENT
+                | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                    current = parent;
+                }
+                syntax_kind_ext::BINARY_EXPRESSION => {
+                    let Some(binary) = self.ctx.arena.get_binary_expr(parent_node) else {
+                        return false;
+                    };
+                    return binary.right == current
+                        && self.is_assignment_operator(binary.operator_token);
+                }
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// Find the left-hand side of an assignment when given the RHS node.
+    /// This is used to anchor errors at the assignment target position.
+    pub(crate) fn find_assignment_lhs_for_rhs(&self, rhs_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = rhs_idx;
+        for _ in 0..6 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return None;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return None;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return None;
+            };
+            match parent_node.kind {
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                | syntax_kind_ext::PROPERTY_ASSIGNMENT
+                | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                    current = parent;
+                }
+                syntax_kind_ext::BINARY_EXPRESSION => {
+                    let Some(binary) = self.ctx.arena.get_binary_expr(parent_node) else {
+                        return None;
+                    };
+                    if binary.right == current
+                        && self.is_assignment_operator(binary.operator_token)
+                    {
+                        return Some(binary.left);
+                    }
+                    return None;
+                }
+                _ => return None,
+            }
+        }
+        None
+    }
+
     fn js_prototype_owner_expression_from_assignment_left(
         &self,
         left_idx: NodeIndex,
