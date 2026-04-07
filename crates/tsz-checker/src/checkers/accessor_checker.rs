@@ -355,4 +355,89 @@ impl<'a> CheckerState<'a> {
         }
         None
     }
+
+    /// Check getter/setter type compatibility for object literal accessors.
+    ///
+    /// When a getter in an object literal has no explicit return type annotation,
+    /// its type is inferred from the body and must be compatible with the setter's
+    /// explicit parameter type annotation. This mirrors `check_accessor_type_compatibility`
+    /// but works on object literal element nodes instead of class members.
+    pub(crate) fn check_object_literal_accessor_type_compatibility(
+        &mut self,
+        elements: &[NodeIndex],
+    ) {
+        // In JS/checkJs, accessor pairs are co-inferred from the property shape.
+        if self.ctx.is_js_file() {
+            return;
+        }
+
+        type GetterInfo = Option<(NodeIndex, NodeIndex, NodeIndex)>; // (name, body, type_ann)
+        type SetterInfo = Option<(NodeIndex, NodeIndex)>; // (param_type_ann, param_idx)
+
+        let mut pairs: FxHashMap<String, (GetterInfo, SetterInfo)> = FxHashMap::default();
+
+        for &elem_idx in elements {
+            let Some(node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            let Some(accessor) = self.ctx.arena.get_accessor(node) else {
+                continue;
+            };
+
+            let Some(name) = self.get_property_name_resolved(accessor.name) else {
+                continue;
+            };
+
+            if node.kind == syntax_kind_ext::GET_ACCESSOR {
+                pairs.entry(name).or_default().0 =
+                    Some((accessor.name, accessor.body, accessor.type_annotation));
+            } else if node.kind == syntax_kind_ext::SET_ACCESSOR
+                && let Some(&first_param) = accessor.parameters.nodes.first()
+                && let Some(param_node) = self.ctx.arena.get(first_param)
+                && let Some(param) = self.ctx.arena.get_parameter(param_node)
+            {
+                pairs.entry(name).or_default().1 = Some((param.type_annotation, first_param));
+            }
+        }
+
+        for (_name, (getter, setter)) in pairs {
+            let Some((getter_name, getter_body, getter_type_ann)) = getter else {
+                continue;
+            };
+            let Some((setter_type_ann, _setter_param)) = setter else {
+                continue;
+            };
+            // Only check when the setter has an explicit type annotation.
+            if setter_type_ann == NodeIndex::NONE {
+                continue;
+            }
+            // TS 5.1: when the getter ALSO has an explicit return type annotation,
+            // unrelated types are allowed — skip the check.
+            if getter_type_ann != NodeIndex::NONE {
+                continue;
+            }
+            // Skip abstract accessors — no body to anchor the diagnostic.
+            if getter_body == NodeIndex::NONE {
+                continue;
+            }
+
+            let getter_return_type = self.infer_getter_return_type(getter_body);
+            let setter_param_type = self.get_type_from_type_node(setter_type_ann);
+
+            if getter_return_type != setter_param_type
+                && getter_return_type != tsz_solver::TypeId::ANY
+                && setter_param_type != tsz_solver::TypeId::ANY
+            {
+                let diag_idx = self
+                    .find_first_return_in_block(getter_body)
+                    .unwrap_or(getter_name);
+                self.check_assignable_or_report_at(
+                    getter_return_type,
+                    setter_param_type,
+                    diag_idx,
+                    diag_idx,
+                );
+            }
+        }
+    }
 }
