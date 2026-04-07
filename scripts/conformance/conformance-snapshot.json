@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-04-07T13:25:59Z",
-  "git_sha": "d59de4d4e26db4483db0aaca7e7b3bd6402cc0a1",
+  "timestamp": "2026-04-07T13:45:53Z",
+  "git_sha": "429e99dda7a0fc62dfd03afbd4ebb2882291e631",
   "summary": {
     "total_tests": 12581,
-    "passed": 11617,
-    "failed": 964,
+    "passed": 11618,
+    "failed": 963,
     "pass_rate": 92.3
   },
   "areas_by_pass_rate": [
@@ -319,9 +319,9 @@
     {
       "area": "compiler",
       "total": 6519,
-      "passed": 6035,
-      "failed": 484,
-      "pass_rate": 92.58
+      "passed": 6036,
+      "failed": 483,
+      "pass_rate": 92.59
     },
     {
       "area": "enums",
@@ -762,11 +762,11 @@
       "count": 1
     },
     {
-      "code": "TS2857",
+      "code": "TS2420",
       "count": 1
     },
     {
-      "code": "TS2420",
+      "code": "TS2857",
       "count": 1
     },
     {
@@ -896,15 +896,15 @@
       "count": 1
     },
     {
-      "code": "TS2457",
-      "count": 1
-    },
-    {
       "code": "TS1177",
       "count": 1
     },
     {
       "code": "TS1178",
+      "count": 1
+    },
+    {
+      "code": "TS2457",
       "count": 1
     }
   ],
@@ -1080,11 +1080,11 @@
       "count": 1
     },
     {
-      "code": "TS1062",
+      "code": "TS2344",
       "count": 1
     },
     {
-      "code": "TS2344",
+      "code": "TS1062",
       "count": 1
     },
     {
@@ -1100,11 +1100,11 @@
       "count": 1
     },
     {
-      "code": "TS2857",
+      "code": "TS2420",
       "count": 1
     },
     {
-      "code": "TS2420",
+      "code": "TS2857",
       "count": 1
     },
     {
@@ -1187,10 +1187,6 @@
     },
     {
       "code": "TS6059",
-      "count": 1
-    },
-    {
-      "code": "TS2348",
       "count": 1
     },
     {
@@ -1297,10 +1293,6 @@
     },
     {
       "code": "TS2583",
-      "count": 1
-    },
-    {
-      "code": "TS2348",
       "count": 1
     },
     {
@@ -1649,7 +1641,7 @@
     }
   ],
   "categories": {
-    "false_positive": 124,
+    "false_positive": 123,
     "all_missing": 55,
     "wrong_code": 179,
     "fingerprint_only": 596,
