@@ -167,7 +167,6 @@ FAIL TypeScript/tests/cases/compiler/jsxFragmentFactoryNoUnusedLocals.tsx | expe
 FAIL TypeScript/tests/cases/compiler/jsxFragmentWrongType.tsx | expected:[TS2304,TS2874,TS2879] actual:[TS2304,TS2874,TS2879]
 FAIL TypeScript/tests/cases/compiler/jsxIntrinsicElementsTypeArgumentErrors.tsx | expected:[TS1009,TS1099,TS2304,TS2344,TS2558] actual:[TS1099]
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixIntrinsics.tsx | expected:[TS2322,TS2339] actual:[TS2322,TS2339]
-FAIL TypeScript/tests/cases/compiler/jsxRuntimePragma.ts | expected:[] actual:[TS2322,TS2741]
 FAIL TypeScript/tests/cases/compiler/keyRemappingKeyofResult.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/keyofIsLiteralContexualType.ts | expected:[TS2322,TS2339] actual:[TS2322,TS2339]
 FAIL TypeScript/tests/cases/compiler/knockout.ts | expected:[TS2339] actual:[TS2339]
@@ -383,9 +382,7 @@ FAIL TypeScript/tests/cases/compiler/varianceReferences.ts | expected:[TS2322,TS
 FAIL TypeScript/tests/cases/compiler/widenToAny1.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/async/es2017/asyncArrowFunction/asyncArrowFunction_allowJs.ts | expected:[TS1064,TS2322,TS2345] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/async/es2017/await_incorrectThisType.ts | expected:[TS1320,TS2684] actual:[TS2322,TS2416,TS2684]
-FAIL TypeScript/tests/cases/conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration12_es2017.ts | expected:[TS1359] actual:[]
 FAIL TypeScript/tests/cases/conformance/async/es6/asyncImportedPromise_es6.ts | expected:[TS1064,TS2322] actual:[TS1064,TS2322]
-FAIL TypeScript/tests/cases/conformance/async/es6/functionDeclarations/asyncFunctionDeclaration12_es6.ts | expected:[TS1359] actual:[]
 FAIL TypeScript/tests/cases/conformance/classes/classDeclarations/classAbstractKeyword/classAbstractClinterfaceAssignability.ts | expected:[TS2322,TS2564] actual:[TS2322,TS2564]
 FAIL TypeScript/tests/cases/conformance/classes/classDeclarations/classBody/classBodyWithStatements.ts | expected:[TS1068,TS1128] actual:[TS1068,TS1128]
 FAIL TypeScript/tests/cases/conformance/classes/classDeclarations/declaredClassMergedwithSelf.ts | expected:[TS2300] actual:[TS2300]
@@ -450,7 +447,6 @@ FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of29.ts | expec
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of39.ts | expected:[TS2769] actual:[TS2769]
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of47.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of48.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/conformance/es6/functionDeclarations/FunctionDeclaration12_es6.ts | expected:[TS1212] actual:[]
 FAIL TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInArray5.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsTypeArgumentInference.ts | expected:[TS2322,TS2345,TS2403] actual:[TS2322,TS2345,TS2403]
 FAIL TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsTypeArgumentInferenceES6.ts | expected:[TS2322,TS2345,TS2403] actual:[TS2322,TS2345,TS2403]
@@ -647,6 +643,7 @@ FAIL TypeScript/tests/cases/conformance/node/nodeModulesResolveJsonModule.ts | e
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesSynchronousCallErrors.ts | expected:[TS1471,TS1479] actual:[TS1479]
 FAIL TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForTsJsImport.ts | expected:[TS2307] actual:[TS2307,TS2846,TS5097]
 FAIL TypeScript/tests/cases/conformance/override/override19.ts | expected:[TS4113,TS4117] actual:[TS4113,TS4117]
+FAIL TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.functionExpressions.es2018.ts | expected:[TS1109,TS5024] actual:[TS1109,TS1359,TS5024]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.objectLiteralMethods.es2018.ts | expected:[TS1005,TS1109,TS5024] actual:[TS1005,TS1109,TS5024]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.binaryNegative.ts | expected:[TS1351,TS6188,TS6189] actual:[TS1351,TS6188,TS6189]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.decmialNegative.ts | expected:[TS1005,TS1124,TS1128,TS1434,TS6188,TS6189] actual:[TS1005,TS1124,TS1128,TS1434,TS6188,TS6189]
@@ -4570,6 +4567,7 @@ PASS TypeScript/tests/cases/compiler/jsxNestedWithinTernaryParsesCorrectly.tsx
 PASS TypeScript/tests/cases/compiler/jsxPartialSpread.tsx
 PASS TypeScript/tests/cases/compiler/jsxPreserveWithJsInput.ts
 PASS TypeScript/tests/cases/compiler/jsxPropsAsIdentifierNames.tsx
+PASS TypeScript/tests/cases/compiler/jsxRuntimePragma.ts
 PASS TypeScript/tests/cases/compiler/jsxSpreadFirstUnionNoErrors.tsx
 PASS TypeScript/tests/cases/compiler/jsxSpreadTag.ts
 PASS TypeScript/tests/cases/compiler/jsxViaImport.2.tsx
@@ -7048,6 +7046,7 @@ PASS TypeScript/tests/cases/conformance/async/es2017/await_unaryExpression_es201
 PASS TypeScript/tests/cases/conformance/async/es2017/await_unaryExpression_es2017_3.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration10_es2017.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration11_es2017.ts
+PASS TypeScript/tests/cases/conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration12_es2017.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration13_es2017.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration14_es2017.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration1_es2017.ts
@@ -7174,6 +7173,7 @@ PASS TypeScript/tests/cases/conformance/async/es6/await_unaryExpression_es6_2.ts
 PASS TypeScript/tests/cases/conformance/async/es6/await_unaryExpression_es6_3.ts
 PASS TypeScript/tests/cases/conformance/async/es6/functionDeclarations/asyncFunctionDeclaration10_es6.ts
 PASS TypeScript/tests/cases/conformance/async/es6/functionDeclarations/asyncFunctionDeclaration11_es6.ts
+PASS TypeScript/tests/cases/conformance/async/es6/functionDeclarations/asyncFunctionDeclaration12_es6.ts
 PASS TypeScript/tests/cases/conformance/async/es6/functionDeclarations/asyncFunctionDeclaration13_es6.ts
 PASS TypeScript/tests/cases/conformance/async/es6/functionDeclarations/asyncFunctionDeclaration14_es6.ts
 PASS TypeScript/tests/cases/conformance/async/es6/functionDeclarations/asyncFunctionDeclaration15_es6.ts
@@ -8497,6 +8497,7 @@ PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of8.ts
 PASS TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of9.ts
 PASS TypeScript/tests/cases/conformance/es6/functionDeclarations/FunctionDeclaration10_es6.ts
 PASS TypeScript/tests/cases/conformance/es6/functionDeclarations/FunctionDeclaration11_es6.ts
+PASS TypeScript/tests/cases/conformance/es6/functionDeclarations/FunctionDeclaration12_es6.ts
 PASS TypeScript/tests/cases/conformance/es6/functionDeclarations/FunctionDeclaration13_es6.ts
 PASS TypeScript/tests/cases/conformance/es6/functionDeclarations/FunctionDeclaration1_es6.ts
 PASS TypeScript/tests/cases/conformance/es6/functionDeclarations/FunctionDeclaration2_es6.ts
@@ -10496,7 +10497,6 @@ PASS TypeScript/tests/cases/conformance/override/override_js3.ts
 PASS TypeScript/tests/cases/conformance/override/override_js4.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.classMethods.es2018.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.functionDeclarations.es2018.ts
-PASS TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.functionExpressions.es2018.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript2018/forAwait/parser.forAwait.es2018.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.binary.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.decimal.ts
