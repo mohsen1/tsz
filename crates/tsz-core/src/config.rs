@@ -150,7 +150,11 @@ pub struct CompilerOptions {
     pub no_lib: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub lib_replacement: Option<bool>,
-    #[serde(default, deserialize_with = "deserialize_bool_or_string", rename = "noTypesAndSymbols")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_bool_or_string",
+        rename = "noTypesAndSymbols"
+    )]
     pub no_types_and_symbols: Option<bool>,
     #[serde(default)]
     pub base_url: Option<String>,
