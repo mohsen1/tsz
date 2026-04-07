@@ -1296,8 +1296,8 @@ impl<'a> TypeFormatter<'a> {
 
     pub(super) fn format_def_name(&mut self, def: &crate::def::DefinitionInfo) -> String {
         // Try to build a qualified name by walking the symbol parent chain.
-        // tsc qualifies type names with their containing namespace (e.g., `m.variable`)
-        // and enum (e.g., `Choice.Yes`) to disambiguate from同名 types in other scopes.
+        // tsc qualifies type names with their containing enum (e.g., `Choice.Yes`)
+        // but uses SHORT names for types inside namespaces (e.g., `Line` not `A.Line`).
         if let Some(sym_raw) = def.symbol_id
             && let Some(arena) = self.symbol_arena
             && let Some(symbol) = arena.get(SymbolId(sym_raw))
@@ -1308,11 +1308,8 @@ impl<'a> TypeFormatter<'a> {
 
             while current_parent != SymbolId::NONE {
                 if let Some(parent_sym) = arena.get(current_parent) {
-                    let is_qualifying_parent = parent_sym.has_any_flags(
-                        symbol_flags::ENUM
-                            | symbol_flags::VALUE_MODULE
-                            | symbol_flags::NAMESPACE_MODULE,
-                    );
+                    // Only qualify with enum parents, not namespace/module parents.
+                    let is_qualifying_parent = parent_sym.has_any_flags(symbol_flags::ENUM);
                     let name = &parent_sym.escaped_name;
                     let is_file_module = name.starts_with('"')
                         || name.starts_with("__")
