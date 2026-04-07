@@ -241,10 +241,6 @@ impl<'a> CheckerState<'a> {
                     source_error_node,
                     fallback_error_node,
                 );
-                eprintln!(
-                    "DEBUG check_return_statement: ok={}, source={:?}, fallback={:?}",
-                    ok, source_error_node, fallback_error_node
-                );
                 if !ok {
                     // TS2409: In constructors, also emit the constructor-specific diagnostic
                     // alongside the TS2322 already emitted by check_assignable_or_report.
