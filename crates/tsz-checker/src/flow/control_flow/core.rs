@@ -2054,7 +2054,7 @@ impl<'a> FlowAnalyzer<'a> {
         {
             // The predicate target is !innerCall
             // Check if the inner call's argument matches our reference
-            if let Some((guard, guard_target, _is_optional)) =
+            if let Some((_guard, guard_target, _is_optional)) =
                 self.extract_type_guard(unary.operand)
             {
                 if self.is_matching_reference(guard_target, reference) {
