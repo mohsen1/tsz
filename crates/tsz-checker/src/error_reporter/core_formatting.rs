@@ -100,9 +100,20 @@ impl<'a> CheckerState<'a> {
         }
 
         let display_ty = self.normalize_assignability_display_type(ty);
-        // Do NOT use display properties — tsc shows widened property types
-        // in error messages: `{ two: number }` not `{ two: 1 }`.
-        let mut formatted = self.format_type_diagnostic(display_ty);
+        // For fresh object literal types, format without display properties so
+        // widened types are shown: `{ two: number }` not `{ two: 1 }`.
+        // Other types (class expressions, interfaces) keep their display properties
+        // to preserve named type display (e.g., `typeof A`).
+        // A fresh object literal has display_properties AND an anonymous shape (no symbol).
+        // Class expressions/interfaces have symbols so they don't match.
+        let is_fresh_object_literal = self.ctx.types.get_display_properties(display_ty).is_some()
+            && tsz_solver::type_queries::get_object_shape(self.ctx.types, display_ty)
+                .is_some_and(|shape| shape.symbol.is_none());
+        let mut formatted = if is_fresh_object_literal {
+            self.format_type_diagnostic_widened(display_ty)
+        } else {
+            self.format_type_diagnostic(display_ty)
+        };
 
         // Preserve generic instantiations for nominal class instance names when possible.
         if !formatted.contains('<')
