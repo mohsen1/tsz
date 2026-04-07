@@ -722,7 +722,6 @@ FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess.ts | e
 FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess2.ts | expected:[TS2322,TS2339,TS2739,TS2862,TS7053] actual:[TS2322,TS2339,TS2536,TS2739,TS7053]
 FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccessErrors.ts | expected:[TS2304,TS2322,TS2339,TS2345,TS2536,TS2537,TS2538,TS2564] actual:[TS2304,TS2322,TS2339,TS2345,TS2536,TS2537,TS2538,TS2564]
 FAIL TypeScript/tests/cases/conformance/types/literal/enumLiteralTypes3.ts | expected:[TS2322,TS2367,TS2678] actual:[TS2322,TS2367,TS2678]
-FAIL TypeScript/tests/cases/conformance/types/literal/literalTypeWidening.ts | expected:[] actual:[TS2783]
 FAIL TypeScript/tests/cases/conformance/types/literal/stringEnumLiteralTypes3.ts | expected:[TS2322,TS2367,TS2678] actual:[TS2322,TS2367,TS2678]
 FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsAssertionsInEqualityComparisons02.ts | expected:[TS2352,TS2367] actual:[TS2352,TS2367]
 FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsAssignedToStringMappings.ts | expected:[TS2322] actual:[TS2322]
@@ -11744,6 +11743,7 @@ PASS TypeScript/tests/cases/conformance/types/literal/booleanLiteralTypes1.ts
 PASS TypeScript/tests/cases/conformance/types/literal/booleanLiteralTypes2.ts
 PASS TypeScript/tests/cases/conformance/types/literal/enumLiteralTypes1.ts
 PASS TypeScript/tests/cases/conformance/types/literal/enumLiteralTypes2.ts
+PASS TypeScript/tests/cases/conformance/types/literal/literalTypeWidening.ts
 PASS TypeScript/tests/cases/conformance/types/literal/literalTypes1.ts
 PASS TypeScript/tests/cases/conformance/types/literal/literalTypes2.ts
 PASS TypeScript/tests/cases/conformance/types/literal/literalTypes3.ts
