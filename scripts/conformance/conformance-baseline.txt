@@ -210,10 +210,6 @@ FAIL TypeScript/tests/cases/compiler/modularizeLibrary_ErrorFromUsingES6ArrayWit
 FAIL TypeScript/tests/cases/compiler/modularizeLibrary_ErrorFromUsingES6FeaturesWithOnlyES5Lib.ts | expected:[TS2304,TS2339,TS2550,TS2583,TS2585] actual:[TS2339,TS2551,TS2583,TS2585]
 FAIL TypeScript/tests/cases/compiler/moduleAndInterfaceWithSameName.ts | expected:[TS2339] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationEnumClassMergeOfReexportIsError.ts | expected:[TS2564,TS2567] actual:[TS2564,TS2567]
-FAIL TypeScript/tests/cases/compiler/moduleAugmentationImportsAndExports1.ts | expected:[TS2322,TS2454,TS2564] actual:[TS2322,TS2454,TS2564]
-FAIL TypeScript/tests/cases/compiler/moduleAugmentationImportsAndExports4.ts | expected:[TS2322,TS2454,TS2564] actual:[TS2322,TS2454,TS2564]
-FAIL TypeScript/tests/cases/compiler/moduleAugmentationImportsAndExports5.ts | expected:[TS2322,TS2454,TS2564] actual:[TS2322,TS2454,TS2564]
-FAIL TypeScript/tests/cases/compiler/moduleAugmentationImportsAndExports6.ts | expected:[TS2322,TS2454,TS2564] actual:[TS2322,TS2454,TS2564]
 FAIL TypeScript/tests/cases/compiler/moduleDetectionIsolatedModulesCjsFileScope.ts | expected:[] actual:[TS2451]
 FAIL TypeScript/tests/cases/compiler/moduleElementsInWrongContext.ts | expected:[TS1184,TS1231,TS1232,TS1233,TS1234,TS1235,TS1258,TS2305,TS2307] actual:[TS1184,TS1202,TS2307]
 FAIL TypeScript/tests/cases/compiler/moduleElementsInWrongContext2.ts | expected:[TS1184,TS1231,TS1232,TS1233,TS1234,TS1235,TS1258] actual:[TS1184]
@@ -4841,8 +4837,12 @@ PASS TypeScript/tests/cases/compiler/moduleAugmentationGlobal7.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationGlobal7_1.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationGlobal8.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationGlobal8_1.ts
+PASS TypeScript/tests/cases/compiler/moduleAugmentationImportsAndExports1.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationImportsAndExports2.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationImportsAndExports3.ts
+PASS TypeScript/tests/cases/compiler/moduleAugmentationImportsAndExports4.ts
+PASS TypeScript/tests/cases/compiler/moduleAugmentationImportsAndExports5.ts
+PASS TypeScript/tests/cases/compiler/moduleAugmentationImportsAndExports6.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule1.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule2.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule3.ts
