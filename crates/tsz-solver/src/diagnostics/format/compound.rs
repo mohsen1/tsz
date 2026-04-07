@@ -834,10 +834,16 @@ impl<'a> TypeFormatter<'a> {
         // normalize_intersection skips sorting and preserves source/declaration order.
         // tsc also preserves the original declaration order, so displaying members
         // in their stored order matches tsc's behavior.
+        //
+        // Enable display properties for intersection members to preserve literal types
+        // in error messages (e.g., `{ fooProp: "frizzlebizzle" }` not `{ fooProp: string }`).
+        let prev = self.use_display_properties;
+        self.use_display_properties = true;
         let formatted: Vec<String> = members
             .iter()
             .map(|&m| self.format_intersection_member(m))
             .collect();
+        self.use_display_properties = prev;
         formatted.join(" & ")
     }
 
