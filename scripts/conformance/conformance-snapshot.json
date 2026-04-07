@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-04-07T11:58:54Z",
-  "git_sha": "ddddbbbc00d39841b09fed4d34b6500d9304b6e6",
+  "timestamp": "2026-04-07T12:03:42Z",
+  "git_sha": "d2e415f9589188330b197b3e62437616557689d5",
   "summary": {
     "total_tests": 12581,
     "passed": 11743,
@@ -734,11 +734,11 @@
       "count": 1
     },
     {
-      "code": "TS2344",
+      "code": "TS5057",
       "count": 1
     },
     {
-      "code": "TS5057",
+      "code": "TS2344",
       "count": 1
     },
     {
@@ -1052,15 +1052,15 @@
       "count": 1
     },
     {
-      "code": "TS2344",
-      "count": 1
-    },
-    {
       "code": "TS5057",
       "count": 1
     },
     {
       "code": "TS1062",
+      "count": 1
+    },
+    {
+      "code": "TS2344",
       "count": 1
     },
     {
