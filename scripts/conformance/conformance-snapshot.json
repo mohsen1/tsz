@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-04-07T10:40:16Z",
+  "timestamp": "2026-04-07T10:42:40Z",
   "git_sha": "2ead4739384c1cd7234116c90ec4c08ad6ca8c3d",
   "summary": {
     "total_tests": 12581,
@@ -746,11 +746,11 @@
       "count": 1
     },
     {
-      "code": "TS2307",
+      "code": "TS9006",
       "count": 1
     },
     {
-      "code": "TS9006",
+      "code": "TS2307",
       "count": 1
     },
     {
@@ -884,15 +884,15 @@
       "count": 1
     },
     {
-      "code": "TS2457",
-      "count": 1
-    },
-    {
       "code": "TS1177",
       "count": 1
     },
     {
       "code": "TS1178",
+      "count": 1
+    },
+    {
+      "code": "TS2457",
       "count": 1
     },
     {
@@ -1056,11 +1056,11 @@
       "count": 1
     },
     {
-      "code": "TS1062",
+      "code": "TS2344",
       "count": 1
     },
     {
-      "code": "TS2344",
+      "code": "TS1062",
       "count": 1
     },
     {
@@ -1068,11 +1068,11 @@
       "count": 1
     },
     {
-      "code": "TS2307",
+      "code": "TS9006",
       "count": 1
     },
     {
-      "code": "TS9006",
+      "code": "TS2307",
       "count": 1
     },
     {
