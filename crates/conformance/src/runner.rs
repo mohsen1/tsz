@@ -972,13 +972,10 @@ impl Runner {
                     // The TSC cache only stores file-level diagnostics, but our compiler also emits
                     // config-level deprecation warnings. These should not be compared as they are
                     // compiler configuration diagnostics, not file-level type checking diagnostics.
-                    // Also filter project-level diagnostics (TS5057, TS5058, TS5081) that the cache
+                    // Also filter project-level diagnostics (TS5057, TS5058, TS5081, TS18003) that the cache
                     // stores in fingerprints but not in error_codes.
                     let config_level_codes: std::collections::HashSet<u32> =
-                        [5057u32, 5058u32, 5081u32, 5101u32, 5107u32]
-                            .iter()
-                            .cloned()
-                            .collect();
+                        [18003u32, 5057u32, 5058u32, 5081u32, 5101u32, 5107u32].iter().cloned().collect();
                     tsc_error_codes.retain(|c| !config_level_codes.contains(c));
                     let tsc_fps: Vec<_> = tsc_fps
                         .into_iter()
@@ -995,13 +992,10 @@ impl Runner {
                     // The TSC cache only stores file-level diagnostics, but our compiler also emits
                     // config-level deprecation warnings. These should not be compared as they are
                     // compiler configuration diagnostics, not file-level type checking diagnostics.
-                    // Also filter project-level diagnostics (TS5057, TS5058, TS5081) that the cache
+                    // Also filter project-level diagnostics (TS5057, TS5058, TS5081, TS18003) that the cache
                     // stores in fingerprints but not in error_codes.
                     let config_level_codes: std::collections::HashSet<u32> =
-                        [5057u32, 5058u32, 5081u32, 5101u32, 5107u32]
-                            .iter()
-                            .cloned()
-                            .collect();
+                        [18003u32, 5057u32, 5058u32, 5081u32, 5101u32, 5107u32].iter().cloned().collect();
                     let tsc_error_codes: Vec<u32> = tsc_error_codes
                         .into_iter()
                         .filter(|c| !config_level_codes.contains(c))
