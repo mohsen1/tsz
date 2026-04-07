@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-04-06T23:58:04Z",
-  "git_sha": "d75bacbf920c54eadc5015e40c7b79faf2e81ca0",
+  "timestamp": "2026-04-07T00:14:19Z",
+  "git_sha": "61548741f3adf077c59e6ba668c487a215249b4d",
   "summary": {
     "total_tests": 12581,
-    "passed": 11769,
-    "failed": 812,
+    "passed": 11768,
+    "failed": 813,
     "pass_rate": 93.5
   },
   "areas_by_pass_rate": [
@@ -333,9 +333,9 @@
     {
       "area": "compiler",
       "total": 6519,
-      "passed": 6149,
-      "failed": 370,
-      "pass_rate": 94.32
+      "passed": 6148,
+      "failed": 371,
+      "pass_rate": 94.31
     },
     {
       "area": "functions",
@@ -754,11 +754,11 @@
       "count": 1
     },
     {
-      "code": "TS9006",
+      "code": "TS2307",
       "count": 1
     },
     {
-      "code": "TS2307",
+      "code": "TS9006",
       "count": 1
     },
     {
@@ -1092,11 +1092,11 @@
       "count": 1
     },
     {
-      "code": "TS9006",
+      "code": "TS2307",
       "count": 1
     },
     {
-      "code": "TS2307",
+      "code": "TS9006",
       "count": 1
     },
     {
@@ -1488,7 +1488,7 @@
     "false_positive": 1,
     "all_missing": 45,
     "wrong_code": 169,
-    "fingerprint_only": 595,
+    "fingerprint_only": 596,
     "close_to_passing": 89
   }
 }
