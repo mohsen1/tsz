@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-04-07T11:48:16Z",
-  "git_sha": "5e9d77fcc4b55c1c2b430591f93777d29eb7e958",
+  "timestamp": "2026-04-07T11:58:20Z",
+  "git_sha": "ddddbbbc00d39841b09fed4d34b6500d9304b6e6",
   "summary": {
     "total_tests": 12581,
     "passed": 11742,
@@ -338,17 +338,17 @@
       "pass_rate": 93.94
     },
     {
+      "area": "compiler",
+      "total": 6519,
+      "passed": 6135,
+      "failed": 384,
+      "pass_rate": 94.11
+    },
+    {
       "area": "declarationEmit",
       "total": 17,
       "passed": 16,
       "failed": 1,
-      "pass_rate": 94.12
-    },
-    {
-      "area": "compiler",
-      "total": 6519,
-      "passed": 6136,
-      "failed": 383,
       "pass_rate": 94.12
     },
     {
@@ -942,11 +942,11 @@
       "count": 7
     },
     {
-      "code": "TS1003",
+      "code": "TS1434",
       "count": 5
     },
     {
-      "code": "TS1434",
+      "code": "TS1003",
       "count": 5
     },
     {
@@ -1122,6 +1122,10 @@
       "count": 1
     },
     {
+      "code": "TS2740",
+      "count": 1
+    },
+    {
       "code": "TS2305",
       "count": 1
     },
@@ -1132,15 +1136,15 @@
     {
       "code": "TS1003",
       "count": 1
-    },
-    {
-      "code": "TS1359",
-      "count": 1
     }
   ],
   "false_positive_codes": [
     {
       "code": "TS2345",
+      "count": 1
+    },
+    {
+      "code": "TS2740",
       "count": 1
     }
   ],
@@ -1186,11 +1190,11 @@
       "count": 7
     },
     {
-      "code": "TS1003",
+      "code": "TS1434",
       "count": 5
     },
     {
-      "code": "TS1434",
+      "code": "TS1003",
       "count": 5
     },
     {
@@ -1469,10 +1473,10 @@
     }
   ],
   "categories": {
-    "false_positive": 1,
+    "false_positive": 2,
     "all_missing": 43,
-    "wrong_code": 161,
+    "wrong_code": 160,
     "fingerprint_only": 634,
-    "close_to_passing": 82
+    "close_to_passing": 81
   }
 }
