@@ -107,7 +107,7 @@ pub fn constituent_count(db: &dyn TypeDatabase, type_id: TypeId) -> u64 {
             members
                 .iter()
                 .map(|m| constituent_count(db, *m))
-                .product::<u64>()
+                .fold(1u64, |acc, count| acc.saturating_mul(count))
                 .max(1)
         }
         _ => 1,

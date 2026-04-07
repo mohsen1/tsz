@@ -1295,17 +1295,43 @@ impl<'a> TypeFormatter<'a> {
     }
 
     pub(super) fn format_def_name(&mut self, def: &crate::def::DefinitionInfo) -> String {
-        // Always use the short (unqualified) definition name.
-        // Enum member qualification (e.g., `Choice.Yes`) is handled by
-        // `format_symbol_name` through the `resolve_symbol_ref_name` path.
-        // Using `format_symbol_name` here causes cross-binder SymbolId
-        // collisions where the def's symbol_id maps to a namespace-qualified
-        // symbol in the current binder (e.g., `A.B` instead of just `B`).
-        //
-        // NOTE: Namespace qualification (e.g., `m.variable` vs `variable`) requires
-        // scope-aware disambiguation that the formatter lacks. tsc only qualifies
-        // when the short name would be ambiguous at the diagnostic location's scope.
-        // A future enhancement could pass scope context from the checker.
+        // Try to build a qualified name by walking the symbol parent chain.
+        // tsc qualifies type names with their containing namespace (e.g., `m.variable`)
+        // and enum (e.g., `Choice.Yes`) to disambiguate from同名 types in other scopes.
+        if let Some(sym_raw) = def.symbol_id
+            && let Some(arena) = self.symbol_arena
+            && let Some(symbol) = arena.get(SymbolId(sym_raw))
+        {
+            use tsz_binder::symbol_flags;
+            let mut qualified_name = symbol.escaped_name.to_string();
+            let mut current_parent = symbol.parent;
+
+            while current_parent != SymbolId::NONE {
+                if let Some(parent_sym) = arena.get(current_parent) {
+                    let is_qualifying_parent = parent_sym.has_any_flags(
+                        symbol_flags::ENUM | symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE,
+                    );
+                    let name = &parent_sym.escaped_name;
+                    let is_file_module = name.starts_with('"')
+                        || name.starts_with("__")
+                        || name.contains('/')
+                        || name.contains('\\')
+                        || name.is_empty();
+                    if is_qualifying_parent && !is_file_module {
+                        qualified_name = format!("{}.{}", parent_sym.escaped_name, qualified_name);
+                        current_parent = parent_sym.parent;
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            return qualified_name;
+        }
+
+        // Fallback: use the short (unqualified) definition name.
         self.atom(def.name).to_string()
     }
 }
