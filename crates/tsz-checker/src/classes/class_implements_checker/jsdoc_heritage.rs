@@ -604,8 +604,17 @@ impl<'a> CheckerState<'a> {
         }
 
         for target_name in &implements_names {
-            // Resolve the target symbol from file_locals
-            let Some(sym_id) = self.ctx.binder.file_locals.get(target_name) else {
+            // Resolve the target symbol - first try flat lookup, then qualified name resolution
+            let sym_id = if let Some(sym) = self.ctx.binder.file_locals.get(target_name) {
+                Some(sym)
+            } else if target_name.contains('.') {
+                // Try to resolve as a qualified name (e.g., "NS.I" from @import * as NS)
+                self.resolve_jsdoc_entity_name_symbol(target_name)
+            } else {
+                None
+            };
+            
+            let Some(sym_id) = sym_id else {
                 continue;
             };
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
