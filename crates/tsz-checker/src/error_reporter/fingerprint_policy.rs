@@ -871,9 +871,10 @@ impl<'a> CheckerState<'a> {
 
     /// Choose the anchor for a variable declaration assignment error.
     ///
-    /// For `var` declarations with property access initializers, tsc points at
-    /// the initializer (e.g., `var x: T = obj.prop;` -> points at `obj.prop`).
-    /// For `let`/`const` or other initializers, tsc points at the variable name.
+    /// For `var` declarations with property access initializers where the
+    /// initializer type is callable, tsc points at the initializer
+    /// (e.g., `var x: T = obj.prop;` -> points at `obj.prop`).
+    /// For `let`/`const` or non-callable initializers, tsc points at the variable name.
     fn variable_declaration_anchor(
         &self,
         vd: &tsz_parser::parser::node::VariableDeclarationData,
@@ -891,12 +892,21 @@ impl<'a> CheckerState<'a> {
             false
         };
 
-        // For `var` (not let/const) with property access initializers, tsc points at the property access.
-        // For `let`/`const` or non-property-access initializers, point at the variable name.
+        // For `var` (not let/const) with property access initializers where the
+        // initializer type is callable, tsc points at the property access.
+        // For `let`/`const` or non-callable initializers, point at the variable name.
         if !is_let_or_const && vd.initializer.is_some() {
             if let Some(init_node) = self.ctx.arena.get(vd.initializer) {
                 if init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                    return vd.initializer;
+                    // Check if the initializer type is callable (function-like).
+                    // tsc points at the initializer for callable types but at the
+                    // variable name for non-callable types.
+                    // Use the cached type directly to avoid &mut self requirement.
+                    if let Some(&init_type) = self.ctx.node_types.get(&vd.initializer.0) {
+                        if self.is_callable_type(init_type) {
+                            return vd.initializer;
+                        }
+                    }
                 }
             }
         }
@@ -904,6 +914,19 @@ impl<'a> CheckerState<'a> {
             return vd.name;
         }
         vd.initializer
+    }
+
+    /// Check if a type is callable (function, method, constructor, etc.).
+    fn is_callable_type(&self, ty: TypeId) -> bool {
+        use crate::query_boundaries::diagnostics::{callable_shape_for_type, function_shape};
+
+        if function_shape(self.ctx.types, ty).is_some() {
+            return true;
+        }
+        if callable_shape_for_type(self.ctx.types, ty).is_some() {
+            return true;
+        }
+        false
     }
 
     fn call_primary_anchor_node(&self, idx: NodeIndex) -> NodeIndex {
