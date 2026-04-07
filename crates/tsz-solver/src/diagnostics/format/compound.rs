@@ -1303,7 +1303,15 @@ impl<'a> TypeFormatter<'a> {
             && let Some(symbol) = arena.get(SymbolId(sym_raw))
         {
             use tsz_binder::symbol_flags;
-            let mut qualified_name = symbol.escaped_name.to_string();
+            // For anonymous class expressions assigned to variables, the binder
+            // creates a symbol named "(Anonymous class)" but tsc displays the
+            // variable name instead. Prefer the definition's name in this case.
+            let base_name = if symbol.escaped_name == "(Anonymous class)" {
+                self.atom(def.name).to_string()
+            } else {
+                symbol.escaped_name.to_string()
+            };
+            let mut qualified_name = base_name;
             let mut current_parent = symbol.parent;
 
             while current_parent != SymbolId::NONE {
