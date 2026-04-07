@@ -122,6 +122,22 @@ impl<'a> CheckerState<'a> {
             return alias_name;
         }
 
+        // When the type is the body of a non-generic type alias AND has a
+        // display_alias (produced by evaluating a generic Application like
+        // `Id<{...}>`), format the Application directly.
+        // Example: `type Foo1 = Id<{...}>` should show `Id<{...}>` in
+        // assignability messages, not `Foo1`.
+        // Only applies to TypeAlias definitions (not interfaces/classes),
+        // since those should preserve their names.
+        if let Some(display_alias) = self.ctx.types.get_display_alias(ty)
+            && let Some(def_id) = self.ctx.definition_store.find_def_for_type(ty)
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+            && def.kind == tsz_solver::def::DefKind::TypeAlias
+            && def.type_params.is_empty()
+        {
+            return self.format_type_diagnostic(display_alias);
+        }
+
         let display_ty = self.normalize_assignability_display_type(ty);
         // Do NOT use display properties — tsc shows widened property types
         // in error messages: `{ two: number }` not `{ two: 1 }`.
