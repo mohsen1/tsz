@@ -852,21 +852,35 @@ impl<'a> CheckerState<'a> {
                     expected_name,
                     Some(source_file_idx),
                 ) {
+                    // Use get_cross_file_symbol first, then fall back to
+                    // get_symbol_with_libs. When the target comes from a
+                    // different binder (ambient module, cross-file export),
+                    // SymbolId values can collide with the current binder's
+                    // symbols, causing incorrect flag lookups.
                     let target_flags = self
-                        .ctx
-                        .binder
-                        .get_symbol_with_libs(target_sym_id, &lib_binders)
+                        .get_cross_file_symbol(target_sym_id)
+                        .or_else(|| {
+                            self.ctx
+                                .binder
+                                .get_symbol_with_libs(target_sym_id, &lib_binders)
+                        })
                         .map_or(0, |s| s.flags);
                     let target_is_namespace_module = (target_flags
                         & (symbol_flags::MODULE
                             | symbol_flags::NAMESPACE_MODULE
                             | symbol_flags::VALUE_MODULE))
                         != 0;
-                    let target_is_value_only = (self
-                        .alias_resolves_to_value_only(target_sym_id, None)
-                        || self.symbol_is_value_only(target_sym_id, None))
-                        && !self.symbol_is_type_only(target_sym_id, None);
-                    return Some(if target_is_value_only && !target_is_namespace_module {
+                    // Use the already-resolved target_flags for value-only
+                    // classification. The internal symbol_is_value_only /
+                    // alias_resolves_to_value_only helpers use lookup_symbol_with_name
+                    // which searches the current binder — that can return a
+                    // WRONG symbol when SymbolIds collide across binders.
+                    let target_has_type =
+                        (target_flags & (symbol_flags::TYPE | symbol_flags::TYPE_ALIAS)) != 0;
+                    let target_has_value = (target_flags & symbol_flags::VALUE) != 0;
+                    let target_is_value_only =
+                        target_has_value && !target_has_type && !target_is_namespace_module;
+                    return Some(if target_is_value_only {
                         TypeSymbolResolution::ValueOnly(target_sym_id)
                     } else {
                         TypeSymbolResolution::Type(target_sym_id)
@@ -890,21 +904,27 @@ impl<'a> CheckerState<'a> {
                             module_name,
                         );
                     }
+                    // Use get_cross_file_symbol to avoid SymbolId collision
+                    // across binders (same fix as the first branch above).
                     let target_flags = self
-                        .ctx
-                        .binder
-                        .get_symbol_with_libs(target_sym_id, &lib_binders)
+                        .get_cross_file_symbol(target_sym_id)
+                        .or_else(|| {
+                            self.ctx
+                                .binder
+                                .get_symbol_with_libs(target_sym_id, &lib_binders)
+                        })
                         .map_or(0, |s| s.flags);
                     let target_is_namespace_module = (target_flags
                         & (symbol_flags::MODULE
                             | symbol_flags::NAMESPACE_MODULE
                             | symbol_flags::VALUE_MODULE))
                         != 0;
-                    let target_is_value_only = (self
-                        .alias_resolves_to_value_only(target_sym_id, None)
-                        || self.symbol_is_value_only(target_sym_id, None))
-                        && !self.symbol_is_type_only(target_sym_id, None);
-                    if target_is_value_only && !target_is_namespace_module {
+                    let target_has_type =
+                        (target_flags & (symbol_flags::TYPE | symbol_flags::TYPE_ALIAS)) != 0;
+                    let target_has_value = (target_flags & symbol_flags::VALUE) != 0;
+                    let target_is_value_only =
+                        target_has_value && !target_has_type && !target_is_namespace_module;
+                    if target_is_value_only {
                         TypeSymbolResolution::ValueOnly(target_sym_id)
                     } else {
                         TypeSymbolResolution::Type(target_sym_id)
