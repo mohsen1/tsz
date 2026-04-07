@@ -1491,3 +1491,36 @@ fn test_estimated_size_bytes_grows_with_functions() {
         "Size should grow after interning functions: baseline={baseline}, after={after_fns}"
     );
 }
+
+/// TS2590: Intersection of many unions should trigger the union_too_complex flag.
+///
+/// When `normalize_intersection` receives an all-union intersection like
+/// `(A|B) & (C|D) & ... & (Y|Z)` with a cross-product ≥ 100,000,
+/// the flag must be set even though distribution is skipped.
+#[test]
+fn test_intersection_of_many_unions_sets_too_complex_flag() {
+    let interner = TypeInterner::new();
+
+    // Create 18 unions, each with 2 members → cross-product = 2^18 = 262,144 > 100,000
+    let mut union_members = Vec::new();
+    for i in 0..18u32 {
+        let a_name = interner.intern_string(&format!("a{i}"));
+        let b_name = interner.intern_string(&format!("b{i}"));
+        let obj_a = interner.object(vec![PropertyInfo::new(a_name, TypeId::STRING)]);
+        let obj_b = interner.object(vec![PropertyInfo::new(b_name, TypeId::NUMBER)]);
+        let u = interner.union(vec![obj_a, obj_b]);
+        union_members.push(u);
+    }
+
+    // Clear any flag that might have been set during union construction
+    let _ = interner.take_union_too_complex();
+
+    // Create the intersection of 18 unions
+    let _result = interner.intersection(union_members);
+
+    // The flag should be set because 2^18 = 262,144 > 100,000
+    assert!(
+        interner.take_union_too_complex(),
+        "Intersection of 18 two-member unions should set union_too_complex flag (cross-product = 2^18 = 262,144)"
+    );
+}

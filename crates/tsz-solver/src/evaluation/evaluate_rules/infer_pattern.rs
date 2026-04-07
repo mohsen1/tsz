@@ -292,6 +292,71 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Collect the names of `infer` type variables that appear in contravariant
+    /// positions (function/callable parameter types) within `pattern`.
+    ///
+    /// Used when matching a union source against a pattern: infer variables in
+    /// covariant positions merge via union, contravariant via intersection.
+    fn collect_contravariant_infer_names(&self, pattern: TypeId) -> FxHashSet<Atom> {
+        let mut result = FxHashSet::default();
+        self.collect_infer_names_in_params(pattern, &mut result);
+        result
+    }
+
+    /// Recursively find `Infer` nodes inside function/callable parameter types.
+    fn collect_infer_names_in_params(&self, ty: TypeId, out: &mut FxHashSet<Atom>) {
+        match self.interner().lookup(ty) {
+            Some(TypeData::Function(fn_id)) => {
+                let shape = self.interner().function_shape(fn_id);
+                for param in &shape.params {
+                    self.collect_all_infer_names(param.type_id, out);
+                }
+            }
+            Some(TypeData::Callable(callable_id)) => {
+                let shape = self.interner().callable_shape(callable_id);
+                for sig in &shape.call_signatures {
+                    for param in &sig.params {
+                        self.collect_all_infer_names(param.type_id, out);
+                    }
+                }
+                for sig in &shape.construct_signatures {
+                    for param in &sig.params {
+                        self.collect_all_infer_names(param.type_id, out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Collect all `Infer` names reachable from `ty` (any variance).
+    fn collect_all_infer_names(&self, ty: TypeId, out: &mut FxHashSet<Atom>) {
+        match self.interner().lookup(ty) {
+            Some(TypeData::Infer(info)) => {
+                out.insert(info.name);
+            }
+            Some(TypeData::Union(members)) => {
+                for &m in self.interner().type_list(members).iter() {
+                    self.collect_all_infer_names(m, out);
+                }
+            }
+            Some(TypeData::Intersection(members)) => {
+                for &m in self.interner().type_list(members).iter() {
+                    self.collect_all_infer_names(m, out);
+                }
+            }
+            Some(TypeData::Array(elem)) => {
+                self.collect_all_infer_names(elem, out);
+            }
+            Some(TypeData::Tuple(elements)) => {
+                for elem in self.interner().tuple_list(elements).iter() {
+                    self.collect_all_infer_names(elem.type_id, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Bind an inferred type to an infer parameter.
     ///
     /// Handles constraint checking and merging with existing bindings.
@@ -914,6 +979,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let base = bindings.clone();
             let mut merged = base.clone();
 
+            // Determine which infer names appear in contravariant positions
+            // (function/callable parameters) of the pattern. For those, multiple
+            // candidates from union members should be intersected (not unioned).
+            // This is essential for `UnionToIntersection<U>`:
+            //   (U extends any ? (k: U) => void : never) extends ((k: infer I) => void) ? I : never
+            // where `I` is in a contravariant (parameter) position, so candidates
+            // from each union member are intersected to produce `A & B`.
+            let contravariant_infers = self.collect_contravariant_infer_names(pattern);
+
             for &member in members.iter() {
                 let mut local = base.clone();
                 if !self.match_infer_pattern(member, pattern, &mut local, visited, checker) {
@@ -927,7 +1001,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                     if let Some(existing) = merged.get_mut(&name) {
                         if *existing != ty {
-                            *existing = self.interner().union2(*existing, ty);
+                            if contravariant_infers.contains(&name) {
+                                *existing = self.interner().intersection2(*existing, ty);
+                            } else {
+                                *existing = self.interner().union2(*existing, ty);
+                            }
                         }
                     } else {
                         merged.insert(name, ty);

@@ -24234,3 +24234,109 @@ doSomething(new Dog(), () => new Animal());
         "Should not emit TS2322 for callback return type when TS2741 is emitted.\nTS2322 diagnostics: {ts2322_msgs:?}"
     );
 }
+
+/// TS2590: Simple test - intersection of many 2-member unions should flag as too complex.
+/// This verifies the solver flag propagates through the checker.
+#[test]
+fn test_simple_intersection_of_many_unions_emits_ts2590() {
+    // Create a function whose return type is an intersection of 18 two-member unions
+    // Cross-product = 2^18 = 262,144 > 100,000
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type A = { ref: { a: 1 } | { b: 1 } };
+type B = { ref: { a: 2 } | { b: 2 } };
+type C = { ref: { a: 3 } | { b: 3 } };
+type D = { ref: { a: 4 } | { b: 4 } };
+type E = { ref: { a: 5 } | { b: 5 } };
+type F = { ref: { a: 6 } | { b: 6 } };
+type G = { ref: { a: 7 } | { b: 7 } };
+type H = { ref: { a: 8 } | { b: 8 } };
+type I = { ref: { a: 9 } | { b: 9 } };
+type J = { ref: { a: 10 } | { b: 10 } };
+type K = { ref: { a: 11 } | { b: 11 } };
+type L = { ref: { a: 12 } | { b: 12 } };
+type M = { ref: { a: 13 } | { b: 13 } };
+type N = { ref: { a: 14 } | { b: 14 } };
+type O = { ref: { a: 15 } | { b: 15 } };
+type P = { ref: { a: 16 } | { b: 16 } };
+type Q = { ref: { a: 17 } | { b: 17 } };
+type R = { ref: { a: 18 } | { b: 18 } };
+declare function make(): A & B & C & D & E & F & G & H & I & J & K & L & M & N & O & P & Q & R;
+const x = make();
+const r = x.ref;
+        "#,
+    );
+    // We expect TS2590 because accessing `ref` on the intersection creates
+    // an intersection of 18 two-member unions (cross-product = 2^18 > 100,000)
+    assert!(
+        has_error(&diagnostics, 2590),
+        "Should emit TS2590 when property access on intersection creates too-complex union.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+/// TS2590: Test basic UnionToIntersection behavior
+#[test]
+fn test_union_to_intersection_basic() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type UnionToIntersection<U> = (U extends any ? (k: U) => void : never) extends ((k: infer I) => void) ? I : never;
+type A = { a: number };
+type B = { b: string };
+type AB = UnionToIntersection<A | B>;
+declare const x: AB;
+const a: number = x.a;
+const b: string = x.b;
+const c: number = x.b; // Should error: string not assignable to number
+        "#,
+    );
+    assert!(
+        has_error(&diagnostics, 2322),
+        "UnionToIntersection<A|B> should produce {{a: number}} & {{b: string}}, and 'string' not assignable to 'number' should emit TS2322.\nDiagnostics: {diagnostics:#?}"
+    );
+}
+
+/// TS2590: Test that UnionToIntersection distributes and creates intersection.
+/// This is a prerequisite for the normalizedIntersectionTooComplex conformance test.
+#[test]
+fn test_union_to_intersection_with_many_members_emits_ts2590() {
+    // Simplified version: explicit intersection through UnionToIntersection
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type UnionToIntersection<U> = (U extends any ? (k: U) => void : never) extends ((k: infer I) => void) ? I : never;
+
+type T0 = { ref: { a: 0 } | { b: 0 } };
+type T1 = { ref: { a: 1 } | { b: 1 } };
+type T2 = { ref: { a: 2 } | { b: 2 } };
+type T3 = { ref: { a: 3 } | { b: 3 } };
+type T4 = { ref: { a: 4 } | { b: 4 } };
+type T5 = { ref: { a: 5 } | { b: 5 } };
+type T6 = { ref: { a: 6 } | { b: 6 } };
+type T7 = { ref: { a: 7 } | { b: 7 } };
+type T8 = { ref: { a: 8 } | { b: 8 } };
+type T9 = { ref: { a: 9 } | { b: 9 } };
+type T10 = { ref: { a: 10 } | { b: 10 } };
+type T11 = { ref: { a: 11 } | { b: 11 } };
+type T12 = { ref: { a: 12 } | { b: 12 } };
+type T13 = { ref: { a: 13 } | { b: 13 } };
+type T14 = { ref: { a: 14 } | { b: 14 } };
+type T15 = { ref: { a: 15 } | { b: 15 } };
+type T16 = { ref: { a: 16 } | { b: 16 } };
+type T17 = { ref: { a: 17 } | { b: 17 } };
+type BigUnion = T0 | T1 | T2 | T3 | T4 | T5 | T6 | T7 | T8 | T9 | T10 | T11 | T12 | T13 | T14 | T15 | T16 | T17;
+type BigIntersection = UnionToIntersection<BigUnion>;
+declare function make(): BigIntersection;
+const x = make();
+const r = x.ref;
+        "#,
+        CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
+    );
+    let all_codes: Vec<u32> = diagnostics.iter().map(|(c, _)| *c).collect();
+    // Check if TS2590 is emitted - this validates UnionToIntersection evaluation
+    assert!(
+        has_error(&diagnostics, 2590),
+        "Should emit TS2590 when UnionToIntersection creates an intersection with too-complex cross-product.\nDiagnostics: {all_codes:?}\n{diagnostics:#?}"
+    );
+}
