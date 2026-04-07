@@ -392,6 +392,10 @@ struct CompilerOptions {
     #[serde(default, deserialize_with = "deserialize_bool_option")]
     no_lib: Option<bool>,
 
+    /// When true, do not load default types and symbols (test harness directive).
+    #[serde(default, deserialize_with = "deserialize_bool_option")]
+    no_types_and_symbols: Option<bool>,
+
     /// Add 'undefined' to a type when accessed using an index.
     #[serde(
         default,
@@ -632,7 +636,7 @@ impl CompilerOptions {
             strict_bind_call_apply: false,
             exact_optional_property_types: self.exact_optional_property_types.unwrap_or(false),
             no_lib: self.no_lib.unwrap_or(false),
-            no_types_and_symbols: false,
+            no_types_and_symbols: self.no_types_and_symbols.unwrap_or(false),
             target: self.resolve_target(),
             module: self.resolve_module(),
             jsx_factory: "React.createElement".to_string(),
