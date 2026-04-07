@@ -1249,7 +1249,9 @@ impl<'a> TypeFormatter<'a> {
 
         // Walk up the parent chain, qualifying with enum parents only.
         // tsc qualifies type names with their containing enum (e.g., `Choice.Yes`)
-        // but uses SHORT names for types inside namespaces (e.g., `Line` not `A.Line`).
+        // but uses SHORT names for types inside namespaces (e.g., `Line` not `A.Line`)
+        // unless disambiguation is needed (same name in outer scope). Namespace
+        // qualification requires scope-aware disambiguation not yet implemented.
         // Skip file-level module symbols (synthetic names like __test1__, "file.ts", etc.)
         // as those represent file modules, not declared namespaces.
         while current_parent != SymbolId::NONE {
