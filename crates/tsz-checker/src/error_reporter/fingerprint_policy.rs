@@ -746,7 +746,6 @@ impl<'a> CheckerState<'a> {
     }
 
     fn assignment_anchor_node(&self, idx: NodeIndex) -> NodeIndex {
-        eprintln!("DEBUG assignment_anchor_node: idx={:?}", idx);
         let mut current = idx;
         let mut saw_assignment_binary = false;
         let mut var_decl: Option<NodeIndex> = None;
