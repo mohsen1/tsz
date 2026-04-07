@@ -102,6 +102,11 @@ impl<'a> CheckerState<'a> {
                 return factory.readonly_type(inner_type);
             }
 
+            // Handle keyof operator
+            if operator == SyntaxKind::KeyOfKeyword as u16 {
+                return factory.keyof(inner_type);
+            }
+
             // Handle unique operator
             if operator == SyntaxKind::UniqueKeyword as u16 {
                 // unique is handled differently - it's a type modifier for symbols
