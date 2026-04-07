@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-04-07T18:44:19Z",
-  "git_sha": "561be009136a0ab58b9a8c890515f7bad5e2a171",
+  "timestamp": "2026-04-07T19:34:46Z",
+  "git_sha": "ca2bc5b3635f8cfc003534bfdb56b6914909da47",
   "summary": {
     "total_tests": 12581,
-    "passed": 11721,
-    "failed": 860,
+    "passed": 11722,
+    "failed": 859,
     "pass_rate": 93.2
   },
   "areas_by_pass_rate": [
@@ -333,9 +333,9 @@
     {
       "area": "compiler",
       "total": 6519,
-      "passed": 6113,
-      "failed": 406,
-      "pass_rate": 93.77
+      "passed": 6114,
+      "failed": 405,
+      "pass_rate": 93.79
     },
     {
       "area": "es6/yieldExpressions",
@@ -962,11 +962,11 @@
       "count": 7
     },
     {
-      "code": "TS1003",
+      "code": "TS1434",
       "count": 5
     },
     {
-      "code": "TS1434",
+      "code": "TS1003",
       "count": 5
     },
     {
@@ -1088,11 +1088,11 @@
       "count": 1
     },
     {
-      "code": "TS1062",
+      "code": "TS2344",
       "count": 1
     },
     {
-      "code": "TS2344",
+      "code": "TS1062",
       "count": 1
     },
     {
@@ -1248,11 +1248,11 @@
       "count": 3
     },
     {
-      "code": "TS2883",
+      "code": "TS2536",
       "count": 2
     },
     {
-      "code": "TS2536",
+      "code": "TS2883",
       "count": 2
     },
     {
@@ -1342,11 +1342,11 @@
       "count": 7
     },
     {
-      "code": "TS1003",
+      "code": "TS1434",
       "count": 5
     },
     {
-      "code": "TS1434",
+      "code": "TS1003",
       "count": 5
     },
     {
@@ -1624,7 +1624,7 @@
     "false_positive": 33,
     "all_missing": 59,
     "wrong_code": 171,
-    "fingerprint_only": 579,
+    "fingerprint_only": 578,
     "close_to_passing": 90
   }
 }

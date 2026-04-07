@@ -50,7 +50,6 @@ FAIL TypeScript/tests/cases/compiler/didYouMeanElaborationsForExpressionsWhichCo
 FAIL TypeScript/tests/cases/compiler/differentTypesWithSameName.ts | expected:[TS2345,TS2564] actual:[TS2345,TS2564]
 FAIL TypeScript/tests/cases/compiler/dissallowSymbolAsWeakType.ts | expected:[TS2345,TS2769] actual:[TS2345,TS2769]
 FAIL TypeScript/tests/cases/compiler/distributiveConditionalTypeConstraints.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/divergentAccessorsTypes6.ts | expected:[TS2322,TS2344] actual:[TS2322,TS2344]
 FAIL TypeScript/tests/cases/compiler/divergentAccessorsTypes8.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/divergentAccessorsVisibility1.ts | expected:[TS2341,TS2445,TS2808] actual:[TS2341,TS2445,TS2808]
 FAIL TypeScript/tests/cases/compiler/dontShowCompilerGeneratedMembers.ts | expected:[TS1109,TS1139] actual:[TS1128,TS1139]
@@ -2757,6 +2756,7 @@ PASS TypeScript/tests/cases/compiler/divergentAccessorsTypes2.ts
 PASS TypeScript/tests/cases/compiler/divergentAccessorsTypes3.ts
 PASS TypeScript/tests/cases/compiler/divergentAccessorsTypes4.ts
 PASS TypeScript/tests/cases/compiler/divergentAccessorsTypes5.ts
+PASS TypeScript/tests/cases/compiler/divergentAccessorsTypes6.ts
 PASS TypeScript/tests/cases/compiler/divergentAccessorsTypes7.ts
 PASS TypeScript/tests/cases/compiler/divideAndConquerIntersections.ts
 PASS TypeScript/tests/cases/compiler/doNotElaborateAssignabilityToTypeParameters.ts
