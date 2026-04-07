@@ -519,3 +519,31 @@ takes(1, 2);
         "TS2554 should cover the contiguous excess-argument span"
     );
 }
+
+#[test]
+fn ts2345_object_literal_argument_shows_widened_property_types() {
+    // tsc shows widened types in TS2345 messages: `{ e: number; m: number }`
+    // not `{ e: 1; m: 1 }`. This matches tsc's behavior of widening fresh
+    // object literal types in assignability error messages.
+    let source = r#"
+declare function foo(x: string): void;
+foo({ e: 1, m: 1 });
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text.contains("{ e: number; m: number; }"),
+        "TS2345 should show widened property types (number not 1). Got: {}",
+        diag.message_text
+    );
+    assert!(
+        !diag.message_text.contains("{ e: 1"),
+        "TS2345 should NOT show literal property types. Got: {}",
+        diag.message_text
+    );
+}
