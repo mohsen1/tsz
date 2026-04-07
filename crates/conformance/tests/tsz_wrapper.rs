@@ -380,6 +380,43 @@ fn test_prepare_test_dir_threads_no_types_and_symbols_into_root_tsconfig_merge()
     );
 }
 
+#[test]
+fn test_prepare_test_dir_no_types_and_symbols_excludes_at_types_from_root_files() {
+    let content = "";
+    let filenames = vec![
+        (
+            "usage.ts".to_string(),
+            r#"import { parse } from "url";"#.to_string(),
+        ),
+        (
+            "/node_modules/@types/node/index.d.ts".to_string(),
+            r#"declare module "url" { export function parse(): void; }"#.to_string(),
+        ),
+    ];
+    let options: HashMap<String, String> =
+        HashMap::from([("noTypesAndSymbols".to_string(), "true".to_string())]);
+
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
+    let tsconfig_raw = std::fs::read_to_string(&tsconfig_path).unwrap();
+    let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
+
+    // The "files" array should NOT contain the @types/node file when
+    // noTypesAndSymbols is set — tsc's harness excludes @types from roots.
+    if let Some(files) = tsconfig_json
+        .get("files")
+        .and_then(serde_json::Value::as_array)
+    {
+        let has_types_file = files
+            .iter()
+            .any(|f| f.as_str().is_some_and(|s| s.contains("@types")));
+        assert!(
+            !has_types_file,
+            "noTypesAndSymbols should exclude @types files from root files list, got files: {files:?}"
+        );
+    }
+}
+
 fn find_tsz_binary() -> String {
     // Try common build locations relative to workspace root
     let candidates = [

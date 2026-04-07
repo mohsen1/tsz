@@ -603,6 +603,34 @@ export const thing = () => parse();
     );
 }
 
+// TS2591: noTypesAndSymbols + Node module resolution should emit TS2591
+// for known Node built-ins (not suppress them). This exercises the
+// is_node_builtin guard in check_import_declaration.
+#[test]
+fn test_no_types_and_symbols_with_node_module_kind_emits_ts2591() {
+    let diags = check_with_module_not_found_errors(
+        r#"import { parse } from "url";
+export const thing = parse();
+"#,
+        "usage.ts",
+        vec![],
+        vec!["url"],
+        CheckerOptions {
+            module: crate::common::ModuleKind::NodeNext,
+            no_types_and_symbols: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_error_code(&diags, TS2591),
+        "noTypesAndSymbols + NodeNext should emit TS2591 for Node builtins, got: {diags:?}"
+    );
+    assert!(
+        no_error_code(&diags, TS2307),
+        "noTypesAndSymbols + NodeNext should not emit TS2307 for Node builtins, got: {diags:?}"
+    );
+}
+
 #[test]
 fn test_es_default_import_resolved() {
     let source = r#"import utils from "./utils";"#;

@@ -338,6 +338,18 @@ pub fn prepare_test_dir(
                     if lower.ends_with("tsconfig.json") || lower.ends_with("package.json") {
                         return None;
                     }
+                    // When noTypesAndSymbols is set, tsc's harness does NOT
+                    // include @types files as root files — they remain on disk
+                    // for module resolution but aren't loaded into the program
+                    // unless the `types` config allows auto-discovery.
+                    // Without this filter, ambient module declarations in
+                    // @types packages pollute the global scope unconditionally.
+                    if no_types_and_symbols
+                        && (lower.contains("/node_modules/@types/")
+                            || lower.starts_with("node_modules/@types/"))
+                    {
+                        return None;
+                    }
                     Some(name.replace("..", "_").trim_start_matches('/').to_string())
                 })
                 .collect();
@@ -444,11 +456,23 @@ pub fn prepare_test_dir(
             // node_modules-backed tests match the TypeScript harness project
             // shape. Include globs stay in place for default-library discovery
             // and TS18003 parity on non-explicit files.
-            serde_json::json!({
-                "compilerOptions": compiler_options,
-                "include": include,
-                "files": root_files
-            })
+            if no_types_and_symbols {
+                // When noTypesAndSymbols is set, exclude @types from include
+                // discovery to match tsc's harness behavior where @types
+                // packages aren't auto-included in the program.
+                serde_json::json!({
+                    "compilerOptions": compiler_options,
+                    "include": include,
+                    "files": root_files,
+                    "exclude": ["node_modules/@types"]
+                })
+            } else {
+                serde_json::json!({
+                    "compilerOptions": compiler_options,
+                    "include": include,
+                    "files": root_files
+                })
+            }
         } else {
             serde_json::json!({
                 "compilerOptions": compiler_options,
