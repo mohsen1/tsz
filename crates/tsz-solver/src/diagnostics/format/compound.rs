@@ -1309,7 +1309,9 @@ impl<'a> TypeFormatter<'a> {
             while current_parent != SymbolId::NONE {
                 if let Some(parent_sym) = arena.get(current_parent) {
                     let is_qualifying_parent = parent_sym.has_any_flags(
-                        symbol_flags::ENUM | symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE,
+                        symbol_flags::ENUM
+                            | symbol_flags::VALUE_MODULE
+                            | symbol_flags::NAMESPACE_MODULE,
                     );
                     let name = &parent_sym.escaped_name;
                     let is_file_module = name.starts_with('"')
