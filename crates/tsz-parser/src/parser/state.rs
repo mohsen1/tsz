@@ -1553,12 +1553,13 @@ impl ParserState {
 
     /// Error: Identifier expected (TS1003), or Invalid character (TS1127)
     pub(crate) fn error_identifier_expected(&mut self) {
-        // Special case: When the current token is '}' in JSX context, emit TS1005.
-        // This handles cases where JSX text containing '}' is encountered when
-        // an identifier is expected (e.g., missing closing tag).
-        if self.is_token(SyntaxKind::CloseBraceToken)
-            || (self.is_token(SyntaxKind::JsxText)
-                && self.scanner.get_token_value_ref().starts_with("}"))
+        // Special case: When the current token is JSX text starting with '}',
+        // emit TS1005. This handles cases where JSX text containing '}' is
+        // encountered when an identifier is expected (e.g., missing closing tag).
+        // Note: plain CloseBraceToken should NOT be special-cased here — tsc
+        // emits TS1003 "Identifier expected" for '}' in most contexts (class
+        // body after `*`, JSX attribute expressions, etc.).
+        if self.is_token(SyntaxKind::JsxText) && self.scanner.get_token_value_ref().starts_with("}")
         {
             if self.should_report_error() {
                 use tsz_common::diagnostics::diagnostic_codes;
