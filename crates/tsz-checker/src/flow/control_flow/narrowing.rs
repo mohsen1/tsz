@@ -227,62 +227,63 @@ impl<'a> FlowAnalyzer<'a> {
                 let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
                 return Some(narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED));
             }
-            // Handle assertion predicates with negated type guard arguments.
-            // For `assert(!isB(foo))` where `isB` has predicate `arg is 'B'`:
-            // The predicate_target is `!isB(foo)` (PREFIX_UNARY_EXPRESSION).
-            // We need to look through the `!` and find the inner type guard call,
-            // then apply its narrowing in the NEGATIVE sense (since `!` inverts).
+            // Handle assertion predicates where the asserted condition is itself
+            // a call with a type predicate (or a negation thereof).
+            // For `assert(isB(foo))`: predicate_target is `isB(foo)` (CALL_EXPRESSION).
+            //   -> Apply the inner predicate in the SAME sense.
+            // For `assert(!isB(foo))`: predicate_target is `!isB(foo)` (PREFIX_UNARY).
+            //   -> Look through `!`, apply inner predicate in the INVERTED sense.
             if signature.predicate.asserts {
                 if let Some(pred_node) = self.arena.get(predicate_target) {
-                    // Check if predicate target is a `!` expression
-                    if pred_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
-                        if let Some(unary) = self.arena.get_unary_expr(pred_node) {
-                            if unary.operator == SyntaxKind::ExclamationToken as u16 {
-                                let inner_expr = unary.operand;
-                                // Check if the inner expression is a call with a type predicate
-                                let inner_node = self.arena.get(inner_expr)?;
-                                if let Some(inner_call) = self.arena.get_call_expr(inner_node) {
-                                    if let Some(inner_callee_type) =
-                                        node_types.get(&inner_call.expression.0)
-                                    {
-                                        if let Some(inner_sig) =
-                                            self.predicate_signature_for_type(*inner_callee_type)
-                                        {
-                                            if let Some(inner_target) = self
-                                                .predicate_target_expression(
-                                                    inner_call,
-                                                    &inner_sig.predicate,
-                                                    &inner_sig.params,
-                                                )
-                                            {
-                                                if self.is_matching_reference(inner_target, target)
-                                                {
-                                                    // Found a negated type guard targeting our variable.
-                                                    // Resolve generic predicates and apply with inverted sense.
-                                                    let resolved_inner_pred = self
-                                                        .resolve_generic_predicate(
-                                                            &inner_sig.predicate,
-                                                            &inner_sig.params,
-                                                            inner_call,
-                                                            *inner_callee_type,
-                                                            node_types,
-                                                        );
-                                                    // Invert the sense: `!isB(foo)` being truthy
-                                                    // means `isB(foo)` is falsy, so narrow negatively
-                                                    return Some(
-                                                        self.apply_type_predicate_narrowing(
-                                                            type_id,
-                                                            &resolved_inner_pred,
-                                                            !is_true_branch,
-                                                        ),
-                                                    );
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                    // Determine if we have a negation and find the inner call expression.
+                    let (inner_call_node_idx, negate) =
+                        if pred_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+                            if let Some(unary) = self.arena.get_unary_expr(pred_node)
+                                && unary.operator == SyntaxKind::ExclamationToken as u16
+                            {
+                                (unary.operand, true)
+                            } else {
+                                (predicate_target, false)
                             }
-                        }
+                        } else {
+                            // Positive case: the predicate_target IS the call expression
+                            (predicate_target, false)
+                        };
+
+                    // Check if the (inner) expression is a call with a type predicate
+                    if let Some(call_node) = self.arena.get(inner_call_node_idx)
+                        && let Some(inner_call) = self.arena.get_call_expr(call_node)
+                        && let Some(inner_callee_type) = node_types.get(&inner_call.expression.0)
+                        && let Some(inner_sig) =
+                            self.predicate_signature_for_type(*inner_callee_type)
+                        && let Some(inner_target) = self.predicate_target_expression(
+                            inner_call,
+                            &inner_sig.predicate,
+                            &inner_sig.params,
+                        )
+                        && self.is_matching_reference(inner_target, target)
+                    {
+                        // Found a type guard call targeting our variable.
+                        // Resolve generic predicates and apply narrowing.
+                        let resolved_inner_pred = self.resolve_generic_predicate(
+                            &inner_sig.predicate,
+                            &inner_sig.params,
+                            inner_call,
+                            *inner_callee_type,
+                            node_types,
+                        );
+                        // For positive: same sense as is_true_branch.
+                        // For negated: invert the sense.
+                        let effective_branch = if negate {
+                            !is_true_branch
+                        } else {
+                            is_true_branch
+                        };
+                        return Some(self.apply_type_predicate_narrowing(
+                            type_id,
+                            &resolved_inner_pred,
+                            effective_branch,
+                        ));
                     }
                 }
             }
@@ -537,6 +538,41 @@ impl<'a> FlowAnalyzer<'a> {
                         substitution.insert(tp.name, arg_type);
                     }
                     break;
+                }
+            }
+        }
+
+        // Case 2b: Infer remaining type params from callback function predicates.
+        // For a parameter like `predicate: (arg: unknown) => arg is ValueT`, if the
+        // argument is `isB: (arg: unknown) => arg is 'B'`, infer ValueT = 'B' by
+        // matching the type predicates of the parameter type and argument type.
+        for tp in &type_params {
+            if substitution.get(tp.name).is_some() {
+                continue; // Already substituted
+            }
+            for (i, param) in params.iter().enumerate() {
+                // Check if the parameter type is a function with a type predicate
+                // containing the unsubstituted type param
+                if let Some(param_fn_shape) =
+                    flow_query::get_function_shape(self.interner, param.type_id)
+                    && let Some(ref param_pred) = param_fn_shape.type_predicate
+                    && let Some(param_pred_type) = param_pred.type_id
+                    && flow_query::type_param_info(self.interner, param_pred_type)
+                        .is_some_and(|info| info.name == tp.name)
+                {
+                    // The param's predicate type IS this type param (e.g., `arg is ValueT`).
+                    // Now check if the argument is also a function with a type predicate.
+                    if let Some(&arg_idx) = args.get(i)
+                        && let Some(&arg_type) = node_types.get(&arg_idx.0)
+                        && let Some(arg_fn_shape) =
+                            flow_query::get_function_shape(self.interner, arg_type)
+                        && let Some(ref arg_pred) = arg_fn_shape.type_predicate
+                        && let Some(arg_pred_type) = arg_pred.type_id
+                    {
+                        // Infer: ValueT = arg's predicate type (e.g., 'B')
+                        substitution.insert(tp.name, arg_pred_type);
+                        break;
+                    }
                 }
             }
         }
