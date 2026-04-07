@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-04-07T00:14:19Z",
-  "git_sha": "61548741f3adf077c59e6ba668c487a215249b4d",
+  "timestamp": "2026-04-07T00:38:03Z",
+  "git_sha": "c7076cea15d8f0a8f90119a8bf85a64df4a56f0e",
   "summary": {
     "total_tests": 12581,
     "passed": 11768,
@@ -332,10 +332,10 @@
     },
     {
       "area": "compiler",
-      "total": 6519,
+      "total": 6517,
       "passed": 6148,
-      "failed": 371,
-      "pass_rate": 94.31
+      "failed": 369,
+      "pass_rate": 94.34
     },
     {
       "area": "functions",
@@ -746,10 +746,6 @@
       "count": 1
     },
     {
-      "code": "TS2344",
-      "count": 1
-    },
-    {
       "code": "TS18042",
       "count": 1
     },
@@ -938,10 +934,6 @@
       "count": 8
     },
     {
-      "code": "TS2344",
-      "count": 7
-    },
-    {
       "code": "TS1109",
       "count": 7
     },
@@ -952,6 +944,10 @@
     {
       "code": "TS1003",
       "count": 7
+    },
+    {
+      "code": "TS2344",
+      "count": 6
     },
     {
       "code": "TS1434",
@@ -1084,10 +1080,6 @@
       "count": 1
     },
     {
-      "code": "TS2344",
-      "count": 1
-    },
-    {
       "code": "TS18042",
       "count": 1
     },
@@ -1190,10 +1182,6 @@
       "count": 8
     },
     {
-      "code": "TS2344",
-      "count": 7
-    },
-    {
       "code": "TS1109",
       "count": 7
     },
@@ -1204,6 +1192,10 @@
     {
       "code": "TS1003",
       "count": 7
+    },
+    {
+      "code": "TS2344",
+      "count": 6
     },
     {
       "code": "TS1434",
@@ -1486,9 +1478,9 @@
   ],
   "categories": {
     "false_positive": 1,
-    "all_missing": 45,
+    "all_missing": 44,
     "wrong_code": 169,
-    "fingerprint_only": 596,
+    "fingerprint_only": 595,
     "close_to_passing": 89
   }
 }
