@@ -5262,7 +5262,9 @@ fn test_conditional_infer_function_optional_param_non_distributive_union_input()
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    // Contravariant: infer in optional parameter position from union source
+    // produces intersection (string & number = never for disjoint primitives).
+    let expected = TypeId::NEVER;
     assert_eq!(result, expected);
 }
 
@@ -5397,7 +5399,10 @@ fn test_conditional_infer_function_param_non_distributive_union_input() {
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    // Contravariant: infer in function parameter position from union source
+    // produces intersection (string & number = never for disjoint primitives).
+    // This matches tsc's behavior for non-distributive conditional types.
+    let expected = TypeId::NEVER;
     assert_eq!(result, expected);
 }
 
@@ -5643,7 +5648,9 @@ fn test_conditional_infer_function_rest_param_non_distributive_union_input() {
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    let expected = interner.union(vec![
+    // Contravariant: infer in rest parameter position from union source
+    // produces intersection (string[] & number[] for disjoint array types).
+    let expected = interner.intersection(vec![
         interner.array(TypeId::STRING),
         interner.array(TypeId::NUMBER),
     ]);
@@ -6373,11 +6380,13 @@ fn test_conditional_infer_function_param_and_return_non_distributive_union_input
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    let param_union = interner.union(vec![TypeId::STRING, TypeId::BOOLEAN]);
+    // P is contravariant (function parameter): string & boolean = never
+    // R is covariant (function return): number | string
+    let param_intersection = TypeId::NEVER; // string & boolean = never
     let return_union = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
     let expected = interner.tuple(vec![
         TupleElement {
-            type_id: param_union,
+            type_id: param_intersection,
             name: None,
             optional: false,
             rest: false,
@@ -6731,7 +6740,8 @@ fn test_conditional_infer_object_call_signature_non_distributive_union_input() {
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    // Contravariant: infer in call signature parameter from union source
+    let expected = TypeId::NEVER;
     assert_eq!(result, expected);
 }
 
@@ -6955,7 +6965,8 @@ fn test_conditional_infer_object_call_signature_optional_param_non_distributive_
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    // Contravariant: infer in call signature optional parameter from union source
+    let expected = TypeId::NEVER;
     assert_eq!(result, expected);
 }
 
@@ -7182,7 +7193,8 @@ fn test_conditional_infer_object_call_signature_rest_param_non_distributive_unio
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    let expected = interner.union(vec![
+    // Contravariant: infer in call signature rest parameter from union source
+    let expected = interner.intersection(vec![
         interner.array(TypeId::STRING),
         interner.array(TypeId::NUMBER),
     ]);

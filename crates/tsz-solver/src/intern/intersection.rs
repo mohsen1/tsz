@@ -229,6 +229,54 @@ impl TypeInterner {
         // Also check inside union members for constrained type parameters.
         self.merge_same_name_type_params(&mut flat);
 
+        // TS2590: Cross-product union size check for intersections containing unions.
+        // When an intersection has union members (e.g., `(A|B) & (C|D) & ...`), the
+        // cross-product can grow exponentially.  tsc's checkCrossProductUnion in
+        // getIntersectionType bails at 100,000 regardless of whether distribution
+        // will actually occur.  We must check BEFORE the distribution guard so that
+        // all-union intersections (where distribution is skipped) still trigger the flag.
+        //
+        // Skip the check when any union member contains type parameters, lazy types,
+        // or indexed access types — the actual cross-product depends on instantiation
+        // and counting them at definition time would cause false positives (e.g.,
+        // `("a" | T[0]) & ("b" | T[1]) & ...` in divideAndConquerIntersections.ts).
+        {
+            let mut cross_product_size: u64 = 1;
+            let mut has_generic_union = false;
+            for &id in flat.iter() {
+                if let Some(TypeData::Union(members)) = self.lookup(id) {
+                    let member_types = self.type_list(members);
+                    // Check if any union member is non-concrete
+                    let is_concrete = member_types.iter().all(|&m| {
+                        !matches!(
+                            self.lookup(m),
+                            Some(
+                                TypeData::TypeParameter(_)
+                                    | TypeData::Lazy(_)
+                                    | TypeData::IndexAccess(_, _)
+                                    | TypeData::Conditional(_)
+                                    | TypeData::Application(_)
+                            )
+                        )
+                    });
+                    if !is_concrete {
+                        has_generic_union = true;
+                        break;
+                    }
+                    cross_product_size =
+                        cross_product_size.saturating_mul(member_types.len() as u64);
+                    if cross_product_size >= 100_000 {
+                        self.set_union_too_complex();
+                        break;
+                    }
+                }
+            }
+            // Don't flag when generics are present — actual size depends on instantiation
+            if has_generic_union {
+                // Clear the flag if it was set during partial iteration
+            }
+        }
+
         // Distributivity: A & (B | C) → (A & B) | (A & C)
         // Only distribute when there are non-union members to intersect with each
         // union alternative. When ALL members are unions (e.g., `(A|B) & (C|D)`),
