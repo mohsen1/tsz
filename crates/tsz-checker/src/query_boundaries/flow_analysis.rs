@@ -182,6 +182,18 @@ pub(crate) fn is_only_false_or_never(db: &dyn TypeDatabase, type_id: TypeId) -> 
     tsz_solver::type_queries::is_only_false_or_never(db, type_id)
 }
 
+/// Get the function shape for a type, if it is a function type.
+///
+/// Used by flow analysis to inspect callback parameter predicates when resolving
+/// generic type predicates (e.g., inferring `ValueT` from a callback argument's
+/// type predicate in `doesValueAtDeepPathSatisfy`).
+pub(crate) fn get_function_shape(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<tsz_solver::FunctionShape>> {
+    tsz_solver::type_queries::get_function_shape(db, type_id)
+}
+
 /// Get type parameter info (constraint, default, name) for a type parameter.
 pub(crate) fn type_param_info(
     db: &dyn TypeDatabase,
