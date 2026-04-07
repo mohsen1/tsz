@@ -605,7 +605,10 @@ impl<'a> CheckerState<'a> {
             eprintln!("DEBUG: elaborated error at source_idx={:?}", source_idx);
             return false;
         }
-        eprintln!("DEBUG: calling error_type_not_assignable_with_reason_at at diag_idx={:?}", diag_idx);
+        eprintln!(
+            "DEBUG: calling error_type_not_assignable_with_reason_at at diag_idx={:?}",
+            diag_idx
+        );
         self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
         false
     }
