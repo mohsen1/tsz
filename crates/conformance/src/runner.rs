@@ -975,7 +975,7 @@ impl Runner {
                     // Also filter project-level diagnostics (TS5057, TS5058, TS5081, TS18003, TS5023) that the cache
                     // stores in fingerprints but not in error_codes.
                     let config_level_codes: std::collections::HashSet<u32> =
-                        [18003u32, 5057u32, 5058u32, 5081u32, 5101u32, 5107u32]
+                        [18003u32, 5023u32, 5057u32, 5058u32, 5081u32, 5101u32, 5107u32]
                             .iter()
                             .cloned()
                             .collect();
