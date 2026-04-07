@@ -750,6 +750,18 @@ impl<'a> CheckerState<'a> {
         let mut saw_assignment_binary = false;
         let mut var_decl: Option<NodeIndex> = None;
 
+        // If the starting node is itself a VariableDeclaration, capture it
+        // immediately. This handles the common case where the diagnostic
+        // index is the variable declaration node.
+        if self
+            .ctx
+            .arena
+            .get(current)
+            .is_some_and(|n| n.kind == syntax_kind_ext::VARIABLE_DECLARATION)
+        {
+            var_decl = Some(current);
+        }
+
         while current.is_some() {
             let Some(ext) = self.ctx.arena.get_extended(current) else {
                 break;
@@ -814,9 +826,8 @@ impl<'a> CheckerState<'a> {
             if parent_node.kind == syntax_kind_ext::VARIABLE_STATEMENT && var_decl.is_some() {
                 if let Some(vd_idx) = var_decl
                     && let Some(vd) = self.ctx.arena.get_variable_declaration_at(vd_idx)
-                    && vd.name.is_some()
                 {
-                    return vd.name;
+                    return self.variable_declaration_anchor(vd, parent);
                 }
                 return parent;
             }
@@ -829,15 +840,70 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(vd_idx) = var_decl {
-            if let Some(vd) = self.ctx.arena.get_variable_declaration_at(vd_idx)
-                && vd.name.is_some()
-            {
-                return vd.name;
+            if let Some(vd) = self.ctx.arena.get_variable_declaration_at(vd_idx) {
+                let var_stmt = self.find_variable_statement_parent(vd_idx);
+                return self.variable_declaration_anchor(vd, var_stmt.unwrap_or(NodeIndex::NONE));
             }
             return vd_idx;
         }
 
         idx
+    }
+
+    /// Find the VariableStatement parent of a VariableDeclaration.
+    fn find_variable_statement_parent(&self, vd_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = Some(vd_idx);
+        while let Some(idx) = current {
+            let ext = self.ctx.arena.get_extended(idx)?;
+            let parent = ext.parent;
+            if parent.is_none() {
+                return None;
+            }
+            if let Some(parent_node) = self.ctx.arena.get(parent) {
+                if parent_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                    return Some(parent);
+                }
+            }
+            current = Some(parent);
+        }
+        None
+    }
+
+    /// Choose the anchor for a variable declaration assignment error.
+    ///
+    /// For `var` declarations with property access initializers, tsc points at
+    /// the initializer (e.g., `var x: T = obj.prop;` -> points at `obj.prop`).
+    /// For `let`/`const` or other initializers, tsc points at the variable name.
+    fn variable_declaration_anchor(
+        &self,
+        vd: &tsz_parser::parser::node::VariableDeclarationData,
+        var_stmt: NodeIndex,
+    ) -> NodeIndex {
+        // Check if this is a `let` or `const` declaration (not `var`)
+        let is_let_or_const = if let Some(stmt_node) = self.ctx.arena.get(var_stmt)
+            && let Some(var_data) = self.ctx.arena.get_variable(stmt_node)
+            && let Some(&list_idx) = var_data.declarations.nodes.first()
+        {
+            let flags = self.ctx.arena.get_variable_declaration_flags(list_idx);
+            use tsz_parser::parser::flags::node_flags;
+            (flags & (node_flags::LET | node_flags::CONST)) != 0
+        } else {
+            false
+        };
+
+        // For `var` (not let/const) with property access initializers, tsc points at the property access.
+        // For `let`/`const` or non-property-access initializers, point at the variable name.
+        if !is_let_or_const && vd.initializer.is_some() {
+            if let Some(init_node) = self.ctx.arena.get(vd.initializer) {
+                if init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                    return vd.initializer;
+                }
+            }
+        }
+        if vd.name.is_some() {
+            return vd.name;
+        }
+        vd.initializer
     }
 
     fn call_primary_anchor_node(&self, idx: NodeIndex) -> NodeIndex {
