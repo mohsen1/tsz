@@ -2265,6 +2265,12 @@ impl<'a> CheckerState<'a> {
             generic_spread_types,
         );
 
+        // Check getter/setter type compatibility for object literal accessors.
+        // When a getter has no explicit return type annotation, its type is inferred
+        // from the body and must be compatible with the setter's parameter type.
+        // This matches tsc behavior for object literals with accessor pairs.
+        self.check_object_literal_accessor_type_compatibility(&obj.elements.nodes);
+
         // Pop this type from stack if we pushed it earlier
         if marker_this_type.is_some() {
             self.ctx.this_type_stack.pop();
