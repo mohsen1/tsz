@@ -975,7 +975,10 @@ impl Runner {
                     // Also filter project-level diagnostics (TS5057, TS5058, TS5081, TS18003, TS5023) that the cache
                     // stores in fingerprints but not in error_codes.
                     let config_level_codes: std::collections::HashSet<u32> =
-                        [18003u32, 5023u32, 5057u32, 5058u32, 5081u32, 5101u32, 5107u32].iter().cloned().collect();
+                        [18003u32, 5057u32, 5058u32, 5081u32, 5101u32, 5107u32]
+                            .iter()
+                            .cloned()
+                            .collect();
                     tsc_error_codes.retain(|c| !config_level_codes.contains(c));
                     let tsc_fps: Vec<_> = tsc_fps
                         .into_iter()
@@ -995,7 +998,10 @@ impl Runner {
                     // Also filter project-level diagnostics (TS5057, TS5058, TS5081, TS18003, TS5023) that the cache
                     // stores in fingerprints but not in error_codes.
                     let config_level_codes: std::collections::HashSet<u32> =
-                        [18003u32, 5023u32, 5057u32, 5058u32, 5081u32, 5101u32, 5107u32].iter().cloned().collect();
+                        [18003u32, 5023u32, 5057u32, 5058u32, 5081u32, 5101u32, 5107u32]
+                            .iter()
+                            .cloned()
+                            .collect();
                     let tsc_error_codes: Vec<u32> = tsc_error_codes
                         .into_iter()
                         .filter(|c| !config_level_codes.contains(c))
@@ -1014,8 +1020,8 @@ impl Runner {
                         .get("noLib")
                         .or_else(|| options.get("nolib"))
                         .is_some_and(|v| v == "true");
-                    let tsc_has_2318 = tsc_error_codes.contains(&2318)
-                        || tsc_fps.iter().any(|fp| fp.code == 2318);
+                    let tsc_has_2318 =
+                        tsc_error_codes.contains(&2318) || tsc_fps.iter().any(|fp| fp.code == 2318);
                     if is_nolib && tsc_has_2318 {
                         // When tsc has TS2318 only in fingerprints (not error_codes),
                         // we need to also filter TS2318 from tsz's output to avoid
