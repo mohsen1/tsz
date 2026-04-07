@@ -802,12 +802,17 @@ impl<'a> CheckerState<'a> {
                 syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION
             ) {
                 // Check if this function is the RHS of an assignment
-                let is_rhs_of_assignment = if let Some(parent_ext) = self.ctx.arena.get_extended(parent) {
-                    let grandparent = parent_ext.parent;
-                    if let Some(gp_node) = self.ctx.arena.get(grandparent) {
-                        if gp_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-                            if let Some(binary) = self.ctx.arena.get_binary_expr(gp_node) {
-                                self.is_assignment_operator(binary.operator_token) && binary.right == parent
+                let is_rhs_of_assignment =
+                    if let Some(parent_ext) = self.ctx.arena.get_extended(parent) {
+                        let grandparent = parent_ext.parent;
+                        if let Some(gp_node) = self.ctx.arena.get(grandparent) {
+                            if gp_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                                if let Some(binary) = self.ctx.arena.get_binary_expr(gp_node) {
+                                    self.is_assignment_operator(binary.operator_token)
+                                        && binary.right == parent
+                                } else {
+                                    false
+                                }
                             } else {
                                 false
                             }
@@ -816,11 +821,8 @@ impl<'a> CheckerState<'a> {
                         }
                     } else {
                         false
-                    }
-                } else {
-                    false
-                };
-                
+                    };
+
                 if !is_rhs_of_assignment {
                     return parent;
                 }

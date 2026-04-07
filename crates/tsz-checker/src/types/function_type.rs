@@ -1968,7 +1968,10 @@ impl<'a> CheckerState<'a> {
                         if conditional_branch_mismatch
                             && let Some(loc) = self.get_source_location(body)
                         {
-                            eprintln!("DEBUG function_type: conditional_branch_mismatch at start={}", loc.start);
+                            eprintln!(
+                                "DEBUG function_type: conditional_branch_mismatch at start={}",
+                                loc.start
+                            );
                             let src_str = self.format_type(actual_return);
                             let tgt_str = self.format_type(expected_return_type);
                             let message = format_message(
@@ -2001,7 +2004,10 @@ impl<'a> CheckerState<'a> {
                             .get(body)
                             .is_some_and(|n| n.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION);
                         let is_rhs_assignment = is_closure && self.is_rhs_of_assignment(idx);
-                        eprintln!("DEBUG: is_closure={}, is_rhs_assignment={}", is_closure, is_rhs_assignment);
+                        eprintln!(
+                            "DEBUG: is_closure={}, is_rhs_assignment={}",
+                            is_closure, is_rhs_assignment
+                        );
                         let assignability_ok = if body_is_conditional || is_rhs_assignment {
                             self.check_assignable_or_report_at(
                                 actual_return,
