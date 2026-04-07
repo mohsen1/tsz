@@ -1492,7 +1492,7 @@ fn test_estimated_size_bytes_grows_with_functions() {
     );
 }
 
-/// TS2590: Intersection of many unions should trigger the union_too_complex flag.
+/// TS2590: Intersection of many unions should trigger the `union_too_complex` flag.
 ///
 /// When `normalize_intersection` receives an all-union intersection like
 /// `(A|B) & (C|D) & ... & (Y|Z)` with a cross-product ≥ 100,000,

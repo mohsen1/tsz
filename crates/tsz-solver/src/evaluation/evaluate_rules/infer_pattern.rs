@@ -335,12 +335,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Some(TypeData::Infer(info)) => {
                 out.insert(info.name);
             }
-            Some(TypeData::Union(members)) => {
-                for &m in self.interner().type_list(members).iter() {
-                    self.collect_all_infer_names(m, out);
-                }
-            }
-            Some(TypeData::Intersection(members)) => {
+            Some(TypeData::Union(members) | TypeData::Intersection(members)) => {
                 for &m in self.interner().type_list(members).iter() {
                     self.collect_all_infer_names(m, out);
                 }

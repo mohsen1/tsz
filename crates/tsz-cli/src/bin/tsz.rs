@@ -306,6 +306,8 @@ fn run_batch_mode() -> Result<()> {
         let parts: Vec<&str> = trimmed.split('\t').collect();
         let project_dir = parts[0];
         if parts.len() > 1 {
+            // SAFETY: Batch mode runs single-threaded; no concurrent env var access.
+            #[allow(unsafe_code)]
             unsafe {
                 std::env::set_var("TSZ_CONFORMANCE_TEST", parts[1]);
             }
