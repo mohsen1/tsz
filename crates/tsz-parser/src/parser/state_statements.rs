@@ -2565,14 +2565,13 @@ impl ParserState {
         // Check for generator asterisk
         let asterisk_token = self.parse_optional(SyntaxKind::AsteriskToken);
 
-        // Set context flags BEFORE parsing name and parameters so that
-        // reserved keywords (await/yield) are properly detected in function expressions
-        // For async function * await() {}, the function name 'await' should error
-        // For async function * (await) {}, the parameter name 'await' should error
+        // Set context flags BEFORE parsing parameters and body so that
+        // reserved keywords (await/yield) are properly detected in parameters and body.
+        // For async function * (await) {}, the parameter name 'await' should error.
         let saved_flags = self.context_flags;
         // Save whether we're in a static block before clearing the flag.
-        // Function expression names bind in the outer scope, so 'await' as a name
-        // is still illegal inside static blocks.
+        // Inside static blocks, `await` as a function expression name is still
+        // illegal (TS1359), even though in async/generator contexts it is not.
         let was_in_static_block = self.in_static_block_context();
         // Parameter-default context is for the containing parameter initializer only.
         // Nested function expressions create a new parsing context where this flag
@@ -2589,24 +2588,18 @@ impl ParserState {
             self.context_flags |= CONTEXT_FLAG_GENERATOR;
         }
 
-        // Check for reserved words used as function expression names:
-        // - `await` cannot be used as name in async function expressions
-        // - `yield` cannot be used as name in generator function expressions
-        // - `await` in static blocks is always illegal
-        // Note: function DECLARATIONS are different - they bind in outer scope, so
-        // `async function await() {}` as a declaration is valid.
-        {
+        // Check for `await` used as function expression name inside static blocks.
+        // tsc reports TS1359 for `(function await() {})` in static blocks because
+        // `await` is always reserved there.
+        // However, tsc does NOT emit TS1359/TS1212 for `await`/`yield` as function
+        // expression names in async/generator contexts (e.g., `async function * await() {}`).
+        // Those are handled by the checker, not the parser.
+        if self.is_token(SyntaxKind::AwaitKeyword) && was_in_static_block {
             use tsz_common::diagnostics::diagnostic_codes;
-            if self.is_token(SyntaxKind::AwaitKeyword)
-                && (was_in_static_block || is_async || self.in_async_context())
-            {
-                self.parse_error_at_current_token(
-                    "Identifier expected. 'await' is a reserved word that cannot be used here.",
-                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
-                );
-            } else if self.is_token(SyntaxKind::YieldKeyword) && self.in_generator_context() {
-                self.report_yield_reserved_word_error();
-            }
+            self.parse_error_at_current_token(
+                "Identifier expected. 'await' is a reserved word that cannot be used here.",
+                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
+            );
         }
 
         // Parse optional name (function expressions can be anonymous)
