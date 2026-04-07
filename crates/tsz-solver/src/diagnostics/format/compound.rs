@@ -1247,17 +1247,16 @@ impl<'a> TypeFormatter<'a> {
 
         use tsz_binder::symbol_flags;
 
-        // Walk up the parent chain, qualifying with enum and namespace parents.
+        // Walk up the parent chain, qualifying with enum parents only.
         // tsc qualifies type names with their containing enum (e.g., `Choice.Yes`)
-        // and with their containing namespace (e.g., `m.variable`) to disambiguate
-        // from types with the same name in other scopes.
+        // but uses SHORT names for types inside namespaces (e.g., `Line` not `A.Line`)
+        // unless disambiguation is needed (same name in outer scope). Namespace
+        // qualification requires scope-aware disambiguation not yet implemented.
         // Skip file-level module symbols (synthetic names like __test1__, "file.ts", etc.)
         // as those represent file modules, not declared namespaces.
         while current_parent != SymbolId::NONE {
             if let Some(parent_sym) = arena.get(current_parent) {
-                let is_qualifying_parent = parent_sym.has_any_flags(
-                    symbol_flags::ENUM | symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE,
-                );
+                let is_qualifying_parent = parent_sym.has_any_flags(symbol_flags::ENUM);
                 let name = &parent_sym.escaped_name;
                 let is_file_module = name.starts_with('"')
                     || name.starts_with("__")
