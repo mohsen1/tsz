@@ -602,7 +602,6 @@ impl<'a> CheckerState<'a> {
         if !skip_source_elaboration
             && self.try_elaborate_assignment_source_error(source_idx, target)
         {
-            eprintln!("DEBUG: elaborated error at source_idx={:?}", source_idx);
             return false;
         }
         eprintln!(
