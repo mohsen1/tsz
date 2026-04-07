@@ -746,6 +746,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn assignment_anchor_node(&self, idx: NodeIndex) -> NodeIndex {
+        eprintln!("DEBUG assignment_anchor_node: idx={:?}", idx);
         let mut current = idx;
         let mut saw_assignment_binary = false;
         let mut var_decl: Option<NodeIndex> = None;
@@ -792,11 +793,37 @@ impl<'a> CheckerState<'a> {
             // expression itself as the anchor. This matches tsc's behavior for contextual
             // typing failures where the error should point at the entire function rather
             // than the inner expression that triggered the type mismatch.
+            //
+            // EXCEPTION: When the function expression is the RHS of an assignment (e.g.,
+            // `A.prototype.foo = function() {}`), continue walking up to the assignment
+            // level so the error is anchored at the expression statement, matching tsc.
             if matches!(
                 parent_node.kind,
                 syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION
             ) {
-                return parent;
+                // Check if this function is the RHS of an assignment
+                let is_rhs_of_assignment = if let Some(parent_ext) = self.ctx.arena.get_extended(parent) {
+                    let grandparent = parent_ext.parent;
+                    if let Some(gp_node) = self.ctx.arena.get(grandparent) {
+                        if gp_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                            if let Some(binary) = self.ctx.arena.get_binary_expr(gp_node) {
+                                self.is_assignment_operator(binary.operator_token) && binary.right == parent
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                
+                if !is_rhs_of_assignment {
+                    return parent;
+                }
             }
 
             if matches!(
