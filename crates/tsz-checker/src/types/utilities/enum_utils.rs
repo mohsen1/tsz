@@ -1,5 +1,6 @@
 //! Enum helpers, type overlap checking, readonly properties, and class/function utility methods.
 
+use crate::query_boundaries::common;
 use crate::query_boundaries::dispatch::is_type_parameter_like;
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel};
@@ -1295,14 +1296,8 @@ impl<'a> CheckerState<'a> {
     /// types should still be comparable (e.g., `<T, U extends T>(x: T, y: U) => T`
     /// vs `(x: Base, y: C) => Base`).
     fn both_callable_types_overlap(&self, left: TypeId, right: TypeId) -> bool {
-        use tsz_solver::types::TypeData;
-        let is_callable_like = |type_id: TypeId| -> bool {
-            matches!(
-                self.ctx.types.lookup(type_id),
-                Some(TypeData::Function(_) | TypeData::Callable(_))
-            )
-        };
-        is_callable_like(left) && is_callable_like(right)
+        common::is_callable_type(self.ctx.types, left)
+            && common::is_callable_type(self.ctx.types, right)
     }
 
     /// Check if two object types have all common properties with independently

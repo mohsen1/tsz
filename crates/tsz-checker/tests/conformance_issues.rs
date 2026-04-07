@@ -88,7 +88,7 @@ fn diagnostic_message(diagnostics: &[(u32, String)], code: u32) -> Option<&str> 
 /// at the initializer expression, not the variable name. This matches tsc
 /// behavior where `var d: Foo = expr` reports the error at `expr`.
 ///
-/// Currently ignored: `assignment_anchor_node` in fingerprint_policy.rs rewrites
+/// Currently ignored: `assignment_anchor_node` in `fingerprint_policy.rs` rewrites
 /// all variable declaration anchors to `vd.name`. A targeted fix would need to
 /// either skip rewriting for non-destructuring initializers or add a
 /// `DiagnosticAnchorKind` variant that preserves the initializer position.
@@ -121,8 +121,7 @@ var d: ParserFunc = parsers.readline;
     let trimmed = error_text.trim_end_matches(';');
     assert_eq!(
         trimmed, "parsers.readline",
-        "TS2322 should be anchored at the initializer expression, got span text: '{}'",
-        error_text
+        "TS2322 should be anchored at the initializer expression, got span text: '{error_text}'",
     );
 }
 
@@ -24316,7 +24315,7 @@ const r = x.ref;
     );
 }
 
-/// TS2590: Test basic UnionToIntersection behavior
+/// TS2590: Test basic `UnionToIntersection` behavior
 #[test]
 fn test_union_to_intersection_basic() {
     let diagnostics = compile_and_get_diagnostics(
@@ -24337,7 +24336,7 @@ const c: number = x.b; // Should error: string not assignable to number
     );
 }
 
-/// TS2590: Test that UnionToIntersection distributes and creates intersection.
+/// TS2590: Test that `UnionToIntersection` distributes and creates intersection.
 /// This is a prerequisite for the normalizedIntersectionTooComplex conformance test.
 #[test]
 fn test_union_to_intersection_with_many_members_emits_ts2590() {
