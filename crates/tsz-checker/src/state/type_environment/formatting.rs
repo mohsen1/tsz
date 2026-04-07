@@ -95,8 +95,13 @@ impl<'a> CheckerState<'a> {
     /// Format a type for use in diagnostic error messages.
     /// Unlike `format_type`, this skips union optionalization (synthetic `?: undefined`)
     /// that tsc only uses in hover/quickinfo, not in error messages.
+    /// Enables display properties to preserve original literal types from the
+    /// freshness model (e.g., `"frizzlebizzle"` not `string`) matching tsc.
     pub fn format_type_diagnostic(&self, type_id: TypeId) -> String {
-        let mut formatter = self.ctx.create_diagnostic_type_formatter();
+        let mut formatter = self
+            .ctx
+            .create_diagnostic_type_formatter()
+            .with_display_properties();
         formatter.format(type_id).into_owned()
     }
 
