@@ -140,6 +140,22 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS1212: Reserved word used as function expression name in strict mode.
+        // This check is for function expressions (declarations are checked in check_function_declaration_callback).
+        if node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            && let Some(name_idx) = name_node
+            && let Some(name_n) = self.ctx.arena.get(name_idx)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_n)
+        {
+            let name = &ident.escaped_text;
+            if self.is_strict_mode_for_node(name_idx)
+                && !self.ctx.is_ambient_declaration(idx)
+                && crate::state_checking::is_strict_mode_reserved_name(name)
+            {
+                self.emit_strict_mode_reserved_word_error(name_idx, name, true);
+            }
+        }
+
         // Push enclosing type parameters so nested functions can reference outer generic scopes.
         let enclosing_type_param_updates = self.push_enclosing_type_parameters(idx);
 
