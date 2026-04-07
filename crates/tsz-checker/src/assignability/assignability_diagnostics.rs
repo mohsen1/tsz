@@ -887,6 +887,108 @@ impl<'a> CheckerState<'a> {
             .is_none_or(|obj| obj.properties.is_empty())
     }
 
+    /// Check if two object types with call/construct signatures are comparable
+    /// because at least one has generic type parameters.
+    ///
+    /// In tsc's Comparable relation, object types with generic call signatures
+    /// are considered comparable to concrete call signature objects because the
+    /// generic could potentially be instantiated to match. For example:
+    /// `{ fn<T, U extends T>(x: T, y: U): T }` is comparable to
+    /// `{ fn(x: Base, y: C): Base }` because T=Base, U=C is a valid instantiation.
+    ///
+    /// This checks both direct callable shapes (for Callable types) and
+    /// property-level callable shapes (for Object types with method properties).
+    fn objects_with_generic_signatures_are_comparable(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let source_resolved = self.evaluate_type_with_resolution(source);
+        let target_resolved = self.evaluate_type_with_resolution(target);
+
+        let src_has_generics = self.type_has_generic_signatures(source_resolved);
+        let tgt_has_generics = self.type_has_generic_signatures(target_resolved);
+
+        // At least one side must have generic type parameters
+        if !src_has_generics && !tgt_has_generics {
+            return false;
+        }
+
+        // Both must be object-like types (have callable shape or object shape)
+        let src_is_object_like = self.is_object_or_callable_type(source_resolved);
+        let tgt_is_object_like = self.is_object_or_callable_type(target_resolved);
+
+        src_is_object_like && tgt_is_object_like
+    }
+
+    /// Check if a type has any generic call/construct signatures, either directly
+    /// (Callable/Function type) or through object properties.
+    fn type_has_generic_signatures(&self, type_id: TypeId) -> bool {
+        // Check direct callable shape (CallableShape has call_signatures + construct_signatures)
+        if let Some(shape) =
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
+        {
+            let has_generic_sigs = shape
+                .call_signatures
+                .iter()
+                .chain(shape.construct_signatures.iter())
+                .any(|sig| !sig.type_params.is_empty());
+            if has_generic_sigs {
+                return true;
+            }
+        }
+
+        // Check direct function shape (FunctionShape has type_params)
+        if let Some(func_shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
+        {
+            if !func_shape.type_params.is_empty() {
+                return true;
+            }
+        }
+
+        // Check object properties for callable/function types with generics
+        if let Some(obj_shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+        {
+            for prop in &obj_shape.properties {
+                // Check callable property types
+                if let Some(callable) = crate::query_boundaries::common::callable_shape_for_type(
+                    self.ctx.types,
+                    prop.type_id,
+                ) {
+                    let has_generic_sigs = callable
+                        .call_signatures
+                        .iter()
+                        .chain(callable.construct_signatures.iter())
+                        .any(|sig| !sig.type_params.is_empty());
+                    if has_generic_sigs {
+                        return true;
+                    }
+                }
+                // Check function property types
+                if let Some(func_shape) = crate::query_boundaries::common::function_shape_for_type(
+                    self.ctx.types,
+                    prop.type_id,
+                ) {
+                    if !func_shape.type_params.is_empty() {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check if a type is object-like (Callable, Object, or Function type).
+    fn is_object_or_callable_type(&self, type_id: TypeId) -> bool {
+        crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id).is_some()
+            || crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+                .is_some()
+            || crate::query_boundaries::common::has_function_shape(self.ctx.types, type_id)
+    }
+
     /// Check if two types are comparable (overlap).
     ///
     /// Corresponds to TypeScript's `areTypesComparable`: returns true if the types
@@ -998,6 +1100,14 @@ impl<'a> CheckerState<'a> {
         if self.is_constructor_only_object_type_for_comparison(source_apparent)
             && self.is_constructor_only_object_type_for_comparison(target_apparent)
         {
+            return true;
+        }
+
+        // Two object types where at least one has generic call/construct signatures
+        // are considered comparable by tsc's Comparable relation. This is because
+        // generic signatures can potentially be instantiated to match the concrete
+        // type, so tsc treats them as having structural overlap.
+        if self.objects_with_generic_signatures_are_comparable(source_apparent, target_apparent) {
             return true;
         }
 

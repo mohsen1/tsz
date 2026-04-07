@@ -1962,17 +1962,10 @@ impl<'a> CheckerState<'a> {
                                 if left_to_num && right_to_num {
                                     true
                                 } else if !left_to_num && !right_to_num {
-                                    // First try bidirectional assignability (the standard
-                                    // comparable check). If that fails, also accept two
-                                    // object-like types: tsc's Comparable relation is more
-                                    // lenient than Assignable for call signatures within
-                                    // objects. Two object types with incompatible generic
-                                    // call signatures (e.g., constrained type parameters)
-                                    // are still considered comparable because they share
-                                    // structural overlap as objects.
+                                    // Use the Comparable relation: bidirectional assignability
+                                    // plus union/intersection decomposition, all-optional
+                                    // property overlap, and constructor-only object checks.
                                     self.is_type_comparable_to(cmp_left, cmp_right)
-                                        || (self.is_object_like_for_comparison(cmp_left)
-                                            && self.is_object_like_for_comparison(cmp_right))
                                 } else {
                                     false
                                 }
@@ -2173,31 +2166,6 @@ impl<'a> CheckerState<'a> {
                     || right_is_index_access && self.is_assignable_to(right, TypeId::NUMBER);
                 left_ok && right_ok
             }
-            _ => false,
-        }
-    }
-
-    /// Check if a type is "object-like" for comparison operator purposes.
-    ///
-    /// In tsc, two object types (including callable/function types) are always
-    /// considered comparable by relational operators (<, >, <=, >=) even when
-    /// their call signatures are structurally incompatible (e.g., due to
-    /// constrained generic type parameters). This is because tsc's Comparable
-    /// relation is more lenient than the Assignable relation for call signatures
-    /// within object types.
-    ///
-    /// This helper identifies types that are "object-like" (Callable, Object, Function)
-    /// as opposed to primitives, so that the relational operator check can treat
-    /// two object-like types as comparable without strict assignability.
-    fn is_object_like_for_comparison(&self, type_id: TypeId) -> bool {
-        use tsz_solver::types::TypeData;
-        match self.ctx.types.lookup(type_id) {
-            Some(
-                TypeData::Callable(_)
-                | TypeData::Object(_)
-                | TypeData::ObjectWithIndex(_)
-                | TypeData::Function(_),
-            ) => true,
             _ => false,
         }
     }
