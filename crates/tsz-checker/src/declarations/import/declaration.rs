@@ -963,8 +963,22 @@ impl<'a> CheckerState<'a> {
                     self.ctx.import_resolution_stack.pop();
                     return;
                 }
-                // Node.js built-in modules: suppress TS2307/TS2882 entirely.
+                // Node.js built-in modules: suppress TS2307/TS2882 entirely,
+                // UNLESS noTypesAndSymbols is set — in that case @types/node
+                // won't be auto-loaded, so tsc emits TS2591 instead.
                 if is_node_builtin {
+                    if self.ctx.compiler_options.no_types_and_symbols {
+                        let (msg, code) = self.module_not_found_diagnostic_for_site(
+                            module_name,
+                            crate::import::core::ModuleNotFoundSite::Import,
+                        );
+                        if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
+                            self.ctx
+                                .modules_with_ts2307_emitted
+                                .insert(module_key.clone());
+                            self.error_at_position(spec_start, spec_length, &msg, code);
+                        }
+                    }
                     self.ctx.import_resolution_stack.pop();
                     return;
                 }
@@ -1297,8 +1311,21 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Node.js built-in modules: suppress fallback TS2307/TS2882 too.
+        // Node.js built-in modules: suppress fallback TS2307/TS2882 too,
+        // unless noTypesAndSymbols — emit TS2591 in that case.
         if is_node_builtin {
+            if self.ctx.compiler_options.no_types_and_symbols {
+                let (msg, code) = self.module_not_found_diagnostic_for_site(
+                    module_name,
+                    crate::import::core::ModuleNotFoundSite::Import,
+                );
+                if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
+                    self.ctx
+                        .modules_with_ts2307_emitted
+                        .insert(module_key.clone());
+                    self.error_at_position(spec_start, spec_length, &msg, code);
+                }
+            }
             self.ctx.import_resolution_stack.pop();
             return;
         }
