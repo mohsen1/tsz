@@ -172,8 +172,15 @@ impl<'a> CheckerState<'a> {
             // Check if this is an extends clause (for TS2507 errors)
             let is_extends_clause = heritage.token == SyntaxKind::ExtendsKeyword as u16;
 
-            // Check each type in the heritage clause
-            for &type_idx in &heritage.types.nodes {
+            // Check each type in the heritage clause.
+            // For class `extends`, only check the first type -- additional types
+            // after a comma are parser errors (TS1174) and should not be resolved
+            // by the checker (matching tsc behavior which only resolves the first
+            // base class expression).
+            for (heritage_type_index, &type_idx) in heritage.types.nodes.iter().enumerate() {
+                if is_class_declaration && is_extends_clause && heritage_type_index > 0 {
+                    continue;
+                }
                 let Some(type_node) = self.ctx.arena.get(type_idx) else {
                     continue;
                 };
