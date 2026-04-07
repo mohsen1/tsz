@@ -604,10 +604,6 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        eprintln!(
-            "DEBUG: calling error_type_not_assignable_with_reason_at at diag_idx={:?}",
-            diag_idx
-        );
         self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
         false
     }
