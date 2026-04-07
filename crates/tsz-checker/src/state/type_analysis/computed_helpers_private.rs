@@ -386,30 +386,41 @@ impl<'a> CheckerState<'a> {
                 // For concrete types, check if the property actually exists on the type.
                 // If found: TS18013 (property exists but not accessible from outside its class).
                 // If not found: TS2339 (property does not exist on type).
+                //
+                // Important: Private identifiers (names starting with `#`) are nominally
+                // scoped and cannot be implicitly declared by index signatures. When the
+                // private name is not declared in ANY enclosing class scope (symbols.is_empty()),
+                // index signature matches must be excluded. Only explicit property declarations
+                // with the exact `#name` should count as "found".
                 let mut found = false;
 
-                use crate::query_boundaries::common::PropertyAccessResult;
-                match self
-                    .ctx
-                    .types
-                    .property_access_type(resolved_type, &property_name)
-                {
-                    PropertyAccessResult::Success { .. } => {
-                        found = true;
+                // Check for explicit property declarations (not index signatures).
+                // For private names, we only look at named properties on the type's shape,
+                // not through property_access_type which resolves index signatures.
+                if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    resolved_type,
+                ) {
+                    let prop_atom = self.ctx.types.intern_string(&property_name);
+                    for prop in &shape.properties {
+                        if prop.name == prop_atom {
+                            found = true;
+                            break;
+                        }
                     }
-                    _ => {
-                        if let Some(shape) =
-                            crate::query_boundaries::state::type_analysis::callable_shape_for_type(
-                                self.ctx.types,
-                                resolved_type,
-                            )
-                        {
-                            let prop_atom = self.ctx.types.intern_string(&property_name);
-                            for prop in &shape.properties {
-                                if prop.name == prop_atom {
-                                    found = true;
-                                    break;
-                                }
+                }
+                if !found {
+                    if let Some(shape) =
+                        crate::query_boundaries::state::type_analysis::callable_shape_for_type(
+                            self.ctx.types,
+                            resolved_type,
+                        )
+                    {
+                        let prop_atom = self.ctx.types.intern_string(&property_name);
+                        for prop in &shape.properties {
+                            if prop.name == prop_atom {
+                                found = true;
+                                break;
                             }
                         }
                     }

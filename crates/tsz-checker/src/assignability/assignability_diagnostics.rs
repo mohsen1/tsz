@@ -989,6 +989,88 @@ impl<'a> CheckerState<'a> {
             || crate::query_boundaries::common::has_function_shape(self.ctx.types, type_id)
     }
 
+    /// Check if two object types are comparable because their function-typed
+    /// properties have overlapping arity.
+    ///
+    /// In tsc's comparable relation, objects like `{ fn(a?: Base): void }` and
+    /// `{ fn(a?: C): void }` are considered comparable because both functions
+    /// can be called with 0 arguments (all optional). The comparable relation
+    /// threads through object properties and checks function signatures for
+    /// arity overlap, not strict assignability.
+    fn objects_with_arity_overlapping_functions_are_comparable(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        use crate::query_boundaries::common::{function_shape_for_type, object_shape_for_type};
+
+        let source_resolved = self.evaluate_type_with_resolution(source);
+        let target_resolved = self.evaluate_type_with_resolution(target);
+
+        let Some(source_shape) = object_shape_for_type(self.ctx.types, source_resolved) else {
+            return false;
+        };
+        let Some(target_shape) = object_shape_for_type(self.ctx.types, target_resolved) else {
+            return false;
+        };
+
+        // Need at least one common property that is a function type
+        let mut found_function_prop = false;
+
+        for target_prop in &target_shape.properties {
+            if let Some(source_prop) = source_shape
+                .properties
+                .iter()
+                .find(|p| p.name == target_prop.name)
+            {
+                // Check if both properties are function types
+                let src_func = function_shape_for_type(self.ctx.types, source_prop.type_id);
+                let tgt_func = function_shape_for_type(self.ctx.types, target_prop.type_id);
+
+                match (src_func, tgt_func) {
+                    (Some(src_fn), Some(tgt_fn)) => {
+                        found_function_prop = true;
+                        // Check arity overlap: min arity of one <= max arity of other
+                        let src_min = src_fn.params.iter().filter(|p| p.is_required()).count();
+                        let tgt_min = tgt_fn.params.iter().filter(|p| p.is_required()).count();
+                        let src_has_rest = src_fn.params.iter().any(|p| p.rest);
+                        let tgt_has_rest = tgt_fn.params.iter().any(|p| p.rest);
+                        let src_max = if src_has_rest {
+                            usize::MAX
+                        } else {
+                            src_fn.params.len()
+                        };
+                        let tgt_max = if tgt_has_rest {
+                            usize::MAX
+                        } else {
+                            tgt_fn.params.len()
+                        };
+
+                        // Arity ranges must overlap: [src_min, src_max] ∩ [tgt_min, tgt_max] ≠ ∅
+                        if src_min > tgt_max || tgt_min > src_max {
+                            return false;
+                        }
+                    }
+                    (None, None) => {
+                        // Neither is a function type — check normal comparability
+                        let prop_comparable = self
+                            .is_assignable_to(source_prop.type_id, target_prop.type_id)
+                            || self.is_assignable_to(target_prop.type_id, source_prop.type_id);
+                        if !prop_comparable {
+                            return false;
+                        }
+                    }
+                    _ => {
+                        // One is function, the other is not — not comparable
+                        return false;
+                    }
+                }
+            }
+        }
+
+        found_function_prop
+    }
+
     /// Check if two types are comparable (overlap).
     ///
     /// Corresponds to TypeScript's `areTypesComparable`: returns true if the types
@@ -1108,6 +1190,18 @@ impl<'a> CheckerState<'a> {
         // generic signatures can potentially be instantiated to match the concrete
         // type, so tsc treats them as having structural overlap.
         if self.objects_with_generic_signatures_are_comparable(source_apparent, target_apparent) {
+            return true;
+        }
+
+        // Two object types where function-typed properties have overlapping arity
+        // are comparable. For example, `{ fn(a?: Base): void }` and `{ fn(a?: C): void }`
+        // are comparable because both functions can be called with 0 args (all optional).
+        // tsc's Comparable relation threads through object properties and considers
+        // function signatures comparable when their arity ranges overlap.
+        if self.objects_with_arity_overlapping_functions_are_comparable(
+            source_apparent,
+            target_apparent,
+        ) {
             return true;
         }
 
