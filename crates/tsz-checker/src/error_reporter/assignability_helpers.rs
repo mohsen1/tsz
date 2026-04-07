@@ -53,10 +53,6 @@ impl<'a> CheckerState<'a> {
         target_for_display: TypeId,
         anchor_idx: NodeIndex,
     ) {
-        eprintln!(
-            "DEBUG error_type_not_assignable_at_with_display_types: anchor_idx={:?}",
-            anchor_idx
-        );
         let (start, length) = self
             .resolve_diagnostic_anchor(
                 anchor_idx,
@@ -67,10 +63,6 @@ impl<'a> CheckerState<'a> {
                 let (pos, end) = self.get_node_span(anchor_idx).unwrap_or((0, 0));
                 self.normalized_anchor_span(anchor_idx, pos, end.saturating_sub(pos))
             });
-        eprintln!(
-            "DEBUG error_type_not_assignable_at_with_display_types: resolved start={}",
-            start
-        );
         let source_str = self.format_type_diagnostic(source_for_display);
         let target_str = self.format_type_diagnostic(target_for_display);
         let message = crate::diagnostics::format_message(
