@@ -24474,3 +24474,68 @@ let c: Config = { name: "hello" };
          from an ambient module via export=. Got: {codes:?}\n{diagnostics:#?}"
     );
 }
+
+/// Bug: `keyof` type alias used as function parameter corrupts subsequent usage.
+/// When `type K = keyof Reg` is used as a function parameter type, subsequent
+/// assignments like `const x: K = "a"` incorrectly fail with "Type 'string'
+/// is not assignable to type 'keyof Reg'". Without the function declaration,
+/// the assignment works fine. Using `keyof Reg` directly (not through alias)
+/// also works. This suggests a caching side-effect in function parameter
+/// type processing that corrupts the keyof type alias evaluation.
+#[test]
+#[ignore = "keyof type alias caching bug - function parameter processing corrupts keyof evaluation"]
+fn test_keyof_type_alias_in_function_parameter_should_not_corrupt_assignability() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface Registry {
+  a: never;
+  b: never;
+  c: never;
+}
+type Keys = keyof Registry;
+declare function take(style: Keys): void;
+const x: Keys = "a";
+take("a");
+"#,
+        CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    // Neither assignment nor call should error
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Should NOT emit TS2322 for literal assignable to keyof. Got: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Should NOT emit TS2345 for literal argument to keyof param. Got: {diagnostics:?}"
+    );
+}
+
+/// Types NOT inside a namespace should remain unqualified in diagnostics.
+#[test]
+fn test_global_type_display_remains_unqualified() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Bar { y: string; }
+declare function takeBar(b: Bar): void;
+takeBar("wrong");
+"#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2345),
+        "Should emit TS2345. Got: {diagnostics:?}"
+    );
+    let msg = diagnostic_message(&diagnostics, 2345).unwrap();
+    assert!(
+        msg.contains("'Bar'"),
+        "TS2345 message should contain unqualified 'Bar', got: {msg}"
+    );
+    assert!(
+        !msg.contains(".Bar"),
+        "TS2345 message should NOT contain dot-qualified '.Bar', got: {msg}"
+    );
+}
