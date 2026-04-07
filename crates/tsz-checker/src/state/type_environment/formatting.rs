@@ -100,6 +100,18 @@ impl<'a> CheckerState<'a> {
         formatter.format(type_id).into_owned()
     }
 
+    /// Format a type for assignability error messages WITHOUT display properties.
+    /// tsc shows widened property types in assignability messages:
+    /// `{ two: number }` not `{ two: 1 }`.
+    pub fn format_type_diagnostic_widened(&self, type_id: TypeId) -> String {
+        let mut formatter = self
+            .ctx
+            .create_type_formatter()
+            .with_diagnostic_mode()
+            .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks);
+        formatter.format(type_id).into_owned()
+    }
+
     /// Format a type for diagnostics while suppressing function-type parameter
     /// binders in the displayed surface.
     ///
