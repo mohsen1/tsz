@@ -627,12 +627,9 @@ impl<'a> CheckerContext<'a> {
     /// Create a type formatter configured for diagnostic error messages.
     /// Skips union optionalization (synthetic `?: undefined` members) that
     /// tsc only uses in hover/quickinfo, not in error messages.
-    /// Enables display properties to preserve literal types in error messages
-    /// (e.g., `{ fooProp: "frizzlebizzle" }` not `{ fooProp: string }`).
     pub fn create_diagnostic_type_formatter(&self) -> tsz_solver::TypeFormatter<'_> {
         self.create_type_formatter()
             .with_diagnostic_mode()
-            .with_display_properties()
             .with_strict_null_checks(self.compiler_options.strict_null_checks)
     }
 

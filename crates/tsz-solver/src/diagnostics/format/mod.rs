@@ -188,13 +188,6 @@ impl<'a> TypeFormatter<'a> {
         self
     }
 
-    /// Add a type ID to the display_alias_visiting set.
-    /// This prevents the formatter from looking up and using the alias name
-    /// for this type, causing it to display the expanded form instead.
-    pub fn add_display_alias_visiting(&mut self, type_id: TypeId) {
-        self.display_alias_visiting.insert(type_id);
-    }
-
     fn atom(&mut self, atom: Atom) -> Arc<str> {
         if let Some(value) = self.atom_cache.get(&atom) {
             return std::sync::Arc::clone(value);
