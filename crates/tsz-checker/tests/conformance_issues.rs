@@ -24382,3 +24382,95 @@ const r = x.ref;
         "Should emit TS2590 when UnionToIntersection creates an intersection with too-complex cross-product.\nDiagnostics: {all_codes:?}\n{diagnostics:#?}"
     );
 }
+
+/// Cross-binder SymbolId collision: named import from ambient module with export=.
+///
+/// When `import { Passport } from "passport"` resolves through an ambient module
+/// with `export = passport`, the resolved target SymbolId comes from a different
+/// binder. If the current binder has a symbol with the same numeric ID,
+/// `get_symbol_with_libs` would return the wrong symbol (e.g., a local variable
+/// instead of the imported interface), causing a false TS2749.
+#[test]
+fn test_cross_binder_symbol_id_collision_no_false_ts2749() {
+    let passport_dts = r#"
+declare module 'passport' {
+    namespace passport {
+        interface Passport {
+            use(): this;
+        }
+
+        interface PassportStatic extends Passport {
+            Passport: {new(): Passport};
+        }
+    }
+
+    const passport: passport.PassportStatic;
+    export = passport;
+}
+"#;
+
+    let test_ts = r#"
+import * as passport from "passport";
+import { Passport } from "passport";
+
+let p: Passport = passport.use();
+"#;
+
+    let files: &[(&str, &str)] = &[("passport.d.ts", passport_dts), ("test.ts", test_ts)];
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        files,
+        "test.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|(c, _)| *c).collect();
+    // Must NOT emit TS2749 — Passport is an interface, not a value.
+    assert!(
+        !has_error(&diagnostics, 2749),
+        "Should NOT emit TS2749 for 'Passport' — it is an interface imported \
+         from an ambient module via export=. Got: {codes:?}\n{diagnostics:#?}"
+    );
+}
+
+/// Simpler variant: named interface import from an ambient module without
+/// polymorphic this.
+#[test]
+fn test_cross_binder_named_import_resolves_as_type() {
+    let module_dts = r#"
+declare module 'mymod' {
+    namespace mymod {
+        interface Config {
+            name: string;
+        }
+    }
+    const mymod: { Config: { new(): mymod.Config } };
+    export = mymod;
+}
+"#;
+
+    let test_ts = r#"
+import { Config } from "mymod";
+
+let c: Config = { name: "hello" };
+"#;
+
+    let files: &[(&str, &str)] = &[("mymod.d.ts", module_dts), ("test.ts", test_ts)];
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        files,
+        "test.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|(c, _)| *c).collect();
+    assert!(
+        !has_error(&diagnostics, 2749),
+        "Should NOT emit TS2749 for 'Config' — it is an interface imported \
+         from an ambient module via export=. Got: {codes:?}\n{diagnostics:#?}"
+    );
+}
