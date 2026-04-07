@@ -500,10 +500,6 @@ impl<'a> CheckerState<'a> {
     pub fn diagnose_assignment_failure(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
         let anchor_idx =
             self.resolve_diagnostic_anchor_node(idx, DiagnosticAnchorKind::RewriteAssignment);
-        eprintln!(
-            "DEBUG diagnose_assignment_failure: resolved anchor_idx={:?}",
-            anchor_idx
-        );
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
     }
 
