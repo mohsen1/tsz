@@ -100,8 +100,7 @@ impl<'a> CheckerState<'a> {
                     let Some(binary) = self.ctx.arena.get_binary_expr(parent_node) else {
                         return None;
                     };
-                    if binary.right == current
-                        && self.is_assignment_operator(binary.operator_token)
+                    if binary.right == current && self.is_assignment_operator(binary.operator_token)
                     {
                         return Some(binary.left);
                     }

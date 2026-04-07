@@ -501,7 +501,10 @@ impl<'a> CheckerState<'a> {
         eprintln!("DEBUG diagnose_assignment_failure: idx={:?}", idx);
         let anchor_idx =
             self.resolve_diagnostic_anchor_node(idx, DiagnosticAnchorKind::RewriteAssignment);
-        eprintln!("DEBUG diagnose_assignment_failure: resolved anchor_idx={:?}", anchor_idx);
+        eprintln!(
+            "DEBUG diagnose_assignment_failure: resolved anchor_idx={:?}",
+            anchor_idx
+        );
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
     }
 
