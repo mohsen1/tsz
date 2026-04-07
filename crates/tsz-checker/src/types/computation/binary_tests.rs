@@ -588,6 +588,26 @@ fn ts2365_still_emitted_for_objects_with_required_properties() {
 }
 
 #[test]
+fn ts2365_emitted_for_class_types_with_incompatible_properties() {
+    // Class types with properties of incompatible types should emit TS2365 for relational ops.
+    // This matches tsc's behavior in comparisonOperatorWithNoRelationshipObjectsOnProperty.ts.
+    let diags = check_source_diagnostics(
+        "class A1 { a: string; } class B1 { a: number; }
+         declare var a1: A1; declare var b1: B1;
+         var r1 = a1 < b1;
+         var r2 = a1 > b1;
+         var r3 = a1 <= b1;
+         var r4 = a1 >= b1;",
+    );
+    let ts2365_count = diags.iter().filter(|d| d.code == 2365).count();
+    assert!(
+        ts2365_count == 4,
+        "Expected 4 TS2365 for class relational comparisons, got {ts2365_count}. Codes: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn ts2363_any_times_type_parameter() {
     // When left operand is `any` and right is a type parameter T,
     // tsc emits TS2363 for the right-hand side. The evaluator returns
