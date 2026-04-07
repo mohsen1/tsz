@@ -8,8 +8,7 @@
 #   scripts/session/launch-agents.sh --list         # List available campaigns
 #
 # Environment:
-#   CLAUDE_MODEL    — model to use (default: claude-sonnet-4-20250514)
-#   MAX_BUDGET      — per-iteration budget in USD (default: 5)
+#   AGENT_MODEL     — model to use (default: alibaba/qwen3.6-plus)
 #
 # =============================================================================
 set -uo pipefail
@@ -17,7 +16,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 CAMPAIGNS_FILE="$SCRIPT_DIR/campaigns.yaml"
-MODEL="${CLAUDE_MODEL:-claude-sonnet-4-20250514}"
+MODEL="${AGENT_MODEL:-alibaba/qwen3.6-plus}"
 
 # --- --list mode ---
 if [[ "${1:-}" == "--list" ]]; then
@@ -153,11 +152,12 @@ with open(sys.argv[1]) as f:
 " "$WORKTREE/scripts/conformance/conformance-snapshot.json" 2>/dev/null || echo "0")
     echo "Baseline: $BASELINE conformance tests passing"
 
-    echo "Launching claude agent..."
-    claude -p "$PROMPT" \
+    echo "Launching opencode agent (model: $MODEL)..."
+    opencode run "$PROMPT" \
+        -m "$MODEL" \
+        --variant high \
         --dir "$WORKTREE" \
-        --dangerously-skip-permissions \
-        --model "$MODEL" \
+        --title "campaign-$CAMPAIGN-iter$ITERATION" \
         || true
 
     CURRENT=$(git -C "$WORKTREE" rev-parse HEAD)
