@@ -2044,30 +2044,6 @@ impl<'a> FlowAnalyzer<'a> {
             return self.apply_type_predicate_narrowing(pre_type, &resolved_predicate, true);
         }
 
-        // Check if predicate_target is a negated expression (!innerCall)
-        // This handles cases like assert(!typeGuard(x)) where we need to narrow
-        // based on the inner call's predicate but with negative sense.
-        if let Some(pred_node) = self.arena.get(predicate_target)
-            && pred_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-            && let Some(unary) = self.arena.get_unary_expr(pred_node)
-            && unary.operator == SyntaxKind::ExclamationToken as u16
-        {
-            // The predicate target is !innerCall
-            // Check if the inner call's argument matches our reference
-            if let Some((guard, guard_target, _is_optional)) =
-                self.extract_type_guard(unary.operand)
-            {
-                if self.is_matching_reference(guard_target, reference) {
-                    // Apply the guard with NEGATIVE sense (because of the !)
-                    return self.apply_type_predicate_narrowing(
-                        pre_type,
-                        &resolved_predicate,
-                        false, // false = negative sense
-                    );
-                }
-            }
-        }
-
         // Optional-chain intermediate transport for assertion predicates:
         // `assertNonNull(o?.foo)` and similar predicates prove that the chain
         // reached its tail value, so prefix references (`o`, `o.foo` intermediates)
