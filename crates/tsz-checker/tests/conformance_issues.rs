@@ -84,6 +84,48 @@ fn diagnostic_message(diagnostics: &[(u32, String)], code: u32) -> Option<&str> 
         .map(|(_, message)| message.as_str())
 }
 
+/// TS2322 for variable declarations with type annotations should be anchored
+/// at the initializer expression, not the variable name. This matches tsc
+/// behavior where `var d: Foo = expr` reports the error at `expr`.
+///
+/// Currently ignored: `assignment_anchor_node` in fingerprint_policy.rs rewrites
+/// all variable declaration anchors to `vd.name`. A targeted fix would need to
+/// either skip rewriting for non-destructuring initializers or add a
+/// `DiagnosticAnchorKind` variant that preserves the initializer position.
+#[test]
+#[ignore]
+fn test_ts2322_variable_decl_diagnostic_anchored_at_initializer() {
+    let source = r#"
+interface ParserFunc {
+    (eventEmitter: number, buffer: string): void;
+}
+interface Parsers {
+    readline(delimiter?: string): ParserFunc;
+}
+declare var parsers: Parsers;
+var d: ParserFunc = parsers.readline;
+"#;
+    let diags = compile_and_get_raw_diagnostics_named("test.ts", source, CheckerOptions::default());
+    let ts2322 = diags.iter().filter(|d| d.code == 2322).collect::<Vec<_>>();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected 1 TS2322, got {}: {:?}",
+        ts2322.len(),
+        ts2322
+    );
+    let diag = ts2322[0];
+    // The error should point at `parsers.readline` (the initializer),
+    // not at `d` (the variable name).
+    let error_text = &source[diag.start as usize..diag.start as usize + diag.length as usize];
+    let trimmed = error_text.trim_end_matches(';');
+    assert_eq!(
+        trimmed, "parsers.readline",
+        "TS2322 should be anchored at the initializer expression, got span text: '{}'",
+        error_text
+    );
+}
+
 #[test]
 fn test_no_implicit_any_string_indexer_uses_get_set_call_suggestions() {
     let diagnostics = compile_and_get_diagnostics_with_options(
