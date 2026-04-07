@@ -158,8 +158,10 @@ impl<'a> CheckerState<'a> {
 
         // TS1359: 'await' used as function name in async context.
         // Async functions create an implicit async context where 'await' is reserved.
+        // Skip for async generators — the parser handles `await` as a name there (TS1109).
         if node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
             && function_is_async
+            && !function_is_generator
             && let Some(name_idx) = name_node
             && let Some(name_n) = self.ctx.arena.get(name_idx)
             && let Some(ident) = self.ctx.arena.get_identifier(name_n)
