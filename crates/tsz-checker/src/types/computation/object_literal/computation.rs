@@ -2203,7 +2203,7 @@ impl<'a> CheckerState<'a> {
                         // Skip for generic spreads — the constraint properties
                         // are approximations and may include properties that
                         // aren't actually present in the concrete type.
-                        if self.ctx.strict_null_checks() && !is_generic_spread {
+                        if self.ctx.strict_null_checks() {
                             for sp in &spread_props {
                                 if !sp.optional
                                     && let Some((prop_node, prop_name)) =
