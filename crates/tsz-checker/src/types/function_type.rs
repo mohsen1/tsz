@@ -156,6 +156,25 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS1359: 'await' used as function name in async context.
+        // Async functions create an implicit async context where 'await' is reserved.
+        if node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            && function_is_async
+            && let Some(name_idx) = name_node
+            && let Some(name_n) = self.ctx.arena.get(name_idx)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_n)
+        {
+            let name = &ident.escaped_text;
+            if name == "await" {
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node(
+                    name_idx,
+                    "Identifier expected. 'await' is a reserved word that cannot be used here.",
+                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
+                );
+            }
+        }
+
         // Push enclosing type parameters so nested functions can reference outer generic scopes.
         let enclosing_type_param_updates = self.push_enclosing_type_parameters(idx);
 
