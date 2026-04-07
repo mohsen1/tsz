@@ -38,30 +38,7 @@ impl<'a> CheckerState<'a> {
                             let evaluated = self.evaluate_type_with_env(ty);
                             return self.format_type_diagnostic(evaluated);
                         }
-                        // tsc expands type aliases whose body is a union of literal
-                        // types (e.g., `type IAxisType = "linear" | "categorical"`)
-                        // showing `"linear" | "categorical"` instead of `IAxisType`.
-                        if let Some(members) =
-                            crate::query_boundaries::common::union_members(self.ctx.types, body)
-                        {
-                            let all_literals = !members.is_empty()
-                                && members.iter().all(|&m| {
-                                    tsz_solver::literal_value(self.ctx.types, m).is_some()
-                                        || m == TypeId::BOOLEAN_TRUE
-                                        || m == TypeId::BOOLEAN_FALSE
-                                });
-                            if all_literals {
-                                return self.format_type_diagnostic(body);
-                            }
-                        }
                     }
-                    let name = self.ctx.types.resolve_atom_ref(def.name);
-                    return name.to_string();
-                }
-                // For non-generic interfaces referenced via Lazy(DefId), preserve the
-                // interface name. tsc displays "Num" instead of the expanded structural
-                // form "{ constraint: Constraint<this>; witness: number; tag: string; }".
-                if def.kind == tsz_solver::def::DefKind::Interface && def.type_params.is_empty() {
                     let name = self.ctx.types.resolve_atom_ref(def.name);
                     return name.to_string();
                 }
@@ -120,22 +97,6 @@ impl<'a> CheckerState<'a> {
         // instead of expanding to the function signature).
         if let Some(alias_name) = self.lookup_type_alias_name_for_display(ty) {
             return alias_name;
-        }
-
-        // When the type is the body of a non-generic type alias AND has a
-        // display_alias (produced by evaluating a generic Application like
-        // `Id<{...}>`), format the Application directly.
-        // Example: `type Foo1 = Id<{...}>` should show `Id<{...}>` in
-        // assignability messages, not `Foo1`.
-        // Only applies to TypeAlias definitions (not interfaces/classes),
-        // since those should preserve their names.
-        if let Some(display_alias) = self.ctx.types.get_display_alias(ty)
-            && let Some(def_id) = self.ctx.definition_store.find_def_for_type(ty)
-            && let Some(def) = self.ctx.definition_store.get(def_id)
-            && def.kind == tsz_solver::def::DefKind::TypeAlias
-            && def.type_params.is_empty()
-        {
-            return self.format_type_diagnostic(display_alias);
         }
 
         let display_ty = self.normalize_assignability_display_type(ty);
@@ -827,22 +788,6 @@ impl<'a> CheckerState<'a> {
         // conditional evaluation. tsc shows the expanded form for these.
         if let Some(body) = def.body {
             if self.ctx.definition_store.is_computed_body(body) {
-                return None;
-            }
-        }
-        // tsc expands type aliases whose body is a union of literal types
-        // (e.g., `type IAxisType = "linear" | "categorical"`) — show the
-        // expanded form instead of the alias name. Check the actual type `ty`
-        // (which may be the evaluated body) rather than `def.body` (which
-        // may be a different TypeId).
-        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, ty) {
-            let all_literals = !members.is_empty()
-                && members.iter().all(|&m| {
-                    tsz_solver::literal_value(self.ctx.types, m).is_some()
-                        || m == TypeId::BOOLEAN_TRUE
-                        || m == TypeId::BOOLEAN_FALSE
-                });
-            if all_literals {
                 return None;
             }
         }
