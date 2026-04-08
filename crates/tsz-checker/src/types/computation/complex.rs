@@ -41,33 +41,6 @@ fn should_preserve_contextual_application_shape(
     false
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::diagnostics::diagnostic_codes;
-
-    #[test]
-    fn ts1209_invalid_optional_chain_from_new_anchors_question_dot() {
-        let source = r#"
-class A {
-    b() {}
-}
-new A?.b();
-"#;
-        let diagnostics = crate::test_utils::check_source_diagnostics(source);
-        let diag = diagnostics
-            .iter()
-            .find(|d| d.code == diagnostic_codes::INVALID_OPTIONAL_CHAIN_FROM_NEW_EXPRESSION_DID_YOU_MEAN_TO_CALL)
-            .expect("expected TS1209");
-
-        let question_dot_start = source.find("?.").expect("expected optional chain token") as u32;
-        assert_eq!(
-            diag.start, question_dot_start,
-            "TS1209 should anchor at `?.`, got: {diag:?}"
-        );
-        assert_eq!(diag.length, 2, "TS1209 should cover only `?.`");
-    }
-}
-
 impl<'a> CheckerState<'a> {
     pub(crate) const fn should_suppress_weak_key_arg_mismatch(
         &mut self,
@@ -1362,5 +1335,35 @@ impl<'a> CheckerState<'a> {
         } else {
             type_id
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::diagnostics::diagnostic_codes;
+
+    #[test]
+    fn ts1209_invalid_optional_chain_from_new_anchors_question_dot() {
+        let source = r#"
+class A {
+    b() {}
+}
+new A?.b();
+"#;
+        let diagnostics = crate::test_utils::check_source_diagnostics(source);
+        let diag = diagnostics
+            .iter()
+            .find(|d| {
+                d.code
+                    == diagnostic_codes::INVALID_OPTIONAL_CHAIN_FROM_NEW_EXPRESSION_DID_YOU_MEAN_TO_CALL
+            })
+            .expect("expected TS1209");
+
+        let question_dot_start = source.find("?.").expect("expected optional chain token") as u32;
+        assert_eq!(
+            diag.start, question_dot_start,
+            "TS1209 should anchor at `?.`, got: {diag:?}"
+        );
+        assert_eq!(diag.length, 2, "TS1209 should cover only `?.`");
     }
 }
