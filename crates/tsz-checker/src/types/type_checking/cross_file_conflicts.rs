@@ -496,7 +496,9 @@ impl<'a> CheckerState<'a> {
         decl_idx: NodeIndex,
         members: &mut FxHashMap<String, u32>,
     ) {
-        for (name, _name_idx, flags) in self.namespace_member_declarations(arena, decl_idx) {
+        for (name, _name_idx, flags, _is_import_equals_decl, _decl_idx) in
+            self.namespace_member_declarations(arena, decl_idx)
+        {
             members
                 .entry(name)
                 .and_modify(|existing| *existing |= flags)
@@ -1071,7 +1073,7 @@ impl<'a> CheckerState<'a> {
         }
 
         for &decl_idx in local_namespace_decls {
-            for (name, name_idx, flags) in
+            for (name, name_idx, flags, is_import_equals_decl, member_decl_idx) in
                 self.namespace_member_declarations(self.ctx.arena, decl_idx)
             {
                 let Some(&remote_flags) = remote_members.get(&name) else {
@@ -1092,6 +1094,30 @@ impl<'a> CheckerState<'a> {
 
                 let message = format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
                 self.error_at_node(name_idx, &message, diagnostic_codes::DUPLICATE_IDENTIFIER);
+                if is_import_equals_decl
+                    && (remote_flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0
+                {
+                    let conflict_message = format_message(
+                        diagnostic_messages::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
+                        &[&name],
+                    );
+                    let error_node = self
+                        .ctx
+                        .arena
+                        .get_extended(member_decl_idx)
+                        .and_then(|ext| {
+                            let p = ext.parent;
+                            self.ctx.arena.get(p).and_then(|pn| {
+                                (pn.kind == syntax_kind_ext::EXPORT_DECLARATION).then_some(p)
+                            })
+                        })
+                        .unwrap_or(name_idx);
+                    self.error_at_node(
+                        error_node,
+                        &conflict_message,
+                        diagnostic_codes::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
+                    );
+                }
             }
         }
     }
@@ -1100,7 +1126,7 @@ impl<'a> CheckerState<'a> {
         &self,
         arena: &tsz_parser::parser::node::NodeArena,
         decl_idx: NodeIndex,
-    ) -> Vec<(String, NodeIndex, u32)> {
+    ) -> Vec<(String, NodeIndex, u32, bool, NodeIndex)> {
         let Some(node) = arena.get(decl_idx) else {
             return Vec::new();
         };
@@ -1128,7 +1154,7 @@ impl<'a> CheckerState<'a> {
         &self,
         arena: &tsz_parser::parser::node::NodeArena,
         stmt_idx: NodeIndex,
-        members: &mut Vec<(String, NodeIndex, u32)>,
+        members: &mut Vec<(String, NodeIndex, u32, bool, NodeIndex)>,
     ) {
         let Some(stmt_node) = arena.get(stmt_idx) else {
             return;
@@ -1175,6 +1201,8 @@ impl<'a> CheckerState<'a> {
                         ident.escaped_text.to_string(),
                         var_decl.name,
                         self.normalize_namespace_member_flags(arena, decl_idx, flags),
+                        false,
+                        decl_idx,
                     ));
                 }
             }
@@ -1198,6 +1226,8 @@ impl<'a> CheckerState<'a> {
             name,
             name_idx,
             self.normalize_namespace_member_flags(arena, stmt_idx, flags),
+            stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION,
+            stmt_idx,
         ));
     }
 
