@@ -504,7 +504,7 @@ impl BinderState {
                                         // `export class A {}; export type { A };` value-visible.
                                         let should_clone_type_only_export = spec_type_only
                                             && !orig_is_type_only
-                                            && !orig_was_exported;
+                                            && (orig != exp || !orig_was_exported);
                                         if should_clone_type_only_export {
                                             let clone_id = {
                                                 let src =
