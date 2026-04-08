@@ -316,7 +316,43 @@ impl<'a> CheckerState<'a> {
         let anchor_argument_from_all_failures =
             all_failures_are_argument_mismatches && shared_argument_anchor.is_some();
         let is_new_call = self.is_new_expression(idx);
+        let is_bind_method_call = self
+            .ctx
+            .arena
+            .get(idx)
+            .and_then(|call_node| self.ctx.arena.get_call_expr(call_node))
+            .is_some_and(|call_expr| {
+                let is_bind = self
+                    .ctx
+                    .arena
+                    .get(call_expr.expression)
+                    .and_then(|callee| {
+                        if callee.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                            self.ctx.arena.get_access_expr(callee)
+                        } else {
+                            None
+                        }
+                    })
+                    .and_then(|access| self.ctx.arena.get(access.name_or_argument))
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .is_some_and(|ident| ident.escaped_text == "bind");
+                if !is_bind {
+                    return false;
+                }
+
+                // tsc anchors callback.bind(2)-style failures at `bind`, but
+                // keeps first-argument anchoring for `bind(undefined)` mismatches.
+                let first_arg_is_undefined = call_expr
+                    .arguments
+                    .as_ref()
+                    .and_then(|args| args.nodes.first().copied())
+                    .and_then(|arg_idx| self.ctx.arena.get(arg_idx))
+                    .and_then(|arg_node| self.ctx.arena.get_identifier(arg_node))
+                    .is_some_and(|ident| ident.escaped_text == "undefined");
+                !first_arg_is_undefined
+            });
         let anchor_first_argument = !is_new_call
+            && !is_bind_method_call
             && (identical_argument_failures
                 && !remaining_failures.is_empty()
                 && remaining_failures_are_count_mismatches
