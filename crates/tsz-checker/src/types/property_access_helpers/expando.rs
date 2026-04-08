@@ -568,6 +568,33 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Imported aliases should not behave as local JS expando objects.
+        // Preserve TS2339 for writes like `importedCtor.prototype.foo = ...`.
+        let mut root_idx = object_expr_idx;
+        loop {
+            let Some(root_node) = self.ctx.arena.get(root_idx) else {
+                break;
+            };
+            if root_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && root_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            {
+                break;
+            }
+            let Some(root_access) = self.ctx.arena.get_access_expr(root_node) else {
+                break;
+            };
+            root_idx = root_access.expression;
+        }
+        if let Some(root_node) = self.ctx.arena.get(root_idx)
+            && root_node.kind == SyntaxKind::Identifier as u16
+            && let Some(root_sym_id) = self.resolve_identifier_symbol(root_idx)
+            && let Some(root_symbol) = self.ctx.binder.get_symbol(root_sym_id)
+            && (root_symbol.flags & symbol_flags::ALIAS) != 0
+            && root_symbol.import_module.is_some()
+        {
+            return false;
+        }
+
         self.is_expando_property_read(object_expr_idx, property_name)
             || (self.property_access_is_direct_write_target(property_access_idx)
                 && self
@@ -596,6 +623,26 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
+
+        // Do not treat imported aliases as prototype-expando roots.
+        // In checkJs, writes like `importedCtor.prototype.foo = ...` should still
+        // be checked against the imported instance shape (TS2339), not silently
+        // accepted as local expandos.
+        if let Some(object_node) = self.ctx.arena.get(object_expr_idx)
+            && object_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(object_access) = self.ctx.arena.get_access_expr(object_node)
+            && self
+                .ctx
+                .arena
+                .get_identifier_at(object_access.name_or_argument)
+                .is_some_and(|ident| ident.escaped_text == "prototype")
+            && let Some(root_sym_id) = self.resolve_identifier_symbol(object_access.expression)
+            && let Some(root_symbol) = self.ctx.binder.get_symbol(root_sym_id)
+            && (root_symbol.flags & symbol_flags::ALIAS) != 0
+            && root_symbol.import_module.is_some()
+        {
+            return false;
+        }
 
         // Don't treat as expando if the object is a class and the property exists
         // as an instance member of that class. In that case, accessing it on the
