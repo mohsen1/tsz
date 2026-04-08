@@ -230,13 +230,38 @@ impl ParserState {
 
             self.parse_type_member_separator_with_asi();
 
-            // If we didn't make progress, emit TS1131 and skip the token to avoid infinite loop
+            // If we didn't make progress, emit TS1131 and skip tokens to avoid infinite loops.
             if self.token_pos() == start_pos && !self.is_token(SyntaxKind::CloseBraceToken) {
                 self.parse_error_at_current_token(
                     tsz_common::diagnostics::diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
                     tsz_common::diagnostics::diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
                 );
-                self.next_token();
+
+                // `var` declarations are not valid type members. tsc recovers by
+                // abandoning the malformed member tail (`var x: T<>;`) and then
+                // surfacing a declaration-level TS1128 at the following `}`.
+                if self.is_token(SyntaxKind::VarKeyword) {
+                    self.next_token(); // consume `var`
+                    while !matches!(
+                        self.token(),
+                        SyntaxKind::SemicolonToken
+                            | SyntaxKind::CloseBraceToken
+                            | SyntaxKind::EndOfFileToken
+                    ) {
+                        self.next_token();
+                    }
+                    if self.is_token(SyntaxKind::SemicolonToken) {
+                        self.next_token();
+                    }
+                    if self.is_token(SyntaxKind::CloseBraceToken) {
+                        self.parse_error_at_current_token(
+                            tsz_common::diagnostics::diagnostic_messages::DECLARATION_OR_STATEMENT_EXPECTED,
+                            tsz_common::diagnostics::diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                        );
+                    }
+                } else {
+                    self.next_token();
+                }
             }
         }
 
