@@ -718,140 +718,15 @@ impl<'a> FlowAnalyzer<'a> {
 
             // User-defined type guards: isString(x), obj.isString(), assertsIs(x), etc.
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
-                if let Some(call) = self.arena.get_call_expr(cond_node)
-                    && let Some(node_types) = self.node_types
-                    && let Some(&callee_type) = node_types.get(&call.expression.0)
-                    && let Some(signature) = self.predicate_signature_for_type(callee_type)
-                    && signature.predicate.asserts
-                    && let Some(narrowed) =
-                        self.narrow_by_call_predicate(type_id, call, target, true)
-                {
+                if let Some(narrowed) = self.narrow_call_expression_condition(
+                    type_id,
+                    cond_node,
+                    condition_idx,
+                    target,
+                    is_true_branch,
+                    &narrowing,
+                ) {
                     return narrowed;
-                }
-
-                // CRITICAL: Use Solver-First architecture for call expressions
-                // Extract TypeGuard from AST (Checker responsibility: WHERE + WHAT)
-                if let Some((guard, guard_target, is_optional)) =
-                    self.extract_type_guard(condition_idx)
-                {
-                    // CRITICAL: Optional chaining behavior
-                    // If call is optional (obj?.method(x)), only narrow the true branch
-                    // The false branch might mean the method wasn't called (obj was nullish)
-                    if is_optional && !is_true_branch {
-                        return type_id;
-                    }
-
-                    // Check if the guard applies to our target reference
-                    if self.is_matching_reference(guard_target, target) {
-                        use tracing::trace;
-                        trace!(
-                            ?guard,
-                            ?type_id,
-                            ?is_true_branch,
-                            "Applying guard from call expression"
-                        );
-                        let guard_sense = match guard {
-                            TypeGuard::Predicate { asserts: true, .. } => GuardSense::Positive,
-                            _ => GuardSense::from(is_true_branch),
-                        };
-                        // Delegate to Solver for the calculation (Solver responsibility: RESULT)
-                        let result = narrowing.narrow_type(type_id, &guard, guard_sense);
-                        trace!(?result, "Guard application result");
-                        if !is_true_branch
-                            && result == type_id
-                            && let TypeGuard::Predicate {
-                                type_id: Some(predicate_type),
-                                ..
-                            } = guard
-                        {
-                            // Some complex generic predicates are not reduced by direct
-                            // negative narrowing. Mirror tsc behavior by subtracting the
-                            // positively narrowed subset from the source when possible.
-                            let positive =
-                                narrowing.narrow_type(type_id, &guard, GuardSense::Positive);
-                            if positive != type_id && positive != TypeId::NEVER {
-                                let excluded = narrowing.narrow_excluding_type(type_id, positive);
-                                if excluded != type_id {
-                                    return excluded;
-                                }
-                            }
-
-                            // Additional fallback for unions: exclude members that are
-                            // assignable to the predicate type.
-                            let members = union_members(self.interner, type_id)
-                                .unwrap_or_else(|| vec![type_id]);
-                            let excluded_members: Vec<TypeId> = members
-                                .iter()
-                                .copied()
-                                .filter(|member| self.is_assignable_to(*member, predicate_type))
-                                .collect();
-                            if !excluded_members.is_empty() {
-                                let excluded =
-                                    narrowing.narrow_excluding_types(type_id, &excluded_members);
-                                if excluded != type_id {
-                                    return excluded;
-                                }
-                            }
-                        }
-                        if result == type_id
-                            && let Some(call) = self.arena.get_call_expr(cond_node)
-                            && let Some(retry) =
-                                self.narrow_by_call_predicate(type_id, call, target, is_true_branch)
-                            && retry != type_id
-                        {
-                            return retry;
-                        }
-                        return result;
-                    }
-
-                    // Optional chain intermediate narrowing:
-                    // When a type guard on `x?.y?.z` (guard_target) would make the full
-                    // chain non-nullish, intermediates `x` and `x.y` (target) must also be
-                    // non-nullish (because `?.` short-circuits to undefined otherwise).
-                    //
-                    // This applies in both branches:
-                    // - TRUE branch of `isNotNull(x?.y?.z)` → chain is non-nullish
-                    // - FALSE branch of `isNil(x?.y?.z)` → chain is non-nullish
-                    // Matches tsc's getFlowTypeOfReferenceInOptionalChain behavior.
-                    if self.contains_optional_chain(guard_target)
-                        && self.is_optional_chain_prefix(guard_target, target)
-                    {
-                        return flow_boundary::narrow_optional_chain(
-                            self.interner.as_type_database(),
-                            type_id,
-                        );
-                    }
-                }
-
-                // Fall through to type-resolved predicate narrowing when AST-based
-                // extract_type_guard didn't match (e.g. declared function predicates
-                // where the callee type carries the predicate signature).
-                if let Some(call) = self.arena.get_call_expr(cond_node) {
-                    if let Some(narrowed) =
-                        self.narrow_by_call_predicate(type_id, call, target, is_true_branch)
-                    {
-                        return narrowed;
-                    }
-                    if is_true_branch {
-                        let optional_call =
-                            (cond_node.flags as u32 & node_flags::OPTIONAL_CHAIN) != 0;
-                        if optional_call && self.is_matching_reference(call.expression, target) {
-                            return flow_boundary::narrow_optional_chain(
-                                self.interner.as_type_database(),
-                                type_id,
-                            );
-                        }
-                        if let Some(callee_node) = self.arena.get(call.expression)
-                            && let Some(access) = self.arena.get_access_expr(callee_node)
-                            && self.access_expr_is_optional_chain(callee_node, access)
-                            && self.is_matching_reference(access.expression, target)
-                        {
-                            return flow_boundary::narrow_optional_chain(
-                                self.interner.as_type_database(),
-                                type_id,
-                            );
-                        }
-                    }
                 }
             }
 
