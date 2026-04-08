@@ -437,6 +437,93 @@ const s: string = getString("hello");
     }
 }
 
+#[test]
+fn test_generic_type_predicate_false_branch_does_not_collapse_to_never() {
+    let source = r#"
+type Result = { value: string };
+type Results = Result[];
+
+function isPlainResponse<T>(value: T | { data: T}): value is T {
+    return !value.hasOwnProperty('data');
+}
+
+function getResults2(value: Results | { data: Results }): Results {
+    return isPlainResponse(value) ? value : value.data;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    let formatted_predicates: Vec<_> = checker
+        .ctx
+        .call_type_predicates
+        .iter()
+        .map(|(node, (predicate, params))| {
+            (
+                *node,
+                predicate
+                    .type_id
+                    .map(|ty| checker.format_type(ty))
+                    .unwrap_or_else(|| "<none>".to_string()),
+                params
+                    .iter()
+                    .map(|param| {
+                        (
+                            param.name.map(|name| name.0),
+                            checker.format_type(param.type_id),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
+
+    if relevant
+        .iter()
+        .any(|(_, message)| message.contains("type 'never'"))
+    {
+        panic!(
+            "Found erroneous false-branch collapse to never for generic predicate: {relevant:?}; formatted_predicates={formatted_predicates:?}; call_type_predicates={:?}",
+            checker.ctx.call_type_predicates,
+        );
+    }
+}
+
 /// Regression test: union type predicate narrowing.
 ///
 /// When a method is called on a union type (e.g., `Entry | Group`) and only

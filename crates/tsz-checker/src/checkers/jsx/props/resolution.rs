@@ -1352,10 +1352,15 @@ impl<'a> CheckerState<'a> {
             .iter()
             .map(|(name, type_id)| {
                 let name_atom = self.ctx.types.intern_string(name);
+                let display_type = if name == "children" {
+                    self.jsx_children_display_type(*type_id)
+                } else {
+                    *type_id
+                };
                 tsz_solver::PropertyInfo {
                     name: name_atom,
-                    type_id: *type_id,
-                    write_type: *type_id,
+                    type_id: display_type,
+                    write_type: display_type,
                     optional: false,
                     readonly: false,
                     is_method: false,
@@ -1582,6 +1587,8 @@ impl<'a> CheckerState<'a> {
                         // Widen BOOLEAN_TRUE → BOOLEAN for error display
                         let display_type = if *type_id == TypeId::BOOLEAN_TRUE {
                             TypeId::BOOLEAN
+                        } else if name == "children" {
+                            self.jsx_children_display_type(*type_id)
                         } else {
                             *type_id
                         };

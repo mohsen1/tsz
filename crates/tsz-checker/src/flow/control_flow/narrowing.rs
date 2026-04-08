@@ -500,6 +500,22 @@ impl<'a> FlowAnalyzer<'a> {
                         .filter(|&&m| m != pred_type)
                         .copied()
                         .collect();
+                    if concrete_members.iter().any(|&m| {
+                        let evaluated = flow_query::evaluate_type_structure(self.interner, m);
+                        crate::query_boundaries::common::contains_type_parameters(
+                            self.interner,
+                            m,
+                        ) || crate::query_boundaries::common::contains_type_parameters(
+                            self.interner,
+                            evaluated,
+                        ) || crate::query_boundaries::state::checking::object_shape(
+                            self.interner,
+                            evaluated,
+                        )
+                        .is_some()
+                    }) {
+                        continue;
+                    }
                     let inferred_t = if let Some(arg_members) =
                         union_members_for_type(self.interner, arg_type)
                     {
@@ -635,7 +651,7 @@ impl<'a> FlowAnalyzer<'a> {
     /// (non-type-parameter) union members from the argument type.
     ///
     /// Returns `Some(inferred_type)` if inference succeeds, `None` otherwise.
-    fn infer_type_param_from_union(
+    pub(crate) fn infer_type_param_from_union(
         &self,
         param_type: TypeId,
         arg_type: TypeId,
@@ -712,6 +728,75 @@ impl<'a> FlowAnalyzer<'a> {
 
         if remaining.is_empty() {
             return None;
+        }
+
+        // Wrapper-pattern fallback: if the non-T side is a structural wrapper like
+        // `{ data: T }`, exact member subtraction leaves both `T` and `{ data: T }`
+        // in `remaining` because the wrapper member still contains the type parameter.
+        // Prefer the candidates that do NOT have the wrapper's property set.
+        let wrapper_props = param_members
+            .iter()
+            .copied()
+            .filter(|&m| !is_target_param(m))
+            .find_map(|m| {
+                let evaluated = if let Some(env_ref) = &self.type_environment {
+                    let env = env_ref.borrow();
+                    let applied = flow_query::evaluate_application_type(self.interner, &env, m);
+                    if applied != m {
+                        applied
+                    } else {
+                        flow_query::evaluate_type_structure(self.interner, m)
+                    }
+                } else {
+                    flow_query::evaluate_type_structure(self.interner, m)
+                };
+                crate::query_boundaries::state::checking::object_shape(self.interner, evaluated)
+                    .map(|shape| {
+                        shape
+                            .properties
+                            .iter()
+                            .map(|prop| prop.name)
+                            .collect::<Vec<_>>()
+                    })
+            })
+            .unwrap_or_default();
+
+        if !wrapper_props.is_empty() && remaining.len() > 1 {
+            let unwrapped: Vec<TypeId> = remaining
+                .iter()
+                .copied()
+                .filter(|candidate| {
+                    let evaluated = if let Some(env_ref) = &self.type_environment {
+                        let env = env_ref.borrow();
+                        let applied =
+                            flow_query::evaluate_application_type(self.interner, &env, *candidate);
+                        if applied != *candidate {
+                            applied
+                        } else {
+                            flow_query::evaluate_type_structure(self.interner, *candidate)
+                        }
+                    } else {
+                        flow_query::evaluate_type_structure(self.interner, *candidate)
+                    };
+                    wrapper_props.iter().all(|prop_name| {
+                        let prop_text = self.interner.resolve_atom_ref(*prop_name);
+                        crate::query_boundaries::state::checking::find_property_in_object_by_str(
+                            self.interner,
+                            evaluated,
+                            prop_text.as_ref(),
+                        )
+                        .is_none()
+                    })
+                })
+                .collect();
+
+            if !unwrapped.is_empty() {
+                return Some(if unwrapped.len() == 1 {
+                    unwrapped[0]
+                } else {
+                    self.interner.union(unwrapped)
+                });
+            }
         }
 
         // Build the inferred type from the remaining members

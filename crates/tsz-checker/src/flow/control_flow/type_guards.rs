@@ -457,6 +457,38 @@ impl<'a> FlowAnalyzer<'a> {
         if let Some(predicates) = self.call_type_predicates
             && let Some((predicate, params)) = predicates.get(&condition.0)
         {
+            let Some(node_types) = self.node_types else {
+                return None;
+            };
+            let callee_idx = self.skip_parens_and_assertions(call.expression);
+            let mut resolved_predicate = node_types
+                .get(&callee_idx.0)
+                .copied()
+                .map(|callee_type| {
+                    self.resolve_generic_predicate(
+                        predicate,
+                        params,
+                        call,
+                        callee_type,
+                        node_types,
+                    )
+                })
+                .unwrap_or(*predicate);
+            if let Some(pred_ty) = resolved_predicate.type_id
+                && let Some(pred_info) = flow_query::type_param_info(self.interner, pred_ty)
+                && let Some(param_idx) = resolved_predicate.parameter_index
+                && let Some(param) = params.get(param_idx)
+                && let Some(&arg_idx) = call.arguments.as_ref().and_then(|args| args.nodes.get(param_idx))
+                && let Some(&arg_type) = node_types.get(&arg_idx.0)
+            {
+                if param.type_id == pred_ty {
+                    resolved_predicate.type_id = Some(arg_type);
+                } else if let Some(inferred) =
+                    self.infer_type_param_from_union(param.type_id, arg_type, pred_info.name)
+                {
+                    resolved_predicate.type_id = Some(inferred);
+                }
+            }
             // When the solver infers T = ArgType (full argument type instead of the
             // narrowed subtype), the predicate type becomes a union matching the argument.
             // This happens when the parameter type is a type alias like `Result<T> = T | "FAILURE"`
@@ -465,11 +497,9 @@ impl<'a> FlowAnalyzer<'a> {
             // Detect: if the original predicate was a type parameter AND the instantiated
             // predicate type equals the argument type for the predicated parameter,
             // the inference was trivial. Skip cache and let the fallback resolve it.
-            let should_skip_cache = if let Some(pred_ty) = predicate.type_id
-                && flow_query::union_members_for_type(self.interner, pred_ty).is_some()
-                && let Some(param_idx) = predicate.parameter_index
+            let should_skip_cache = if let Some(pred_ty) = resolved_predicate.type_id
+                && let Some(param_idx) = resolved_predicate.parameter_index
             {
-                let callee_idx = self.skip_parens_and_assertions(call.expression);
                 let orig_is_type_param = self
                     .node_types
                     .and_then(|nt| nt.get(&callee_idx.0).copied())
@@ -480,26 +510,34 @@ impl<'a> FlowAnalyzer<'a> {
                     .is_some_and(|orig_pred| {
                         flow_query::type_param_info(self.interner, orig_pred).is_some()
                     });
-                // Only skip if the predicate type matches the argument type
-                // (indicating T was set to the full argument type, not a proper subset)
                 orig_is_type_param
-                    && call
-                        .arguments
-                        .as_ref()
-                        .and_then(|args| args.nodes.get(param_idx))
-                        .and_then(|&arg_idx| {
-                            self.node_types.and_then(|nt| nt.get(&arg_idx.0).copied())
-                        })
-                        .is_some_and(|arg_type| arg_type == pred_ty)
+                    && (flow_query::union_members_for_type(self.interner, pred_ty).is_some()
+                        || call
+                            .arguments
+                            .as_ref()
+                            .and_then(|args| args.nodes.get(param_idx))
+                            .and_then(|&arg_idx| {
+                                self.node_types.and_then(|nt| nt.get(&arg_idx.0).copied())
+                            })
+                            .is_some_and(|arg_type| {
+                                if arg_type == pred_ty {
+                                    return true;
+                                }
+                                let evaluated_pred =
+                                    flow_query::evaluate_type_structure(self.interner, pred_ty);
+                                evaluated_pred == arg_type
+                                    || self.interner.is_assignable_to(arg_type, evaluated_pred)
+                            }))
             } else {
                 false
             };
             if !should_skip_cache {
-                let target_node = self.predicate_target_expression(call, predicate, params)?;
-                let guard = if let Some(type_id) = predicate.type_id {
+                let target_node =
+                    self.predicate_target_expression(call, &resolved_predicate, params)?;
+                let guard = if let Some(type_id) = resolved_predicate.type_id {
                     TypeGuard::Predicate {
                         type_id: Some(type_id),
-                        asserts: predicate.asserts,
+                        asserts: resolved_predicate.asserts,
                     }
                 } else {
                     TypeGuard::Truthy

@@ -42,6 +42,8 @@ impl<'a> CheckerState<'a> {
                 let name_atom = self.ctx.types.intern_string(name);
                 let display_type = if *type_id == TypeId::BOOLEAN_TRUE {
                     TypeId::BOOLEAN
+                } else if name == "children" {
+                    self.jsx_children_display_type(*type_id)
                 } else {
                     *type_id
                 };
@@ -61,6 +63,33 @@ impl<'a> CheckerState<'a> {
             })
             .collect();
         self.ctx.types.factory().object(properties)
+    }
+
+    pub(in crate::checkers_domain::jsx) fn jsx_children_display_type(
+        &mut self,
+        type_id: TypeId,
+    ) -> TypeId {
+        let Some(elements) = tsz_solver::type_queries::get_tuple_elements(self.ctx.types, type_id)
+        else {
+            return type_id;
+        };
+        if elements.len() <= 1
+            || elements
+                .iter()
+                .any(|element| element.optional || element.rest || element.name.is_some())
+        {
+            return type_id;
+        }
+        let element_types = elements
+            .iter()
+            .map(|element| self.widen_type_for_display(element.type_id))
+            .collect::<Vec<_>>();
+        let array_element = if element_types.len() == 1 {
+            element_types[0]
+        } else {
+            self.ctx.types.factory().union(element_types)
+        };
+        self.ctx.types.factory().array(array_element)
     }
 
     fn format_jsx_provided_attrs_source_type(
@@ -87,10 +116,21 @@ impl<'a> CheckerState<'a> {
 
         let fields = provided_attrs
             .iter()
-            .map(|(name, type_id)| format!("{}: {}", format_name(name), self.format_type(*type_id)))
+            .map(|(name, type_id)| {
+                let display_type = if name == "children" {
+                    self.jsx_children_display_type(*type_id)
+                } else {
+                    *type_id
+                };
+                format!("{}: {}", format_name(name), self.format_type(display_type))
+            })
             .collect::<Vec<_>>()
             .join("; ");
-        format!("{{ {fields}; }}")
+        if fields.is_empty() {
+            "{}".to_string()
+        } else {
+            format!("{{ {fields}; }}")
+        }
     }
 
     fn format_jsx_missing_props_target_type(
@@ -224,7 +264,32 @@ impl<'a> CheckerState<'a> {
         display_target: &str,
         anchor_idx: NodeIndex,
     ) {
-        let source_str = self.format_type(attrs_type);
+        let source_str = if let Some(shape) = tsz_solver::type_queries::get_object_shape(
+            self.ctx.types,
+            attrs_type,
+        ) {
+            let fields = shape
+                .properties
+                .iter()
+                .map(|prop| {
+                    let name = self.ctx.types.resolve_atom_ref(prop.name);
+                    let display_type = if name.as_ref() == "children" {
+                        self.jsx_children_display_type(prop.type_id)
+                    } else {
+                        prop.type_id
+                    };
+                    format!("{name}: {}", self.format_type(display_type))
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            if fields.is_empty() {
+                "{}".to_string()
+            } else {
+                format!("{{ {fields}; }}")
+            }
+        } else {
+            self.format_type(attrs_type)
+        };
         let message = format_message(
             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             &[&source_str, display_target],

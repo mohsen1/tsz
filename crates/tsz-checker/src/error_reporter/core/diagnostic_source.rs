@@ -902,6 +902,14 @@ impl<'a> CheckerState<'a> {
                 {
                     return display;
                 }
+                if let Some(display) =
+                    self.declared_identifier_source_display(expr_idx, target, expr_display_type)
+                {
+                    return display;
+                }
+                if let Some(display) = self.rebuilt_array_source_display(display_type, target) {
+                    return display;
+                }
                 return self.format_assignability_type_for_message(display_type, target);
             }
 
@@ -976,6 +984,14 @@ impl<'a> CheckerState<'a> {
                 == Some(TypeId::UNKNOWN)
                 && let Some(display) = self.call_unknown_array_source_display(expr_idx, target)
             {
+                return display;
+            }
+            if let Some(display) =
+                self.declared_identifier_source_display(expr_idx, target, expr_display_type)
+            {
+                return display;
+            }
+            if let Some(display) = self.rebuilt_array_source_display(display_type, target) {
                 return display;
             }
 
@@ -1415,6 +1431,144 @@ impl<'a> CheckerState<'a> {
             stack.extend(self.ctx.arena.get_children(node_idx));
         }
         None
+    }
+
+    pub(in crate::error_reporter) fn declared_identifier_source_display(
+        &mut self,
+        expr_idx: NodeIndex,
+        target: TypeId,
+        expr_display_type: TypeId,
+    ) -> Option<String> {
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self.resolve_identifier_symbol(expr_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if (symbol.flags & tsz_binder::symbol_flags::VARIABLE) == 0 {
+            return None;
+        }
+
+        let declared_type = self.get_type_of_symbol(sym_id);
+        if matches!(declared_type, TypeId::ERROR | TypeId::UNKNOWN) {
+            return None;
+        }
+
+        if let Some(display) = self.identifier_array_object_literal_source_display(expr_idx, target)
+        {
+            return Some(display);
+        }
+        if let Some(display) = self.rebuilt_array_source_display(declared_type, target) {
+            return Some(display);
+        }
+
+        let declared_display_type =
+            self.widen_function_like_display_type(self.widen_type_for_display(declared_type));
+        let expr_display_type =
+            self.widen_function_like_display_type(self.widen_type_for_display(expr_display_type));
+        let declared_display =
+            self.format_assignability_type_for_message(declared_display_type, target);
+        let expr_display = self.format_assignability_type_for_message(expr_display_type, target);
+
+        (declared_display != expr_display).then_some(declared_display)
+    }
+
+    pub(in crate::error_reporter) fn rebuilt_array_source_display(
+        &mut self,
+        source_type: TypeId,
+        target: TypeId,
+    ) -> Option<String> {
+        let element_type =
+            tsz_solver::type_queries::get_array_element_type(self.ctx.types, source_type)?;
+        if matches!(element_type, TypeId::ERROR | TypeId::UNKNOWN) {
+            return None;
+        }
+        let widened_element =
+            self.normalize_assignability_display_type(self.widen_type_for_display(element_type));
+        let rebuilt = self.ctx.types.array(widened_element);
+        Some(self.format_assignability_type_for_message(rebuilt, target))
+    }
+
+    pub(in crate::error_reporter) fn identifier_array_object_literal_source_display(
+        &mut self,
+        expr_idx: NodeIndex,
+        target: TypeId,
+    ) -> Option<String> {
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self.resolve_identifier_symbol(expr_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if (symbol.flags & tsz_binder::symbol_flags::VARIABLE) == 0 {
+            return None;
+        }
+        let &decl_idx = symbol.declarations.first()?;
+        let decl = self.ctx.arena.get_variable_declaration_at(decl_idx)?;
+        let init_idx = decl.initializer.into_option()?;
+        let init_idx = self.ctx.arena.skip_parenthesized_and_assertions(init_idx);
+        let init_node = self.ctx.arena.get(init_idx)?;
+        if init_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return None;
+        }
+        let literal = self.ctx.arena.get_literal_expr(init_node)?;
+        if literal.elements.nodes.is_empty() {
+            return None;
+        }
+
+        let mut ordered_names = Vec::new();
+        let mut property_values: Vec<Vec<TypeId>> = Vec::new();
+        for (element_index, &element_idx) in literal.elements.nodes.iter().enumerate() {
+            let element_node = self.ctx.arena.get(element_idx)?;
+            if element_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                return None;
+            }
+            let object = self.ctx.arena.get_literal_expr(element_node)?;
+            if element_index == 0 {
+                for &child_idx in &object.elements.nodes {
+                    let child = self.ctx.arena.get(child_idx)?;
+                    let prop = self.ctx.arena.get_property_assignment(child)?;
+                    let name = self.get_property_name(prop.name)?;
+                    ordered_names.push(name);
+                    property_values.push(vec![self.get_type_of_node(prop.initializer)]);
+                }
+                continue;
+            }
+
+            if object.elements.nodes.len() != ordered_names.len() {
+                return None;
+            }
+            for (prop_index, &child_idx) in object.elements.nodes.iter().enumerate() {
+                let child = self.ctx.arena.get(child_idx)?;
+                let prop = self.ctx.arena.get_property_assignment(child)?;
+                let name = self.get_property_name(prop.name)?;
+                if name != ordered_names[prop_index] {
+                    return None;
+                }
+                property_values[prop_index].push(self.get_type_of_node(prop.initializer));
+            }
+        }
+
+        let fields = ordered_names
+            .into_iter()
+            .zip(property_values)
+            .map(|(name, value_types)| {
+                let widened_types = value_types
+                    .into_iter()
+                    .map(|ty| self.widen_type_for_display(ty))
+                    .collect::<Vec<_>>();
+                let value_type = if widened_types.len() == 1 {
+                    widened_types[0]
+                } else {
+                    self.ctx.types.factory().union(widened_types)
+                };
+                let display =
+                    self.format_assignability_type_for_message(value_type, target);
+                format!("{name}: {display}")
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        Some(format!("{{ {fields}; }}[]"))
     }
 
     pub(in crate::error_reporter) fn has_more_specific_diagnostic_at_span(

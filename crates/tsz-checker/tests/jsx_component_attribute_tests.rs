@@ -3337,9 +3337,9 @@ const k5 = <Tag key="1"><div></div><div></div></Tag>;
     );
     assert!(
         ts2322.iter().any(|(_, _, message)| message.contains(
-            "Type '{ children: [Element, Element]; key: string; }' is not assignable to type 'IntrinsicAttributes'."
+            "Type '{ children: Element[]; key: string; }' is not assignable to type 'IntrinsicAttributes'."
         )),
-        "Expected multi-body children with key to synthesize '{{ children: [Element, Element]; key: string; }}', got: {diags:?}"
+        "Expected multi-body children with key to synthesize '{{ children: Element[]; key: string; }}', got: {diags:?}"
     );
 }
 
