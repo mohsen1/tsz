@@ -1312,10 +1312,20 @@ impl ParserState {
                 Some(
                     if self.in_import_type_options_context
                         && !self.fallback_import_type_options_once
-                        && self.look_ahead_is_import_options_object_literal()
+                        && self.is_token(SyntaxKind::OpenBraceToken)
                     {
                         self.parse_import_options_object_literal()
                     } else {
+                        if self.in_import_type_options_context
+                            && !self.fallback_import_type_options_once
+                            && !self.is_token(SyntaxKind::OpenBraceToken)
+                        {
+                            self.error_token_expected("{");
+                            // For malformed import-type options in intersections,
+                            // match tsc by downgrading the next `& import(...)`
+                            // constituent to expression-mode option parsing.
+                            self.abort_intersection_continuation = true;
+                        }
                         self.parse_assignment_expression()
                     },
                 )
@@ -2900,23 +2910,6 @@ impl ParserState {
         )
     }
 
-    fn look_ahead_is_import_options_object_literal(&mut self) -> bool {
-        if !self.is_token(SyntaxKind::OpenBraceToken) {
-            return false;
-        }
-
-        let snapshot = self.scanner.save_state();
-        let current = self.current_token;
-        self.next_token();
-
-        let result = self.is_token(SyntaxKind::CloseBraceToken)
-            || self.look_ahead_is_import_attributes_property();
-
-        self.scanner.restore_state(snapshot);
-        self.current_token = current;
-        result
-    }
-
     fn look_ahead_is_import_attributes_property(&mut self) -> bool {
         let matches_key = if self.is_token(SyntaxKind::StringLiteral) {
             matches!(self.scanner.get_token_value_ref(), "with" | "assert")
@@ -2973,6 +2966,26 @@ impl ParserState {
         {
             let prop = if self.look_ahead_is_import_attributes_property() {
                 self.parse_import_options_property_assignment()
+            } else if self.is_property_start() {
+                // Type import options objects only allow `with`/`assert` at the
+                // top level. For malformed keys, mirror TypeScript's parser
+                // recovery shape: `'with' expected` + recovered tail diagnostics.
+                let mut semicolon_recovery = None;
+                self.parse_error_at_current_token("'with' expected.", diagnostic_codes::EXPECTED);
+                while !self.is_token(SyntaxKind::CloseBraceToken)
+                    && !self.is_token(SyntaxKind::EndOfFileToken)
+                {
+                    if semicolon_recovery.is_none() && self.is_token(SyntaxKind::ColonToken) {
+                        let start = self.u32_from_usize(self.scanner.get_token_start());
+                        let end = self.u32_from_usize(self.scanner.get_token_end());
+                        semicolon_recovery = Some((start, end - start));
+                    }
+                    self.next_token();
+                }
+                self.abort_intersection_continuation = true;
+                self.report_invalid_import_attribute_tail_recovery(semicolon_recovery);
+                aborted_after_nested_recovery = true;
+                NodeIndex::NONE
             } else {
                 self.parse_property_assignment()
             };
