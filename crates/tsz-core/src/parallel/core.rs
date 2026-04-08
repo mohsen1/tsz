@@ -3251,9 +3251,8 @@ fn suppress_parallel_ts2339_cascade_diagnostics(
         suppressed_ts2339_starts.insert(name_node.pos);
     }
 
-    diagnostics.retain(|diag| {
-        !(diag.code == 2339 && suppressed_ts2339_starts.contains(&diag.start))
-    });
+    diagnostics
+        .retain(|diag| !(diag.code == 2339 && suppressed_ts2339_starts.contains(&diag.start)));
 }
 
 /// Collect all function declarations from a source file
