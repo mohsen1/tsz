@@ -326,6 +326,19 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     && clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                 {
                     self.check_export_import_equals_type_only(export_idx, clause_idx);
+                    if self.ctx.is_declaration_file()
+                        && self.is_inside_global_augmentation(export_idx)
+                        && let Some(import_decl) = self.ctx.arena.get_import_decl(clause_node)
+                        && let Some(alias_node) = self.ctx.arena.get(import_decl.import_clause)
+                        && let Some(alias_ident) = self.ctx.arena.get_identifier(alias_node)
+                        && alias_ident.escaped_text == "JSX"
+                    {
+                        self.error_at_node(
+                            import_decl.import_clause,
+                            "Duplicate identifier 'JSX'.",
+                            crate::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER,
+                        );
+                    }
                 }
 
                 if self
