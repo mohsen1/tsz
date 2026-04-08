@@ -527,7 +527,8 @@ impl<'a> CheckerState<'a> {
             };
 
             // TS2858: import attribute values must be string literal expressions.
-            // Use string literal types directly (not widened) for valid values.
+            // For TS2322 display parity, keep top-level literal primitives (e.g. `0`)
+            // but widen nested object-literal members (e.g. `{ a: 0 }` -> `{ a: number }`).
             let value_type = if let Some(val_node) = self.ctx.arena.get(attr_data.value) {
                 if val_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16 {
                     if let Some(lit) = self.ctx.arena.get_literal(val_node) {
@@ -542,7 +543,27 @@ impl<'a> CheckerState<'a> {
                         crate::diagnostics::diagnostic_messages::IMPORT_ATTRIBUTE_VALUES_MUST_BE_STRING_LITERAL_EXPRESSIONS,
                         crate::diagnostics::diagnostic_codes::IMPORT_ATTRIBUTE_VALUES_MUST_BE_STRING_LITERAL_EXPRESSIONS,
                     );
-                    self.get_type_of_node(attr_data.value)
+                    if val_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                        let object_type = self.get_type_of_node(attr_data.value);
+                        let widened_object =
+                            crate::query_boundaries::common::widen_type(self.ctx.types, object_type);
+                        if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                            self.ctx.types,
+                            widened_object,
+                        ) {
+                            self.ctx.types.store_display_properties(
+                                widened_object,
+                                shape.properties.clone(),
+                            );
+                        }
+                        widened_object
+                    } else if let Some(literal_type) =
+                        self.literal_type_from_initializer(attr_data.value)
+                    {
+                        literal_type
+                    } else {
+                        self.get_type_of_node(attr_data.value)
+                    }
                 }
             } else {
                 self.get_type_of_node(attr_data.value)
