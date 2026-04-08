@@ -673,22 +673,6 @@ impl<'a> CheckerState<'a> {
             return TypeSymbolResolution::Type(sym_id);
         }
 
-        // Fast path for UMD global aliases (`export as namespace X`) that are
-        // already present in file_locals. These symbols carry ALIAS-only flags
-        // but are valid qualified type anchors.
-        if let Some(file_sym_id) = self.ctx.binder.file_locals.get(name)
-            && self
-                .ctx
-                .binder
-                .get_symbol(file_sym_id)
-                .is_some_and(|symbol| symbol.is_umd_export)
-        {
-            let scope_resolved = self.ctx.binder.resolve_identifier(self.ctx.arena, idx);
-            if scope_resolved.is_none_or(|resolved| resolved == file_sym_id) {
-                return TypeSymbolResolution::Type(file_sym_id);
-            }
-        }
-
         if let Some(sym_id) =
             self.resolve_unqualified_name_in_enclosing_namespace_for_type_position(idx, name)
         {
@@ -743,12 +727,7 @@ impl<'a> CheckerState<'a> {
                     };
                     if !should_skip_lib_symbol(sym_id) {
                         // Check flags using lib binder (lib_sym_id is valid in lib binder)
-                        let lib_symbol = lib_ctx.binder.get_symbol(lib_sym_id);
-                        let flags = lib_symbol.map_or(0, |s| s.flags);
-
-                        if lib_symbol.is_some_and(|s| s.is_umd_export) {
-                            return TypeSymbolResolution::Type(sym_id);
-                        }
+                        let flags = lib_ctx.binder.get_symbol(lib_sym_id).map_or(0, |s| s.flags);
 
                         // Namespaces and modules are value-only but should be allowed in type position
                         let is_namespace_or_module = (flags
@@ -799,14 +778,11 @@ impl<'a> CheckerState<'a> {
 
         let accept_type_symbol = |sym_id: SymbolId| -> bool {
             // Get symbol flags to check for special cases
-            let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders);
-            let flags = symbol.map_or(0, |s| s.flags);
-
-            // UMD namespace exports (`export as namespace X`) can be used as
-            // qualified type anchors.
-            if symbol.is_some_and(|s| s.is_umd_export) {
-                return true;
-            }
+            let flags = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(sym_id, &lib_binders)
+                .map_or(0, |s| s.flags);
 
             // Namespaces and modules are value-only but should be allowed in type position
             // because they can contain types (e.g., MyNamespace.ValueInterface)
@@ -1085,14 +1061,6 @@ impl<'a> CheckerState<'a> {
                         return false;
                     }
 
-                    if symbol.is_umd_export
-                        || (symbol.flags
-                            & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
-                            != 0
-                    {
-                        return true;
-                    }
-
                     let is_class_member = Self::is_class_member_symbol(symbol.flags);
                     if is_class_member {
                         return false;
@@ -1138,37 +1106,10 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(value_only) = value_only_candidate.get() {
-            return TypeSymbolResolution::ValueOnly(value_only);
+            TypeSymbolResolution::ValueOnly(value_only)
+        } else {
+            TypeSymbolResolution::NotFound
         }
-
-        // Fallback: UMD namespace globals (`export as namespace X`) may live in a
-        // different file binder and be absent from the current binder scope tables.
-        // In type position, allow them as qualified type anchors.
-        let local_shadows_umd = self
-            .ctx
-            .binder
-            .file_locals
-            .get(name)
-            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-            .is_some_and(|symbol| !symbol.is_umd_export);
-        if !local_shadows_umd && let Some(all_binders) = self.ctx.all_binders.as_ref() {
-            for (file_idx, binder) in all_binders.iter().enumerate() {
-                if let Some(sym_id) = binder.file_locals.get(name)
-                    && binder
-                        .get_symbol(sym_id)
-                        .is_some_and(|symbol| symbol.is_umd_export)
-                {
-                    if file_idx != self.ctx.current_file_idx
-                        && !self.ctx.has_symbol_file_index(sym_id)
-                    {
-                        self.ctx.register_symbol_file_target(sym_id, file_idx);
-                    }
-                    return TypeSymbolResolution::Type(sym_id);
-                }
-            }
-        }
-
-        TypeSymbolResolution::NotFound
     }
 
     // =========================================================================

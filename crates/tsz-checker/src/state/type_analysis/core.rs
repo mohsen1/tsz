@@ -638,14 +638,13 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .binder
                 .get_symbol_with_libs(left_sym_id, &lib_binders)
-            && (symbol.is_umd_export
-                || symbol.flags
-                    & (symbol_flags::MODULE
-                        | symbol_flags::CLASS
-                        | symbol_flags::REGULAR_ENUM
-                        | symbol_flags::CONST_ENUM
-                        | symbol_flags::INTERFACE)
-                    != 0)
+            && symbol.flags
+                & (symbol_flags::MODULE
+                    | symbol_flags::CLASS
+                    | symbol_flags::REGULAR_ENUM
+                    | symbol_flags::CONST_ENUM
+                    | symbol_flags::INTERFACE)
+                != 0
         {
             // If the left symbol is a pure interface (no namespace meaning) and a
             // local declaration shadows an outer namespace, the member might exist
@@ -906,22 +905,11 @@ impl<'a> CheckerState<'a> {
         member_name: &str,
         lib_binders: &[std::sync::Arc<tsz_binder::BinderState>],
     ) -> Option<tsz_binder::SymbolId> {
-        let record_member_origin = |member_id: tsz_binder::SymbolId| -> tsz_binder::SymbolId {
-            if let Some(parent_id) = sym_id
-                && let Some(file_idx) = self.ctx.resolve_symbol_file_index(parent_id)
-                && file_idx != self.ctx.current_file_idx
-                && !self.ctx.has_symbol_file_index(member_id)
-            {
-                self.ctx.register_symbol_file_target(member_id, file_idx);
-            }
-            member_id
-        };
-
         // Try direct exports first
         if let Some(ref exports) = symbol.exports
             && let Some(member_id) = exports.get(member_name)
         {
-            return Some(record_member_origin(member_id));
+            return Some(member_id);
         }
 
         // For classes, also check members (for static members in type queries)
@@ -930,14 +918,14 @@ impl<'a> CheckerState<'a> {
             && let Some(ref members) = symbol.members
             && let Some(member_id) = members.get(member_name)
         {
-            return Some(record_member_origin(member_id));
+            return Some(member_id);
         }
 
         if symbol.flags & symbol_flags::MODULE != 0 {
             if let Some(member_id) =
                 self.resolve_module_export_from_declarations(symbol, member_name)
             {
-                return Some(record_member_origin(member_id));
+                return Some(member_id);
             }
             // Only the anonymous source-file module should see top-level file exports
             // through `file_locals`. Named namespaces/modules must resolve members
@@ -962,7 +950,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(sym) = self.ctx.binder.get_symbol(local_sym_id)
                 && sym.is_exported
             {
-                return Some(record_member_origin(local_sym_id));
+                return Some(local_sym_id);
             }
         }
 
@@ -979,7 +967,7 @@ impl<'a> CheckerState<'a> {
             if let Some(reexported_sym_id) =
                 self.resolve_reexported_member(module_specifier, member_name, lib_binders)
             {
-                return Some(record_member_origin(reexported_sym_id));
+                return Some(reexported_sym_id);
             }
             // Cross-file fallback: resolve the relative module specifier from
             // the ALIAS symbol's source file perspective.
@@ -988,7 +976,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx
                         .resolve_alias_import_member(alias_id, module_specifier, member_name)
             {
-                return Some(record_member_origin(resolved));
+                return Some(resolved);
             }
         }
 
