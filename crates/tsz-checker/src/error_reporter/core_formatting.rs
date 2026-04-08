@@ -394,9 +394,9 @@ impl<'a> CheckerState<'a> {
 
     fn nominal_shape_symbol_for_display(&mut self, ty: TypeId) -> Option<tsz_binder::SymbolId> {
         let resolved = self.evaluate_type_for_assignability(ty);
-        [ty, resolved]
-            .into_iter()
-            .find_map(|candidate| tsz_solver::type_queries::get_type_shape_symbol(self.ctx.types, candidate))
+        [ty, resolved].into_iter().find_map(|candidate| {
+            tsz_solver::type_queries::get_type_shape_symbol(self.ctx.types, candidate)
+        })
     }
 
     fn qualified_symbol_name_for_message(&self, sym_id: tsz_binder::SymbolId) -> Option<String> {
