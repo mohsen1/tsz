@@ -589,13 +589,21 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Check assignability — emit TS2322 at the attributes node if not assignable
-        self.check_assignable_or_report_at(
-            source_type,
-            import_attributes_type,
-            attributes_idx,
-            attributes_idx,
-        );
+        // Emit top-level TS2322 at the attributes object (matching tsc fingerprint
+        // parity for import attribute shape mismatches).
+        if !self.is_assignable_to(source_type, import_attributes_type) {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let source_str = self.format_type(source_type);
+            let message = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&source_str, "ImportAttributes"],
+            );
+            self.error_at_node(
+                attributes_idx,
+                &message,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+        }
     }
 
     /// TS1453/TS1455/TS1456/TS1463/TS1464: validate type-only `resolution-mode`
