@@ -219,7 +219,9 @@ fn object_method_arrow_return_token_prefers_brace_expected_then_ts1434() {
         "expected TS1128 tail recovery after malformed object method, got {diags:?}"
     );
     assert!(
-        diags.iter().all(|d| d.code != diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED),
+        diags
+            .iter()
+            .all(|d| d.code != diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED),
         "object method recovery should not fall back to TS1131, got {diags:?}"
     );
 }
