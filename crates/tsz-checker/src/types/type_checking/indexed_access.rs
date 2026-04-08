@@ -864,11 +864,7 @@ impl<'a> CheckerState<'a> {
             tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
         {
             let property_name = self.ctx.types.resolve_atom(prop_atom);
-            self.check_ts4105_private_on_type_parameter(
-                data.index_type,
-                object_type,
-                &property_name,
-            );
+            self.check_ts4105_private_on_type_parameter(node_idx, object_type, &property_name);
         }
 
         let mut index_constraint =
