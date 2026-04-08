@@ -192,6 +192,33 @@ fn variable_declaration_recovery_prefers_ts1134_over_negated_regex_tail_ts1161()
 }
 
 #[test]
+fn variable_declaration_recovery_prefers_ts1134_for_unknown_identifier_tail() {
+    let subscript_one = '\u{2081}';
+    let source = format!(
+        "var a{subscript_one} = \"hello\"; alert(a{subscript_one})"
+    );
+    let (parser, _root) = parse_source(&source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+
+    let ts1134_count = codes
+        .iter()
+        .filter(|&&code| code == diagnostic_codes::VARIABLE_DECLARATION_EXPECTED)
+        .count();
+    assert_eq!(
+        ts1134_count, 2,
+        "expected exactly two TS1134 diagnostics for malformed declaration tail, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::EXPECTED),
+        "expected no TS1005 fallback for malformed unknown-identifier declaration tail, got {codes:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::INVALID_CHARACTER),
+        "expected TS1127 on the malformed identifier character, got {codes:?}"
+    );
+}
+
+#[test]
 fn parse_invalid_import_non_clause_start_reports_ts1128() {
     // `import 10;` — `10` is not a valid import clause start (not an identifier,
     // not `*`, `{`, `type`, or `defer`). tsc emits TS1128 "Declaration or statement

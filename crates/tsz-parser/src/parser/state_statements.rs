@@ -1879,6 +1879,51 @@ impl ParserState {
                     }
                 }
 
+                // `var a₁ = "hello";` leaves an Unknown token for the subscript
+                // character between the parsed identifier and `=`.
+                // tsc recovers by treating the assignment tail as malformed
+                // declaration syntax and reports TS1134 at `=` and again at
+                // the initializer start, instead of bubbling out as TS1005 ';'
+                // from parse_semicolon.
+                if self.is_token(SyntaxKind::Unknown) {
+                    let snapshot = self.scanner.save_state();
+                    let current = self.current_token;
+                    self.next_token();
+                    let unknown_followed_by_equals = self.is_token(SyntaxKind::EqualsToken);
+                    self.scanner.restore_state(snapshot);
+                    self.current_token = current;
+
+                    if unknown_followed_by_equals {
+                        self.parse_error_at_current_token(
+                            "Invalid character.",
+                            diagnostic_codes::INVALID_CHARACTER,
+                        );
+                        self.next_token(); // consume Unknown
+
+                        if self.is_token(SyntaxKind::EqualsToken) {
+                            self.parse_error_at_current_token(
+                                "Variable declaration expected.",
+                                diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
+                            );
+                            self.next_token(); // consume '='
+
+                            if !matches!(
+                                self.token(),
+                                SyntaxKind::SemicolonToken
+                                    | SyntaxKind::CloseBraceToken
+                                    | SyntaxKind::EndOfFileToken
+                            ) {
+                                self.parse_error_at_current_token(
+                                    "Variable declaration expected.",
+                                    diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
+                                );
+                                self.next_token();
+                            }
+                        }
+                        break;
+                    }
+                }
+
                 // No ASI - emit ',' expected for the unexpected token and stop.
                 self.error_comma_expected();
 
