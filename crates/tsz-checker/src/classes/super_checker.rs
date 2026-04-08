@@ -3,7 +3,6 @@
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::SyntaxKind;
 
 // =============================================================================
 // Super Expression Checking Methods
@@ -192,97 +191,7 @@ impl<'a> CheckerState<'a> {
             }
 
             if parent_node.kind == syntax_kind_ext::CONSTRUCTOR {
-                let Some(ctor) = self.ctx.arena.get_constructor(parent_node) else {
-                    return false;
-                };
-                if ctor.body.is_none() {
-                    return false;
-                }
-
-                let Some(body_node) = self.ctx.arena.get(ctor.body) else {
-                    return false;
-                };
-                let Some(block) = self.ctx.arena.get_block(body_node) else {
-                    return false;
-                };
-
-                let Some(super_expr_node) = self.ctx.arena.get(idx) else {
-                    return false;
-                };
-                let first_super_pos = block
-                    .statements
-                    .nodes
-                    .iter()
-                    .copied()
-                    .find(|&stmt| self.is_super_call_statement(stmt))
-                    .and_then(|stmt| self.ctx.arena.get(stmt).map(|n| n.pos))
-                    .or_else(|| {
-                        // Fallback for constructors where first super() is nested in control flow.
-                        let body_idx = ctor.body;
-                        let mut first_pos: Option<u32> = None;
-                        for i in 0..self.ctx.arena.len() {
-                            let node_idx = NodeIndex(i as u32);
-                            if !self.is_descendant_of_node(node_idx, body_idx)
-                                && node_idx != body_idx
-                            {
-                                continue;
-                            }
-                            let Some(node) = self.ctx.arena.get(node_idx) else {
-                                continue;
-                            };
-                            if node.kind != SyntaxKind::SuperKeyword as u16 {
-                                continue;
-                            }
-                            let Some(ext) = self.ctx.arena.get_extended(node_idx) else {
-                                continue;
-                            };
-                            let Some(parent) = self.ctx.arena.get(ext.parent) else {
-                                continue;
-                            };
-                            if parent.kind != syntax_kind_ext::CALL_EXPRESSION {
-                                continue;
-                            }
-                            let Some(call) = self.ctx.arena.get_call_expr(parent) else {
-                                continue;
-                            };
-                            if call.expression != node_idx {
-                                continue;
-                            }
-                            if first_pos.is_none_or(|p| node.pos < p) {
-                                first_pos = Some(node.pos);
-                            }
-                        }
-                        first_pos
-                    });
-                let Some(first_super_pos) = first_super_pos else {
-                    return false;
-                };
-
-                if super_expr_node.pos < first_super_pos {
-                    return true;
-                }
-
-                // Also check if the super property access is an argument to the
-                // super() call itself, e.g. `super(super.blah())`.
-                // Arguments are evaluated before the super call completes, so
-                // accessing `super.prop` in an argument is "before super()".
-                let first_super_call_stmt = block
-                    .statements
-                    .nodes
-                    .iter()
-                    .copied()
-                    .find(|&stmt| self.is_super_call_statement(stmt));
-                if let Some(super_stmt) = first_super_call_stmt {
-                    // super.prop inside a super() argument is "before super"
-                    // UNLESS it's in a nested arrow/function (deferred execution).
-                    if self.is_descendant_of_node(idx, super_stmt)
-                        && !self.is_super_in_nested_function(idx)
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
+                return self.is_before_definite_super_call_in_constructor_body(parent_idx, idx);
             }
 
             if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION

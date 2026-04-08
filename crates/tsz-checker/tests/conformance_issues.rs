@@ -7104,6 +7104,37 @@ class Derived extends Base {
 }
 
 #[test]
+fn test_branch_local_super_call_does_not_suppress_else_branch_before_super_errors() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class Base {
+    x = 1;
+}
+
+class Derived extends Base {
+    constructor(flag: boolean) {
+        if (flag) {
+            super();
+        } else {
+            this.x;
+            super.x;
+        }
+    }
+}
+        ",
+    );
+
+    assert!(
+        has_error(&diagnostics, 17009),
+        "Expected TS17009 for 'this' access in branch where super() was not called. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 17011),
+        "Expected TS17011 for super property access in branch where super() was not called. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_super_property_access_inside_super_call_reports_ts17011() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
