@@ -351,8 +351,11 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|ident| ident.escaped_text == "undefined");
                 !first_arg_is_undefined
             });
+        let bind_call_preserves_shared_argument_anchor = is_bind_method_call
+            && anchor_argument_from_all_failures
+            && shared_argument_anchor.is_some();
         let anchor_first_argument = !is_new_call
-            && !is_bind_method_call
+            && (!is_bind_method_call || bind_call_preserves_shared_argument_anchor)
             && (identical_argument_failures
                 && !remaining_failures.is_empty()
                 && remaining_failures_are_count_mismatches
