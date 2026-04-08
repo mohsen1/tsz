@@ -1178,7 +1178,7 @@ impl ParserState {
                 && self.is_token(SyntaxKind::OpenParenToken)
             {
                 self.parse_error_at(
-                    name_start,
+                    name_start.saturating_sub(1),
                     name_end.saturating_sub(name_start),
                     "'(' expected.",
                     diagnostic_codes::EXPECTED,
