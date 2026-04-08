@@ -11,7 +11,7 @@ use crate::control_flow::FlowGraph;
 use crate::diagnostics::{Diagnostic, diagnostic_codes};
 use crate::module_resolution::module_specifier_candidates;
 use tsz_binder::{BinderState, SymbolId};
-use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::TypeId;
 
@@ -97,40 +97,100 @@ impl TypeCache {
 impl<'a> CheckerContext<'a> {
     /// Resolve a `SymbolId` to its owning file index.
     ///
-    /// Checks the shared `global_symbol_file_index` first (pre-built, read-only,
-    /// no RefCell overhead), then falls back to the local `cross_file_symbol_targets`
-    /// overlay for dynamically-discovered mappings. Returns `None` if the symbol
-    /// has no known cross-file owner.
+    /// Checks the local `cross_file_symbol_targets` overlay first (dynamic
+    /// corrections), then falls back to the shared `global_symbol_file_index`.
+    /// Returns `None` if the symbol has no known cross-file owner.
     pub fn resolve_symbol_file_index(&self, sym_id: SymbolId) -> Option<usize> {
-        // Check shared base map first (covers all pre-computed entries, no RefCell cost)
-        if let Some(&idx) = self
-            .global_symbol_file_index
-            .as_ref()
-            .and_then(|map| map.get(&sym_id))
-        {
+        if let Some(&idx) = self.cross_file_symbol_targets.borrow().get(&sym_id) {
             return Some(idx);
         }
-        // Fall back to local overlay (dynamically discovered during this check)
-        self.cross_file_symbol_targets
-            .borrow()
-            .get(&sym_id)
-            .copied()
+
+        // If this SymbolId resolves in the current binder to a local file symbol,
+        // treat it as local and ignore global cross-file owner entries for the
+        // same numeric id.
+        if let Some(symbol) = self.binder.get_symbol(sym_id) {
+            let declaration_name_matches = |decl_idx: NodeIndex| -> bool {
+                if !decl_idx.is_some() {
+                    return false;
+                }
+                let Some(node) = self.arena.get(decl_idx) else {
+                    return false;
+                };
+                let name_idx = match node.kind {
+                    syntax_kind_ext::VARIABLE_DECLARATION => self
+                        .arena
+                        .get_variable_declaration(node)
+                        .map(|decl| decl.name),
+                    syntax_kind_ext::FUNCTION_DECLARATION => {
+                        self.arena.get_function(node).map(|decl| decl.name)
+                    }
+                    syntax_kind_ext::CLASS_DECLARATION => {
+                        self.arena.get_class(node).map(|decl| decl.name)
+                    }
+                    syntax_kind_ext::INTERFACE_DECLARATION => {
+                        self.arena.get_interface(node).map(|decl| decl.name)
+                    }
+                    syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                        self.arena.get_type_alias(node).map(|decl| decl.name)
+                    }
+                    syntax_kind_ext::ENUM_DECLARATION => {
+                        self.arena.get_enum(node).map(|decl| decl.name)
+                    }
+                    syntax_kind_ext::MODULE_DECLARATION => {
+                        self.arena.get_module(node).map(|decl| decl.name)
+                    }
+                    _ => None,
+                };
+                name_idx
+                    .and_then(|name_idx| self.arena.get(name_idx))
+                    .and_then(|name_node| self.arena.get_identifier(name_node))
+                    .is_some_and(|ident| self.arena.resolve_identifier_text(ident) == symbol.escaped_name)
+            };
+
+            if declaration_name_matches(symbol.value_declaration)
+                || symbol
+                    .declarations
+                    .iter()
+                    .copied()
+                    .any(declaration_name_matches)
+            {
+                return None;
+            }
+            if self
+                .binder
+                .file_locals
+                .get(symbol.escaped_name.as_str())
+                .is_some_and(|local_id| local_id == sym_id)
+            {
+                return None;
+            }
+            if symbol.decl_file_idx == self.current_file_idx as u32 {
+                return None;
+            }
+        }
+
+        self.global_symbol_file_index
+            .as_ref()
+            .and_then(|map| map.get(&sym_id).copied())
     }
 
     /// Check whether a `SymbolId` has a known cross-file owner.
     pub fn has_symbol_file_index(&self, sym_id: SymbolId) -> bool {
-        self.global_symbol_file_index
-            .as_ref()
-            .is_some_and(|map| map.contains_key(&sym_id))
-            || self
-                .cross_file_symbol_targets
-                .borrow()
-                .contains_key(&sym_id)
+        self.resolve_symbol_file_index(sym_id).is_some()
     }
 
     /// Register a dynamically-discovered `SymbolId` → file index mapping
     /// in the local overlay.
     pub fn register_symbol_file_target(&self, sym_id: SymbolId, file_idx: usize) {
+        // SymbolIds are binder-local; if this id already exists in the current
+        // binder, treating it as a foreign symbol can poison unrelated local
+        // symbols that happen to share the same numeric id.
+        //
+        // Only register dynamic cross-file ownership for ids that are absent
+        // from the current binder.
+        if self.binder.get_symbol(sym_id).is_some() {
+            return;
+        }
         self.cross_file_symbol_targets
             .borrow_mut()
             .insert(sym_id, file_idx);

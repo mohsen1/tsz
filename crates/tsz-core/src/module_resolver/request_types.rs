@@ -7,7 +7,7 @@
 use crate::span::Span;
 use std::path::{Path, PathBuf};
 
-use super::COULD_NOT_FIND_DECLARATION_FILE;
+use super::{COULD_NOT_FIND_DECLARATION_FILE, FILE_IS_A_JAVASCRIPT_FILE_ENABLE_ALLOWJS};
 
 // ---------------------------------------------------------------------------
 // ModuleLookupRequest / ModuleLookupResult — explicit driver-facing boundary
@@ -110,20 +110,32 @@ impl ModuleLookupResult {
     }
 
     /// Untyped JS module found. Marks as resolved; error only if `noImplicitAny`.
+    ///
+    /// Local JS files use TS6504, while JS from `node_modules` keeps TS7016.
     pub fn untyped_js(js_path: PathBuf, no_implicit_any: bool, specifier: &str) -> Self {
         Self {
             resolved_path: None,
             resolved_using_ts_extension: false,
             treat_as_resolved: true,
             error: if no_implicit_any {
-                Some(ModuleLookupError {
-                    code: COULD_NOT_FIND_DECLARATION_FILE,
-                    message: format!(
-                        "Could not find a declaration file for module '{}'. '{}' implicitly has an 'any' type.",
-                        specifier,
-                        js_path.display()
-                    ),
-                })
+                if js_path.to_string_lossy().contains("node_modules") {
+                    Some(ModuleLookupError {
+                        code: COULD_NOT_FIND_DECLARATION_FILE,
+                        message: format!(
+                            "Could not find a declaration file for module '{}'. '{}' implicitly has an 'any' type.",
+                            specifier,
+                            js_path.display()
+                        ),
+                    })
+                } else {
+                    Some(ModuleLookupError {
+                        code: FILE_IS_A_JAVASCRIPT_FILE_ENABLE_ALLOWJS,
+                        message: format!(
+                            "File '{}' is a JavaScript file. Did you mean to enable the 'allowJs' option?",
+                            js_path.display()
+                        ),
+                    })
+                }
             } else {
                 None
             },

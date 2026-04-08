@@ -1255,6 +1255,10 @@ impl<'a> CheckerState<'a> {
                     (error.message.clone(), error.code)
                 }
             };
+            if error_code == 6504 {
+                self.error_program_level(error_message, error_code);
+                return;
+            }
             self.error(start, length, error_message, error_code);
             return;
         }

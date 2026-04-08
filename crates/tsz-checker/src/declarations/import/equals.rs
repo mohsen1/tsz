@@ -883,6 +883,10 @@ impl<'a> CheckerState<'a> {
                 error_code = fallback_code;
                 error_message = fallback_message;
             }
+            if error_code == 6504 {
+                self.error_program_level(error_message, error_code);
+                return;
+            }
             if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
                 self.ctx.modules_with_ts2307_emitted.insert(module_key);
                 self.error_at_position(spec_start, spec_length, &error_message, error_code);

@@ -1261,8 +1261,10 @@ impl<'a> CheckerState<'a> {
                             }
                         }
 
-                        let allow_namespace_default = self.ctx.allow_synthetic_default_imports()
-                            || self.module_can_use_synthetic_default_import(module_name);
+                        let allow_namespace_default = self
+                            .source_file_import_uses_system_default_namespace_fallback(module_name)
+                            || (self.ctx.compiler_options.module.is_node_module()
+                                && self.module_can_use_synthetic_default_import(module_name));
 
                         // Namespace imports only get a synthetic required `default`
                         // when the target actually has an export= surface.

@@ -95,14 +95,19 @@ impl Reporter {
     /// `file(line,col): error TScode: message`
     fn format_diagnostic_plain(&mut self, out: &mut String, diagnostic: &Diagnostic) {
         let file_display = self.relative_path(&diagnostic.file);
+        let mut has_location_prefix = false;
 
         if let Some((line, col)) = self.position_for(&diagnostic.file, diagnostic.start) {
             out.push_str(&format!("{file_display}({line},{col})"));
+            has_location_prefix = true;
         } else if !diagnostic.file.is_empty() {
             out.push_str(&file_display);
+            has_location_prefix = true;
         }
 
-        out.push_str(": ");
+        if has_location_prefix {
+            out.push_str(": ");
+        }
         out.push_str(&self.format_category_label(diagnostic.category));
         if diagnostic.code != 0 {
             out.push(' ');
@@ -129,6 +134,7 @@ impl Reporter {
     /// ```
     fn format_diagnostic_pretty(&mut self, out: &mut String, diagnostic: &Diagnostic) {
         let file_display = self.relative_path(&diagnostic.file);
+        let mut has_location_prefix = false;
 
         // Header line: file:line:col - error TScode: message
         if let Some((line, col)) = self.position_for(&diagnostic.file, diagnostic.start) {
@@ -141,15 +147,19 @@ impl Reporter {
             } else {
                 out.push_str(&format!("{file_display}:{line}:{col}"));
             }
+            has_location_prefix = true;
         } else if !diagnostic.file.is_empty() {
             if self.color {
                 out.push_str(&file_display.bright_cyan().to_string());
             } else {
                 out.push_str(&file_display);
             }
+            has_location_prefix = true;
         }
 
-        out.push_str(" - ");
+        if has_location_prefix {
+            out.push_str(" - ");
+        }
         out.push_str(&self.format_category_label(diagnostic.category));
 
         if diagnostic.code != 0 {

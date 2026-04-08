@@ -1963,6 +1963,7 @@ impl<'a> CheckerState<'a> {
             direct_member_id,
             module_export_member_id,
             import_module,
+            import_name,
             decl_file_idx,
         ) = {
             let symbol = self.get_cross_file_symbol(sym_id)?;
@@ -2001,9 +2002,78 @@ impl<'a> CheckerState<'a> {
                 direct_member_id,
                 module_export_member_id,
                 symbol.import_module.clone(),
+                symbol.import_name.clone(),
                 symbol.decl_file_idx as usize,
             )
         };
+
+        // In node16/nodenext ESM files, `import * as ns from "./cjs"` exposes
+        // `ns.default` as the full CommonJS `module.exports` surface (not the
+        // module's own `default` export member type).
+        if property_name == "default"
+            && (sym_flags & symbol_flags::ALIAS) != 0
+            && import_name.as_ref().is_none_or(|name| name == "*")
+            && let Some(module_specifier) = import_module.as_deref()
+        {
+            let current_file_is_esm = self.ctx.file_is_esm == Some(true)
+                || self.ctx.file_name.ends_with(".mts")
+                || self.ctx.file_name.ends_with(".mjs");
+            let is_node_esm_importing_cjs = self.ctx.compiler_options.module.is_node_module()
+                && current_file_is_esm
+                && !self.module_is_esm(module_specifier);
+            if is_node_esm_importing_cjs
+                && let Some(surface) =
+                    self.resolve_js_export_surface_for_module(module_specifier, Some(decl_file_idx))
+                && surface.has_commonjs_exports
+                && let Some(module_exports_type) = surface.to_type_id(self)
+            {
+                return Some(module_exports_type);
+            }
+            if is_node_esm_importing_cjs
+                && let Some(exports_table) = self
+                    .resolve_effective_module_exports_from_file(module_specifier, Some(decl_file_idx))
+            {
+                let factory = self.ctx.types.factory();
+                let export_equals_type = exports_table
+                    .get("export=")
+                    .map(|export_sym_id| self.get_type_of_symbol(export_sym_id));
+                let mut props = Vec::new();
+                for (name, &export_sym_id) in exports_table.iter() {
+                    if name == "export=" {
+                        continue;
+                    }
+                    let prop_type = self.get_type_of_symbol(export_sym_id);
+                    let name_atom = self.ctx.types.intern_string(name);
+                    props.push(tsz_solver::PropertyInfo {
+                        name: name_atom,
+                        type_id: prop_type,
+                        write_type: prop_type,
+                        optional: false,
+                        readonly: false,
+                        is_method: false,
+                        is_class_prototype: false,
+                        visibility: tsz_solver::Visibility::Public,
+                        parent_id: None,
+                        declaration_order: props.len() as u32,
+                        is_string_named: false,
+                    });
+                }
+
+                if !props.is_empty() {
+                    let namespace_type = factory.object(props);
+                    if let Some(export_equals_type) = export_equals_type
+                        && self.commonjs_direct_export_supports_named_exports(export_equals_type)
+                    {
+                        return Some(factory.intersection2(export_equals_type, namespace_type));
+                    }
+                    return Some(namespace_type);
+                }
+
+                if let Some(export_equals_type) = export_equals_type {
+                    return Some(export_equals_type);
+                }
+            }
+        }
 
         if let Some(member_id) = direct_member_id {
             // Check type-only wildcard export guard for direct members

@@ -632,7 +632,7 @@ impl ModuleResolver {
                 // 4. Check ambient module declarations
                 let is_ordinary_bare = !specifier.starts_with('.')
                     && !specifier.starts_with('/')
-                    && !specifier.contains(':');
+                    && (!specifier.contains(':') || specifier.starts_with("node:"));
                 if is_ordinary_bare && is_ambient_module(specifier) {
                     return ModuleLookupResult::ambient();
                 }

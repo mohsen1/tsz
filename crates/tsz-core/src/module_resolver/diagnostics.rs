@@ -1,7 +1,7 @@
 //! Diagnostic constants and error code selection for module resolution.
 //!
 //! All TS diagnostic codes emitted by module resolution (TS2307, TS2732,
-//! TS2792, TS2834, TS2835, TS5097, TS6142, TS7016) are owned here.
+//! TS2792, TS2834, TS2835, TS5097, TS6142, TS6504, TS7016) are owned here.
 
 use crate::diagnostics::Diagnostic;
 use crate::span::Span;
@@ -62,6 +62,10 @@ pub const MODULE_WAS_RESOLVED_TO_BUT_ALLOW_ARBITRARY_EXTENSIONS_IS_NOT_SET: u32 
 /// Emitted when resolution fails but a JS file exists for the specifier
 /// and `noImplicitAny` is enabled.
 pub const COULD_NOT_FIND_DECLARATION_FILE: u32 = 7016;
+
+/// TS6504: File is a JavaScript file. Did you mean to enable `allowJs`?
+/// Emitted for local JS file resolution under `noImplicitAny`.
+pub const FILE_IS_A_JAVASCRIPT_FILE_ENABLE_ALLOWJS: u32 = 6504;
 
 /// TS2209: The project root is ambiguous, but is required to resolve export map entry.
 /// Emitted when a package imports itself (self-reference) with exports field in package.json
