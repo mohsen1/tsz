@@ -51,10 +51,8 @@ c.foo.bind(undefined);
     assert_eq!(diag.length, "undefined".len() as u32);
 }
 
-// TS2769 anchor position: tsc anchors at the method name "bind", but our
-// overload resolution currently anchors at the argument. The important
-// correctness check is that TS2769 IS emitted for the overload mismatch.
-// TODO: Align anchor position with tsc (method name instead of argument).
+// TS2769 anchor position: tsc anchors at the method name "bind" for this
+// generic thisArg overload mismatch.
 #[test]
 fn strict_bind_call_apply_bind_generic_this_arg_mismatch_uses_ts2769() {
     let source = r#"
@@ -68,14 +66,13 @@ function bar<T extends unknown[]>(callback: (this: 1, ...args: T) => void) {
         .iter()
         .find(|diag| diag.code == 2769)
         .expect("expected TS2769 for bind thisArg overload mismatch");
-    // Verify the overload failure is correctly detected.
-    // The diagnostic anchors at the argument (pos 96) rather than the method
-    // name (pos 91) — tracked as a diagnostic quality improvement.
-    let arg_start = source.find('2').expect("expected argument '2'") as u32;
+    // Verify the overload failure is correctly detected and anchored at `bind`.
+    let bind_start = source.find("bind").expect("expected bind method name") as u32;
     assert_eq!(
-        diag.start, arg_start,
-        "generic bind overload mismatch anchored at argument, got: {diag:?}"
+        diag.start, bind_start,
+        "generic bind overload mismatch should anchor at `bind`, got: {diag:?}"
     );
+    assert_eq!(diag.length, "bind".len() as u32);
 }
 
 #[test]
