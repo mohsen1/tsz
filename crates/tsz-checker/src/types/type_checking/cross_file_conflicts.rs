@@ -1424,14 +1424,13 @@ impl<'a> CheckerState<'a> {
                 let Some(node) = self.ctx.arena.get(decl_idx) else {
                     continue;
                 };
-                // Skip pure type declarations and class declarations. Type-only
-                // symbols are handled by dedicated checks, and classes have a
-                // dedicated reserved-name diagnostic (e.g. TS2414 for `class undefined`).
-                // Keep namespace declarations here: in merged value spaces tsc
-                // anchors TS2397 at the namespace declaration.
+                // Skip pure type declarations, class declarations, and namespace
+                // declarations. `namespace undefined` is allowed by tsc; TS2397 for
+                // `undefined` is for value declarations (var/let/const/function).
                 if node.kind == syntax_kind_ext::INTERFACE_DECLARATION
                     || node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
                     || node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || node.kind == syntax_kind_ext::MODULE_DECLARATION
                 {
                     continue;
                 }
