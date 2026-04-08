@@ -936,14 +936,14 @@ impl ParserState {
         if self.is_token(SyntaxKind::GreaterThanToken) {
             let end_pos = self.token_end();
             self.next_token(); // consume >
-            let kind = if tag_name_is_missing && initial_tag_head_token == SyntaxKind::NumericLiteral
-            {
-                // `<1234>` in JS/JSX recovery should not force an unclosed-tag
-                // trailing diagnostic; treat this malformed head as self-closing.
-                syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
-            } else {
-                syntax_kind_ext::JSX_OPENING_ELEMENT
-            };
+            let kind =
+                if tag_name_is_missing && initial_tag_head_token == SyntaxKind::NumericLiteral {
+                    // `<1234>` in JS/JSX recovery should not force an unclosed-tag
+                    // trailing diagnostic; treat this malformed head as self-closing.
+                    syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                } else {
+                    syntax_kind_ext::JSX_OPENING_ELEMENT
+                };
             return self.arena.add_jsx_opening(
                 kind,
                 start_pos,
