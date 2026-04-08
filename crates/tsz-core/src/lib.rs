@@ -660,7 +660,7 @@ impl CompilerOptions {
             no_resolve: false,
             isolated_declarations: false,
             emit_declarations: false,
-            no_unchecked_side_effect_imports: false,
+            no_unchecked_side_effect_imports: true,
             no_implicit_override: false,
             jsx_mode: tsz_common::checker_options::JsxMode::None,
             module_explicitly_set: self.module.is_some(),

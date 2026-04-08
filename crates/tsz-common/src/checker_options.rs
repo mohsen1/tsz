@@ -222,7 +222,8 @@ impl Default for CheckerOptions {
             no_resolve: false,
             isolated_declarations: false,
             emit_declarations: false,
-            no_unchecked_side_effect_imports: false,
+            // TSC 6.0 defaults `noUncheckedSideEffectImports` to true.
+            no_unchecked_side_effect_imports: true,
             no_implicit_override: false,
             jsx_factory: "React.createElement".to_string(),
             jsx_factory_from_config: false,
