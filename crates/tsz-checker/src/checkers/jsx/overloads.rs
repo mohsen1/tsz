@@ -162,26 +162,25 @@ impl<'a> CheckerState<'a> {
         // tsc often anchors at the tag name, but when every non-0-param overload
         // fails on the same explicit attribute, anchor that attribute instead.
         guard.rollback(&mut self.ctx);
-        let anchor_idx = if considered_overload_failures > 0
-            && all_overload_failures_share_explicit_anchor
-        {
-            shared_explicit_anchor_name
-                .as_deref()
-                .and_then(|shared_name| {
-                    attrs_info
-                        .attrs
-                        .iter()
-                        .find(|a| {
-                            !a.from_spread
-                                && a.name_node_idx.is_some()
-                                && a.name.as_str() == shared_name
-                        })
-                        .and_then(|a| a.name_node_idx)
-                })
-                .unwrap_or(tag_name_idx)
-        } else {
-            tag_name_idx
-        };
+        let anchor_idx =
+            if considered_overload_failures > 0 && all_overload_failures_share_explicit_anchor {
+                shared_explicit_anchor_name
+                    .as_deref()
+                    .and_then(|shared_name| {
+                        attrs_info
+                            .attrs
+                            .iter()
+                            .find(|a| {
+                                !a.from_spread
+                                    && a.name_node_idx.is_some()
+                                    && a.name.as_str() == shared_name
+                            })
+                            .and_then(|a| a.name_node_idx)
+                    })
+                    .unwrap_or(tag_name_idx)
+            } else {
+                tag_name_idx
+            };
 
         // TS2786: When no overload matches, also check if the component's return
         // type is compatible with JSX.Element. tsc emits TS2786 alongside TS2769

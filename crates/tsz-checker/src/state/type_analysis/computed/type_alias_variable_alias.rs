@@ -1272,10 +1272,10 @@ impl<'a> CheckerState<'a> {
                         //   named exports so `ns.default.<name>` remains addressable.
                         let synthetic_namespace_default_type =
                             if export_equals_type.is_none() && allow_namespace_default {
-                            Some(factory.object(props.clone()))
-                        } else {
-                            None
-                        };
+                                Some(factory.object(props.clone()))
+                            } else {
+                                None
+                            };
                         if let Some(eq_type) =
                             export_equals_type.or(synthetic_namespace_default_type)
                             && allow_namespace_default
@@ -1301,8 +1301,8 @@ impl<'a> CheckerState<'a> {
                         let namespace_type = factory.object(props);
                         // Store display name for error messages: TSC shows namespace
                         // types as `typeof import("module")` in diagnostics.
-                        let preserve_namespace_display = !(module_is_non_module_entity
-                            && allow_namespace_default);
+                        let preserve_namespace_display =
+                            !(module_is_non_module_entity && allow_namespace_default);
                         if preserve_namespace_display {
                             self.ctx.namespace_module_names.insert(
                                 namespace_type,
