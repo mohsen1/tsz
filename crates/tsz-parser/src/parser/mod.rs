@@ -30,6 +30,7 @@ mod state_declarations;
 mod state_declarations_exports;
 mod state_expressions;
 mod state_expressions_literals;
+mod state_import_attributes;
 mod state_statements;
 mod state_statements_class;
 mod state_statements_class_members;

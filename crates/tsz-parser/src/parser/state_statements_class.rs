@@ -1040,12 +1040,21 @@ impl ParserState {
                     .is_some_and(|expr| expr.kind == syntax_kind_ext::TYPE_ASSERTION);
 
                 if type_assertion_decorator && self.is_token(SyntaxKind::EndOfFileToken) {
-                    self.parse_error_at(
-                        self.token_end(),
-                        0,
-                        "'{' expected.",
-                        diagnostic_codes::EXPECTED,
-                    );
+                    let missing_brace_pos = self.token_end();
+                    let already_reported_missing_brace =
+                        self.parse_diagnostics.iter().any(|diag| {
+                            diag.start == missing_brace_pos
+                                && diag.code == diagnostic_codes::EXPECTED
+                                && diag.message == "'{' expected."
+                        });
+                    if !already_reported_missing_brace {
+                        self.parse_error_at(
+                            missing_brace_pos,
+                            0,
+                            "'{' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                    }
                 } else {
                     // TS1146: When decorators are followed by a non-declaration token,
                     // tsc emits "Declaration expected" rather than "Decorators are not valid here"
