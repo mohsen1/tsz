@@ -220,7 +220,11 @@ impl<'a> CheckerState<'a> {
 
     /// TS2560 ("did you mean to call it?") in call-site weak-type comparisons
     /// expects widened primitive names for callable sources.
-    fn widen_weak_type_callable_source_display(&self, arg_type: TypeId, _arg_str: String) -> String {
+    fn widen_weak_type_callable_source_display(
+        &self,
+        arg_type: TypeId,
+        _arg_str: String,
+    ) -> String {
         Self::widen_member_literals_in_display_text(
             &self.format_type_diagnostic(self.widen_literal_type(arg_type)),
         )

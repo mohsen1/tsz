@@ -147,7 +147,6 @@ CURRENT_HOOKS_PATH=$(git config --get core.hooksPath 2>/dev/null || true)
 if [ "$FORCE" = false ] && [ "$CURRENT_HOOKS_PATH" = "scripts/githooks" ]; then
   skip "Already configured (core.hooksPath = scripts/githooks)."
 else
-  GITHOOKS_DIR="$ROOT_DIR/scripts/githooks"
   GIT_HOOKS_DIR="$ROOT_DIR/.git/hooks"
 
   # Clean up stale symlinks / old hooks that might conflict
@@ -162,12 +161,9 @@ else
     done
   fi
 
-  git config core.hooksPath scripts/githooks
+  "$ROOT_DIR/scripts/setup/install-hooks.sh"
   echo "  $(green "Hooks installed (core.hooksPath = scripts/githooks).")"
 fi
-
-# Ensure all managed hooks are executable, including newly added ones.
-chmod +x "$ROOT_DIR/scripts/githooks"/* 2>/dev/null || true
 
 # Register "ours" merge driver for auto-resolving snapshot conflicts.
 # Without this, the merge=ours attribute in .gitattributes has no effect.

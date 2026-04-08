@@ -49,6 +49,7 @@ fi
 # --- Fetch latest remote state ---
 echo "Fetching latest from origin..."
 git -C "$REPO_ROOT" fetch origin --quiet
+"$REPO_ROOT/scripts/setup/install-hooks.sh"
 
 # --- Check if campaign branch already exists on remote ---
 if git -C "$REPO_ROOT" rev-parse --verify "origin/$BRANCH" &>/dev/null; then
