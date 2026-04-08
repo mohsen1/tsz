@@ -1093,7 +1093,7 @@ impl<'a> CheckerState<'a> {
                     != 0
                 && value_decl.is_some()
                 && self.jsdoc_type_annotation_for_node(value_decl).is_some();
-            let preferred_cross_file_type = if self.ctx.is_js_file()
+            let preferred_cross_file_type = if !self.ctx.is_js_file()
                 && self.ctx.should_resolve_jsdoc()
                 && (flags
                     & (symbol_flags::FUNCTION_SCOPED_VARIABLE
@@ -1268,6 +1268,16 @@ impl<'a> CheckerState<'a> {
                     let widened_flow = tsz_solver::widening::widen_type(self.ctx.types, flow_type);
                     if widened_flow == declared_type {
                         // Flow type is just the initializer literal - use widened declared type
+                        declared_type
+                    } else if tsz_solver::type_queries::get_object_shape(
+                        self.ctx.types,
+                        self.evaluate_type_for_assignability(declared_type),
+                    )
+                    .is_some()
+                        && tsz_solver::is_primitive_type(self.ctx.types, flow_type)
+                    {
+                        // Guard against stale primitive flow snapshots replacing an object/module
+                        // declared type for mutable bindings in JS/checkJs paths.
                         declared_type
                     } else if self.has_recursive_alias_shape_for_flow_compare(declared_type) {
                         flow_type
