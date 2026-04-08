@@ -345,7 +345,8 @@ fn parse_mid_file_shebang_reports_ts18026_and_argument_semicolon_error() {
 
 #[test]
 fn parse_malformed_variable_hashbang_tail_matches_tsc_shape() {
-    let source = "const a =!@#!@$\nconst b = !@#!@#!@#!\nOK!\nHERE's A shouty thing\nGOTTA GO FAST\n";
+    let source =
+        "const a =!@#!@$\nconst b = !@#!@#!@#!\nOK!\nHERE's A shouty thing\nGOTTA GO FAST\n";
     let (parser, _root) = parse_source(source);
     let diags = parser.get_diagnostics();
 
