@@ -1421,35 +1421,32 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Look for `declare module './xxx' { ... }` augmentations in the file
-        let has_augmentation = stmts.iter().any(|&stmt_idx| {
-            let Some(node) = self.ctx.arena.get(stmt_idx) else {
-                return false;
-            };
-            if node.kind != syntax_kind_ext::MODULE_DECLARATION {
-                return false;
-            }
-            let Some(module) = self.ctx.arena.get_module(node) else {
-                return false;
-            };
-            // Module augmentation: name is a string literal and body exists
-            let Some(name_node) = self.ctx.arena.get(module.name) else {
-                return false;
-            };
-            name_node.kind == SyntaxKind::StringLiteral as u16 && module.body.is_some()
-        });
-
-        if !has_augmentation {
-            return;
-        }
-
-        // If there are augmentations, check imports that need preserving
         for &stmt_idx in stmts {
             let Some(node) = self.ctx.arena.get(stmt_idx) else {
                 continue;
             };
-            if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
-                // This import may be needed for augmentations
+            if node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+                continue;
+            }
+
+            let Some(import_decl) = self.ctx.arena.get_import_decl(node) else {
+                continue;
+            };
+            let Some(imported_module_specifier) =
+                self.get_require_module_specifier(import_decl.module_specifier)
+            else {
+                continue;
+            };
+            let Some(imported_file_idx) = self.ctx.resolve_import_target_from_file(
+                self.ctx.current_file_idx,
+                &imported_module_specifier,
+            ) else {
+                continue;
+            };
+
+            // TS9026 is reported on imports whose target file augments the
+            // current file. These imports must be preserved in declaration emit.
+            if self.imported_file_augments_current_file(imported_file_idx) {
                 self.error_at_node(
                     stmt_idx,
                     diagnostic_messages::DECLARATION_EMIT_FOR_THIS_FILE_REQUIRES_PRESERVING_THIS_IMPORT_FOR_AUGMENTATIONS,
@@ -1457,5 +1454,23 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+
+    fn imported_file_augments_current_file(&self, imported_file_idx: usize) -> bool {
+        let current_file_idx = self.ctx.current_file_idx;
+        let Some(imported_binder) = self.ctx.get_binder_for_file(imported_file_idx) else {
+            return false;
+        };
+
+        imported_binder
+            .module_augmentations
+            .iter()
+            .any(|(module_specifier, augmentations)| {
+                !augmentations.is_empty()
+                    && self
+                        .ctx
+                        .resolve_import_target_from_file(imported_file_idx, module_specifier)
+                        == Some(current_file_idx)
+            })
     }
 }
