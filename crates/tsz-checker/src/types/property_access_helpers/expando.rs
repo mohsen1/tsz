@@ -420,8 +420,7 @@ impl<'a> CheckerState<'a> {
             if binary.operator_token != SyntaxKind::EqualsToken as u16 {
                 continue;
             }
-            if Self::expando_assignment_access_key_in_arena(self.ctx.arena, binary.left)
-                .as_deref()
+            if Self::expando_assignment_access_key_in_arena(self.ctx.arena, binary.left).as_deref()
                 != Some(expected_key.as_str())
             {
                 continue;
@@ -454,34 +453,34 @@ impl<'a> CheckerState<'a> {
         let obj_lit = self.ctx.arena.get_literal_expr(rhs_node)?;
 
         Some(obj_lit.elements.nodes.iter().copied().any(|elem_idx| {
-                let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
-                    return false;
-                };
-                let elem_prop_name = match elem_node.kind {
-                    syntax_kind_ext::PROPERTY_ASSIGNMENT => self
-                        .ctx
-                        .arena
-                        .get_property_assignment(elem_node)
-                        .and_then(|prop| self.get_property_name(prop.name)),
-                    syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
-                        .ctx
-                        .arena
-                        .get_shorthand_property(elem_node)
-                        .and_then(|prop| self.get_property_name(prop.name)),
-                    syntax_kind_ext::METHOD_DECLARATION => self
-                        .ctx
-                        .arena
-                        .get_method_decl(elem_node)
-                        .and_then(|method| self.get_property_name(method.name)),
-                    syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => self
-                        .ctx
-                        .arena
-                        .get_accessor(elem_node)
-                        .and_then(|accessor| self.get_property_name(accessor.name)),
-                    _ => None,
-                };
-                elem_prop_name.is_some_and(|name| name == property_name)
-            }))
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                return false;
+            };
+            let elem_prop_name = match elem_node.kind {
+                syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                    .ctx
+                    .arena
+                    .get_property_assignment(elem_node)
+                    .and_then(|prop| self.get_property_name(prop.name)),
+                syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
+                    .ctx
+                    .arena
+                    .get_shorthand_property(elem_node)
+                    .and_then(|prop| self.get_property_name(prop.name)),
+                syntax_kind_ext::METHOD_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_method_decl(elem_node)
+                    .and_then(|method| self.get_property_name(method.name)),
+                syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => self
+                    .ctx
+                    .arena
+                    .get_accessor(elem_node)
+                    .and_then(|accessor| self.get_property_name(accessor.name)),
+                _ => None,
+            };
+            elem_prop_name.is_some_and(|name| name == property_name)
+        }))
     }
 
     /// Check if a property access is an expando function assignment pattern.
