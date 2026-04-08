@@ -49,7 +49,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // Fall back to the first lower-bound candidate so later argument checks
         // drive assignability failures on the mismatch site.
-        lower_bounds[0]
+        lower_bounds
+            .iter()
+            .copied()
+            .find(|ty| !matches!(*ty, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR))
+            .unwrap_or(lower_bounds[0])
     }
 
     fn preferred_specific_tuple_inference_candidate(
