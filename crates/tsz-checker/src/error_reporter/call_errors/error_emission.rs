@@ -90,10 +90,10 @@ impl<'a> CheckerState<'a> {
             Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
         ) {
             // Try to get the literal expression display (unwidened) from the AST
-            let arg_str = self
+            let mut arg_str = self
                 .literal_call_argument_display(idx)
                 .unwrap_or_else(|| self.format_type_diagnostic(arg_type));
-            let arg_str = self.rewrite_source_display_for_non_literal_target_assignability(
+            arg_str = self.rewrite_source_display_for_non_literal_target_assignability(
                 arg_type, param_type, arg_str,
             );
             let param_str =
@@ -105,15 +105,20 @@ impl<'a> CheckerState<'a> {
                 .should_suggest_calling_for_weak_type(arg_type, param_type)
             {
                 (
-                        diagnostic_messages::VALUE_OF_TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE_DID_YOU_MEAN_TO_CALL_IT,
-                        diagnostic_codes::VALUE_OF_TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE_DID_YOU_MEAN_TO_CALL_IT,
-                    )
+                    diagnostic_messages::VALUE_OF_TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE_DID_YOU_MEAN_TO_CALL_IT,
+                    diagnostic_codes::VALUE_OF_TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE_DID_YOU_MEAN_TO_CALL_IT,
+                )
             } else {
                 (
                     diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
                     diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
                 )
             };
+            if code
+                == diagnostic_codes::VALUE_OF_TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE_DID_YOU_MEAN_TO_CALL_IT
+            {
+                arg_str = self.widen_weak_type_callable_source_display(arg_type, arg_str);
+            }
             let message = format_message(msg_template, &[&arg_str, &param_str]);
             let request =
                 DiagnosticRenderRequest::simple(DiagnosticAnchorKind::Exact, code, message);
@@ -211,6 +216,14 @@ impl<'a> CheckerState<'a> {
         } else {
             false
         }
+    }
+
+    /// TS2560 ("did you mean to call it?") in call-site weak-type comparisons
+    /// expects widened primitive names for callable sources.
+    fn widen_weak_type_callable_source_display(&self, arg_type: TypeId, _arg_str: String) -> String {
+        Self::widen_member_literals_in_display_text(
+            &self.format_type_diagnostic(self.widen_literal_type(arg_type)),
+        )
     }
 
     /// Check if a node is a `new` expression.

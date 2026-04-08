@@ -493,7 +493,7 @@ impl<'a> CheckerState<'a> {
                 // Use unwidened type for TS2559/TS2560 — tsc preserves literal types
                 // (e.g., "12" not "number", "'false'" not "boolean") in
                 // "has no properties in common" messages.
-                let source_str = self.format_type_diagnostic(source);
+                let mut source_str = self.format_type_diagnostic(source);
                 let target_str = self.format_type_for_assignability_message(target);
 
                 // If the source is callable/constructable and calling it would fix
@@ -511,6 +511,11 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
                     )
                 };
+                if code
+                    == diagnostic_codes::VALUE_OF_TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE_DID_YOU_MEAN_TO_CALL_IT
+                {
+                    source_str = Self::widen_member_literals_in_display_text(&source_str);
+                }
                 let message = format_message(msg_template, &[&source_str, &target_str]);
                 Diagnostic::error(file_name, start, length, message, code)
             }
