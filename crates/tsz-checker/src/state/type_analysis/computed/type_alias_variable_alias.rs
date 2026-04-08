@@ -1264,20 +1264,9 @@ impl<'a> CheckerState<'a> {
                         let allow_namespace_default = self.ctx.allow_synthetic_default_imports()
                             || self.module_can_use_synthetic_default_import(module_name);
 
-                        // When esModuleInterop / allowSyntheticDefaultImports is
-                        // enabled, synthesize a "default" property on CommonJS-shaped
-                        // namespaces:
-                        // - Prefer the export= value when present.
-                        // - Otherwise, fall back to a snapshot object composed from
-                        //   named exports so `ns.default.<name>` remains addressable.
-                        let synthetic_namespace_default_type =
-                            if export_equals_type.is_none() && allow_namespace_default {
-                                Some(factory.object(props.clone()))
-                            } else {
-                                None
-                            };
-                        if let Some(eq_type) =
-                            export_equals_type.or(synthetic_namespace_default_type)
+                        // Namespace imports only get a synthetic required `default`
+                        // when the target actually has an export= surface.
+                        if let Some(eq_type) = export_equals_type
                             && allow_namespace_default
                         {
                             let default_atom = self.ctx.types.intern_string("default");
