@@ -1681,3 +1681,59 @@ const x = {
         ts2352.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn unknown_array_destructuring_ts2571_anchors_only_empty_pattern() {
+    let source = r#"
+declare function f<T>(): T;
+const [] = f();
+const [e1, e2] = f();
+"#;
+    let diags = check_source_diagnostics(source);
+
+    let ts2571: Vec<_> = diags.iter().filter(|d| d.code == 2571).collect();
+    assert_eq!(
+        ts2571.len(),
+        1,
+        "Expected exactly one TS2571 for unknown array destructuring, got: {:?}",
+        diags.iter().map(|d| (d.code, d.start)).collect::<Vec<_>>()
+    );
+
+    let empty_start = source.find("[]").expect("expected empty array pattern") as u32;
+    assert_eq!(
+        ts2571[0].start, empty_start,
+        "TS2571 should anchor at the empty array pattern"
+    );
+
+    let ts2488: Vec<_> = diags.iter().filter(|d| d.code == 2488).collect();
+    assert_eq!(
+        ts2488.len(),
+        2,
+        "Expected TS2488 on both unknown array destructuring patterns, got: {:?}",
+        diags.iter().map(|d| (d.code, d.start)).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn catch_array_destructuring_unknown_suppresses_ts2571() {
+    let diags = check_source_diagnostics(
+        r#"
+try {} catch ([x]) {}
+"#,
+    );
+
+    let ts2571: Vec<_> = diags.iter().filter(|d| d.code == 2571).collect();
+    assert_eq!(
+        ts2571.len(),
+        0,
+        "Expected no TS2571 for catch-clause array destructuring, got: {:?}",
+        diags.iter().map(|d| (d.code, d.start)).collect::<Vec<_>>()
+    );
+    let ts2488: Vec<_> = diags.iter().filter(|d| d.code == 2488).collect();
+    assert_eq!(
+        ts2488.len(),
+        1,
+        "Expected TS2488 for catch-clause array destructuring, got: {:?}",
+        diags.iter().map(|d| (d.code, d.start)).collect::<Vec<_>>()
+    );
+}
