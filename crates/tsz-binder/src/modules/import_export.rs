@@ -507,11 +507,10 @@ impl BinderState {
                                             && !orig_was_exported;
                                         if should_clone_type_only_export {
                                             let clone_id = {
-                                                let src = self
-                                                    .symbols
-                                                    .get(sym_id)
-                                                    .cloned()
-                                                    .expect("symbol exists for resolved sym_id");
+                                                let src =
+                                                    self.symbols.get(sym_id).cloned().expect(
+                                                        "symbol exists for resolved sym_id",
+                                                    );
                                                 self.symbols.alloc_from(&src)
                                             };
                                             if let Some(clone_sym) = self.symbols.get_mut(clone_id)
