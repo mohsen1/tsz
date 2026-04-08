@@ -729,9 +729,7 @@ impl<'a> FlowAnalyzer<'a> {
         predicate: &TypePredicate,
         is_true_branch: bool,
     ) -> TypeId {
-        if predicate.asserts && !is_true_branch {
-            return type_id;
-        }
+        let effective_true_branch = predicate.asserts || is_true_branch;
 
         // Create narrowing context and wire up TypeEnvironment if available
         let env_borrow;
@@ -750,12 +748,12 @@ impl<'a> FlowAnalyzer<'a> {
                 type_id: Some(predicate_type),
                 asserts: predicate.asserts,
             };
-            return narrowing.narrow_type(type_id, &guard, GuardSense::from(is_true_branch));
+            return narrowing.narrow_type(type_id, &guard, GuardSense::from(effective_true_branch));
         }
 
         // Assertion guards without type predicate (asserts x) narrow to truthy
         // This is the CRITICAL fix: use TypeGuard::Truthy instead of just excluding null/undefined
-        if is_true_branch {
+        if effective_true_branch {
             // Delegate to narrow_type with TypeGuard::Truthy for comprehensive narrowing
             return narrowing.narrow_type(type_id, &TypeGuard::Truthy, GuardSense::Positive);
         }

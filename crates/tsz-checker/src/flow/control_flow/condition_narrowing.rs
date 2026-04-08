@@ -718,6 +718,17 @@ impl<'a> FlowAnalyzer<'a> {
 
             // User-defined type guards: isString(x), obj.isString(), assertsIs(x), etc.
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                if let Some(call) = self.arena.get_call_expr(cond_node)
+                    && let Some(node_types) = self.node_types
+                    && let Some(&callee_type) = node_types.get(&call.expression.0)
+                    && let Some(signature) = self.predicate_signature_for_type(callee_type)
+                    && signature.predicate.asserts
+                    && let Some(narrowed) =
+                        self.narrow_by_call_predicate(type_id, call, target, true)
+                {
+                    return narrowed;
+                }
+
                 // CRITICAL: Use Solver-First architecture for call expressions
                 // Extract TypeGuard from AST (Checker responsibility: WHERE + WHAT)
                 if let Some((guard, guard_target, is_optional)) =
@@ -739,12 +750,12 @@ impl<'a> FlowAnalyzer<'a> {
                             ?is_true_branch,
                             "Applying guard from call expression"
                         );
+                        let guard_sense = match guard {
+                            TypeGuard::Predicate { asserts: true, .. } => GuardSense::Positive,
+                            _ => GuardSense::from(is_true_branch),
+                        };
                         // Delegate to Solver for the calculation (Solver responsibility: RESULT)
-                        let result = narrowing.narrow_type(
-                            type_id,
-                            &guard,
-                            GuardSense::from(is_true_branch),
-                        );
+                        let result = narrowing.narrow_type(type_id, &guard, guard_sense);
                         trace!(?result, "Guard application result");
                         if !is_true_branch
                             && result == type_id

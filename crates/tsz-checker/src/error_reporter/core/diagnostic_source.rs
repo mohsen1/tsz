@@ -1036,7 +1036,8 @@ impl<'a> CheckerState<'a> {
                 // reorders null/undefined to the end to match tsc's display.
                 // Annotation text preserves the user's original order which
                 // differs from tsc's canonical display.
-                && !display.contains(" | ")
+                && (!display.contains(" | ")
+                    || Self::display_has_member_literals_assignability(&display))
                 // Don't use annotation text when the formatted type includes
                 // `| undefined` (added by strictNullChecks for optional params)
                 // that the raw annotation text doesn't have. The annotation text
@@ -1076,6 +1077,9 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(display) = self.declared_type_annotation_text_for_expression(target_expr) {
+            if Self::display_has_member_literals_assignability(&display) {
+                return self.format_annotation_like_type(&display);
+            }
             let fallback = self.format_assignability_type_for_message(target, source);
             if Self::display_has_member_literals_assignability(&fallback)
                 && !Self::display_has_member_literals_assignability(&display)
