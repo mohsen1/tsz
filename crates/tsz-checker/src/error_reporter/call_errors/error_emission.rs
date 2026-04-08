@@ -315,11 +315,13 @@ impl<'a> CheckerState<'a> {
             && remaining_failures_are_count_mismatches;
         let anchor_argument_from_all_failures =
             all_failures_are_argument_mismatches && shared_argument_anchor.is_some();
-        let anchor_first_argument = identical_argument_failures
+        let is_new_call = self.is_new_expression(idx);
+        let anchor_first_argument = !is_new_call
+            && (identical_argument_failures
             && !remaining_failures.is_empty()
             && remaining_failures_are_count_mismatches
             || anchor_argument_from_mixed_failures
-            || anchor_argument_from_all_failures;
+            || anchor_argument_from_all_failures);
 
         let anchor_kind = if literal_anchor.is_some() {
             DiagnosticAnchorKind::Exact
@@ -348,7 +350,6 @@ impl<'a> CheckerState<'a> {
         let Some(anchor) = self.resolve_diagnostic_anchor(anchor_idx, anchor_kind) else {
             return;
         };
-
         let mut related = Vec::new();
         let span =
             tsz_solver::SourceSpan::new(self.ctx.file_name.as_str(), anchor.start, anchor.length);
