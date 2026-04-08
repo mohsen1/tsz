@@ -809,6 +809,20 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        let is_class_property_literal_check = code
+            == crate::diagnostics::diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_A_CLASS_PROPERTY_DECLARATION_MUST_HAVE_A_SIMPLE_LITE;
+
+        // tsc rejects class property names like `[expr as "lit"]` even when the
+        // asserted type is a literal. For TS1166 this must still error.
+        if is_class_property_literal_check
+            && let Some(expr_node) = self.ctx.arena.get(computed.expression)
+            && (expr_node.kind == tsz_parser::parser::syntax_kind_ext::AS_EXPRESSION
+                || expr_node.kind == tsz_parser::parser::syntax_kind_ext::SATISFIES_EXPRESSION)
+        {
+            self.error_at_node(name_idx, message, code);
+            return;
+        }
+
         let is_entity_name = self.is_entity_name_expression(computed.expression);
 
         // Literal expressions (string, number, no-substitution template) are always OK

@@ -953,6 +953,11 @@ impl<'a> CheckerState<'a> {
             if name_node.kind == SyntaxKind::ThisKeyword as u16 {
                 return "this".to_string();
             }
+            if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                && let Some(display_name) = self.get_member_name_display_text(name_idx)
+            {
+                return display_name;
+            }
             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                 return ident.escaped_text.clone();
             }
@@ -970,6 +975,15 @@ impl<'a> CheckerState<'a> {
     /// Get the name of a property for error messages.
     pub(crate) fn property_name_for_error(&self, name_idx: NodeIndex) -> Option<String> {
         self.get_property_name(name_idx).or_else(|| {
+            if self
+                .ctx
+                .arena
+                .get(name_idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                && let Some(display_name) = self.get_member_name_display_text(name_idx)
+            {
+                return Some(display_name);
+            }
             self.node_text(name_idx)
                 .map(|text| text.trim().to_string())
                 .filter(|text| !text.is_empty())
