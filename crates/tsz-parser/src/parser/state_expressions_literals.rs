@@ -952,7 +952,9 @@ impl ParserState {
             let is_jsx_artifact = regex_body.find('<').is_some_and(|lt_pos| {
                 regex_body.find('>').is_some_and(|gt_pos| {
                     lt_pos < gt_pos
-                        && regex_body.find(';').is_none_or(|semi_pos| gt_pos < semi_pos)
+                        && regex_body
+                            .find(';')
+                            .is_none_or(|semi_pos| gt_pos < semi_pos)
                 })
             });
             if !is_jsx_artifact {
