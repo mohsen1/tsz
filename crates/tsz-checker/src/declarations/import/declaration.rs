@@ -545,16 +545,17 @@ impl<'a> CheckerState<'a> {
                     );
                     if val_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
                         let object_type = self.get_type_of_node(attr_data.value);
-                        let widened_object =
-                            crate::query_boundaries::common::widen_type(self.ctx.types, object_type);
+                        let widened_object = crate::query_boundaries::common::widen_type(
+                            self.ctx.types,
+                            object_type,
+                        );
                         if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
                             self.ctx.types,
                             widened_object,
                         ) {
-                            self.ctx.types.store_display_properties(
-                                widened_object,
-                                shape.properties.clone(),
-                            );
+                            self.ctx
+                                .types
+                                .store_display_properties(widened_object, shape.properties.clone());
                         }
                         widened_object
                     } else if let Some(literal_type) =
