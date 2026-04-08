@@ -961,6 +961,17 @@ impl ParserState {
         // (like stray `<`) fall through to the self-closing path, which
         // avoids attempting to parse children/closing for malformed JSX.
         if self.is_token(SyntaxKind::GreaterThanToken) {
+            if !self.is_js_file()
+                && tag_name_is_missing
+                && initial_tag_head_token == SyntaxKind::NumericLiteral
+            {
+                self.parse_error_at(
+                    self.token_pos(),
+                    1,
+                    tsz_common::diagnostics::diagnostic_messages::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_GT,
+                    tsz_common::diagnostics::diagnostic_codes::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_GT,
+                );
+            }
             let end_pos = self.token_end();
             self.next_token(); // consume >
             let kind =
@@ -1657,9 +1668,6 @@ impl ParserState {
 
     fn emit_jsx_unclosed_fragment_error(&mut self, opening_fragment: NodeIndex) {
         use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
-        if !self.is_js_file() {
-            return;
-        }
         if let Some(node) = self.arena.get(opening_fragment) {
             let start = if self.is_js_file() {
                 node.pos.saturating_sub(1)

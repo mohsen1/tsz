@@ -3010,7 +3010,7 @@ const b = 1 as !any;
 }
 
 #[test]
-fn test_unclosed_jsx_fragment_after_unary_plus_in_tsx_suppresses_ts17014() {
+fn test_unclosed_jsx_fragment_after_unary_plus_in_tsx_reports_ts17014() {
     let source = r#"
 const x = "oops";
 const y = + <> x;
@@ -3022,8 +3022,8 @@ const y = + <> x;
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
 
     assert!(
-        !codes.contains(&17014),
-        "Expected TSX unary `+ <>` recovery to avoid TS17014, got diagnostics: {diagnostics:?}"
+        codes.contains(&17014),
+        "Expected TSX unary `+ <>` recovery to report TS17014, got diagnostics: {diagnostics:?}"
     );
 }
 
@@ -3089,6 +3089,43 @@ const y = + <1234> x;
     assert!(
         !codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
         "Expected no TS1109 fallback for malformed numeric JSX tag head, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_tsx_unary_plus_mixed_type_assertion_and_fragment_matches_conformance_shape() {
+    let source = r#"
+const x = "oops";
+
+const a = + <number> x;
+const b = + <> x;
+const c = + <1234> x;
+"#;
+    let mut parser = ParserState::new("index.tsx".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::JSX_ELEMENT_HAS_NO_CORRESPONDING_CLOSING_TAG),
+        "Expected TS17008 from unary `+ <number> x` JSX recovery, got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::JSX_FRAGMENT_HAS_NO_CORRESPONDING_CLOSING_TAG),
+        "Expected TS17014 from unary `+ <> x` JSX recovery, got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED),
+        "Expected TS1003 for malformed numeric JSX tag head `<1234>`, got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_GT),
+        "Expected TS1382 on malformed numeric JSX tag head close token, got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::EXPECTED),
+        "Expected TS1005 recovery tail after malformed JSX unary expressions, got diagnostics: {diagnostics:?}"
     );
 }
 
@@ -3181,7 +3218,7 @@ var f: {
 }
 
 #[test]
-fn test_tsx_fragment_errors_conformance_shape_has_no_diagnostics() {
+fn test_tsx_fragment_errors_conformance_shape_reports_unclosed_fragment() {
     let source = r#"
 declare namespace JSX {
 	interface Element { }
@@ -3202,13 +3239,13 @@ declare var React: any;
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
 
     assert!(
-        codes.is_empty(),
-        "Expected no parser diagnostics for current tsxFragmentErrors conformance shape, got diagnostics: {diagnostics:?}"
+        codes.contains(&diagnostic_codes::JSX_FRAGMENT_HAS_NO_CORRESPONDING_CLOSING_TAG),
+        "Expected TS17014 for current tsxFragmentErrors conformance shape, got diagnostics: {diagnostics:?}"
     );
 }
 
 #[test]
-fn test_tsx_fragment_errors_actual_conformance_file_has_no_diagnostics() {
+fn test_tsx_fragment_errors_actual_conformance_file_reports_unclosed_fragment() {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../TypeScript/tests/cases/conformance/jsx/tsxFragmentErrors.tsx"
@@ -3221,8 +3258,8 @@ fn test_tsx_fragment_errors_actual_conformance_file_has_no_diagnostics() {
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
 
     assert!(
-        codes.is_empty(),
-        "Expected no parser diagnostics for actual tsxFragmentErrors conformance file, got diagnostics: {diagnostics:?}"
+        codes.contains(&diagnostic_codes::JSX_FRAGMENT_HAS_NO_CORRESPONDING_CLOSING_TAG),
+        "Expected TS17014 for actual tsxFragmentErrors conformance file, got diagnostics: {diagnostics:?}"
     );
 }
 
