@@ -2031,10 +2031,6 @@ impl<'a> CheckerState<'a> {
                         && !accessibility_error_emitted
                         && !self.is_super_expression(access.expression)
                         && !self.is_property_access_on_unresolved_import(access.expression)
-                        // When the receiver already produced TS2454 ("used before
-                        // being assigned"), tsc does not stack a follow-on TS2339 for
-                        // the member access on that same read.
-                        && !receiver_has_daa_error
                     {
                         if self.is_js_file()
                             && self.is_current_file_commonjs_export_base(access.expression)

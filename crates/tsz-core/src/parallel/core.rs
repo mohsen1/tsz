@@ -3183,6 +3183,79 @@ pub struct CheckResult {
     pub diagnostic_count: usize,
 }
 
+fn suppress_parallel_ts2339_cascade_diagnostics(
+    arena: &NodeArena,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let ts2454_starts: FxHashSet<u32> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2454)
+        .map(|diag| diag.start)
+        .collect();
+    if ts2454_starts.is_empty() {
+        return;
+    }
+
+    let ts2339_starts: FxHashSet<u32> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2339)
+        .map(|diag| diag.start)
+        .collect();
+    if ts2339_starts.is_empty() {
+        return;
+    }
+
+    let mut suppressed_ts2339_starts = FxHashSet::default();
+    for raw_idx in 0..arena.len() {
+        let idx = NodeIndex(raw_idx as u32);
+        let Some(node) = arena.get(idx) else {
+            continue;
+        };
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            continue;
+        }
+
+        let Some(access) = arena.get_access_expr(node) else {
+            continue;
+        };
+        let Some(name_node) = arena.get(access.name_or_argument) else {
+            continue;
+        };
+        if !ts2339_starts.contains(&name_node.pos) {
+            continue;
+        }
+
+        let receiver_start = arena.get(access.expression).map(|expr| expr.pos);
+        if !receiver_start.is_some_and(|start| ts2454_starts.contains(&start)) {
+            continue;
+        }
+
+        let Some(ext) = arena.get_extended(idx) else {
+            continue;
+        };
+        let parent = ext.parent;
+        let Some(parent_node) = arena.get(parent) else {
+            continue;
+        };
+        if parent_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            continue;
+        }
+
+        let Some(var_decl) = arena.get_variable_declaration_at(parent) else {
+            continue;
+        };
+        if var_decl.initializer != idx {
+            continue;
+        }
+
+        suppressed_ts2339_starts.insert(name_node.pos);
+    }
+
+    diagnostics.retain(|diag| {
+        !(diag.code == 2339 && suppressed_ts2339_starts.contains(&diag.start))
+    });
+}
+
 /// Collect all function declarations from a source file
 fn collect_functions(arena: &NodeArena, source_file: NodeIndex) -> Vec<NodeIndex> {
     let mut functions = Vec::new();
@@ -3597,6 +3670,8 @@ pub fn check_files_parallel(
 
         // Sort diagnostics by position for deterministic output within each file.
         diagnostics.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
+
+        suppress_parallel_ts2339_cascade_diagnostics(file.arena.as_ref(), &mut diagnostics);
 
         // Deduplicate within each file: same (start, code) = same diagnostic.
         diagnostics.dedup_by(|a, b| a.start == b.start && a.code == b.code);
