@@ -450,6 +450,31 @@ fn parse_reserved_word_as_var_name_emits_ts1389() {
 }
 
 #[test]
+fn parse_reserved_word_parameter_names_emit_ts1390_recovery_family() {
+    let source = "function f1(enum) {}\nfunction f2(class) {}\nfunction f3(function) {}\nfunction f4(while) {}\nfunction f5(for) {}";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::IS_NOT_ALLOWED_AS_A_PARAMETER_NAME),
+        "Expected TS1390 for reserved parameter names, got codes: {codes:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED),
+        "Expected TS1003 companion recovery for enum/function parameter names, got codes: {codes:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::EXPECTED),
+        "Expected TS1005 companion recovery for class/while/for parameter names, got codes: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE),
+        "Should use TS1390, not generic TS1359, for reserved parameter names. Got codes: {codes:?}"
+    );
+}
+
+#[test]
 fn parse_reserved_word_as_const_name_emits_ts1389() {
     let (parser, _root) = parse_source("const class = 1;");
     let diags = parser.get_diagnostics();

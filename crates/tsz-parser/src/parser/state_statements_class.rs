@@ -4,8 +4,13 @@ use super::state::{
     CONTEXT_FLAG_AMBIENT, CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS,
     CONTEXT_FLAG_IN_CLASS, CONTEXT_FLAG_PARAMETER_DEFAULT, ParserState,
 };
-use crate::parser::{NodeIndex, NodeList, node::ClassData, syntax_kind_ext};
+use crate::parser::{
+    NodeIndex, NodeList,
+    node::{ClassData, IdentifierData},
+    syntax_kind_ext,
+};
 use tsz_common::diagnostics::diagnostic_codes;
+use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
 
 impl ParserState {
@@ -499,6 +504,28 @@ impl ParserState {
             self.parse_object_binding_pattern()
         } else if self.is_token(SyntaxKind::OpenBracketToken) {
             self.parse_array_binding_pattern()
+        } else if matches!(
+            self.token(),
+            SyntaxKind::EnumKeyword
+                | SyntaxKind::ClassKeyword
+                | SyntaxKind::FunctionKeyword
+                | SyntaxKind::WhileKeyword
+                | SyntaxKind::ForKeyword
+        ) {
+            let reserved_start = self.token_pos();
+            let reserved_end = self.token_end();
+            self.error_reserved_word_in_parameter_name();
+            self.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                reserved_start,
+                reserved_end,
+                IdentifierData {
+                    atom: Atom::NONE,
+                    escaped_text: String::new(),
+                    original_text: None,
+                    type_arguments: None,
+                },
+            )
         } else if self.is_identifier_or_keyword() {
             self.parse_identifier_name()
         } else {

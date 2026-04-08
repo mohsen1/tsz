@@ -1738,6 +1738,49 @@ impl ParserState {
         self.recover_after_reserved_word_in_variable_declaration(keyword);
     }
 
+    /// Error: TS1390 - '{0}' is not allowed as a parameter name.
+    ///
+    /// For a few legacy keyword parameter forms, tsc also emits a companion parser
+    /// diagnostic during recovery. We mirror that shape here to avoid falling through
+    /// to checker-only diagnostics such as TS7006.
+    pub(crate) fn error_reserved_word_in_parameter_name(&mut self) {
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        let keyword = self.token();
+        if self.should_report_error() {
+            let word = self.current_keyword_text();
+            let msg = diagnostic_messages::IS_NOT_ALLOWED_AS_A_PARAMETER_NAME.replace("{0}", word);
+            self.parse_error_at_current_token(
+                &msg,
+                diagnostic_codes::IS_NOT_ALLOWED_AS_A_PARAMETER_NAME,
+            );
+        }
+
+        // Consume the reserved word so companion recovery diagnostics are anchored at
+        // the following token position (matching tsc's reserved-parameter recovery).
+        self.next_token();
+
+        // Match tsc recovery for common reserved parameter names:
+        //   enum/function -> TS1003 at the following token (typically ')')
+        //   class         -> TS1005 "'{' expected." at the following token
+        //   while/for     -> TS1005 "'(' expected." at the following token
+        match keyword {
+            SyntaxKind::EnumKeyword | SyntaxKind::FunctionKeyword => {
+                self.parse_error_at_current_token(
+                    "Identifier expected.",
+                    diagnostic_codes::IDENTIFIER_EXPECTED,
+                );
+            }
+            SyntaxKind::ClassKeyword => {
+                self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
+            }
+            SyntaxKind::WhileKeyword | SyntaxKind::ForKeyword => {
+                self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
+            }
+            _ => {}
+        }
+    }
+
     /// Error: TS1359 - Identifier expected. '{0}' is a reserved word that cannot be used here.
     pub(crate) fn error_reserved_word_identifier(&mut self) {
         // Use centralized error suppression heuristic
