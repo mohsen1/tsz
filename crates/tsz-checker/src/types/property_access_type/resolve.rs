@@ -853,6 +853,41 @@ impl<'a> CheckerState<'a> {
         let mut js_expando_before_assignment = false;
         if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
             let property_name = &ident.escaped_text;
+            if self.is_js_file()
+                && self.property_access_is_direct_write_target(idx)
+                && let Some(prototype_node) = self.ctx.arena.get(access.expression)
+                && prototype_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(prototype_access) = self.ctx.arena.get_access_expr(prototype_node)
+                && self
+                    .ctx
+                    .arena
+                    .get_identifier_at(prototype_access.name_or_argument)
+                    .is_some_and(|prototype_ident| prototype_ident.escaped_text == "prototype")
+                && let Some(read_pos) = self.ctx.arena.get(idx).map(|n| n.pos)
+                && self
+                    .prior_js_prototype_object_literal_declares_property(
+                        prototype_access.expression,
+                        property_name,
+                        read_pos,
+                    )
+                    .is_some_and(|declares| !declares)
+            {
+                let type_display = if let Some(obj_lit_idx) = self
+                    .prior_js_prototype_object_literal_assignment_node(
+                        prototype_access.expression,
+                        read_pos,
+                    ) {
+                    let obj_lit_type = self.get_type_of_node(obj_lit_idx);
+                    self.format_type(obj_lit_type)
+                } else {
+                    self.format_type(display_object_type)
+                };
+                self.error_property_not_exist_with_apparent_type(
+                    property_name,
+                    &type_display,
+                    idx,
+                );
+            }
             if !commonjs_named_props_disallowed {
                 js_expando_before_assignment = self.expando_property_read_before_assignment(
                     idx,
