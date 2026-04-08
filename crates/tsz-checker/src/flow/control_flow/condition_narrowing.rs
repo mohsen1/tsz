@@ -746,6 +746,57 @@ impl<'a> FlowAnalyzer<'a> {
                             GuardSense::from(is_true_branch),
                         );
                         trace!(?result, "Guard application result");
+                        if !is_true_branch
+                            && result == type_id
+                            && let TypeGuard::Predicate {
+                                type_id: Some(predicate_type),
+                                ..
+                            } = guard
+                        {
+                            // Some complex generic predicates are not reduced by direct
+                            // negative narrowing. Mirror tsc behavior by subtracting the
+                            // positively narrowed subset from the source when possible.
+                            let positive = narrowing.narrow_type(
+                                type_id,
+                                &guard,
+                                GuardSense::Positive,
+                            );
+                            if positive != type_id && positive != TypeId::NEVER {
+                                let excluded = narrowing.narrow_excluding_type(type_id, positive);
+                                if excluded != type_id {
+                                    return excluded;
+                                }
+                            }
+
+                            // Additional fallback for unions: exclude members that are
+                            // assignable to the predicate type.
+                            let members = union_members(self.interner, type_id)
+                                .unwrap_or_else(|| vec![type_id]);
+                            let excluded_members: Vec<TypeId> = members
+                                .iter()
+                                .copied()
+                                .filter(|member| self.is_assignable_to(*member, predicate_type))
+                                .collect();
+                            if !excluded_members.is_empty() {
+                                let excluded =
+                                    narrowing.narrow_excluding_types(type_id, &excluded_members);
+                                if excluded != type_id {
+                                    return excluded;
+                                }
+                            }
+                        }
+                        if result == type_id
+                            && let Some(call) = self.arena.get_call_expr(cond_node)
+                            && let Some(retry) = self.narrow_by_call_predicate(
+                                type_id,
+                                call,
+                                target,
+                                is_true_branch,
+                            )
+                            && retry != type_id
+                        {
+                            return retry;
+                        }
                         return result;
                     }
 
