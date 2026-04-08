@@ -1261,12 +1261,24 @@ impl<'a> CheckerState<'a> {
                             }
                         }
 
+                        let allow_namespace_default = self.ctx.allow_synthetic_default_imports()
+                            || self.module_can_use_synthetic_default_import(module_name);
+
                         // When esModuleInterop / allowSyntheticDefaultImports is
-                        // enabled and the module uses `export =`, synthesize a
-                        // "default" property on the namespace so that
-                        // `ns.default` resolves to the export= value.
-                        if let Some(eq_type) = export_equals_type
-                            && self.ctx.allow_synthetic_default_imports()
+                        // enabled, synthesize a "default" property on CommonJS-shaped
+                        // namespaces:
+                        // - Prefer the export= value when present.
+                        // - Otherwise, fall back to a snapshot object composed from
+                        //   named exports so `ns.default.<name>` remains addressable.
+                        let synthetic_namespace_default_type =
+                            if export_equals_type.is_none() && allow_namespace_default {
+                            Some(factory.object(props.clone()))
+                        } else {
+                            None
+                        };
+                        if let Some(eq_type) =
+                            export_equals_type.or(synthetic_namespace_default_type)
+                            && allow_namespace_default
                         {
                             let default_atom = self.ctx.types.intern_string("default");
                             if !props.iter().any(|p| p.name == default_atom) {
@@ -1290,7 +1302,7 @@ impl<'a> CheckerState<'a> {
                         // Store display name for error messages: TSC shows namespace
                         // types as `typeof import("module")` in diagnostics.
                         let preserve_namespace_display = !(module_is_non_module_entity
-                            && self.ctx.allow_synthetic_default_imports());
+                            && allow_namespace_default);
                         if preserve_namespace_display {
                             self.ctx.namespace_module_names.insert(
                                 namespace_type,
@@ -1311,7 +1323,7 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.types,
                                     export_equals_type,
                                 );
-                                if is_object_like && self.ctx.allow_synthetic_default_imports() {
+                                if is_object_like && allow_namespace_default {
                                     return (namespace_type, Vec::new());
                                 }
                                 return (export_equals_type, Vec::new());
