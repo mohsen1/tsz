@@ -192,6 +192,39 @@ fn object_literal_dotted_property_recovery() {
 }
 
 #[test]
+fn object_method_arrow_return_token_prefers_brace_expected_then_ts1434() {
+    let source = r#"let o = {
+    m(n: number) => string {
+        return n.toString();
+    }
+};"#;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    assert!(
+        diags.iter().any(|d| {
+            d.code == diagnostic_codes::EXPECTED && d.message.contains("'{' expected.")
+        }),
+        "expected TS1005 '{{' expected on object method `=>` recovery, got {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER),
+        "expected TS1434 on stray type token after object method `=>`, got {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "expected TS1128 tail recovery after malformed object method, got {diags:?}"
+    );
+    assert!(
+        diags.iter().all(|d| d.code != diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED),
+        "object method recovery should not fall back to TS1131, got {diags:?}"
+    );
+}
+
+#[test]
 fn async_arrow_parameter_recovery_rolls_back_speculation() {
     let source = "var foo = async (a = await => await): Promise<void> => {}";
     let (parser, _root) = parse_source(source);

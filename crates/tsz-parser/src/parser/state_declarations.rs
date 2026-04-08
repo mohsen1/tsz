@@ -627,6 +627,14 @@ impl ParserState {
         // Return type (supports type predicates: param is T)
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_return_type()
+        } else if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+            // tsc reports `':' expected` for `(args) => T` in type members.
+            self.parse_error_at_current_token(
+                "':' expected.",
+                tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+            );
+            self.next_token(); // consume `=>` and recover by parsing the return type
+            self.parse_return_type()
         } else {
             NodeIndex::NONE
         };
@@ -676,6 +684,14 @@ impl ParserState {
 
         // Return type (supports type predicates)
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
+            self.parse_return_type()
+        } else if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+            // tsc reports `':' expected` for `new (...) => T` in type members.
+            self.parse_error_at_current_token(
+                "':' expected.",
+                tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+            );
+            self.next_token(); // consume `=>` and recover by parsing the return type
             self.parse_return_type()
         } else {
             NodeIndex::NONE

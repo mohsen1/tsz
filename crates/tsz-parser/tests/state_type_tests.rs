@@ -47,3 +47,37 @@ fn parse_mapped_type_with_keyof_retrieval_has_no_errors() {
     );
     assert_eq!(parser.get_diagnostics().len(), 0);
 }
+
+#[test]
+fn parse_call_signature_with_arrow_reports_colon_expected_not_property_signature_expected() {
+    let (parser, _root) = parse_source("type T = { (n: number) => string; };");
+    let diagnostics = parser.get_diagnostics();
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 1005 && d.message == "':' expected."),
+        "Expected TS1005 ':' expected for malformed call signature, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 1131),
+        "Malformed call signature should not fall back to TS1131, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn parse_construct_signature_with_arrow_reports_colon_expected_not_property_signature_expected() {
+    let (parser, _root) = parse_source("type T = { new (n: number) => string; };");
+    let diagnostics = parser.get_diagnostics();
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 1005 && d.message == "':' expected."),
+        "Expected TS1005 ':' expected for malformed construct signature, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 1131),
+        "Malformed construct signature should not fall back to TS1131, got {diagnostics:?}"
+    );
+}
