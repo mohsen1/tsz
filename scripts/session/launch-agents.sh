@@ -73,6 +73,7 @@ PROMPT
 
 # --- Setup worktree ---
 setup_worktree() {
+    "$REPO_ROOT/scripts/setup/install-hooks.sh"
     if [[ -d "$WORKTREE" ]] && git -C "$WORKTREE" rev-parse --git-dir &>/dev/null; then
         echo "Reusing existing worktree: $WORKTREE"
         return 0
