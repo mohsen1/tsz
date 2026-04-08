@@ -237,19 +237,9 @@ impl<'a> CheckerState<'a> {
         match init_node.kind {
             syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION => {
                 if let Some(func) = self.ctx.arena.get_function(init_node) {
-                    if func.type_annotation.is_none() && func.body.is_some() {
-                        let error_target = if func.name.is_some() {
-                            func.name
-                        } else {
-                            init_idx
-                        };
-                        self.error_at_node(
-                            error_target,
-                            diagnostic_messages::FUNCTION_MUST_HAVE_AN_EXPLICIT_RETURN_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
-                            diagnostic_codes::FUNCTION_MUST_HAVE_AN_EXPLICIT_RETURN_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
-                        );
-                    }
-                    // Also check parameters for TS9011
+                    // For function-valued variable initializers, TS9007 comes from
+                    // function-expression defaults in parameter initializers, not the
+                    // outer initializer function itself.
                     self.check_isolated_decl_function_params(&func.parameters);
                 }
             }
@@ -376,6 +366,22 @@ impl<'a> CheckerState<'a> {
                     error_node,
                     diagnostic_messages::PARAMETER_MUST_HAVE_AN_EXPLICIT_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
                     diagnostic_codes::PARAMETER_MUST_HAVE_AN_EXPLICIT_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
+                );
+            }
+
+            // Function-expression defaults in exported signatures require explicit
+            // return type annotations (TS9007).
+            if param.initializer.is_some()
+                && let Some(init_node) = self.ctx.arena.get(param.initializer)
+                && init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                && let Some(func) = self.ctx.arena.get_function(init_node)
+                && func.type_annotation.is_none()
+                && func.body.is_some()
+            {
+                self.error_at_node(
+                    param.initializer,
+                    diagnostic_messages::FUNCTION_MUST_HAVE_AN_EXPLICIT_RETURN_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
+                    diagnostic_codes::FUNCTION_MUST_HAVE_AN_EXPLICIT_RETURN_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
                 );
             }
 
@@ -633,21 +639,14 @@ impl<'a> CheckerState<'a> {
 
         // Check if initializer is inferrable (literals, as const, etc.)
         if self.is_isolated_decl_property_inferrable(prop.initializer) {
-            // Even if the property value is inferrable, check function expressions
-            // for missing return types
+            // Even if the property value is inferrable, nested function-expression
+            // defaults in parameters still require TS9007.
             if let Some(init_node) = self.ctx.arena.get(prop.initializer)
                 && (init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
                     || init_node.kind == syntax_kind_ext::ARROW_FUNCTION)
                 && let Some(func) = self.ctx.arena.get_function(init_node)
-                && func.type_annotation.is_none()
-                && func.body.is_some()
-                && self.body_has_value_return(func.body)
             {
-                self.error_at_node(
-                    prop.name,
-                    diagnostic_messages::FUNCTION_MUST_HAVE_AN_EXPLICIT_RETURN_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
-                    diagnostic_codes::FUNCTION_MUST_HAVE_AN_EXPLICIT_RETURN_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
-                );
+                self.check_isolated_decl_function_params(&func.parameters);
             }
             return;
         }
@@ -823,7 +822,21 @@ impl<'a> CheckerState<'a> {
                     // Get the variable name and scan for property assignments
                     if let Some(name_ident) = self.ctx.arena.get_identifier_at(decl.name) {
                         let var_name = name_ident.escaped_text.clone();
-                        self.scan_expando_assignments(&var_name, stmts);
+                        let has_expando = self.scan_expando_assignments(&var_name, stmts);
+
+                        // For expando function values, the owner function itself must
+                        // have an explicit return annotation (TS9007).
+                        if has_expando
+                            && let Some(func) = self.ctx.arena.get_function(init_node)
+                            && func.type_annotation.is_none()
+                            && func.body.is_some()
+                        {
+                            self.error_at_node(
+                                decl.initializer,
+                                diagnostic_messages::FUNCTION_MUST_HAVE_AN_EXPLICIT_RETURN_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
+                                diagnostic_codes::FUNCTION_MUST_HAVE_AN_EXPLICIT_RETURN_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
+                            );
+                        }
                     }
                 }
             }
@@ -831,8 +844,9 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Scan statements for property assignments to a named function/variable (TS9023).
-    fn scan_expando_assignments(&mut self, func_name: &str, stmts: &[NodeIndex]) {
+    fn scan_expando_assignments(&mut self, func_name: &str, stmts: &[NodeIndex]) -> bool {
         let mut seen_props = std::collections::HashSet::new();
+        let mut has_expando = false;
         for &stmt_idx in stmts {
             let Some(node) = self.ctx.arena.get(stmt_idx) else {
                 continue;
@@ -876,6 +890,7 @@ impl<'a> CheckerState<'a> {
                     // Already reported for this property
                     continue;
                 }
+                has_expando = true;
                 self.error_at_node(
                                             stmt_idx,
                                             diagnostic_messages::ASSIGNING_PROPERTIES_TO_FUNCTIONS_WITHOUT_DECLARING_THEM_IS_NOT_SUPPORTED_WITH_I,
@@ -883,6 +898,7 @@ impl<'a> CheckerState<'a> {
                                         );
             }
         }
+        has_expando
     }
 
     /// Check enum for TS9020 (enum member initializers must be computable).
