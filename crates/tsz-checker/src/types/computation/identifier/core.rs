@@ -1093,7 +1093,8 @@ impl<'a> CheckerState<'a> {
                     != 0
                 && value_decl.is_some()
                 && self.jsdoc_type_annotation_for_node(value_decl).is_some();
-            let preferred_cross_file_type = if self.ctx.should_resolve_jsdoc()
+            let preferred_cross_file_type = if self.ctx.is_js_file()
+                && self.ctx.should_resolve_jsdoc()
                 && (flags
                     & (symbol_flags::FUNCTION_SCOPED_VARIABLE
                         | symbol_flags::BLOCK_SCOPED_VARIABLE))

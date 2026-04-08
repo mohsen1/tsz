@@ -1118,6 +1118,15 @@ impl<'a> CheckerState<'a> {
                         let remote_is_block_scoped =
                             (remote_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0;
                         let remote_is_ns_alias = (remote_flags & symbol_flags::ALIAS) != 0;
+                        // `export as namespace X` from another file should only
+                        // conflict with local block-scoped global-augmentation
+                        // values (`declare global { const/let X }`). It should
+                        // not collide with local imports/functions/namespace
+                        // exports (for example umd-augmentation-1.ts,
+                        // sourceFileMergeWithFunction.ts, umdGlobalConflict.ts).
+                        if remote_is_ns_alias && !local_is_global_aug {
+                            continue;
+                        }
                         let is_actual_conflict = (local_is_ns_export && remote_is_block_scoped)
                             || (local_is_global_aug && remote_is_ns_alias);
                         if is_actual_conflict {
@@ -1489,6 +1498,30 @@ impl<'a> CheckerState<'a> {
             let has_variable_conflict = declarations.iter().any(|(decl_idx, flags, _, _, _)| {
                 conflicts.contains(decl_idx) && (flags & symbol_flags::VARIABLE) != 0
             });
+            let is_import_equals_like = |decl_idx: NodeIndex| {
+                self.ctx.arena.get(decl_idx).is_some_and(|decl_node| {
+                    if decl_node.kind
+                        == tsz_parser::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    {
+                        return true;
+                    }
+                    if decl_node.kind == tsz_parser::parser::syntax_kind_ext::EXPORT_DECLARATION {
+                        return self
+                            .ctx
+                            .arena
+                            .get_export_decl(decl_node)
+                            .and_then(|export_decl| self.ctx.arena.get(export_decl.export_clause))
+                            .is_some_and(|export_clause| {
+                                export_clause.kind
+                                    == tsz_parser::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                            });
+                    }
+                    false
+                })
+            };
+            let has_import_equals_conflict = declarations.iter().any(|(decl_idx, _, _, _, _)| {
+                conflicts.contains(decl_idx) && is_import_equals_like(*decl_idx)
+            });
             let has_non_variable_conflict =
                 declarations.iter().any(|(decl_idx, flags, _, _, _)| {
                     conflicts.contains(decl_idx) && (flags & symbol_flags::VARIABLE) == 0
@@ -1695,6 +1728,17 @@ impl<'a> CheckerState<'a> {
                     self.current_file_default_export_identifier_named(&name)
             {
                 self.error_at_node(default_export_ident, &message, code);
+                continue;
+            }
+            if code == diagnostic_codes::DUPLICATE_IDENTIFIER
+                && has_remote_declaration
+                && has_import_equals_conflict
+            {
+                continue;
+            }
+            if code == diagnostic_codes::DUPLICATE_IDENTIFIER
+                && self.ctx.import_conflict_names.contains(&name)
+            {
                 continue;
             }
 

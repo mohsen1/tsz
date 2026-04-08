@@ -1092,11 +1092,14 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                let message = format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
-                self.error_at_node(name_idx, &message, diagnostic_codes::DUPLICATE_IDENTIFIER);
-                if is_import_equals_decl
-                    && (remote_flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0
-                {
+                let is_import_alias_type_conflict = is_import_equals_decl
+                    && (remote_flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0;
+                if !is_import_alias_type_conflict {
+                    let message =
+                        format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
+                    self.error_at_node(name_idx, &message, diagnostic_codes::DUPLICATE_IDENTIFIER);
+                }
+                if is_import_alias_type_conflict {
                     let conflict_message = format_message(
                         diagnostic_messages::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
                         &[&name],
