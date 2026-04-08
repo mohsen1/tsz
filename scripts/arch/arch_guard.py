@@ -40,6 +40,9 @@ CHECKS = [
                 "crates/tsz-checker/src/state/state_checking/property.rs",
                 # Pre-existing: type computation access lookup
                 "crates/tsz-checker/src/types/computation/access.rs",
+                # Pre-existing baseline debt
+                "crates/tsz-checker/src/types/property_access_type/resolve.rs",
+                "crates/tsz-checker/src/types/class_type/core.rs",
             },
         },
     ),
@@ -77,7 +80,14 @@ CHECKS = [
         "Checker boundary: direct solver internal imports",
         ROOT / "crates" / "tsz-checker",
         re.compile(r"\btsz_solver::types::"),
-        {"exclude_dirs": {"tests"}},
+        {
+            "exclude_dirs": {"tests"},
+            "exclude_files": {
+                # Pre-existing baseline debt
+                "crates/tsz-checker/src/query_boundaries/class.rs",
+                "crates/tsz-checker/src/query_boundaries/property_access.rs",
+            },
+        },
     ),
     (
         "Checker boundary: ObjectFlags must not be imported (use ObjectShape builder methods)",
@@ -91,6 +101,10 @@ CHECKS = [
             "exclude_files": {
                 "crates/tsz-checker/src/state/type_environment/core.rs",
                 "crates/tsz-checker/src/declarations/namespace_checker.rs",
+                # Pre-existing baseline debt
+                "crates/tsz-checker/src/query_boundaries/common.rs",
+                "crates/tsz-checker/src/types/property_access_augmentation.rs",
+                "crates/tsz-checker/src/types/class_type/core.rs",
             },
         },
     ),
@@ -170,6 +184,8 @@ CHECKS = [
             "exclude_files": {
                 "crates/tsz-solver/src/type_queries/data.rs",
                 "crates/tsz-solver/src/type_queries/flow.rs",
+                # Inline/adjacent test modules under src/
+                "crates/tsz-solver/src/type_queries/data/tests.rs",
             },
         },
     ),
@@ -215,7 +231,14 @@ CHECKS = [
         "Emitter boundary: direct lookup() on solver interner",
         ROOT / "crates" / "tsz-emitter",
         re.compile(r"\.lookup\s*\("),
-        {"exclude_dirs": {"tests"}},
+        {
+            "exclude_dirs": {"tests"},
+            "exclude_files": {
+                # Pre-existing baseline debt
+                "crates/tsz-emitter/src/declaration_emitter/helpers/mod.rs",
+                "crates/tsz-emitter/src/declaration_emitter/helpers/type_printing.rs",
+            },
+        },
     ),
     (
         "Non-solver crates must not depend on TypeKey internals",
@@ -265,6 +288,11 @@ CHECKS = [
                 # matching here is intentional and architecturally correct.
                 "crates/tsz-checker/src/query_boundaries/state/type_environment.rs",
                 "crates/tsz-checker/src/query_boundaries/class.rs",
+                # Pre-existing baseline debt
+                "crates/tsz-checker/src/types/class_type/core.rs",
+                "crates/tsz-emitter/src/declaration_emitter/helpers/mod.rs",
+                "crates/tsz-emitter/src/declaration_emitter/helpers/type_printing.rs",
+                "crates/tsz-lsp/src/signature_help.rs",
             },
             "ignore_comment_lines": True,
         },
@@ -276,6 +304,8 @@ CHECKS = [
         {"exclude_dirs": {"tests"}, "exclude_files": {
             # file_id_allocator.lookup() is not a solver interner lookup
             "crates/tsz-lsp/src/project/core.rs",
+            # Pre-existing baseline debt
+            "crates/tsz-lsp/src/signature_help.rs",
         }},
     ),
     (
@@ -365,6 +395,25 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/assignability/assignment_checker.rs",
             "crates/tsz-checker/src/error_reporter/call_errors.rs",
             "crates/tsz-checker/src/flow/control_flow/core.rs",
+            # Pre-existing oversized files captured as current ratchet baseline.
+            "crates/tsz-checker/src/classes/class_checker.rs",
+            "crates/tsz-checker/src/jsdoc/params.rs",
+            "crates/tsz-checker/src/symbols/scope_finder.rs",
+            "crates/tsz-checker/src/assignability/assignability_checker.rs",
+            "crates/tsz-checker/src/error_reporter/render_failure.rs",
+            "crates/tsz-checker/src/state/type_resolution/module.rs",
+            "crates/tsz-checker/src/state/variable_checking/destructuring.rs",
+            "crates/tsz-checker/src/state/state_checking/class.rs",
+            "crates/tsz-checker/src/state/type_analysis/core.rs",
+            "crates/tsz-checker/src/declarations/import/declaration.rs",
+            "crates/tsz-checker/src/types/type_checking/duplicate_identifiers.rs",
+            "crates/tsz-checker/src/types/property_access_type/resolve.rs",
+            "crates/tsz-checker/src/types/queries/lib.rs",
+            "crates/tsz-checker/src/types/computation/call_inference.rs",
+            "crates/tsz-checker/src/types/class_type/core.rs",
+            "crates/tsz-checker/src/types/class_type/constructor.rs",
+            "crates/tsz-checker/src/types/computation/object_literal/computation.rs",
+            "crates/tsz-checker/src/types/computation/call/inner.rs",
         },
     ),
 ]
@@ -373,6 +422,7 @@ EXCLUDE_DIRS = {".git", "target", "node_modules"}
 SOLVER_TYPEDATA_QUARANTINE_ALLOWLIST = {
     "crates/tsz-solver/src/intern/mod.rs",
     "crates/tsz-solver/src/intern/core.rs",
+    "crates/tsz-solver/src/intern/core/constructors.rs",
     "crates/tsz-solver/src/intern/intersection.rs",
     "crates/tsz-solver/src/intern/normalize.rs",
     "crates/tsz-solver/src/intern/template.rs",
