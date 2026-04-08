@@ -1612,7 +1612,7 @@ impl<'a> CheckerState<'a> {
         let mut bindings_to_check = Vec::new();
 
         if clause.name.is_some() {
-            bindings_to_check.push((clause_idx, clause.name));
+            bindings_to_check.push((clause_idx, clause.name, clause.name));
         }
 
         if clause.named_bindings.is_some()
@@ -1622,7 +1622,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(ns) = self.ctx.arena.get_named_imports(bindings_node)
                     && ns.name.is_some()
                 {
-                    bindings_to_check.push((clause.named_bindings, ns.name));
+                    bindings_to_check.push((clause.named_bindings, ns.name, ns.name));
                 }
             } else if bindings_node.kind == syntax_kind_ext::NAMED_IMPORTS
                 && let Some(named) = self.ctx.arena.get_named_imports(bindings_node)
@@ -1636,15 +1636,23 @@ impl<'a> CheckerState<'a> {
                         } else {
                             spec.property_name
                         };
+                        let diagnostic_name_idx = if spec.property_name.is_some() {
+                            // For aliased named imports (`import { x as y }`), tsc
+                            // anchors TS2440 at the imported name (`x`), while the
+                            // message still references the local binding (`y`).
+                            spec.property_name
+                        } else {
+                            name_idx
+                        };
                         if name_idx.is_some() {
-                            bindings_to_check.push((spec_idx, name_idx));
+                            bindings_to_check.push((spec_idx, name_idx, diagnostic_name_idx));
                         }
                     }
                 }
             }
         }
 
-        for (binding_node_idx, name_idx) in bindings_to_check {
+        for (binding_node_idx, name_idx, diagnostic_name_idx) in bindings_to_check {
             if let Some(name_node) = self.ctx.arena.get(name_idx)
                 && let Some(ident) = self.ctx.arena.get_identifier(name_node)
             {
@@ -2103,7 +2111,7 @@ impl<'a> CheckerState<'a> {
                                 &[&name],
                             );
                         self.error_at_node(
-                                name_idx,
+                                diagnostic_name_idx,
                                 &message,
                                 diagnostic_codes::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
                             );
