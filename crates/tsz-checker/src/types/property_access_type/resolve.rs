@@ -882,11 +882,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.format_type(display_object_type)
                 };
-                self.error_property_not_exist_with_apparent_type(
-                    property_name,
-                    &type_display,
-                    idx,
-                );
+                self.error_property_not_exist_with_apparent_type(property_name, &type_display, idx);
             }
             if !commonjs_named_props_disallowed {
                 js_expando_before_assignment = self.expando_property_read_before_assignment(
