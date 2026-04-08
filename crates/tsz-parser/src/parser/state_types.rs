@@ -18,6 +18,20 @@ impl ParserState {
     }
 
     fn recover_invalid_type_member(&mut self) -> bool {
+        let started_with_expression_like_member = matches!(
+            self.token(),
+            SyntaxKind::LessThanToken
+                | SyntaxKind::PlusToken
+                | SyntaxKind::MinusToken
+                | SyntaxKind::ExclamationToken
+                | SyntaxKind::TildeToken
+                | SyntaxKind::PlusPlusToken
+                | SyntaxKind::MinusMinusToken
+                | SyntaxKind::OpenParenToken
+                | SyntaxKind::OpenBracketToken
+                | SyntaxKind::OpenBraceToken
+        );
+
         self.parse_error_at_current_token(
             tsz_common::diagnostics::diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
             tsz_common::diagnostics::diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
@@ -30,6 +44,18 @@ impl ParserState {
             {
                 self.next_token();
             }
+
+            // For malformed type members that start like expressions (for example `<-`),
+            // tsc reports TS1109 at the synchronizing `}` instead of surfacing that
+            // `}` as a top-level TS1128 stray-brace diagnostic.
+            if started_with_expression_like_member && self.is_token(SyntaxKind::CloseBraceToken) {
+                self.parse_error_at_current_token(
+                    "Expression expected.",
+                    tsz_common::diagnostics::diagnostic_codes::EXPRESSION_EXPECTED,
+                );
+                return true;
+            }
+
             if self.is_token(SyntaxKind::SemicolonToken) {
                 self.next_token();
             }
@@ -38,6 +64,29 @@ impl ParserState {
                 .max(self.type_member_container_depth);
             true
         } else {
+            // Narrow recovery: `<-` inside a type member should surface TS1109 at
+            // the synchronizing close brace, not a top-level TS1128 stray brace.
+            if self.is_token(SyntaxKind::CloseBraceToken) {
+                let source = self.get_source_text().as_bytes();
+                let mut cursor = self.token_pos() as usize;
+                while cursor > 0 && source[cursor - 1].is_ascii_whitespace() {
+                    cursor -= 1;
+                }
+                if cursor > 0 && source[cursor - 1] == b'-' {
+                    let mut before_minus = cursor - 1;
+                    while before_minus > 0 && source[before_minus - 1].is_ascii_whitespace() {
+                        before_minus -= 1;
+                    }
+                    if before_minus > 0 && source[before_minus - 1] == b'<' {
+                        self.parse_error_at_current_token(
+                            "Expression expected.",
+                            tsz_common::diagnostics::diagnostic_codes::EXPRESSION_EXPECTED,
+                        );
+                        return true;
+                    }
+                }
+            }
+
             self.next_token();
             false
         }

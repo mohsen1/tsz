@@ -3153,6 +3153,34 @@ x5.isElement;
 }
 
 #[test]
+fn test_type_literal_invalid_member_lt_minus_reports_ts1109_not_ts1128() {
+    let source = r#"
+var f: {
+    x: number;
+    <-
+};
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::TYPE_PARAMETER_DECLARATION_EXPECTED),
+        "Expected TS1139 from malformed call-signature type parameters, got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "Expected TS1109 at the type-literal synchronizing close brace, got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "Expected no top-level TS1128 stray-brace cascade for `<-` type-member recovery, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_tsx_fragment_errors_conformance_shape_has_no_diagnostics() {
     let source = r#"
 declare namespace JSX {
