@@ -1236,6 +1236,43 @@ impl<'a> TypeFormatter<'a> {
         {
             return Some("Object".to_string());
         }
+        // Special case: detect the global RegExp interface by characteristic
+        // members so diagnostics prefer `RegExp` over expanded structural shape.
+        // This mirrors tsc display behavior in contexts like import attributes.
+        if shape.string_index.is_none()
+            && shape.number_index.is_none()
+            && shape.properties.len() >= 10
+            && shape
+                .properties
+                .iter()
+                .any(|p| self.atom(p.name).as_ref() == "exec")
+            && shape
+                .properties
+                .iter()
+                .any(|p| self.atom(p.name).as_ref() == "test")
+            && shape
+                .properties
+                .iter()
+                .any(|p| self.atom(p.name).as_ref() == "source")
+            && shape
+                .properties
+                .iter()
+                .any(|p| self.atom(p.name).as_ref() == "global")
+            && shape
+                .properties
+                .iter()
+                .any(|p| self.atom(p.name).as_ref() == "ignoreCase")
+            && shape
+                .properties
+                .iter()
+                .any(|p| self.atom(p.name).as_ref() == "multiline")
+            && shape
+                .properties
+                .iter()
+                .any(|p| self.atom(p.name).as_ref() == "lastIndex")
+        {
+            return Some("RegExp".to_string());
+        }
         None
     }
 
