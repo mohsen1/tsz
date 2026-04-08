@@ -272,7 +272,7 @@ pub(crate) fn resolve_lazy_def_with_env(
     env: Option<&tsz_solver::TypeEnvironment>,
     type_id: TypeId,
 ) -> TypeId {
-    if let Some(def_id) = get_lazy_def_id(db, type_id)
+    if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(db, type_id)
         && let Some(environment) = env
         && let Some(resolved) = environment.get_def(def_id)
     {
