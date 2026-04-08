@@ -898,8 +898,7 @@ impl<'a> CheckerState<'a> {
                 }
                 if tsz_solver::type_queries::get_array_element_type(self.ctx.types, display_type)
                     == Some(TypeId::UNKNOWN)
-                    && let Some(display) =
-                        self.call_unknown_array_source_display(expr_idx, target)
+                    && let Some(display) = self.call_unknown_array_source_display(expr_idx, target)
                 {
                     return display;
                 }
@@ -1216,19 +1215,20 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let element_type = tsz_solver::type_queries::get_array_element_type(
-            self.ctx.types,
-            first_arg_type,
-        )
-        .or_else(|| {
-            tsz_solver::operations::get_iterator_info(self.ctx.types, first_arg_type, false)
-                .map(|info| info.yield_type)
-        })?;
+        let element_type =
+            tsz_solver::type_queries::get_array_element_type(self.ctx.types, first_arg_type)
+                .or_else(|| {
+                    tsz_solver::operations::get_iterator_info(self.ctx.types, first_arg_type, false)
+                        .map(|info| info.yield_type)
+                })?;
         if matches!(element_type, TypeId::ERROR | TypeId::UNKNOWN) {
             return None;
         }
 
-        let recovered = self.ctx.types.array(self.widen_type_for_display(element_type));
+        let recovered = self
+            .ctx
+            .types
+            .array(self.widen_type_for_display(element_type));
         Some(self.format_assignability_type_for_message(recovered, target))
     }
 
