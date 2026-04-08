@@ -1664,7 +1664,34 @@ export type Test3 = typeof import("./a.json", {
 }
 
 #[test]
-fn test_import_type_options_array_recovery_reports_ts1005_and_ts1128() {
+fn test_import_attributes_nested_double_comma_reports_ts1478_without_ts1128_tail() {
+    let source = r#"
+export type Test4 = typeof import("./a.json", {
+  with: {
+    type: "json",,
+  }
+});
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::IDENTIFIER_OR_STRING_LITERAL_EXPECTED),
+        "Expected TS1478 for malformed nested import-attribute key, got {diagnostics:?}",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "Expected no TS1128 tail cascade for nested comma invalid-key recovery, got {diagnostics:?}",
+    );
+}
+
+#[test]
+fn test_import_type_options_array_recovery_in_intersection_reports_semicolon_and_ts1128() {
     let source = r#"
 export type LocalInterface =
     & import("pkg", [ {"resolution-mode": "require"} ]).RequireInterface
@@ -1684,13 +1711,13 @@ export type LocalInterface =
         diagnostics
             .iter()
             .any(|d| d.code == diagnostic_codes::EXPECTED && d.message.contains("';' expected.")),
-        "Expected TS1005 ';' expected for array import options recovery, got {diagnostics:?}",
+        "Expected TS1005 ';' expected for array import options recovery in intersections, got {diagnostics:?}",
     );
     assert!(
         diagnostics
             .iter()
             .any(|d| d.code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
-        "Expected TS1128 in array import options recovery, got {diagnostics:?}",
+        "Expected TS1128 statement-tail recovery for array import options in intersections, got {diagnostics:?}",
     );
 }
 
@@ -1715,6 +1742,85 @@ export const a = (null as any as import("pkg", Attribute1).RequireInterface);
             .iter()
             .any(|d| d.code == diagnostic_codes::VARIABLE_DECLARATION_EXPECTED),
         "Expected TS1134 for indirected import options recovery, got {diagnostics:?}",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED && d.message.contains("',' expected.")),
+        "Expected TS1005 ',' expected for indirected import options recovery, got {diagnostics:?}",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "Expected no TS1128 tail cascade for indirected import options recovery, got {diagnostics:?}",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER),
+        "Expected no TS1434 tail cascade for indirected import options recovery, got {diagnostics:?}",
+    );
+}
+
+#[test]
+fn test_import_type_options_array_recovery_in_cast_reports_trailing_comma_without_ts1128_tail() {
+    let source = r#"
+export const a = (null as any as import("pkg", [ {"resolution-mode": "require"} ]).RequireInterface);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED && d.message.contains("'{' expected.")),
+        "Expected TS1005 '{{' expected for array import options in casts, got {diagnostics:?}",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED && d.message.contains("',' expected.")),
+        "Expected TS1005 ',' expected at outer ')' for array import options in casts, got {diagnostics:?}",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "Expected no TS1128 tail cascade for array import options in casts, got {diagnostics:?}",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER),
+        "Expected no TS1434 tail cascade for array import options in casts, got {diagnostics:?}",
+    );
+}
+
+#[test]
+fn test_import_type_options_identifier_recovery_in_intersection_reports_ts1128_without_comma() {
+    let source = r#"
+export type LocalInterface =
+    & import("pkg", Attribute1).RequireInterface;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED && d.message.contains("'{' expected.")),
+        "Expected TS1005 '{{' expected for identifier import options in intersections, got {diagnostics:?}",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .filter(|d| d.code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED)
+            .count()
+            >= 1,
+        "Expected TS1128 statement-tail recovery for identifier import options in intersections, got {diagnostics:?}",
     );
 }
 
