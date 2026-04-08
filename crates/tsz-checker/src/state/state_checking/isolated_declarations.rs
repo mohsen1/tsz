@@ -161,13 +161,15 @@ impl<'a> CheckerState<'a> {
 
                     // TS9018: arrays with spread elements (even const)
                     if init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                        && self.array_has_spread(decl.initializer)
+                        && let Some((spread_start, spread_len)) =
+                            self.first_array_spread_anchor(decl.initializer)
                     {
-                        self.error_at_node(
-                                decl.initializer,
-                                diagnostic_messages::ARRAYS_WITH_SPREAD_ELEMENTS_CANT_INFERRED_WITH_ISOLATEDDECLARATIONS,
-                                diagnostic_codes::ARRAYS_WITH_SPREAD_ELEMENTS_CANT_INFERRED_WITH_ISOLATEDDECLARATIONS,
-                            );
+                        self.error_at_position(
+                            spread_start,
+                            spread_len,
+                            diagnostic_messages::ARRAYS_WITH_SPREAD_ELEMENTS_CANT_INFERRED_WITH_ISOLATEDDECLARATIONS,
+                            diagnostic_codes::ARRAYS_WITH_SPREAD_ELEMENTS_CANT_INFERRED_WITH_ISOLATEDDECLARATIONS,
+                        );
                         continue;
                     }
 
@@ -176,13 +178,15 @@ impl<'a> CheckerState<'a> {
                         && let Some(assertion) = self.ctx.arena.get_type_assertion(init_node)
                         && let Some(inner_node) = self.ctx.arena.get(assertion.expression)
                         && inner_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                        && self.array_has_spread(assertion.expression)
+                        && let Some((spread_start, spread_len)) =
+                            self.first_array_spread_anchor(assertion.expression)
                     {
-                        self.error_at_node(
-                                        assertion.expression,
-                                        diagnostic_messages::ARRAYS_WITH_SPREAD_ELEMENTS_CANT_INFERRED_WITH_ISOLATEDDECLARATIONS,
-                                        diagnostic_codes::ARRAYS_WITH_SPREAD_ELEMENTS_CANT_INFERRED_WITH_ISOLATEDDECLARATIONS,
-                                    );
+                        self.error_at_position(
+                            spread_start,
+                            spread_len,
+                            diagnostic_messages::ARRAYS_WITH_SPREAD_ELEMENTS_CANT_INFERRED_WITH_ISOLATEDDECLARATIONS,
+                            diagnostic_codes::ARRAYS_WITH_SPREAD_ELEMENTS_CANT_INFERRED_WITH_ISOLATEDDECLARATIONS,
+                        );
                         continue;
                     }
                 }
@@ -1291,22 +1295,28 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if an array literal has spread elements.
-    fn array_has_spread(&self, arr_idx: NodeIndex) -> bool {
+    /// Return the source anchor (start, length) for the first `...` spread
+    /// token in an array literal.
+    fn first_array_spread_anchor(&self, arr_idx: NodeIndex) -> Option<(u32, u32)> {
         let Some(arr_node) = self.ctx.arena.get(arr_idx) else {
-            return false;
+            return None;
         };
         let Some(arr) = self.ctx.arena.get_literal_expr(arr_node) else {
-            return false;
+            return None;
         };
         for &elem_idx in &arr.elements.nodes {
             if let Some(elem_node) = self.ctx.arena.get(elem_idx)
                 && elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
             {
-                return true;
+                if let Some(spread_data) = self.ctx.arena.get_spread(elem_node)
+                    && let Some(expr_node) = self.ctx.arena.get(spread_data.expression)
+                {
+                    return Some((expr_node.pos.saturating_sub(3), 3));
+                }
+                return Some((elem_node.pos, elem_node.end.saturating_sub(elem_node.pos)));
             }
         }
-        false
+        None
     }
 
     /// Check for TS9022: class expressions in exported positions.
