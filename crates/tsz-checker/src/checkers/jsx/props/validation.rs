@@ -264,10 +264,9 @@ impl<'a> CheckerState<'a> {
         display_target: &str,
         anchor_idx: NodeIndex,
     ) {
-        let source_str = if let Some(shape) = tsz_solver::type_queries::get_object_shape(
-            self.ctx.types,
-            attrs_type,
-        ) {
+        let source_str = if let Some(shape) =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, attrs_type)
+        {
             let fields = shape
                 .properties
                 .iter()

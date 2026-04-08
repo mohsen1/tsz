@@ -1031,5 +1031,4 @@ impl<'a> CheckerState<'a> {
 
         None
     }
-
 }

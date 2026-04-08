@@ -465,20 +465,17 @@ impl<'a> FlowAnalyzer<'a> {
                 .get(&callee_idx.0)
                 .copied()
                 .map(|callee_type| {
-                    self.resolve_generic_predicate(
-                        predicate,
-                        params,
-                        call,
-                        callee_type,
-                        node_types,
-                    )
+                    self.resolve_generic_predicate(predicate, params, call, callee_type, node_types)
                 })
                 .unwrap_or(*predicate);
             if let Some(pred_ty) = resolved_predicate.type_id
                 && let Some(pred_info) = flow_query::type_param_info(self.interner, pred_ty)
                 && let Some(param_idx) = resolved_predicate.parameter_index
                 && let Some(param) = params.get(param_idx)
-                && let Some(&arg_idx) = call.arguments.as_ref().and_then(|args| args.nodes.get(param_idx))
+                && let Some(&arg_idx) = call
+                    .arguments
+                    .as_ref()
+                    .and_then(|args| args.nodes.get(param_idx))
                 && let Some(&arg_type) = node_types.get(&arg_idx.0)
             {
                 if param.type_id == pred_ty {
