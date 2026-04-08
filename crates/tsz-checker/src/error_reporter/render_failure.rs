@@ -55,14 +55,12 @@ impl<'a> CheckerState<'a> {
             return source;
         }
 
-        let element_type = tsz_solver::type_queries::get_array_element_type(
-            self.ctx.types,
-            first_arg_type,
-        )
-        .or_else(|| {
-            tsz_solver::operations::get_iterator_info(self.ctx.types, first_arg_type, false)
-                .map(|info| info.yield_type)
-        });
+        let element_type =
+            tsz_solver::type_queries::get_array_element_type(self.ctx.types, first_arg_type)
+                .or_else(|| {
+                    tsz_solver::operations::get_iterator_info(self.ctx.types, first_arg_type, false)
+                        .map(|info| info.yield_type)
+                });
         let Some(element_type) = element_type else {
             return source;
         };
@@ -70,7 +68,9 @@ impl<'a> CheckerState<'a> {
             return source;
         }
 
-        self.ctx.types.array(self.widen_type_for_display(element_type))
+        self.ctx
+            .types
+            .array(self.widen_type_for_display(element_type))
     }
 
     /// Recursively render a `SubtypeFailureReason` into a Diagnostic.
