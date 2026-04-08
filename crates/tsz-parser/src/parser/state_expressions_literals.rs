@@ -1158,10 +1158,6 @@ impl ParserState {
         // Check for import.meta / import.defer(...)
         if self.is_token(SyntaxKind::DotToken) {
             self.next_token(); // consume '.'
-            // Create import keyword node
-            let import_node =
-                self.arena
-                    .add_token(SyntaxKind::ImportKeyword as u16, start_pos, start_pos + 6);
             // Check if identifier after '.' is 'meta' or 'defer'
             let prop_name = if self.is_identifier_or_keyword() {
                 self.scanner.get_token_value_ref().to_string()
@@ -1172,50 +1168,74 @@ impl ParserState {
             let name_start = self.token_pos();
             let name = self.parse_identifier_name();
             let name_end = self.token_end();
-            if prop_name == "defer" && !self.is_token(SyntaxKind::OpenParenToken) {
-                // import.defer without '(' — TS1005 "'(' expected."
-                // Unlike import.meta, import.defer is only valid as a call expression.
-                self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
-            } else if !is_valid && !prop_name.is_empty() {
-                // import.X where X is neither 'meta' nor 'defer'
-                // If followed by '(' → TS18061 (suggest 'meta' or 'defer')
-                // Otherwise → TS17012 (suggest only 'meta')
-                if self.is_token(SyntaxKind::OpenParenToken) {
-                    let msg = format_message(
-                        diagnostic_messages::IS_NOT_A_VALID_META_PROPERTY_FOR_KEYWORD_IMPORT_DID_YOU_MEAN_META_OR_DEFER,
-                        &[&prop_name],
-                    );
-                    self.parse_error_at(
-                        name_start,
-                        name_end.saturating_sub(name_start),
-                        &msg,
-                        diagnostic_codes::IS_NOT_A_VALID_META_PROPERTY_FOR_KEYWORD_IMPORT_DID_YOU_MEAN_META_OR_DEFER,
-                    );
-                } else {
-                    let msg = format_message(
-                        diagnostic_messages::IS_NOT_A_VALID_META_PROPERTY_FOR_KEYWORD_DID_YOU_MEAN,
-                        &[&prop_name, "import", "meta"],
-                    );
-                    self.parse_error_at(
-                        name_start,
-                        name_end.saturating_sub(name_start),
-                        &msg,
-                        diagnostic_codes::IS_NOT_A_VALID_META_PROPERTY_FOR_KEYWORD_DID_YOU_MEAN,
-                    );
-                }
-            }
-            let end_pos = self.token_end();
 
-            return self.arena.add_access_expr(
-                syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION,
-                start_pos,
-                end_pos,
-                crate::parser::node::AccessExprData {
-                    expression: import_node,
-                    question_dot_token: false,
-                    name_or_argument: name,
-                },
-            );
+            // In type-import query contexts, `typeof import.defer("...")` should
+            // recover as a malformed dynamic import call, not as a valid
+            // meta-property access. This yields TS1005 '(' + ')' expected and
+            // avoids semantic fallback noise (e.g. TS2339).
+            if self.in_import_type_options_context
+                && prop_name == "defer"
+                && self.is_token(SyntaxKind::OpenParenToken)
+            {
+                self.parse_error_at(
+                    name_start,
+                    name_end.saturating_sub(name_start),
+                    "'(' expected.",
+                    diagnostic_codes::EXPECTED,
+                );
+                self.parse_error_at_current_token("')' expected.", diagnostic_codes::EXPECTED);
+            } else {
+                // Create import keyword node
+                let import_node = self.arena.add_token(
+                    SyntaxKind::ImportKeyword as u16,
+                    start_pos,
+                    start_pos + 6,
+                );
+                if prop_name == "defer" && !self.is_token(SyntaxKind::OpenParenToken) {
+                    // import.defer without '(' — TS1005 "'(' expected."
+                    // Unlike import.meta, import.defer is only valid as a call expression.
+                    self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
+                } else if !is_valid && !prop_name.is_empty() {
+                    // import.X where X is neither 'meta' nor 'defer'
+                    // If followed by '(' → TS18061 (suggest 'meta' or 'defer')
+                    // Otherwise → TS17012 (suggest only 'meta')
+                    if self.is_token(SyntaxKind::OpenParenToken) {
+                        let msg = format_message(
+                            diagnostic_messages::IS_NOT_A_VALID_META_PROPERTY_FOR_KEYWORD_IMPORT_DID_YOU_MEAN_META_OR_DEFER,
+                            &[&prop_name],
+                        );
+                        self.parse_error_at(
+                            name_start,
+                            name_end.saturating_sub(name_start),
+                            &msg,
+                            diagnostic_codes::IS_NOT_A_VALID_META_PROPERTY_FOR_KEYWORD_IMPORT_DID_YOU_MEAN_META_OR_DEFER,
+                        );
+                    } else {
+                        let msg = format_message(
+                            diagnostic_messages::IS_NOT_A_VALID_META_PROPERTY_FOR_KEYWORD_DID_YOU_MEAN,
+                            &[&prop_name, "import", "meta"],
+                        );
+                        self.parse_error_at(
+                            name_start,
+                            name_end.saturating_sub(name_start),
+                            &msg,
+                            diagnostic_codes::IS_NOT_A_VALID_META_PROPERTY_FOR_KEYWORD_DID_YOU_MEAN,
+                        );
+                    }
+                }
+                let end_pos = self.token_end();
+
+                return self.arena.add_access_expr(
+                    syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION,
+                    start_pos,
+                    end_pos,
+                    crate::parser::node::AccessExprData {
+                        expression: import_node,
+                        question_dot_token: false,
+                        name_or_argument: name,
+                    },
+                );
+            }
         }
 
         // Check for invalid import forms before expecting '('
@@ -1316,6 +1336,8 @@ impl ParserState {
                     {
                         self.parse_import_options_object_literal()
                     } else {
+                        let options_starts_with_array = self.is_token(SyntaxKind::OpenBracketToken);
+                        let options_starts_with_identifier = self.is_identifier_or_keyword();
                         if self.in_import_type_options_context
                             && !self.fallback_import_type_options_once
                             && !self.is_token(SyntaxKind::OpenBraceToken)
@@ -1326,7 +1348,67 @@ impl ParserState {
                             // constituent to expression-mode option parsing.
                             self.abort_intersection_continuation = true;
                         }
-                        self.parse_assignment_expression()
+                        let parsed = self.parse_assignment_expression();
+
+                        if self.in_import_type_options_context
+                            && !self.fallback_import_type_options_once
+                            && !self.is_token(SyntaxKind::OpenBraceToken)
+                        {
+                            if options_starts_with_array {
+                                let start = self.u32_from_usize(self.scanner.get_token_start());
+                                let end = self.u32_from_usize(self.scanner.get_token_end());
+                                self.report_invalid_import_attribute_tail_recovery(Some((
+                                    start,
+                                    end.saturating_sub(start),
+                                )));
+                            } else if options_starts_with_identifier
+                                && self.is_token(SyntaxKind::CloseParenToken)
+                            {
+                                let snapshot = self.scanner.save_state();
+                                let saved_token = self.current_token;
+                                self.next_token();
+                                let mut emit_ts1134 = None;
+                                let mut should_emit_tail_recovery = false;
+                                if self.is_token(SyntaxKind::DotToken) {
+                                    self.next_token();
+                                    if self.is_identifier_or_keyword() {
+                                        let ident_start = self.token_pos();
+                                        let ident_end = self.token_end();
+                                        let ident_snapshot = self.scanner.save_state();
+                                        let ident_token = self.current_token;
+                                        self.next_token();
+                                        let next_has_line_break =
+                                            self.scanner.has_preceding_line_break();
+                                        self.scanner.restore_state(ident_snapshot);
+                                        self.current_token = ident_token;
+
+                                        if next_has_line_break {
+                                            should_emit_tail_recovery = true;
+                                        } else {
+                                            emit_ts1134 = Some((
+                                                ident_start,
+                                                ident_end.saturating_sub(ident_start),
+                                            ));
+                                        }
+                                    }
+                                }
+                                self.scanner.restore_state(snapshot);
+                                self.current_token = saved_token;
+
+                                if should_emit_tail_recovery {
+                                    self.report_invalid_import_attribute_tail_recovery(None);
+                                }
+                                if let Some((start, length)) = emit_ts1134 {
+                                    self.parse_error_at(
+                                        start,
+                                        length,
+                                        diagnostic_messages::VARIABLE_DECLARATION_EXPECTED,
+                                        diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
+                                    );
+                                }
+                            }
+                        }
+                        parsed
                     },
                 )
             }
@@ -2964,6 +3046,18 @@ impl ParserState {
         while !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
+            if self.is_token(SyntaxKind::CommaToken) {
+                // `import("x", { ...,, })`: in type-import options, treat an
+                // empty property slot as a broken object tail so recovery
+                // cascades through `}`/`)` with TS1128 like tsc.
+                self.error_token_expected("}");
+                self.next_token();
+                self.abort_intersection_continuation = true;
+                self.report_invalid_import_attribute_tail_recovery(None);
+                aborted_after_nested_recovery = true;
+                break;
+            }
+
             let prop = if self.look_ahead_is_import_attributes_property() {
                 self.parse_import_options_property_assignment()
             } else if self.is_property_start() {
