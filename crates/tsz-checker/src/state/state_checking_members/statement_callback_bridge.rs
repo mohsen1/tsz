@@ -344,7 +344,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                             .binder
                             .symbols
                             .find_all_by_name("JSX")
-                            .into_iter()
+                            .iter()
                             .filter_map(|sym_id| self.ctx.binder.symbols.get(*sym_id))
                             .find_map(|jsx_symbol| {
                                 let exports = jsx_symbol.exports.as_ref()?;
