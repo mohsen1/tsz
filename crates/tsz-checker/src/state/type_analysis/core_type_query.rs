@@ -627,8 +627,8 @@ impl<'a> CheckerState<'a> {
             let flags = symbol.flags;
 
             if (flags & tsz_binder::symbol_flags::VALUE) != 0 {
-                let non_module_value =
-                    flags & (tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE);
+                let non_module_value = flags
+                    & (tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE);
                 if non_module_value != 0 {
                     return false;
                 }
