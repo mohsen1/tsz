@@ -579,6 +579,21 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
+        if let Some(display) =
+            self.identifier_array_object_literal_source_display(expr_idx, param_type)
+        {
+            return display;
+        }
+        if let Some(display) = self.rebuilt_array_source_display(arg_type, param_type) {
+            return display;
+        }
+        if let Some(display) =
+            self.declared_identifier_source_display(expr_idx, param_type, arg_type)
+        {
+            return display;
+        }
+
         let mut display_type = if param_type == TypeId::NEVER {
             if let Some(display) = self.zero_argument_call_list_display(arg_idx) {
                 return display;

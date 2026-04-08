@@ -2188,7 +2188,18 @@ impl<'a> CheckerState<'a> {
         // Store instantiated type predicate from generic call resolution
         // so flow narrowing can use the correct (inferred) predicate type.
         if let Some(predicate) = instantiated_predicate {
-            self.ctx.call_type_predicates.insert(idx.0, predicate);
+            let stored_predicate = call_checker::extract_predicate_signature(
+                self.ctx.types,
+                callee_type_for_call,
+            )
+            .filter(|sig| {
+                sig.predicate
+                    .type_id
+                    .is_some_and(|pred_ty| common::type_param_info(self.ctx.types, pred_ty).is_some())
+            })
+            .map(|sig| (sig.predicate, sig.params))
+            .unwrap_or(predicate);
+            self.ctx.call_type_predicates.insert(idx.0, stored_predicate);
         } else {
             // For non-generic calls with type predicates (e.g., `isString(x): x is string`),
             // extract the predicate from the callee's signature and store it in

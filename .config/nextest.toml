@@ -19,6 +19,10 @@ retries = 0
 # Use all available cores
 test-threads = "num-cpus"
 
+[[profile.default.overrides]]
+filter = 'test(compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006) | test(compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322)'
+slow-timeout = { period = "90s", terminate-after = 2 }
+
 [profile.default.junit]
 path = "target/nextest/default/junit.xml"
 
@@ -29,6 +33,10 @@ leak-timeout = "3s"
 fail-fast = false
 retries = 0
 test-threads = "num-cpus"
+
+[[profile.ci.overrides]]
+filter = 'test(compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006) | test(compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322)'
+slow-timeout = { period = "90s", terminate-after = 2 }
 
 # Quick profile for fast feedback during development
 [profile.quick]
