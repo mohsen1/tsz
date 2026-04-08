@@ -1342,6 +1342,24 @@ impl<'a> CheckerState<'a> {
                     return (json_type, Vec::new());
                 }
 
+                // For default imports from CommonJS `export =` modules in JS/checkJs,
+                // prefer the direct CommonJS export surface type when available.
+                // This avoids collapsing the imported binding to `any` when the
+                // synthetic `export=` symbol has an imprecise type.
+                if export_name == "default"
+                    && let Some(surface) = self.resolve_js_export_surface_for_module(
+                        module_name,
+                        Some(self.ctx.current_file_idx),
+                    )
+                    && surface.has_commonjs_exports
+                    && let Some(direct_export_type) = surface.direct_export_type
+                    && direct_export_type != TypeId::ANY
+                    && direct_export_type != TypeId::UNKNOWN
+                    && direct_export_type != TypeId::ERROR
+                {
+                    return (direct_export_type, Vec::new());
+                }
+
                 // In node16/nodenext, when an ESM file default-imports a CJS module,
                 // the default binding is the entire module namespace (module.exports),
                 // not the "default" export. This matches tsc's behavior where Node.js

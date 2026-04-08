@@ -1388,6 +1388,12 @@ impl<'a> CheckerState<'a> {
                 if self.is_js_file()
                     && property_name == "prototype"
                     && self.property_access_is_direct_write_target(idx)
+                    && !self
+                        .resolve_identifier_symbol(access.expression)
+                        .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                        .is_some_and(|sym| {
+                            (sym.flags & symbol_flags::ALIAS) != 0 && sym.import_module.is_some()
+                        })
                 {
                     return TypeId::ANY;
                 }
@@ -1421,12 +1427,46 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
 
-            let object_type_for_access = if enum_instance_like_access {
+            let external_prototype_owner_instance_type = self
+                .find_enclosing_non_arrow_function(access.expression)
+                .and_then(|func_idx| self.js_prototype_owner_expression_for_node(func_idx))
+                .and_then(|owner_expr| {
+                    // Only for external/imported prototype owners. Local function/class
+                    // owners are handled by regular JS prototype-this logic.
+                    if self.js_prototype_owner_function_target(owner_expr).is_some() {
+                        return None;
+                    }
+                    let owner_type = self.get_type_of_node(owner_expr);
+                    if owner_type == TypeId::ANY
+                        || owner_type == TypeId::UNKNOWN
+                        || owner_type == TypeId::ERROR
+                    {
+                        return None;
+                    }
+                    let owner_type_for_access = self.resolve_type_for_property_access(owner_type);
+                    match self.resolve_property_access_with_env(owner_type_for_access, "prototype")
+                    {
+                        PropertyAccessResult::Success { type_id, .. }
+                        | PropertyAccessResult::PossiblyNullOrUndefined {
+                            property_type: Some(type_id),
+                            ..
+                        } => Some(type_id),
+                        _ => None,
+                    }
+                });
+
+            let mut object_type_for_access = if enum_instance_like_access {
                 self.apparent_enum_instance_type(object_type)
                     .unwrap_or_else(|| self.resolve_type_for_property_access(object_type))
             } else {
                 self.resolve_type_for_property_access(object_type)
             };
+            if object_type_for_access == TypeId::ANY
+                && is_this_access
+                && let Some(owner_instance_type) = external_prototype_owner_instance_type
+            {
+                object_type_for_access = owner_instance_type;
+            }
             if object_type_for_access == TypeId::ANY {
                 return TypeId::ANY;
             }
@@ -1893,11 +1933,16 @@ impl<'a> CheckerState<'a> {
                         .is_some_and(|owner_node| {
                             owner_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         });
-                    let this_owner_is_js_prototype_method = self
-                        .this_has_contextual_owner(access.expression)
-                        .is_some_and(|owner_idx| {
-                            self.js_prototype_owner_expression_for_node(owner_idx)
-                                .is_some()
+                    let this_prototype_owner_expr = self
+                        .find_enclosing_non_arrow_function(access.expression)
+                        .and_then(|func_idx| self.js_prototype_owner_expression_for_node(func_idx));
+                    let this_owner_is_js_prototype_method = this_prototype_owner_expr
+                        .is_some_and(|owner_expr| {
+                            self.js_prototype_owner_function_target(owner_expr).is_some()
+                        });
+                    let this_owner_is_external_js_prototype_method = this_prototype_owner_expr
+                        .is_some_and(|owner_expr| {
+                            self.js_prototype_owner_function_target(owner_expr).is_none()
                         });
                     if is_this_access
                         && this_owner_is_object_literal
@@ -1929,6 +1974,7 @@ impl<'a> CheckerState<'a> {
                         && is_this_access
                         && skip_flow_narrowing
                         && self.property_access_is_direct_write_target(idx)
+                        && !this_owner_is_external_js_prototype_method
                     {
                         let object_literal_owned_this = self
                             .this_has_contextual_owner(access.expression)
@@ -1961,6 +2007,13 @@ impl<'a> CheckerState<'a> {
                     if self.is_js_file()
                         && property_name == "prototype"
                         && self.property_access_is_direct_write_target(idx)
+                        && !self
+                            .resolve_identifier_symbol(access.expression)
+                            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                            .is_some_and(|sym| {
+                                (sym.flags & symbol_flags::ALIAS) != 0
+                                    && sym.import_module.is_some()
+                            })
                     {
                         return TypeId::ANY;
                     }
