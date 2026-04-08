@@ -155,7 +155,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn import_type_namespace_name(&self, module_specifier: &str) -> String {
+    fn import_type_module_display_name(&self, module_specifier: &str) -> String {
         let stripped = module_specifier
             .strip_prefix("./")
             .or_else(|| module_specifier.strip_prefix("../"))
@@ -174,7 +174,14 @@ impl<'a> CheckerState<'a> {
             .or_else(|| stripped.strip_suffix(".mjs"))
             .or_else(|| stripped.strip_suffix(".cjs"))
             .unwrap_or(stripped);
-        format!("\"{display_name}\".export=")
+        format!("\"{display_name}\"")
+    }
+
+    fn import_type_namespace_name(&self, module_specifier: &str) -> String {
+        format!(
+            "{}.export=",
+            self.import_type_module_display_name(module_specifier)
+        )
     }
 
     fn import_type_missing_member_node(&self, idx: NodeIndex) -> NodeIndex {
@@ -218,6 +225,33 @@ impl<'a> CheckerState<'a> {
         Some(segments)
     }
 
+    fn import_type_member_segment_nodes(&self, idx: NodeIndex) -> Option<Vec<NodeIndex>> {
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+            let call = self.ctx.arena.get_call_expr(node)?;
+            let expr_node = self.ctx.arena.get(call.expression)?;
+            return (expr_node.kind == SyntaxKind::ImportKeyword as u16).then(Vec::new);
+        }
+        if node.kind != syntax_kind_ext::QUALIFIED_NAME {
+            return None;
+        }
+
+        let qn = self.ctx.arena.get_qualified_name(node)?;
+        let mut nodes = self.import_type_member_segment_nodes(qn.left)?;
+        nodes.push(qn.right);
+        Some(nodes)
+    }
+
+    fn import_type_missing_member_segment_node(
+        &self,
+        idx: NodeIndex,
+        segment_index: usize,
+    ) -> NodeIndex {
+        self.import_type_member_segment_nodes(idx)
+            .and_then(|nodes| nodes.get(segment_index).copied())
+            .unwrap_or_else(|| self.import_type_missing_member_node(idx))
+    }
+
     fn resolve_import_type_reference(
         &mut self,
         module_name: &str,
@@ -243,11 +277,15 @@ impl<'a> CheckerState<'a> {
             &segments[0],
             resolution_mode_override,
         )?;
-        for segment in segments.iter().skip(1) {
-            let symbol = self
+        let mut resolved_segments = vec![segments[0].clone()];
+        for (segment_index, segment) in segments.iter().enumerate().skip(1) {
+            let Some(symbol) = self
                 .get_cross_file_symbol(current_sym)
-                .or_else(|| self.ctx.binder.get_symbol(current_sym))?;
-            current_sym = symbol
+                .or_else(|| self.ctx.binder.get_symbol(current_sym))
+            else {
+                return None;
+            };
+            if let Some(next_sym) = symbol
                 .exports
                 .as_ref()
                 .and_then(|exports| exports.get(segment))
@@ -256,7 +294,23 @@ impl<'a> CheckerState<'a> {
                         .members
                         .as_ref()
                         .and_then(|members| members.get(segment))
-                })?;
+                })
+            {
+                current_sym = next_sym;
+                resolved_segments.push(segment.clone());
+                continue;
+            }
+
+            let module_display = self.import_type_module_display_name(module_name);
+            let parent_name = if resolved_segments.is_empty() {
+                module_display
+            } else {
+                format!("{module_display}.{}", resolved_segments.join("."))
+            };
+            let member_idx =
+                self.import_type_missing_member_segment_node(type_name_idx, segment_index);
+            self.error_namespace_no_export(&parent_name, segment, member_idx);
+            return Some(TypeId::ERROR);
         }
 
         let symbol_flags = self
@@ -798,7 +852,11 @@ impl<'a> CheckerState<'a> {
                         (error.message.clone(), error.code)
                     }
                 };
+                if error_code == 6504 {
+                    self.error_program_level(error_message, error_code);
+                } else {
                 self.error_at_node(specifier_node, &error_message, error_code);
+                }
             }
             return TypeId::ERROR;
         }

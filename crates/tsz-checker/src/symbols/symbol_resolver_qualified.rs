@@ -465,12 +465,8 @@ impl<'a> CheckerState<'a> {
                 if !accept(sym_id, sym_symbol) {
                     continue;
                 }
-                if let Some(local_symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    if local_symbol.escaped_name != name && !self.ctx.has_symbol_file_index(sym_id)
-                    {
-                        self.ctx.register_symbol_file_target(sym_id, file_idx);
-                    }
-                } else if !self.ctx.has_symbol_file_index(sym_id) {
+                if file_idx != self.ctx.current_file_idx && !self.ctx.has_symbol_file_index(sym_id)
+                {
                     self.ctx.register_symbol_file_target(sym_id, file_idx);
                 }
                 return Some(sym_id);
@@ -558,14 +554,10 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Record a cross-file symbol origin for proper arena delegation.
-    fn record_cross_file_member(&self, member_id: SymbolId, member_name: &str, file_idx: usize) {
-        if let Some(local_sym) = self.ctx.binder.get_symbol(member_id) {
-            if local_sym.escaped_name.as_str() != member_name
-                && !self.ctx.has_symbol_file_index(member_id)
-            {
-                self.ctx.register_symbol_file_target(member_id, file_idx);
-            }
-        } else if !self.ctx.has_symbol_file_index(member_id) {
+    fn record_cross_file_member(&self, member_id: SymbolId, _member_name: &str, file_idx: usize) {
+        if file_idx != self.ctx.current_file_idx
+            && !self.ctx.has_symbol_file_index(member_id)
+        {
             self.ctx.register_symbol_file_target(member_id, file_idx);
         }
     }
@@ -804,6 +796,9 @@ impl<'a> CheckerState<'a> {
             if let Some(exports) = left_symbol.exports.as_ref()
                 && let Some(member_sym) = exports.get(right_name)
             {
+                if let Some(file_idx) = self.ctx.resolve_symbol_file_index(left_sym) {
+                    self.record_cross_file_member(member_sym, right_name, file_idx);
+                }
                 return Some(
                     self.resolve_alias_symbol(member_sym, visited_aliases)
                         .unwrap_or(member_sym),
@@ -876,6 +871,9 @@ impl<'a> CheckerState<'a> {
         if let Some(exports) = left_symbol.exports.as_ref()
             && let Some(member_sym) = exports.get(right_name)
         {
+            if let Some(file_idx) = self.ctx.resolve_symbol_file_index(left_sym) {
+                self.record_cross_file_member(member_sym, right_name, file_idx);
+            }
             return Some(
                 self.resolve_alias_symbol(member_sym, visited_aliases)
                     .unwrap_or(member_sym),

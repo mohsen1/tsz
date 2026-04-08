@@ -116,6 +116,29 @@ impl<'a> CheckerState<'a> {
             push_unique(&mut candidates, normalized.to_string_lossy().to_string());
         }
 
+        // If the module specifier is an absolute path into node_modules
+        // (e.g. `/.../node_modules/math2d/index.d.ts`), also consider the
+        // package specifier (`math2d`) so `declare module 'math2d'`
+        // augmentations can be matched.
+        let path_parts: Vec<String> = Path::new(trimmed)
+            .components()
+            .filter_map(|component| match component {
+                Component::Normal(part) => Some(part.to_string_lossy().to_string()),
+                _ => None,
+            })
+            .collect();
+        if let Some(node_modules_idx) = path_parts.iter().position(|part| part == "node_modules")
+            && let Some(pkg) = path_parts.get(node_modules_idx + 1)
+        {
+            if pkg.starts_with('@')
+                && let Some(scoped_pkg) = path_parts.get(node_modules_idx + 2)
+            {
+                push_unique(&mut candidates, format!("{pkg}/{scoped_pkg}"));
+            } else {
+                push_unique(&mut candidates, pkg.clone());
+            }
+        }
+
         candidates
     }
 
@@ -920,6 +943,11 @@ impl<'a> CheckerState<'a> {
                 let prototype_name = self.ctx.types.intern_string("prototype");
                 let mut merged_properties =
                     self.merge_properties(&augmentation_members, &base_shape.properties);
+                let mut merged_construct_signatures = base_shape.construct_signatures.clone();
+                for sig in &mut merged_construct_signatures {
+                    sig.return_type =
+                        self.apply_module_augmentations(module_spec, interface_name, sig.return_type);
+                }
                 if !base_shape.construct_signatures.is_empty()
                     && let Some(prototype_prop) = merged_properties
                         .iter_mut()
@@ -935,7 +963,7 @@ impl<'a> CheckerState<'a> {
                 }
                 factory.callable(CallableShape {
                     call_signatures: base_shape.call_signatures.clone(),
-                    construct_signatures: base_shape.construct_signatures.clone(),
+                    construct_signatures: merged_construct_signatures,
                     properties: merged_properties,
                     string_index: base_shape.string_index,
                     number_index: base_shape.number_index,

@@ -1037,6 +1037,11 @@ impl<'a> CheckerState<'a> {
                 }
             }
             tracing::trace!(%module_name, error_code, "check_import_declaration: resolution error found");
+            if error_code == 6504 {
+                self.error_program_level(error_message, error_code);
+                self.ctx.import_resolution_stack.pop();
+                return;
+            }
             // Check if we've already emitted an error for this module (prevents duplicate emissions)
             if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
                 self.ctx

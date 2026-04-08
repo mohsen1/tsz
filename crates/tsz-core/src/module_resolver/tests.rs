@@ -2371,7 +2371,7 @@ fn test_lookup_ambient_module_suppresses_error() {
 
 #[test]
 fn test_lookup_untyped_js_module_no_implicit_any() {
-    // TS7016: untyped JS module with noImplicitAny
+    // TS7016: untyped JS module in node_modules with noImplicitAny
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_lookup_untyped_js");
     let _ = fs::remove_dir_all(&dir);
@@ -3061,8 +3061,8 @@ fn test_classify_untyped_js_with_no_implicit_any() {
 
     assert!(outcome.resolved_path.is_none());
     assert!(outcome.is_resolved, "untyped JS should suppress TS2307");
-    let error = outcome.error.expect("should have TS7016 error");
-    assert_eq!(error.code, COULD_NOT_FIND_DECLARATION_FILE);
+    let error = outcome.error.expect("should have TS6504 error");
+    assert_eq!(error.code, FILE_IS_A_JAVASCRIPT_FILE_ENABLE_ALLOWJS);
 }
 
 #[test]

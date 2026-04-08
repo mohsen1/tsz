@@ -464,6 +464,12 @@ impl<'a> CheckerState<'a> {
         if root_symbol.parent == SymbolId::NONE
             && let Some(module_name) = self.external_module_display_name_for_symbol(root_symbol)
         {
+            if root_symbol.is_umd_export && parts.len() == 1 {
+                return module_name;
+            }
+            if self.is_pure_namespace_symbol_for_display(root_symbol) {
+                return qualified_name;
+            }
             return format!("{module_name}.{qualified_name}");
         }
 
@@ -495,10 +501,18 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let stem = file_name
-            .rsplit_once('.')
-            .map(|(base, _)| base)
-            .unwrap_or(file_name.as_str());
+        let stem = [
+            ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx",
+            ".mjs", ".cjs",
+        ]
+        .iter()
+        .find_map(|ext| file_name.strip_suffix(ext))
+        .unwrap_or_else(|| {
+            file_name
+                .rsplit_once('.')
+                .map(|(base, _)| base)
+                .unwrap_or(file_name.as_str())
+        });
         let basename = stem.rsplit_once('/').map(|(_, name)| name).unwrap_or(stem);
         if basename.is_empty() {
             return None;
@@ -526,6 +540,52 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get(module.name)
                 .is_some_and(|name_node| name_node.kind == SyntaxKind::StringLiteral as u16)
+        })
+    }
+
+    fn is_pure_namespace_symbol_for_display(&self, symbol: &tsz_binder::Symbol) -> bool {
+        if (symbol.flags & symbol_flags::MODULE) == 0
+            || symbol.declarations.is_empty()
+            || symbol.escaped_name == "export="
+        {
+            return false;
+        }
+
+        let arena = if symbol.decl_file_idx != u32::MAX {
+            self.ctx.get_arena_for_file(symbol.decl_file_idx)
+        } else {
+            &self.ctx.arena
+        };
+
+        symbol.declarations.iter().all(|&decl_idx| {
+            let Some(node) = arena.get(decl_idx) else {
+                return false;
+            };
+            if node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                return false;
+            }
+            let Some(mods) = arena.get_declaration_modifiers(node) else {
+                return false;
+            };
+            let has_declare = mods.nodes.iter().any(|&mod_idx| {
+                arena
+                    .get(mod_idx)
+                    .is_some_and(|mod_node| mod_node.kind == SyntaxKind::DeclareKeyword as u16)
+            });
+            let has_export = mods.nodes.iter().any(|&mod_idx| {
+                arena
+                    .get(mod_idx)
+                    .is_some_and(|mod_node| mod_node.kind == SyntaxKind::ExportKeyword as u16)
+            });
+            if !has_declare || has_export {
+                return false;
+            }
+            let Some(module) = arena.get_module(node) else {
+                return false;
+            };
+            arena
+                .get(module.name)
+                .is_some_and(|name_node| name_node.kind == SyntaxKind::Identifier as u16)
         })
     }
 
