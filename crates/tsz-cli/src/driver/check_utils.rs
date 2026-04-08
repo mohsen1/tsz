@@ -518,6 +518,7 @@ pub(super) fn required_helpers(
 ) -> Vec<(&'static str, u32, u32)> {
     let mut saw_await: Option<(u32, u32)> = None;
     let mut saw_yield: Option<(u32, u32)> = None;
+    let mut first_async_function: Option<(u32, u32)> = None;
     let mut first_decorator: Option<(u32, u32)> = None;
     let mut first_private_id: Option<(u32, u32)> = None;
 
@@ -554,6 +555,18 @@ pub(super) fn required_helpers(
         if node.kind == syntax_kind_ext::YIELD_EXPRESSION {
             saw_yield = Some((node.pos, node.end.saturating_sub(node.pos)));
         }
+        if first_async_function.is_none()
+            && let Some(func) = file.arena.get_function(node)
+            && func.is_async
+            && !func.asterisk_token
+        {
+            if let Some(name_node) = file.arena.get(func.name) {
+                first_async_function =
+                    Some((name_node.pos, name_node.end.saturating_sub(name_node.pos)));
+            } else {
+                first_async_function = Some((node.pos, node.end.saturating_sub(node.pos)));
+            }
+        }
     }
 
     // Decorators take priority (ES decorators handle private fields internally)
@@ -567,6 +580,9 @@ pub(super) fn required_helpers(
 
     if let (Some((start, length)), Some(_)) = (saw_await, saw_yield) {
         return vec![("__asyncGenerator", start, length)];
+    }
+    if let Some((start, length)) = first_async_function.or(saw_await) {
+        return vec![("__awaiter", start, length)];
     }
 
     // Module-transform helpers for import/export syntax that lower to tslib
@@ -591,6 +607,7 @@ fn required_tslib_helpers(
 ) -> Vec<TslibHelperRequirement> {
     let mut saw_await: Option<(u32, u32)> = None;
     let mut saw_yield: Option<(u32, u32)> = None;
+    let mut first_async_function: Option<(u32, u32)> = None;
     let mut first_decorator: Option<(u32, u32)> = None;
     let mut first_private_id: Option<(u32, u32)> = None;
     let mut first_private_get: Option<(u32, u32)> = None;
@@ -681,6 +698,18 @@ fn required_tslib_helpers(
         if node.kind == syntax_kind_ext::YIELD_EXPRESSION {
             saw_yield = Some((node.pos, node.end.saturating_sub(node.pos)));
         }
+        if first_async_function.is_none()
+            && let Some(func) = file.arena.get_function(node)
+            && func.is_async
+            && !func.asterisk_token
+        {
+            if let Some(name_node) = file.arena.get(func.name) {
+                first_async_function =
+                    Some((name_node.pos, name_node.end.saturating_sub(name_node.pos)));
+            } else {
+                first_async_function = Some((node.pos, node.end.saturating_sub(node.pos)));
+            }
+        }
     }
 
     if let Some((start, length)) = first_decorator {
@@ -721,6 +750,14 @@ fn required_tslib_helpers(
     if let (Some((start, length)), Some(_)) = (saw_await, saw_yield) {
         return vec![TslibHelperRequirement {
             name: "__asyncGenerator",
+            start,
+            length,
+            required_parameter_count: None,
+        }];
+    }
+    if let Some((start, length)) = first_async_function.or(saw_await) {
+        return vec![TslibHelperRequirement {
+            name: "__awaiter",
             start,
             length,
             required_parameter_count: None,
