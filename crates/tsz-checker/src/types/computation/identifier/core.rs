@@ -1078,27 +1078,6 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.get_type_of_symbol(sym_id)
                 }
-            } else if (flags
-                & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE))
-                != 0
-                && value_decl.is_some()
-                && self
-                    .ctx
-                    .arena
-                    .get(value_decl)
-                    .and_then(|decl_node| self.ctx.arena.get_variable_declaration(decl_node))
-                    .is_some_and(|var_decl| var_decl.type_annotation.is_some())
-            {
-                let var_decl = self
-                    .ctx
-                    .arena
-                    .get(value_decl)
-                    .and_then(|decl_node| self.ctx.arena.get_variable_declaration(decl_node));
-                if let Some(var_decl) = var_decl {
-                    self.get_type_from_type_node(var_decl.type_annotation)
-                } else {
-                    self.type_of_value_declaration(value_decl)
-                }
             } else {
                 self.get_type_of_symbol(sym_id)
             };
