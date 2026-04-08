@@ -469,7 +469,9 @@ fn parse_reserved_word_parameter_names_emit_ts1390_recovery_family() {
         "Expected TS1005 companion recovery for class/while/for parameter names, got codes: {codes:?}"
     );
     assert!(
-        !codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE),
+        !codes.contains(
+            &diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE
+        ),
         "Should use TS1390, not generic TS1359, for reserved parameter names. Got codes: {codes:?}"
     );
 }
