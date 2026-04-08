@@ -1130,7 +1130,14 @@ impl ParserState {
         // tsc calls parseEntityName(/*allowReservedWords*/ true) here, so reserved words
         // like `null`, `function` etc. are consumed as identifiers without TS1359.
         let mut expr_name = if self.is_token(SyntaxKind::ImportKeyword) {
-            self.parse_import_expression()
+            // In `typeof import(...)` queries, parse `import()` using type-import
+            // options context so malformed second arguments produce TS1xxx parser
+            // diagnostics (e.g. `'with' expected`) instead of expression fallback.
+            let saved_import_type_options_context = self.in_import_type_options_context;
+            self.in_import_type_options_context = true;
+            let parsed = self.parse_import_expression();
+            self.in_import_type_options_context = saved_import_type_options_context;
+            parsed
         } else {
             self.parse_entity_name_allow_reserved()
         };
