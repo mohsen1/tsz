@@ -239,7 +239,8 @@ impl<'a> CheckerState<'a> {
         widen_source: bool,
     ) -> Option<String> {
         let type_id = if widen_source {
-            self.widen_function_like_assertion_source(type_id)
+            let widened = self.widen_function_like_assertion_source(type_id);
+            self.widen_type_for_display(widened)
         } else {
             type_id
         };
@@ -258,7 +259,8 @@ impl<'a> CheckerState<'a> {
             return display;
         }
         let type_id = if widen_source {
-            self.widen_function_like_assertion_source(type_id)
+            let widened = self.widen_function_like_assertion_source(type_id);
+            self.widen_type_for_display(widened)
         } else {
             type_id
         };
@@ -474,6 +476,11 @@ impl<'a> CheckerState<'a> {
         } else {
             (source_str, target_str)
         };
+        let source_str = self.rewrite_source_display_for_non_literal_target_assignability(
+            source_type,
+            target_type,
+            source_str,
+        );
         let source_str = source_str.trim_end_matches(';').to_string();
         let target_str = target_str.trim_end_matches(';').to_string();
         let message = format_message(

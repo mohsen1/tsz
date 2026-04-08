@@ -93,6 +93,9 @@ impl<'a> CheckerState<'a> {
             let arg_str = self
                 .literal_call_argument_display(idx)
                 .unwrap_or_else(|| self.format_type_diagnostic(arg_type));
+            let arg_str = self.rewrite_source_display_for_non_literal_target_assignability(
+                arg_type, param_type, arg_str,
+            );
             let param_str =
                 self.format_call_parameter_type_for_diagnostic(param_type, arg_type, idx);
 

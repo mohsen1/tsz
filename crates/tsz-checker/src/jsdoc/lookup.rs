@@ -20,6 +20,9 @@ use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -234,6 +237,7 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.should_resolve_jsdoc() {
             return None;
         }
+        let idx = self.normalized_jsdoc_lookup_node(idx);
         let sf = self.source_file_data_for_node(idx)?;
         if sf.comments.is_empty() {
             return None;
@@ -263,6 +267,50 @@ impl<'a> CheckerState<'a> {
         let result = self.resolve_jsdoc_reference(type_expr);
         self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
         result
+    }
+
+    fn normalized_jsdoc_lookup_node(&self, idx: NodeIndex) -> NodeIndex {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return idx;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return idx;
+        }
+
+        let Some(sym_id) = self.ctx.binder.get_node_symbol(idx) else {
+            return idx;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return idx;
+        };
+        let value_decl = symbol.value_declaration;
+        if value_decl.is_none() {
+            return idx;
+        }
+        if value_decl == idx {
+            return idx;
+        }
+
+        let Some(value_node) = self.ctx.arena.get(value_decl) else {
+            return idx;
+        };
+        if value_node.kind != SyntaxKind::Identifier as u16 {
+            return idx;
+        }
+
+        let Some(ext) = self.ctx.arena.get_extended(value_decl) else {
+            return idx;
+        };
+        let Some(parent_node) = self.ctx.arena.get(ext.parent) else {
+            return idx;
+        };
+        if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+            || parent_node.kind == syntax_kind_ext::PARAMETER
+        {
+            return ext.parent;
+        }
+
+        idx
     }
     fn validate_jsdoc_generic_constraints_at_node(
         &mut self,

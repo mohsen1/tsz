@@ -1052,60 +1052,65 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let t_fn = self.interner.function_shape(t_fn_id);
 
         if t_fn.is_constructor {
+            if s_callable.construct_signatures.is_empty() {
+                return SubtypeResult::False;
+            }
             for s_sig in &s_callable.construct_signatures {
-                if self
+                if !self
                     .check_call_signature_subtype_to_fn(s_sig, &t_fn)
                     .is_true()
                 {
-                    return SubtypeResult::True;
+                    return SubtypeResult::False;
                 }
             }
-            return SubtypeResult::False;
+            return SubtypeResult::True;
         }
 
         if s_callable.call_signatures.is_empty() {
             return SubtypeResult::False;
         }
 
-        // Check ALL source call signatures against the target function,
-        // matching tsc's signaturesRelatedTo behavior where any compatible
-        // source signature suffices (not just the last/implementation one).
+        // Check ALL source call signatures against the target function.
+        // An overloaded source is assignable to a single target function only
+        // when every overload is compatible with that target.
+        //
+        // If a source overload is generic and the target is not, try generic
+        // instantiation for that overload. This is still checked universally:
+        // one matching overload is not enough to make the whole callable subtype.
         for s_sig in &s_callable.call_signatures {
-            if self
+            let direct_match = self
                 .check_call_signature_subtype_to_fn(s_sig, &t_fn)
-                .is_true()
-            {
-                return SubtypeResult::True;
-            }
-
-            // Try generic instantiation if the source sig has type params
-            // but the target doesn't
-            if !s_sig.type_params.is_empty()
+                .is_true();
+            let instantiated_match = !direct_match
+                && !s_sig.type_params.is_empty()
                 && t_fn.type_params.is_empty()
                 && self
                     .try_instantiate_generic_callable_to_function(s_sig, &t_fn)
-                    .is_true()
-            {
-                return SubtypeResult::True;
+                    .is_true();
+            if !(direct_match || instantiated_match) {
+                return SubtypeResult::False;
             }
         }
 
         // tsc N×M path: when a callable has multiple signatures and the direct
-        // comparison above fails, try erasing type parameters to `any` (matching
-        // tsc's `getErasedSignature` / `createTypeEraser`). In tsc's
-        // `signaturesRelatedTo`, the N×M case (source.length > 1 || target.length > 1)
-        // always uses `erase = true`, which maps type params to `any`. This allows
-        // overloaded callables with constrained generics (e.g., `{ <T extends A>(x: T): T;
-        // <T extends B>(x: T): T }`) to be assignable to unconstrained generic functions
-        // (e.g., `<T>(x: T) => T`), because after erasure both become `(x: any) => any`.
+        // comparison above fails, try erasing type parameters to `any`
+        // universally across the overload set. This matches tsc's
+        // `signaturesRelatedTo` N×M path, but still requires every source
+        // overload to be compatible after erasure.
         if s_callable.call_signatures.len() > 1 {
+            let mut all_erased_match = true;
             for s_sig in &s_callable.call_signatures {
                 if self
                     .check_erased_signature_subtype_to_fn(s_sig, &t_fn)
                     .is_true()
                 {
-                    return SubtypeResult::True;
+                    continue;
                 }
+                all_erased_match = false;
+                break;
+            }
+            if all_erased_match {
+                return SubtypeResult::True;
             }
         }
 

@@ -1,7 +1,6 @@
 //! Iterable/iterator protocol checking and for-of element type computation.
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-use crate::query_boundaries::checkers::generic::get_object_shape;
 use crate::query_boundaries::checkers::iterable::{
     AsyncIterableTypeKind, ForOfElementKind, FullIterableTypeKind, call_signatures_for_type,
     classify_async_iterable_type, classify_for_of_element_type, classify_full_iterable_type,
@@ -844,7 +843,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Not iterable - emit TS2488
-        self.emit_ts2488_not_iterable(expr_type, expr_idx);
+        self.emit_ts2488_not_iterable(expr_type, expr_idx, false);
         false
     }
 
@@ -894,7 +893,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Not iterable - emit TS2488
-        self.emit_ts2488_not_iterable(spread_type, expr_idx);
+        self.emit_ts2488_not_iterable(spread_type, expr_idx, false);
         false
     }
 
@@ -963,13 +962,13 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN,
                 );
             }
-            self.emit_ts2488_not_iterable(pattern_type, pattern_idx);
+            self.emit_ts2488_not_iterable(pattern_type, pattern_idx, is_assignment_array_target);
             return false;
         }
 
         // In array destructuring, TypeScript still reports TS2488 for `never`.
         if resolved_type == TypeId::NEVER {
-            self.emit_ts2488_not_iterable(pattern_type, pattern_idx);
+            self.emit_ts2488_not_iterable(pattern_type, pattern_idx, is_assignment_array_target);
             return false;
         }
 
@@ -1040,7 +1039,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Not iterable - emit TS2488
-        self.emit_ts2488_not_iterable(pattern_type, pattern_idx);
+        self.emit_ts2488_not_iterable(pattern_type, pattern_idx, is_assignment_array_target);
         false
     }
 
@@ -1301,16 +1300,20 @@ impl<'a> CheckerState<'a> {
     ///
     /// Shared by `check_for_of_iterability`, `check_spread_iterability`, and
     /// `check_destructuring_iterability` for non-iterable types in ES2015+ mode.
-    fn emit_ts2488_not_iterable(&mut self, type_id: TypeId, error_node: NodeIndex) {
+    fn emit_ts2488_not_iterable(
+        &mut self,
+        type_id: TypeId,
+        error_node: NodeIndex,
+        preserve_boolean_literals: bool,
+    ) {
         if let Some((start, end)) = self.get_node_span(error_node) {
-            let is_fresh_object_literal = self.ctx.types.get_display_properties(type_id).is_some()
-                && get_object_shape(self.ctx.types, type_id)
-                    .is_some_and(|shape| shape.symbol.is_none());
-            let type_str = if is_fresh_object_literal {
-                self.format_type_diagnostic_widened(type_id)
+            let evaluated_type = self.evaluate_type_for_assignability(type_id);
+            let display_type = if preserve_boolean_literals {
+                self.widen_type_for_display(evaluated_type)
             } else {
-                self.format_type_diagnostic_without_function_type_params(type_id)
+                self.widen_literal_type(evaluated_type)
             };
+            let type_str = self.format_type_diagnostic_widened(display_type);
             let message = format_message(
                 diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
                 &[&type_str],
