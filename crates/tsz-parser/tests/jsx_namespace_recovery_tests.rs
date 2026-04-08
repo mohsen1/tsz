@@ -268,3 +268,16 @@ fn jsx_attribute_names_starting_with_number_or_minus_follow_tsc_recovery() {
         "expected tsc-style recovery for invalid JSX attribute starters, got {diagnostics:?}"
     );
 }
+
+#[test]
+fn jsx_embedded_expression_starting_with_closing_tag_reports_only_expression_expected() {
+    let source = "declare namespace JSX { interface Element { } }\nfunction foo() {\n    var x = <div>  { </div>\n}\nvar y = { a: 1 };\n";
+    let diagnostics = parse_diagnostics(source);
+    let codes: Vec<u32> = diagnostics.iter().map(|(code, _, _)| *code).collect();
+
+    assert_eq!(
+        codes,
+        vec![diagnostic_codes::EXPRESSION_EXPECTED],
+        "expected only TS1109 for malformed JSX embedded expression, got {diagnostics:?}"
+    );
+}

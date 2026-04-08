@@ -1404,15 +1404,37 @@ impl ParserState {
 
         // Check for spread: {...}
         let dot_dot_dot_token = self.parse_optional(SyntaxKind::DotDotDotToken);
+        let mut suppress_missing_close_brace_error = false;
 
         // Check for empty expression: {}
         let expression = if self.is_token(SyntaxKind::CloseBraceToken) {
+            NodeIndex::NONE
+        } else if self.is_token(SyntaxKind::LessThanSlashToken)
+            || (self.is_token(SyntaxKind::LessThanToken) && {
+                let snapshot = self.scanner.save_state();
+                let current = self.current_token;
+                self.next_token();
+                let is_closing_tag_start = self.is_token(SyntaxKind::SlashToken);
+                self.scanner.restore_state(snapshot);
+                self.current_token = current;
+                is_closing_tag_start
+            })
+        {
+            // Recovery for `{ </tag>` inside JSX children:
+            // tsc reports TS1109 and lets the outer JSX parser consume `</tag>`
+            // as a normal closing element, without a cascading "'}' expected.".
+            self.error_expression_expected();
+            suppress_missing_close_brace_error = true;
             NodeIndex::NONE
         } else {
             self.parse_jsx_embedded_expression()
         };
 
-        self.parse_expected(SyntaxKind::CloseBraceToken);
+        if self.is_token(SyntaxKind::CloseBraceToken) {
+            self.next_token();
+        } else if !suppress_missing_close_brace_error {
+            self.parse_expected(SyntaxKind::CloseBraceToken);
+        }
 
         let end_pos = self.token_end();
         self.arena.add_jsx_expression(
