@@ -210,6 +210,9 @@ impl<'a> CheckerState<'a> {
         if let Some(enum_name) = self.format_disambiguated_enum_name_for_assignment(ty, other) {
             return enum_name;
         }
+        if let Some(type_name) = self.format_disambiguated_nominal_name_for_assignment(ty, other) {
+            return type_name;
+        }
 
         // When displaying the TARGET type and the SOURCE is non-nullable,
         // strip null/undefined from the top-level union to match tsc's behavior.
@@ -365,6 +368,56 @@ impl<'a> CheckerState<'a> {
         }
 
         self.format_qualified_enum_name_for_message(ty)
+    }
+
+    fn format_disambiguated_nominal_name_for_assignment(
+        &mut self,
+        ty: TypeId,
+        other: TypeId,
+    ) -> Option<String> {
+        let ty_sym = self.nominal_shape_symbol_for_display(ty)?;
+        let other_sym = self.nominal_shape_symbol_for_display(other)?;
+        if ty_sym == other_sym {
+            return None;
+        }
+        let ty_symbol = self.ctx.binder.get_symbol(ty_sym)?;
+        let other_symbol = self.ctx.binder.get_symbol(other_sym)?;
+        if ty_symbol.escaped_name != other_symbol.escaped_name {
+            return None;
+        }
+        let qualified = self.qualified_symbol_name_for_message(ty_sym)?;
+        if qualified == ty_symbol.escaped_name {
+            return None;
+        }
+        Some(qualified)
+    }
+
+    fn nominal_shape_symbol_for_display(&mut self, ty: TypeId) -> Option<tsz_binder::SymbolId> {
+        let resolved = self.evaluate_type_for_assignability(ty);
+        [ty, resolved]
+            .into_iter()
+            .find_map(|candidate| tsz_solver::type_queries::get_type_shape_symbol(self.ctx.types, candidate))
+    }
+
+    fn qualified_symbol_name_for_message(&self, sym_id: tsz_binder::SymbolId) -> Option<String> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let mut parts = vec![symbol.escaped_name.clone()];
+        let mut current = symbol.parent;
+        while current != tsz_binder::SymbolId::NONE {
+            let parent = self.ctx.binder.get_symbol(current)?;
+            if (parent.flags
+                & (tsz_binder::symbol_flags::NAMESPACE_MODULE
+                    | tsz_binder::symbol_flags::VALUE_MODULE
+                    | tsz_binder::symbol_flags::ENUM))
+                == 0
+            {
+                break;
+            }
+            parts.push(parent.escaped_name.clone());
+            current = parent.parent;
+        }
+        parts.reverse();
+        Some(parts.join("."))
     }
 
     fn is_exported_external_module_enum_symbol(&self, sym_id: tsz_binder::SymbolId) -> bool {
