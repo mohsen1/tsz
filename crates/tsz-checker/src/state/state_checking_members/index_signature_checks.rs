@@ -864,6 +864,19 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Class computed names that are immediately wrapped with `as`/`satisfies`
+            // are invalid for TS1166 and should not also participate in TS2411 checks.
+            if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                && let Some(name_node) = self.ctx.arena.get(name_idx)
+                && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                && let Some(computed) = self.ctx.arena.get_computed_property(name_node)
+                && let Some(expr_node) = self.ctx.arena.get(computed.expression)
+                && (expr_node.kind == syntax_kind_ext::AS_EXPRESSION
+                    || expr_node.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
+            {
+                continue;
+            }
+
             let computed_key_type = if let Some(name_node) = self.ctx.arena.get(name_idx)
                 && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
                 && let Some(computed) = self.ctx.arena.get_computed_property(name_node)
@@ -978,7 +991,11 @@ impl<'a> CheckerState<'a> {
                 }
                 continue;
             }
-            if let Some(name_text) = self.get_member_name(member_idx) {
+            let resolved_name = self
+                .get_member_name_node(member_node)
+                .and_then(|name_idx| self.get_property_name_resolved(name_idx))
+                .or_else(|| self.get_member_name(member_idx));
+            if let Some(name_text) = resolved_name {
                 own_names.insert(name_text);
             }
         }

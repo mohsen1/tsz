@@ -483,6 +483,8 @@ impl<'a> CheckerState<'a> {
         let Some(class) = self.ctx.arena.get_class(node) else {
             return;
         };
+        let suppress_property_ts9012 =
+            self.class_has_untyped_member_parameters(&class.members.nodes);
         // TS9021: extends clause with expression
         if let Some(ref heritage) = class.heritage_clauses {
             self.check_isolated_decl_heritage_clauses(heritage);
@@ -498,13 +500,56 @@ impl<'a> CheckerState<'a> {
                     self.check_isolated_decl_method(member_idx);
                 }
                 syntax_kind_ext::PROPERTY_DECLARATION => {
-                    self.check_isolated_decl_property(member_idx);
+                    self.check_isolated_decl_property(member_idx, suppress_property_ts9012);
                 }
                 _ => {
                     // GET_ACCESSOR/SET_ACCESSOR: checked via TS7006/TS7010/TS7032
                 }
             }
         }
+    }
+
+    fn class_has_untyped_member_parameters(&self, members: &[NodeIndex]) -> bool {
+        for &member_idx in members {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            match member_node.kind {
+                syntax_kind_ext::METHOD_DECLARATION => {
+                    if let Some(method) = self.ctx.arena.get_method_decl(member_node) {
+                        for &param_idx in &method.parameters.nodes {
+                            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                                continue;
+                            };
+                            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                                continue;
+                            };
+                            if param.type_annotation.is_some() {
+                                continue;
+                            }
+                            if let Some(name_node) = self.ctx.arena.get(param.name)
+                                && name_node.kind == SyntaxKind::ThisKeyword as u16
+                            {
+                                continue;
+                            }
+                            return true;
+                        }
+                    }
+                }
+                syntax_kind_ext::SET_ACCESSOR => {
+                    if let Some(accessor) = self.ctx.arena.get_accessor(member_node)
+                        && let Some(&param_idx) = accessor.parameters.nodes.first()
+                        && let Some(param_node) = self.ctx.arena.get(param_idx)
+                        && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        && param.type_annotation.is_none()
+                    {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
     }
 
     /// Check heritage clauses for TS9021 (extends with expression).
@@ -588,7 +633,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check class property for TS9012 (missing type annotation on property).
-    fn check_isolated_decl_property(&mut self, prop_idx: NodeIndex) {
+    fn check_isolated_decl_property(&mut self, prop_idx: NodeIndex, suppress_ts9012: bool) {
         let Some(node) = self.ctx.arena.get(prop_idx) else {
             return;
         };
@@ -613,6 +658,10 @@ impl<'a> CheckerState<'a> {
         }
 
         if prop.type_annotation.is_some() || prop.initializer.is_none() {
+            return;
+        }
+
+        if suppress_ts9012 {
             return;
         }
 
