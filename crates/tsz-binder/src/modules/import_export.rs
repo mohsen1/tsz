@@ -457,6 +457,11 @@ impl BinderState {
                                         // first export AND it's type-only. Never CLEAR it,
                                         // because the flag may come from `import type` and
                                         // must be preserved for re-export chains.
+                                        let (orig_is_type_only, orig_was_exported) = self
+                                            .symbols
+                                            .get(sym_id)
+                                            .map(|s| (s.is_type_only, s.is_exported))
+                                            .unwrap_or((false, false));
                                         if let Some(orig_sym) = self.symbols.get_mut(sym_id) {
                                             if spec_type_only && !orig_sym.is_exported {
                                                 orig_sym.is_type_only = true;
@@ -490,41 +495,33 @@ impl BinderState {
 
                                         // Add alias to file_locals so it appears in
                                         // module_exports for cross-file import resolution.
-                                        // Only needed when the exported name differs from the
-                                        // original (i.e., `export { v as v1 }` — v1 needs to be
-                                        // findable). When orig == exp, the original symbol is
-                                        // already in file_locals and marked exported.
-                                        if orig != exp {
-                                            // When a type-only export specifier renames a
-                                            // symbol that is NOT itself type-only, clone
-                                            // the symbol so module_exports gets the correct
-                                            // is_type_only per export name. Example:
-                                            //   export { type };           // value export
-                                            //   export { type type as foo }; // type-only
-                                            // Without cloning, both "type" and "foo" would
-                                            // share the same symbol with is_type_only=false.
-                                            let orig_is_type_only = self
-                                                .symbols
-                                                .get(sym_id)
-                                                .is_some_and(|s| s.is_type_only);
-                                            if spec_type_only && !orig_is_type_only {
-                                                let clone_id = {
-                                                    let src =
-                                                        self.symbols.get(sym_id).cloned().expect(
-                                                            "symbol exists for resolved sym_id",
-                                                        );
-                                                    self.symbols.alloc_from(&src)
-                                                };
-                                                if let Some(clone_sym) =
-                                                    self.symbols.get_mut(clone_id)
-                                                {
-                                                    clone_sym.is_type_only = true;
-                                                    clone_sym.is_exported = true;
-                                                }
-                                                self.file_locals.set(exp.to_string(), clone_id);
-                                            } else {
-                                                self.file_locals.set(exp.to_string(), sym_id);
+                                        //
+                                        // For type-only exports from a value-bearing local symbol,
+                                        // clone the symbol when this specifier introduces the export
+                                        // (i.e. the local wasn't already exported as a value). This
+                                        // preserves per-export type-only semantics for
+                                        // `export type { A, B }` while keeping
+                                        // `export class A {}; export type { A };` value-visible.
+                                        let should_clone_type_only_export = spec_type_only
+                                            && !orig_is_type_only
+                                            && !orig_was_exported;
+                                        if should_clone_type_only_export {
+                                            let clone_id = {
+                                                let src = self
+                                                    .symbols
+                                                    .get(sym_id)
+                                                    .cloned()
+                                                    .expect("symbol exists for resolved sym_id");
+                                                self.symbols.alloc_from(&src)
+                                            };
+                                            if let Some(clone_sym) = self.symbols.get_mut(clone_id)
+                                            {
+                                                clone_sym.is_type_only = true;
+                                                clone_sym.is_exported = true;
                                             }
+                                            self.file_locals.set(exp.to_string(), clone_id);
+                                        } else if orig != exp {
+                                            self.file_locals.set(exp.to_string(), sym_id);
                                         }
                                     }
                                 }

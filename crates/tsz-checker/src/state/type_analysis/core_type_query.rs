@@ -613,6 +613,46 @@ impl<'a> CheckerState<'a> {
         resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
     ) -> Option<TypeId> {
         use tsz_common::Visibility;
+        fn binder_symbol_has_no_runtime_value(
+            binder: &tsz_binder::BinderState,
+            sym_id: tsz_binder::SymbolId,
+            visited: &mut rustc_hash::FxHashSet<tsz_binder::SymbolId>,
+        ) -> bool {
+            if !visited.insert(sym_id) {
+                return true;
+            }
+            let Some(symbol) = binder.get_symbol(sym_id) else {
+                return false;
+            };
+            let flags = symbol.flags;
+
+            if (flags & tsz_binder::symbol_flags::VALUE) != 0 {
+                let non_module_value =
+                    flags & (tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE);
+                if non_module_value != 0 {
+                    return false;
+                }
+                if let Some(exports) = symbol.exports.as_ref() {
+                    for (_, &member_sym_id) in exports.iter() {
+                        if !binder_symbol_has_no_runtime_value(binder, member_sym_id, visited) {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            }
+
+            if (flags & tsz_binder::symbol_flags::NAMESPACE_MODULE) != 0 {
+                return true;
+            }
+            if (flags & tsz_binder::symbol_flags::TYPE) != 0 {
+                return true;
+            }
+            if (flags & tsz_binder::symbol_flags::ALIAS) != 0 {
+                return symbol.is_type_only;
+            }
+            false
+        }
 
         if let Some(json_namespace_type) =
             self.json_module_namespace_type_for_module(module_name, Some(self.ctx.current_file_idx))
@@ -639,6 +679,15 @@ impl<'a> CheckerState<'a> {
                 resolution_mode_override,
             )
             .or_else(|| self.ctx.resolve_import_target(module_name));
+        let target_export_context = target_idx.and_then(|idx| {
+            let file_name = self
+                .ctx
+                .get_arena_for_file(idx as u32)
+                .source_files
+                .first()
+                .map(|sf| sf.file_name.clone())?;
+            Some((idx, file_name))
+        });
 
         let result = if let Some(exports_table) = self.resolve_effective_module_exports_from_file(
             module_name,
@@ -650,10 +699,34 @@ impl<'a> CheckerState<'a> {
                 .or(target_idx);
             let mut props = Vec::new();
             for (name, &export_sym_id) in exports_table.iter() {
+                if let Some(owner_file_idx) = exports_table_target {
+                    self.ctx
+                        .register_symbol_file_target(export_sym_id, owner_file_idx);
+                }
+                let target_export_is_type_only = target_export_context
+                    .as_ref()
+                    .and_then(|(target_idx, file_name)| {
+                        let binder = self.ctx.get_binder_for_file(*target_idx)?;
+                        binder
+                            .resolve_import_with_reexports_type_only(file_name, name)
+                            .map(|(_, is_type_only)| is_type_only)
+                    })
+                    .unwrap_or(false);
+                let target_export_has_no_value = target_export_context
+                    .as_ref()
+                    .and_then(|(target_idx, _)| {
+                        let binder = self.ctx.get_binder_for_file(*target_idx)?;
+                        binder.get_symbol(export_sym_id).map(|_| {
+                            let mut visited = rustc_hash::FxHashSet::default();
+                            binder_symbol_has_no_runtime_value(binder, export_sym_id, &mut visited)
+                        })
+                    })
+                    .unwrap_or_else(|| self.export_symbol_has_no_value(export_sym_id));
                 if name == "export="
                     || self.is_type_only_export_symbol(export_sym_id)
+                    || target_export_is_type_only
                     || self.is_export_from_type_only_wildcard(module_name, name)
-                    || self.export_symbol_has_no_value(export_sym_id)
+                    || target_export_has_no_value
                     || exports_table_target.is_some_and(|target_idx| {
                         self.file_has_jsdoc_typedef_named(target_idx, name)
                     })
@@ -671,10 +744,6 @@ impl<'a> CheckerState<'a> {
                     )
                 {
                     continue;
-                }
-                if let Some(target_idx) = target_idx {
-                    self.ctx
-                        .register_symbol_file_target(export_sym_id, target_idx);
                 }
                 let prop_type = self.get_type_of_symbol(export_sym_id);
                 props.push(PropertyInfo {
