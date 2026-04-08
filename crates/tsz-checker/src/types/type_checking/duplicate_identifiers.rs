@@ -915,6 +915,16 @@ impl<'a> CheckerState<'a> {
                     let other_is_module_scoped_local = is_external_module
                         && other_is_local
                         && self.get_enclosing_namespace(other_idx).is_none();
+                    let decl_is_remote_global_namespace_alias = !decl_is_local
+                        && decl_origin == DuplicateDeclarationOrigin::GlobalScopeConflict
+                        && (decl_conflict_flags & symbol_flags::ALIAS) != 0
+                        && (decl_conflict_flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
+                        && (decl_conflict_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0;
+                    let other_is_remote_global_namespace_alias = !other_is_local
+                        && other_origin == DuplicateDeclarationOrigin::GlobalScopeConflict
+                        && (other_conflict_flags & symbol_flags::ALIAS) != 0
+                        && (other_conflict_flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
+                        && (other_conflict_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0;
 
                     let decl_is_skippable_remote = !decl_is_local
                         && decl_origin == DuplicateDeclarationOrigin::SymbolDeclaration
@@ -933,6 +943,14 @@ impl<'a> CheckerState<'a> {
                         && !same_source_file
                         && ((decl_is_module_scoped_local && other_is_skippable_remote)
                             || (other_is_module_scoped_local && decl_is_skippable_remote))
+                    {
+                        continue;
+                    }
+                    if is_external_module
+                        && ((decl_is_module_scoped_local
+                            && other_is_remote_global_namespace_alias)
+                            || (other_is_module_scoped_local
+                                && decl_is_remote_global_namespace_alias))
                     {
                         continue;
                     }

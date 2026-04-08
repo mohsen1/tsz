@@ -338,6 +338,44 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                             "Duplicate identifier 'JSX'.",
                             crate::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER,
                         );
+
+                        if let Some(lma_decl_idx) = self
+                            .ctx
+                            .binder
+                            .symbols
+                            .find_all_by_name("JSX")
+                            .into_iter()
+                            .filter_map(|sym_id| self.ctx.binder.symbols.get(*sym_id))
+                            .find_map(|jsx_symbol| {
+                                let exports = jsx_symbol.exports.as_ref()?;
+                                let lma_sym_id = exports.get("LibraryManagedAttributes")?;
+                                let lma_symbol = self.ctx.binder.symbols.get(lma_sym_id)?;
+                                if lma_symbol.value_declaration.is_some() {
+                                    Some(lma_symbol.value_declaration)
+                                } else {
+                                    lma_symbol.declarations.first().copied()
+                                }
+                            })
+                        {
+                            let lma_error_node =
+                                self.get_declaration_name_node(lma_decl_idx).unwrap_or(lma_decl_idx);
+                            let lma_message = "Duplicate identifier 'LibraryManagedAttributes'.";
+                            let lma_start =
+                                self.ctx.arena.get(lma_error_node).map(|n| n.pos).unwrap_or(u32::MAX);
+                            let already_reported = self.ctx.diagnostics.iter().any(|diag| {
+                                diag.code
+                                    == crate::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER
+                                    && diag.start == lma_start
+                                    && diag.message_text == lma_message
+                            });
+                            if !already_reported {
+                                self.error_at_node(
+                                    lma_error_node,
+                                    lma_message,
+                                    crate::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER,
+                                );
+                            }
+                        }
                     }
                 }
 
