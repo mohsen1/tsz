@@ -1354,56 +1354,85 @@ impl ParserState {
                             && !self.fallback_import_type_options_once
                             && !self.is_token(SyntaxKind::OpenBraceToken)
                         {
-                            if options_starts_with_array {
-                                let start = self.u32_from_usize(self.scanner.get_token_start());
-                                let end = self.u32_from_usize(self.scanner.get_token_end());
-                                self.report_invalid_import_attribute_tail_recovery(Some((
-                                    start,
-                                    end.saturating_sub(start),
-                                )));
-                            } else if options_starts_with_identifier
-                                && self.is_token(SyntaxKind::CloseParenToken)
-                            {
+                            let mut dot_pos = None;
+                            let mut inner_close_paren = None;
+                            let mut outer_close_paren = None;
+
+                            if self.is_token(SyntaxKind::CloseParenToken) {
+                                let inner_start =
+                                    self.u32_from_usize(self.scanner.get_token_start());
+                                let inner_end = self.u32_from_usize(self.scanner.get_token_end());
+                                inner_close_paren =
+                                    Some((inner_start, inner_end.saturating_sub(inner_start)));
+
                                 let snapshot = self.scanner.save_state();
                                 let saved_token = self.current_token;
                                 self.next_token();
-                                let mut emit_ts1134 = None;
-                                let mut should_emit_tail_recovery = false;
                                 if self.is_token(SyntaxKind::DotToken) {
+                                    dot_pos = Some(self.token_pos());
                                     self.next_token();
                                     if self.is_identifier_or_keyword() {
-                                        let ident_start = self.token_pos();
-                                        let ident_end = self.token_end();
-                                        let ident_snapshot = self.scanner.save_state();
-                                        let ident_token = self.current_token;
                                         self.next_token();
-                                        let next_has_line_break =
-                                            self.scanner.has_preceding_line_break();
-                                        self.scanner.restore_state(ident_snapshot);
-                                        self.current_token = ident_token;
-
-                                        if next_has_line_break {
-                                            should_emit_tail_recovery = true;
-                                        } else {
-                                            emit_ts1134 = Some((
-                                                ident_start,
-                                                ident_end.saturating_sub(ident_start),
+                                        if self.is_token(SyntaxKind::CloseParenToken)
+                                            && !self.scanner.has_preceding_line_break()
+                                        {
+                                            let outer_start =
+                                                self.u32_from_usize(self.scanner.get_token_start());
+                                            let outer_end =
+                                                self.u32_from_usize(self.scanner.get_token_end());
+                                            outer_close_paren = Some((
+                                                outer_start,
+                                                outer_end.saturating_sub(outer_start),
                                             ));
                                         }
                                     }
                                 }
                                 self.scanner.restore_state(snapshot);
                                 self.current_token = saved_token;
+                            }
 
-                                if should_emit_tail_recovery {
+                            if options_starts_with_identifier {
+                                if let Some((outer_start, outer_len)) = outer_close_paren {
+                                    self.error_comma_expected();
+                                    if let Some(dot_start) = dot_pos {
+                                        self.parse_error_at(
+                                            dot_start,
+                                            1,
+                                            diagnostic_messages::VARIABLE_DECLARATION_EXPECTED,
+                                            diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
+                                        );
+                                    }
+                                    self.parse_error_at(
+                                        outer_start,
+                                        outer_len,
+                                        "',' expected.",
+                                        diagnostic_codes::EXPECTED,
+                                    );
+                                } else if dot_pos.is_some() {
                                     self.report_invalid_import_attribute_tail_recovery(None);
                                 }
-                                if let Some((start, length)) = emit_ts1134 {
+                            } else if options_starts_with_array {
+                                if let Some((outer_start, outer_len)) = outer_close_paren {
                                     self.parse_error_at(
-                                        start,
-                                        length,
-                                        diagnostic_messages::VARIABLE_DECLARATION_EXPECTED,
-                                        diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
+                                        outer_start,
+                                        outer_len,
+                                        "',' expected.",
+                                        diagnostic_codes::EXPECTED,
+                                    );
+                                } else if let (Some((inner_start, inner_len)), Some(dot_start)) =
+                                    (inner_close_paren, dot_pos)
+                                {
+                                    self.parse_error_at(
+                                        inner_start,
+                                        inner_len,
+                                        "';' expected.",
+                                        diagnostic_codes::EXPECTED,
+                                    );
+                                    self.parse_error_at(
+                                        dot_start,
+                                        1,
+                                        diagnostic_messages::DECLARATION_OR_STATEMENT_EXPECTED,
+                                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
                                     );
                                 }
                             }

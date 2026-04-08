@@ -204,11 +204,18 @@ impl ParserState {
             } else if self.is_identifier_or_keyword() {
                 self.parse_identifier_name()
             } else {
+                let invalid_key_is_comma = self.is_token(SyntaxKind::CommaToken);
                 let mut semicolon_recovery = None;
                 self.parse_error_at_current_token(
                     diagnostic_messages::IDENTIFIER_OR_STRING_LITERAL_EXPECTED,
                     diagnostic_codes::IDENTIFIER_OR_STRING_LITERAL_EXPECTED,
                 );
+                if invalid_key_is_comma {
+                    // `with: { ..., , }` should stay local to the attributes
+                    // object (TS1478) without forcing statement-tail TS1128.
+                    self.next_token();
+                    continue;
+                }
                 while !self.is_token(SyntaxKind::CloseBraceToken)
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
