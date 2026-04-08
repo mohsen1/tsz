@@ -2030,8 +2030,10 @@ impl<'a> CheckerState<'a> {
                 return Some(module_exports_type);
             }
             if is_node_esm_importing_cjs
-                && let Some(exports_table) = self
-                    .resolve_effective_module_exports_from_file(module_specifier, Some(decl_file_idx))
+                && let Some(exports_table) = self.resolve_effective_module_exports_from_file(
+                    module_specifier,
+                    Some(decl_file_idx),
+                )
             {
                 let factory = self.ctx.types.factory();
                 let export_equals_type = exports_table

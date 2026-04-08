@@ -906,17 +906,16 @@ impl<'a> CheckerState<'a> {
         member_name: &str,
         lib_binders: &[std::sync::Arc<tsz_binder::BinderState>],
     ) -> Option<tsz_binder::SymbolId> {
-        let record_member_origin =
-            |member_id: tsz_binder::SymbolId| -> tsz_binder::SymbolId {
-                if let Some(parent_id) = sym_id
-                    && let Some(file_idx) = self.ctx.resolve_symbol_file_index(parent_id)
-                    && file_idx != self.ctx.current_file_idx
-                    && !self.ctx.has_symbol_file_index(member_id)
-                {
-                    self.ctx.register_symbol_file_target(member_id, file_idx);
-                }
-                member_id
-            };
+        let record_member_origin = |member_id: tsz_binder::SymbolId| -> tsz_binder::SymbolId {
+            if let Some(parent_id) = sym_id
+                && let Some(file_idx) = self.ctx.resolve_symbol_file_index(parent_id)
+                && file_idx != self.ctx.current_file_idx
+                && !self.ctx.has_symbol_file_index(member_id)
+            {
+                self.ctx.register_symbol_file_target(member_id, file_idx);
+            }
+            member_id
+        };
 
         // Try direct exports first
         if let Some(ref exports) = symbol.exports

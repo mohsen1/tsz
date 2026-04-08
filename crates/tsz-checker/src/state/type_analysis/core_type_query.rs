@@ -725,21 +725,20 @@ impl<'a> CheckerState<'a> {
         let (module_name, specifier_idx) = self.get_import_type_module_specifier(call_idx)?;
         let resolution_mode_override = self.get_import_type_resolution_mode_override(call_idx);
 
-        let mut current =
-            if let Some(namespace_type) =
-                self.build_typeof_import_namespace_type(&module_name, resolution_mode_override)
-            {
-                namespace_type
-            } else {
-                if self.ctx.report_unresolved_imports {
-                    let (message, code) = self.module_not_found_diagnostic_for_site(
-                        &module_name,
-                        crate::import::core::ModuleNotFoundSite::ImportType,
-                    );
-                    self.error_at_node(specifier_idx, &message, code);
-                }
-                return Some(TypeId::ERROR);
-            };
+        let mut current = if let Some(namespace_type) =
+            self.build_typeof_import_namespace_type(&module_name, resolution_mode_override)
+        {
+            namespace_type
+        } else {
+            if self.ctx.report_unresolved_imports {
+                let (message, code) = self.module_not_found_diagnostic_for_site(
+                    &module_name,
+                    crate::import::core::ModuleNotFoundSite::ImportType,
+                );
+                self.error_at_node(specifier_idx, &message, code);
+            }
+            return Some(TypeId::ERROR);
+        };
         for (segment_idx, segment) in segments {
             let access = self.resolve_property_access_with_env(current, &segment);
             current = match access {

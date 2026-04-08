@@ -945,8 +945,11 @@ impl<'a> CheckerState<'a> {
                     self.merge_properties(&augmentation_members, &base_shape.properties);
                 let mut merged_construct_signatures = base_shape.construct_signatures.clone();
                 for sig in &mut merged_construct_signatures {
-                    sig.return_type =
-                        self.apply_module_augmentations(module_spec, interface_name, sig.return_type);
+                    sig.return_type = self.apply_module_augmentations(
+                        module_spec,
+                        interface_name,
+                        sig.return_type,
+                    );
                 }
                 if !base_shape.construct_signatures.is_empty()
                     && let Some(prototype_prop) = merged_properties

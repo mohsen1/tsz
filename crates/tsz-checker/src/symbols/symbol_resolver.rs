@@ -799,10 +799,7 @@ impl<'a> CheckerState<'a> {
 
         let accept_type_symbol = |sym_id: SymbolId| -> bool {
             // Get symbol flags to check for special cases
-            let symbol = self
-                .ctx
-                .binder
-                .get_symbol_with_libs(sym_id, &lib_binders);
+            let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders);
             let flags = symbol.map_or(0, |s| s.flags);
 
             // UMD namespace exports (`export as namespace X`) can be used as
@@ -1154,14 +1151,15 @@ impl<'a> CheckerState<'a> {
             .get(name)
             .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
             .is_some_and(|symbol| !symbol.is_umd_export);
-        if !local_shadows_umd
-            && let Some(all_binders) = self.ctx.all_binders.as_ref()
-        {
+        if !local_shadows_umd && let Some(all_binders) = self.ctx.all_binders.as_ref() {
             for (file_idx, binder) in all_binders.iter().enumerate() {
                 if let Some(sym_id) = binder.file_locals.get(name)
-                    && binder.get_symbol(sym_id).is_some_and(|symbol| symbol.is_umd_export)
+                    && binder
+                        .get_symbol(sym_id)
+                        .is_some_and(|symbol| symbol.is_umd_export)
                 {
-                    if file_idx != self.ctx.current_file_idx && !self.ctx.has_symbol_file_index(sym_id)
+                    if file_idx != self.ctx.current_file_idx
+                        && !self.ctx.has_symbol_file_index(sym_id)
                     {
                         self.ctx.register_symbol_file_target(sym_id, file_idx);
                     }
