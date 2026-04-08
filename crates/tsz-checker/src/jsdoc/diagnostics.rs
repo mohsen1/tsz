@@ -1344,6 +1344,29 @@ impl<'a> CheckerState<'a> {
                         .join(" ");
                     let joined = joined.trim();
 
+                    // TS2857: JSDoc `@import` tags are type-only imports, and attribute
+                    // objects are invalid except for a resolution-mode-only form.
+                    if let Some(with_off) = rest_full[..next_tag].find("with")
+                        && let Some(attr_part) = joined.split_once(" with ").map(|(_, rhs)| rhs)
+                        && attr_part.contains('{')
+                    {
+                        let has_resolution_mode = attr_part.contains("resolution-mode");
+                        let is_resolution_mode_only = has_resolution_mode
+                            && !attr_part.contains(',')
+                            && !attr_part.contains(" type ")
+                            && !attr_part.contains(" type:")
+                            && !attr_part.contains("{type")
+                            && !attr_part.contains("{ type");
+                        if !is_resolution_mode_only {
+                            self.error_at_position(
+                                comment.pos + after_import as u32 + with_off as u32,
+                                4,
+                                crate::diagnostics::diagnostic_messages::IMPORT_ATTRIBUTES_CANNOT_BE_USED_WITH_TYPE_ONLY_IMPORTS_OR_EXPORTS,
+                                crate::diagnostics::diagnostic_codes::IMPORT_ATTRIBUTES_CANNOT_BE_USED_WITH_TYPE_ONLY_IMPORTS_OR_EXPORTS,
+                            );
+                        }
+                    }
+
                     if joined.is_empty() {
                         self.error_expression_expected_at_position(
                             comment.pos + after_import as u32,

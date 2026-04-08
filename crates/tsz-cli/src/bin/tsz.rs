@@ -1116,14 +1116,14 @@ fn get_valid_values_for_option(option_name: &str) -> Option<&'static str> {
     // Value ordering and inclusion matches tsc baselines exactly.
     match option_name {
         "target" => Some(
-            "'es5', 'es6', 'es2015', 'es2016', 'es2017', 'es2018', 'es2019', 'es2020', 'es2021', 'es2022', 'es2023', 'es2024', 'esnext'",
+            "'es6', 'es2015', 'es2016', 'es2017', 'es2018', 'es2019', 'es2020', 'es2021', 'es2022', 'es2023', 'es2024', 'es2025', 'esnext'",
         ),
         "module" => Some(
-            "'none', 'commonjs', 'amd', 'system', 'umd', 'es6', 'es2015', 'es2020', 'es2022', 'esnext', 'node16', 'node18', 'node20', 'nodenext', 'preserve'",
+            "'commonjs', 'es6', 'es2015', 'es2020', 'es2022', 'esnext', 'node16', 'node18', 'node20', 'nodenext', 'preserve'",
         ),
         "jsx" => Some("'preserve', 'react-native', 'react-jsx', 'react-jsxdev', 'react'"),
         "moduleResolution" | "module-resolution" | "moduleresolution" => {
-            Some("'node10', 'classic', 'node16', 'nodenext', 'bundler'")
+            Some("'node16', 'nodenext', 'bundler'")
         }
         "moduleDetection" | "module-detection" | "moduledetection" => {
             Some("'auto', 'legacy', 'force'")
