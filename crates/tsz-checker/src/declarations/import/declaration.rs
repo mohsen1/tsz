@@ -526,14 +526,25 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Get the value type — import attribute values are always string literals.
-            // Use string literal types directly (not widened) to match TSC behavior.
-            let value_type = if let Some(val_node) = self.ctx.arena.get(attr_data.value)
-                && let Some(lit) = self.ctx.arena.get_literal(val_node)
-            {
-                self.ctx.types.factory().literal_string(&lit.text)
+            // TS2858: import attribute values must be string literal expressions.
+            // Use string literal types directly (not widened) for valid values.
+            let value_type = if let Some(val_node) = self.ctx.arena.get(attr_data.value) {
+                if val_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16 {
+                    if let Some(lit) = self.ctx.arena.get_literal(val_node) {
+                        self.ctx.types.factory().literal_string(&lit.text)
+                    } else {
+                        self.get_type_of_node(attr_data.value)
+                    }
+                } else {
+                    self.error_at_position(
+                        val_node.pos,
+                        val_node.end.saturating_sub(val_node.pos),
+                        crate::diagnostics::diagnostic_messages::IMPORT_ATTRIBUTE_VALUES_MUST_BE_STRING_LITERAL_EXPRESSIONS,
+                        crate::diagnostics::diagnostic_codes::IMPORT_ATTRIBUTE_VALUES_MUST_BE_STRING_LITERAL_EXPRESSIONS,
+                    );
+                    self.get_type_of_node(attr_data.value)
+                }
             } else {
-                // Fallback for non-literal values (should not happen for valid attributes)
                 self.get_type_of_node(attr_data.value)
             };
 
