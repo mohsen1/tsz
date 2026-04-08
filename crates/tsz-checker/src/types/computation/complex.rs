@@ -41,6 +41,33 @@ fn should_preserve_contextual_application_shape(
     false
 }
 
+#[cfg(test)]
+mod tests {
+    use crate::diagnostics::diagnostic_codes;
+
+    #[test]
+    fn ts1209_invalid_optional_chain_from_new_anchors_question_dot() {
+        let source = r#"
+class A {
+    b() {}
+}
+new A?.b();
+"#;
+        let diagnostics = crate::test_utils::check_source_diagnostics(source);
+        let diag = diagnostics
+            .iter()
+            .find(|d| d.code == diagnostic_codes::INVALID_OPTIONAL_CHAIN_FROM_NEW_EXPRESSION_DID_YOU_MEAN_TO_CALL)
+            .expect("expected TS1209");
+
+        let question_dot_start = source.find("?.").expect("expected optional chain token") as u32;
+        assert_eq!(
+            diag.start, question_dot_start,
+            "TS1209 should anchor at `?.`, got: {diag:?}"
+        );
+        assert_eq!(diag.length, 2, "TS1209 should cover only `?.`");
+    }
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) const fn should_suppress_weak_key_arg_mismatch(
         &mut self,
@@ -150,7 +177,7 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         request: &TypingRequest,
     ) -> TypeId {
-        use crate::diagnostics::diagnostic_codes;
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use crate::query_boundaries::common::CallResult;
         use tsz_parser::parser::syntax_kind_ext;
         let contextual_type = request.contextual_type;
@@ -160,17 +187,36 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Missing new expression data - propagate error
         };
 
-        // TS1209: Invalid optional chain from new expression
-        // tsc extracts just the root identifier (e.g., `A` from `A?.b()`)
-        // and points the error at the expression node.
+        // TS1209: Invalid optional chain from new expression.
+        // tsc anchors this at the `?.` token itself, not at the root identifier.
         if super::access::is_optional_chain(self.ctx.arena, new_expr.expression) {
             let root_expr = super::access::optional_chain_root(self.ctx.arena, new_expr.expression);
             let expr_text = self.get_source_text_for_node(root_expr);
-            self.error_at_node_msg(
-                new_expr.expression,
-                diagnostic_codes::INVALID_OPTIONAL_CHAIN_FROM_NEW_EXPRESSION_DID_YOU_MEAN_TO_CALL,
+            let message = format_message(
+                diagnostic_messages::INVALID_OPTIONAL_CHAIN_FROM_NEW_EXPRESSION_DID_YOU_MEAN_TO_CALL,
                 &[&expr_text],
             );
+            let reported = self
+                .get_source_location(new_expr.expression)
+                .is_some_and(|loc| {
+                    let expr_source = self.get_source_text_for_node(new_expr.expression);
+                    expr_source.find("?.").is_some_and(|offset| {
+                        self.error_at_position(
+                            loc.start + offset as u32,
+                            2,
+                            &message,
+                            diagnostic_codes::INVALID_OPTIONAL_CHAIN_FROM_NEW_EXPRESSION_DID_YOU_MEAN_TO_CALL,
+                        );
+                        true
+                    })
+                });
+            if !reported {
+                self.error_at_node(
+                    new_expr.expression,
+                    &message,
+                    diagnostic_codes::INVALID_OPTIONAL_CHAIN_FROM_NEW_EXPRESSION_DID_YOU_MEAN_TO_CALL,
+                );
+            }
             return TypeId::ERROR;
         }
 
