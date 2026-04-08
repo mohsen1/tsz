@@ -1302,7 +1302,14 @@ impl<'a> CheckerState<'a> {
     /// `check_destructuring_iterability` for non-iterable types in ES2015+ mode.
     fn emit_ts2488_not_iterable(&mut self, type_id: TypeId, error_node: NodeIndex) {
         if let Some((start, end)) = self.get_node_span(error_node) {
-            let type_str = self.format_type_diagnostic_without_function_type_params(type_id);
+            let is_fresh_object_literal = self.ctx.types.get_display_properties(type_id).is_some()
+                && tsz_solver::type_queries::get_object_shape(self.ctx.types, type_id)
+                    .is_some_and(|shape| shape.symbol.is_none());
+            let type_str = if is_fresh_object_literal {
+                self.format_type_diagnostic_widened(type_id)
+            } else {
+                self.format_type_diagnostic_without_function_type_params(type_id)
+            };
             let message = format_message(
                 diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
                 &[&type_str],
