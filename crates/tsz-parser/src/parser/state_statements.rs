@@ -93,6 +93,17 @@ impl ParserState {
         }
     }
 
+    fn recover_invalid_shebang_token(&mut self) {
+        let start = self.u32_from_usize(self.token_pos() as usize);
+        self.parse_error_at(
+            start,
+            2,
+            "'#!' can only be used at the start of a file.",
+            diagnostic_codes::CAN_ONLY_BE_USED_AT_THE_START_OF_A_FILE,
+        );
+        self.next_token(); // consume '#'
+    }
+
     // =========================================================================
     // Parse Methods - Core Expressions
     // =========================================================================
@@ -207,7 +218,11 @@ impl ParserState {
             }
 
             if self.look_ahead_is_invalid_shebang() {
-                self.recover_invalid_shebang_line();
+                if self.scanner.has_preceding_line_break() {
+                    self.recover_invalid_shebang_line();
+                } else {
+                    self.recover_invalid_shebang_token();
+                }
                 previous_statement_was_block = false;
                 continue;
             }
@@ -428,7 +443,11 @@ impl ParserState {
             let pos_before = self.token_pos();
 
             if self.look_ahead_is_invalid_shebang() {
-                self.recover_invalid_shebang_line();
+                if self.scanner.has_preceding_line_break() {
+                    self.recover_invalid_shebang_line();
+                } else {
+                    self.recover_invalid_shebang_token();
+                }
                 previous_statement_was_block = false;
                 continue;
             }
@@ -1922,6 +1941,17 @@ impl ParserState {
                         }
                         break;
                     }
+                }
+
+                if self.look_ahead_is_invalid_shebang() {
+                    self.recover_invalid_shebang_token();
+                    if self.is_token(SyntaxKind::ExclamationToken) {
+                        self.parse_error_at_current_token(
+                            "Variable declaration expected.",
+                            diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
+                        );
+                    }
+                    break;
                 }
 
                 // No ASI - emit ',' expected for the unexpected token and stop.

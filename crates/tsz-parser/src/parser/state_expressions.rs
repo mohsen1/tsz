@@ -2500,6 +2500,24 @@ impl ParserState {
         )
     }
 
+    fn look_ahead_is_hashbang_after_at(&mut self) -> bool {
+        if !self.is_token(SyntaxKind::AtToken) {
+            return false;
+        }
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let result = if self.is_token(SyntaxKind::HashToken) {
+            self.next_token();
+            self.is_token(SyntaxKind::ExclamationToken)
+        } else {
+            false
+        };
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
+    }
+
     // Parse primary expression
     pub(crate) fn parse_primary_expression(&mut self) -> NodeIndex {
         match self.token() {
@@ -2533,7 +2551,17 @@ impl ParserState {
             SyntaxKind::NewKeyword => self.parse_new_expression(),
             SyntaxKind::FunctionKeyword => self.parse_function_expression(),
             SyntaxKind::ClassKeyword => self.parse_class_expression(),
-            SyntaxKind::AtToken => self.parse_decorated_class_expression(),
+            SyntaxKind::AtToken => {
+                if self.look_ahead_is_hashbang_after_at() {
+                    let start_pos = self.token_pos();
+                    let end_pos = self.token_end();
+                    self.next_token(); // consume '@' and leave '#!' for outer recovery
+                    self.arena
+                        .add_token(SyntaxKind::Unknown as u16, start_pos, end_pos)
+                } else {
+                    self.parse_decorated_class_expression()
+                }
+            }
             SyntaxKind::AsyncKeyword => {
                 // async function expression or async arrow function
                 if self.look_ahead_is_async_function() {
@@ -2770,10 +2798,16 @@ impl ParserState {
             // emits "',' expected." because it treats the result as an expression in
             // a comma context. For other tokens (e.g., `@dec () => {}`), tsc emits
             // "';' expected." as a statement boundary.
-            if self.is_token(SyntaxKind::FunctionKeyword) {
-                self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
-            } else {
-                self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            //
+            // If recovery crossed a line break (e.g., malformed `!@$` followed by the
+            // next statement), tsc does not emit the companion TS1005 at the next-line
+            // token; only TS1109 at the malformed expression site is kept.
+            if !self.scanner.has_preceding_line_break() {
+                if self.is_token(SyntaxKind::FunctionKeyword) {
+                    self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
+                } else {
+                    self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+                }
             }
             let end_pos = self.token_end();
             self.arena

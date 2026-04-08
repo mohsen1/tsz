@@ -812,6 +812,15 @@ mod identifier_scanning {
     }
 
     #[test]
+    fn at_hashbang_sequence_tokenization() {
+        let mut scanner = ScannerState::new("@#!x".to_string(), true);
+        assert_eq!(scanner.scan(), SyntaxKind::AtToken);
+        assert_eq!(scanner.scan(), SyntaxKind::HashToken);
+        assert_eq!(scanner.scan(), SyntaxKind::ExclamationToken);
+        assert_eq!(scanner.scan(), SyntaxKind::Identifier);
+    }
+
+    #[test]
     fn reserved_word_check() {
         let mut scanner = ScannerState::new("break".to_string(), true);
         scanner.scan();

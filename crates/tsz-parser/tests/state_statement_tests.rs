@@ -344,6 +344,46 @@ fn parse_mid_file_shebang_reports_ts18026_and_argument_semicolon_error() {
 }
 
 #[test]
+fn parse_malformed_variable_hashbang_tail_matches_tsc_shape() {
+    let source = "const a =!@#!@$\nconst b = !@#!@#!@#!\nOK!\nHERE's A shouty thing\nGOTTA GO FAST\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    let count = |code: u32| diags.iter().filter(|d| d.code == code).count();
+
+    assert_eq!(
+        count(diagnostic_codes::CAN_ONLY_BE_USED_AT_THE_START_OF_A_FILE),
+        4,
+        "expected four TS18026 diagnostics, got {diags:?}"
+    );
+    assert_eq!(
+        count(diagnostic_codes::VARIABLE_DECLARATION_EXPECTED),
+        2,
+        "expected two TS1134 diagnostics, got {diags:?}"
+    );
+    assert_eq!(
+        count(diagnostic_codes::EXPRESSION_EXPECTED),
+        1,
+        "expected one TS1109 diagnostic, got {diags:?}"
+    );
+    assert_eq!(
+        count(diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER),
+        3,
+        "expected three TS1434 diagnostics, got {diags:?}"
+    );
+    assert_eq!(
+        count(diagnostic_codes::UNTERMINATED_STRING_LITERAL),
+        1,
+        "expected one TS1002 diagnostic, got {diags:?}"
+    );
+    assert_eq!(
+        count(diagnostic_codes::EXPECTED),
+        0,
+        "did not expect TS1005 in this recovery shape, got {diags:?}"
+    );
+}
+
+#[test]
 fn parse_template_recovery_preserves_follow_up_statement() {
     let (parser, root) = parse_source("const bad = `head${1 + 2`;\nconst ok = 1;");
     let sf = parser.get_arena().get_source_file_at(root).unwrap();
