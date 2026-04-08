@@ -98,10 +98,25 @@ impl<'a> CheckerState<'a> {
         target_type: TypeId,
         preferred_target_display: Option<&str>,
     ) -> String {
+        let target_display = self.format_type(target_type);
+
         if let Some(display) = preferred_target_display
             && !display.contains("children?:")
         {
+            if display.starts_with("IntrinsicClassAttributes<")
+                && let Some(alias_display) =
+                    self.jsx_intrinsic_class_attributes_alias_target_display()
+            {
+                return alias_display;
+            }
             return display.to_string();
+        }
+
+        if preferred_target_display.is_none()
+            && target_display.starts_with("IntrinsicClassAttributes<")
+            && let Some(display) = self.jsx_intrinsic_class_attributes_alias_target_display()
+        {
+            return display;
         }
 
         let target_type = self.normalize_jsx_required_props_target(target_type);
@@ -124,6 +139,55 @@ impl<'a> CheckerState<'a> {
         preferred_target_display
             .map(ToOwned::to_owned)
             .unwrap_or_else(|| self.format_type(target_type))
+    }
+
+    fn jsx_intrinsic_class_attributes_alias_target_display(&mut self) -> Option<String> {
+        let lib_binders = self.get_lib_binders();
+        let jsx_sym_id = self.get_jsx_namespace_type()?;
+        let jsx_symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
+        let ica_sym_id = jsx_symbol
+            .exports
+            .as_ref()?
+            .get("IntrinsicClassAttributes")?;
+
+        let alias_target_text_for_symbol = |binder: &tsz_binder::BinderState,
+                                            arena: &tsz_parser::parser::node::NodeArena|
+         -> Option<String> {
+            let symbol = binder.get_symbol(ica_sym_id)?;
+            for &decl_idx in &symbol.declarations {
+                let node = arena.get(decl_idx)?;
+                let alias = arena.get_type_alias(node)?;
+                let target_node = arena.get(alias.type_node)?;
+                let source = arena.source_files.first()?.text.as_ref();
+                let start = target_node.pos as usize;
+                let end = target_node.end as usize;
+                if start >= end || end > source.len() {
+                    continue;
+                }
+                let text = source[start..end].trim();
+                if !text.is_empty() {
+                    return Some(text.to_string());
+                }
+            }
+            return None;
+        };
+
+        if let Some(text) = alias_target_text_for_symbol(self.ctx.binder, self.ctx.arena) {
+            return Some(text);
+        }
+        if let (Some(all_binders), Some(all_arenas)) =
+            (self.ctx.all_binders.as_ref(), self.ctx.all_arenas.as_ref())
+        {
+            for (binder, arena) in all_binders.iter().zip(all_arenas.iter()) {
+                if let Some(text) = alias_target_text_for_symbol(binder, arena.as_ref()) {
+                    return Some(text);
+                }
+            }
+        }
+        None
     }
 
     pub(in crate::checkers_domain::jsx) fn should_report_custom_jsx_children_via_assignability(

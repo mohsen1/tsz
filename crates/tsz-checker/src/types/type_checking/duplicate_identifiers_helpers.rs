@@ -322,6 +322,27 @@ impl<'a> CheckerState<'a> {
         declarations
     }
 
+    pub(super) fn normalize_duplicate_conflict_flags(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        decl_idx: NodeIndex,
+        flags: u32,
+    ) -> u32 {
+        let Some(resolved_decl_idx) = self.resolve_duplicate_decl_node(arena, decl_idx) else {
+            return flags;
+        };
+        let Some(node) = arena.get(resolved_decl_idx) else {
+            return flags;
+        };
+        if node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+            return flags;
+        }
+        // Import-equals aliases can carry namespace flags from their targets.
+        // For duplicate-name checks, they should still participate as aliases.
+        (flags | symbol_flags::ALIAS)
+            & !(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+    }
+
     pub(crate) fn export_surface_declarations_in_file(
         &self,
         file_idx: usize,
@@ -873,6 +894,391 @@ impl<'a> CheckerState<'a> {
         }
 
         declarations
+    }
+
+    pub(super) fn default_import_alias_conflict_declarations_for_current_file(
+        &self,
+        name: &str,
+    ) -> Vec<(NodeIndex, u32, bool, bool, DuplicateDeclarationOrigin)> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
+            return Vec::new();
+        };
+
+        let mut declarations = Vec::new();
+        let mut seen = FxHashSet::default();
+        let current_file_name = self
+            .ctx
+            .arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.replace('\\', "/"))
+            .unwrap_or_default();
+
+        let module_spec_targets_current_file = |module_spec: &str| {
+            let module_spec = module_spec.replace('\\', "/");
+            let mut module_candidates = vec![module_spec.clone()];
+            if !module_spec.starts_with("@types/") {
+                if let Some(scoped) = module_spec.strip_prefix('@') {
+                    let mut parts = scoped.split('/');
+                    if let (Some(scope), Some(package), None) =
+                        (parts.next(), parts.next(), parts.next())
+                        && !scope.is_empty()
+                        && !package.is_empty()
+                    {
+                        module_candidates.push(format!("@types/{scope}__{package}"));
+                    }
+                } else if !module_spec.is_empty() {
+                    module_candidates.push(format!("@types/{module_spec}"));
+                }
+            }
+
+            module_candidates.into_iter().any(|candidate| {
+                current_file_name.ends_with(&format!("/node_modules/{candidate}/index.d.ts"))
+                    || current_file_name
+                        .ends_with(&format!("/node_modules/{candidate}/index.d.mts"))
+                    || current_file_name
+                        .ends_with(&format!("/node_modules/{candidate}/index.d.cts"))
+                    || current_file_name.ends_with(&format!("/node_modules/{candidate}.d.ts"))
+                    || current_file_name.ends_with(&format!("/node_modules/{candidate}.d.mts"))
+                    || current_file_name.ends_with(&format!("/node_modules/{candidate}.d.cts"))
+            })
+        };
+
+        for (file_idx, arena) in all_arenas.iter().enumerate() {
+            if file_idx == self.ctx.current_file_idx {
+                continue;
+            }
+            let Some(source_file_node) = arena.source_files.first() else {
+                continue;
+            };
+
+            let exports_default_name = source_file_node.statements.nodes.iter().any(|&stmt_idx| {
+                let Some(stmt_node) = arena.get(stmt_idx) else {
+                    return false;
+                };
+                if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
+                    let Some(assign) = arena.get_export_assignment(stmt_node) else {
+                        return false;
+                    };
+                    if assign.is_export_equals {
+                        return false;
+                    }
+                    return arena
+                        .get_identifier_at(assign.expression)
+                        .is_some_and(|ident| ident.escaped_text == name);
+                }
+                if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                    let Some(export_decl) = arena.get_export_decl(stmt_node) else {
+                        return false;
+                    };
+                    if export_decl.module_specifier.is_some() {
+                        return false;
+                    }
+                    return arena
+                        .get_identifier_at(export_decl.export_clause)
+                        .is_some_and(|ident| ident.escaped_text == name);
+                }
+                false
+            });
+            if !exports_default_name {
+                continue;
+            }
+
+            for &stmt_idx in &source_file_node.statements.nodes {
+                let Some(stmt_node) = arena.get(stmt_idx) else {
+                    continue;
+                };
+                if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+                    continue;
+                }
+                let Some(import_decl) = arena.get_import_decl(stmt_node) else {
+                    continue;
+                };
+                if import_decl.import_clause.is_none() {
+                    continue;
+                }
+                let Some(clause_node) = arena.get(import_decl.import_clause) else {
+                    continue;
+                };
+                let Some(clause) = arena.get_import_clause(clause_node) else {
+                    continue;
+                };
+                if clause.name.is_none() {
+                    continue;
+                }
+                let Some(default_ident) = arena.get_identifier_at(clause.name) else {
+                    continue;
+                };
+                if default_ident.escaped_text != name {
+                    continue;
+                }
+                let Some(module_node) = arena.get(import_decl.module_specifier) else {
+                    continue;
+                };
+                let Some(module_lit) = arena.get_literal(module_node) else {
+                    continue;
+                };
+                let targets_current_file = if let Some(target_idx) = self
+                    .ctx
+                    .resolve_import_target_from_file(file_idx, &module_lit.text)
+                {
+                    target_idx == self.ctx.current_file_idx
+                } else {
+                    module_spec_targets_current_file(&module_lit.text)
+                };
+                if !targets_current_file {
+                    continue;
+                }
+
+                let decl_idx = clause.name;
+                if !seen.insert((file_idx, decl_idx.0)) {
+                    continue;
+                }
+                declarations.push((
+                    decl_idx,
+                    symbol_flags::BLOCK_SCOPED_VARIABLE | symbol_flags::ALIAS,
+                    false,
+                    true,
+                    DuplicateDeclarationOrigin::GlobalScopeConflict,
+                ));
+            }
+        }
+
+        declarations
+    }
+
+    pub(super) fn current_file_default_export_identifier_named(
+        &self,
+        name: &str,
+    ) -> Option<NodeIndex> {
+        let source_file = self.ctx.arena.source_files.first()?;
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(node) =
+                self.find_default_export_identifier_named_in_statement(stmt_idx, name, 0)
+            {
+                return Some(node);
+            }
+        }
+        None
+    }
+
+    fn find_default_export_identifier_named_in_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        name: &str,
+        depth: u8,
+    ) -> Option<NodeIndex> {
+        if depth > 12 {
+            return None;
+        }
+        let stmt_node = self.ctx.arena.get(stmt_idx)?;
+
+        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            let export_decl = self.ctx.arena.get_export_decl(stmt_node)?;
+            if !export_decl.is_default_export {
+                return None;
+            }
+            return self
+                .ctx
+                .arena
+                .get_identifier_at(export_decl.export_clause)
+                .is_some_and(|ident| ident.escaped_text == name)
+                .then_some(export_decl.export_clause);
+        }
+
+        if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
+            let export_assign = self.ctx.arena.get_export_assignment(stmt_node)?;
+            if export_assign.is_export_equals {
+                return None;
+            }
+            return self
+                .ctx
+                .arena
+                .get_identifier_at(export_assign.expression)
+                .is_some_and(|ident| ident.escaped_text == name)
+                .then_some(export_assign.expression);
+        }
+
+        if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+            let module_decl = self.ctx.arena.get_module(stmt_node)?;
+            let body_node = self.ctx.arena.get(module_decl.body)?;
+            if body_node.kind == syntax_kind_ext::MODULE_BLOCK {
+                let block = self.ctx.arena.get_module_block(body_node)?;
+                let statements = block.statements.as_ref()?;
+                for &inner_idx in &statements.nodes {
+                    if let Some(found) = self.find_default_export_identifier_named_in_statement(
+                        inner_idx,
+                        name,
+                        depth + 1,
+                    ) {
+                        return Some(found);
+                    }
+                }
+                return None;
+            }
+            if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                return self.find_default_export_identifier_named_in_statement(
+                    module_decl.body,
+                    name,
+                    depth + 1,
+                );
+            }
+        }
+
+        None
+    }
+
+    pub(super) fn jsx_runtime_conflict_declarations_for_current_file(
+        &mut self,
+        name: &str,
+    ) -> Vec<(NodeIndex, u32, bool, bool, DuplicateDeclarationOrigin)> {
+        use tsz_common::checker_options::JsxMode;
+
+        if name != "JSX" {
+            return Vec::new();
+        }
+
+        let effective_mode = self.effective_jsx_mode();
+        let pragma_source = self.extract_jsx_import_source_pragma();
+        let uses_automatic_runtime =
+            matches!(effective_mode, JsxMode::ReactJsx | JsxMode::ReactJsxDev)
+                || pragma_source.is_some()
+                || !self.ctx.compiler_options.jsx_import_source.is_empty();
+        if !uses_automatic_runtime {
+            return Vec::new();
+        }
+
+        let Some(local_alias_decl_idx) = self.first_current_file_global_import_equals_named(name)
+        else {
+            return Vec::new();
+        };
+
+        let source = if let Some(pragma) = pragma_source {
+            pragma
+        } else if self.ctx.compiler_options.jsx_import_source.is_empty() {
+            "react".to_string()
+        } else {
+            self.ctx.compiler_options.jsx_import_source.clone()
+        };
+        let runtime_suffix = if effective_mode == JsxMode::ReactJsxDev {
+            "jsx-dev-runtime"
+        } else {
+            "jsx-runtime"
+        };
+        let runtime_module = format!("{source}/{runtime_suffix}");
+
+        let jsx_sym_id = self
+            .resolve_cross_file_export_from_file(
+                &runtime_module,
+                "JSX",
+                Some(self.ctx.current_file_idx),
+            )
+            .or_else(|| self.resolve_jsx_runtime_export_fallback(&runtime_module))
+            .or_else(|| self.resolve_jsx_namespace_from_factory());
+        let remote_decl_idx = jsx_sym_id
+            .map(|sym_id| {
+                let resolved_sym_id = self
+                    .resolve_alias_symbol(sym_id, &mut Vec::new())
+                    .unwrap_or(sym_id);
+                self.get_cross_file_symbol(resolved_sym_id)
+                    .and_then(|sym| sym.declarations.first().copied())
+                    .or_else(|| {
+                        let lib_binders = self.get_lib_binders();
+                        self.ctx
+                            .binder
+                            .get_symbol_with_libs(resolved_sym_id, &lib_binders)
+                            .and_then(|sym| sym.declarations.first().copied())
+                    })
+                    .unwrap_or(local_alias_decl_idx)
+            })
+            .unwrap_or(local_alias_decl_idx);
+
+        vec![(
+            remote_decl_idx,
+            symbol_flags::ALIAS,
+            false,
+            false,
+            DuplicateDeclarationOrigin::GlobalScopeConflict,
+        )]
+    }
+
+    fn first_current_file_global_import_equals_named(&self, name: &str) -> Option<NodeIndex> {
+        use tsz_parser::parser::node_flags;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
+            return None;
+        };
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            let Some(module_decl) = self.ctx.arena.get_module(stmt_node) else {
+                continue;
+            };
+            let is_global_augmentation =
+                (u32::from(stmt_node.flags) & node_flags::GLOBAL_AUGMENTATION) != 0
+                    || self
+                        .ctx
+                        .arena
+                        .get(module_decl.name)
+                        .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                        .is_some_and(|ident| ident.escaped_text == "global");
+            if !is_global_augmentation {
+                continue;
+            }
+            let Some(body_node) = self.ctx.arena.get(module_decl.body) else {
+                continue;
+            };
+            if body_node.kind != syntax_kind_ext::MODULE_BLOCK {
+                continue;
+            }
+            let Some(block) = self.ctx.arena.get_module_block(body_node) else {
+                continue;
+            };
+            let Some(statements) = &block.statements else {
+                continue;
+            };
+
+            for &inner_idx in &statements.nodes {
+                let Some(inner_node) = self.ctx.arena.get(inner_idx) else {
+                    continue;
+                };
+                let decl_idx = if inner_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                    let Some(export_decl) = self.ctx.arena.get_export_decl(inner_node) else {
+                        continue;
+                    };
+                    export_decl.export_clause
+                } else {
+                    inner_idx
+                };
+                let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                if decl_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                    continue;
+                }
+                let Some(import_eq) = self.ctx.arena.get_import_decl(decl_node) else {
+                    continue;
+                };
+                if self
+                    .ctx
+                    .arena
+                    .get_identifier_at(import_eq.import_clause)
+                    .is_some_and(|ident| ident.escaped_text == name)
+                {
+                    return Some(decl_idx);
+                }
+            }
+        }
+
+        None
     }
 
     /// Scan a `declare global { ... }` block body for variable declarations

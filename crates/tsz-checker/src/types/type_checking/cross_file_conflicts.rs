@@ -516,6 +516,10 @@ impl<'a> CheckerState<'a> {
 
         for arena in &*all_arenas {
             let is_local = std::ptr::eq(arena.as_ref(), self.ctx.arena);
+            let arena_file_idx = self.ctx.get_file_idx_for_arena(arena.as_ref());
+            let arena_is_external_module = arena_file_idx
+                .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+                .is_some_and(|binder| binder.is_external_module());
             let Some(source_file) = arena.source_files.first() else {
                 continue;
             };
@@ -536,50 +540,90 @@ impl<'a> CheckerState<'a> {
                             .get(module_decl.name)
                             .and_then(|name_node| arena.get_identifier(name_node))
                             .is_some_and(|ident| ident.escaped_text == "global");
-                if !is_global_augmentation {
-                    continue;
-                }
-                let Some(body_node) = arena.get(module_decl.body) else {
-                    continue;
-                };
-                let Some(block) = arena.get_module_block(body_node) else {
-                    continue;
-                };
-                let Some(statements) = &block.statements else {
-                    continue;
-                };
-
-                for &inner_idx in &statements.nodes {
-                    let Some(inner_node) = arena.get(inner_idx) else {
+                if is_global_augmentation {
+                    let Some(body_node) = arena.get(module_decl.body) else {
                         continue;
                     };
-                    if inner_node.kind != syntax_kind_ext::MODULE_DECLARATION {
-                        continue;
-                    }
-                    let Some(namespace_decl) = arena.get_module(inner_node) else {
+                    let Some(block) = arena.get_module_block(body_node) else {
                         continue;
                     };
-                    let Some(name) = arena
-                        .get(namespace_decl.name)
-                        .and_then(|name_node| arena.get_identifier(name_node))
-                        .map(|ident| ident.escaped_text.to_string())
-                    else {
+                    let Some(statements) = &block.statements else {
                         continue;
                     };
 
-                    if is_local {
-                        local_namespaces
-                            .entry(name)
-                            .or_insert_with(Vec::new)
-                            .push(inner_idx);
-                    } else {
-                        self.collect_namespace_member_flags(
-                            arena.as_ref(),
-                            inner_idx,
-                            remote_namespaces.entry(name).or_default(),
-                        );
+                    for &inner_idx in &statements.nodes {
+                        let Some(inner_node) = arena.get(inner_idx) else {
+                            continue;
+                        };
+                        if inner_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                            continue;
+                        }
+                        let Some(namespace_decl) = arena.get_module(inner_node) else {
+                            continue;
+                        };
+                        let Some(name) = arena
+                            .get(namespace_decl.name)
+                            .and_then(|name_node| arena.get_identifier(name_node))
+                            .map(|ident| ident.escaped_text.to_string())
+                        else {
+                            continue;
+                        };
+
+                        if is_local {
+                            local_namespaces
+                                .entry(name)
+                                .or_insert_with(Vec::new)
+                                .push(inner_idx);
+                        } else {
+                            self.collect_namespace_member_flags(
+                                arena.as_ref(),
+                                inner_idx,
+                                remote_namespaces.entry(name).or_default(),
+                            );
+                        }
                     }
+                    continue;
                 }
+
+                // Script/global namespaces (`declare namespace X {}` at top level)
+                // can contribute cross-file member conflicts the same way as
+                // `declare global { namespace X {} }`.
+                let Some(name) = arena
+                    .get(module_decl.name)
+                    .and_then(|name_node| arena.get_identifier(name_node))
+                    .map(|ident| ident.escaped_text.to_string())
+                else {
+                    continue;
+                };
+                if arena_is_external_module && name != "JSX" {
+                    continue;
+                }
+                if is_local {
+                    local_namespaces
+                        .entry(name)
+                        .or_insert_with(Vec::new)
+                        .push(stmt_idx);
+                } else {
+                    self.collect_namespace_member_flags(
+                        arena.as_ref(),
+                        stmt_idx,
+                        remote_namespaces.entry(name).or_default(),
+                    );
+                }
+            }
+        }
+
+        // JSX runtime namespaces (`React.JSX`, `export { X as JSX } from ".../jsx-runtime"`)
+        // can conflict with global `namespace JSX` members.
+        let mut jsx_runtime_members = FxHashMap::default();
+        self.collect_jsx_runtime_namespace_members(&mut jsx_runtime_members);
+        if !jsx_runtime_members.is_empty() {
+            let remote_jsx = remote_namespaces.entry("JSX".to_string()).or_default();
+            for (name, flags) in jsx_runtime_members {
+                remote_jsx
+                    .entry(name)
+                    .and_modify(|existing| *existing |= flags)
+                    .or_insert(flags);
             }
         }
 
@@ -592,6 +636,427 @@ impl<'a> CheckerState<'a> {
                 remote_members,
             );
         }
+    }
+
+    fn collect_namespace_members_for_symbol(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        members: &mut FxHashMap<String, u32>,
+        remote_only: bool,
+    ) {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let symbol = self.get_cross_file_symbol(sym_id).cloned().or_else(|| {
+            let lib_binders = self.get_lib_binders();
+            self.ctx
+                .binder
+                .get_symbol_with_libs(sym_id, &lib_binders)
+                .cloned()
+        });
+        let Some(symbol) = symbol else {
+            return;
+        };
+
+        for &decl_idx in &symbol.declarations {
+            let mut collected = false;
+            if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                for arena_arc in arenas {
+                    let arena = arena_arc.as_ref();
+                    if remote_only && std::ptr::eq(arena, self.ctx.arena) {
+                        continue;
+                    }
+                    let Some(node) = arena.get(decl_idx) else {
+                        continue;
+                    };
+                    if node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                        continue;
+                    }
+                    self.collect_namespace_member_flags(arena, decl_idx, members);
+                    collected = true;
+                }
+            }
+
+            if collected {
+                continue;
+            }
+
+            let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id) else {
+                continue;
+            };
+            let arena = self.ctx.get_arena_for_file(file_idx as u32);
+            if remote_only && std::ptr::eq(arena, self.ctx.arena) {
+                continue;
+            }
+            let Some(node) = arena.get(decl_idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            self.collect_namespace_member_flags(arena, decl_idx, members);
+        }
+    }
+
+    fn collect_jsx_runtime_namespace_members(&mut self, members: &mut FxHashMap<String, u32>) {
+        let mut runtime_modules = FxHashSet::default();
+        self.collect_program_jsx_runtime_modules(&mut runtime_modules);
+
+        for runtime_module in runtime_modules {
+            let runtime_jsx_sym = self
+                .resolve_cross_file_export_from_file(
+                    &runtime_module,
+                    "JSX",
+                    Some(self.ctx.current_file_idx),
+                )
+                .or_else(|| self.resolve_jsx_runtime_export_fallback(&runtime_module));
+            let Some(jsx_sym_id) = runtime_jsx_sym else {
+                continue;
+            };
+            let resolved = self
+                .resolve_alias_symbol(jsx_sym_id, &mut Vec::new())
+                .unwrap_or(jsx_sym_id);
+            let remote_only = self
+                .ctx
+                .resolve_symbol_file_index(resolved)
+                .is_none_or(|file_idx| file_idx != self.ctx.current_file_idx);
+            self.collect_namespace_members_for_symbol(resolved, members, remote_only);
+        }
+
+        if let Some(jsx_sym_id) = self.resolve_jsx_namespace_from_factory() {
+            let resolved = self
+                .resolve_alias_symbol(jsx_sym_id, &mut Vec::new())
+                .unwrap_or(jsx_sym_id);
+            let remote_only = self
+                .ctx
+                .resolve_symbol_file_index(resolved)
+                .is_none_or(|file_idx| file_idx != self.ctx.current_file_idx);
+            self.collect_namespace_members_for_symbol(resolved, members, remote_only);
+        }
+
+        self.collect_classic_react_jsx_namespace_members(members);
+    }
+
+    fn resolve_namespace_member_from_symbol(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        member_name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        if let Some(symbol) = self.get_cross_file_symbol(sym_id) {
+            return symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(member_name))
+                .or_else(|| {
+                    symbol
+                        .members
+                        .as_ref()
+                        .and_then(|members| members.get(member_name))
+                });
+        }
+
+        let lib_binders = self.get_lib_binders();
+        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+        symbol
+            .exports
+            .as_ref()
+            .and_then(|exports| exports.get(member_name))
+            .or_else(|| {
+                symbol
+                    .members
+                    .as_ref()
+                    .and_then(|members| members.get(member_name))
+            })
+    }
+
+    fn collect_classic_react_jsx_namespace_members(
+        &mut self,
+        members: &mut FxHashMap<String, u32>,
+    ) {
+        use tsz_common::checker_options::JsxMode;
+
+        if self.effective_jsx_mode() != JsxMode::React {
+            return;
+        }
+        if self.extract_jsx_import_source_pragma().is_some()
+            || !self.ctx.compiler_options.jsx_import_source.is_empty()
+        {
+            return;
+        }
+
+        let root_name = self
+            .ctx
+            .compiler_options
+            .jsx_factory
+            .split('.')
+            .next()
+            .unwrap_or("React");
+        if root_name.is_empty() {
+            return;
+        }
+
+        let jsx_sym_id = self
+            .ctx
+            .binder
+            .file_locals
+            .get(root_name)
+            .and_then(|root_sym_id| self.resolve_namespace_member_from_symbol(root_sym_id, "JSX"))
+            .or_else(|| self.resolve_namespace_member_from_all_binders(root_name, "JSX"));
+        let Some(jsx_sym_id) = jsx_sym_id else {
+            return;
+        };
+
+        let resolved = self
+            .resolve_alias_symbol(jsx_sym_id, &mut Vec::new())
+            .unwrap_or(jsx_sym_id);
+        let remote_only = self
+            .ctx
+            .resolve_symbol_file_index(resolved)
+            .is_none_or(|file_idx| file_idx != self.ctx.current_file_idx);
+        self.collect_namespace_members_for_symbol(resolved, members, remote_only);
+    }
+
+    fn collect_program_jsx_runtime_modules(&self, modules: &mut FxHashSet<String>) {
+        use tsz_common::checker_options::JsxMode;
+
+        let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
+            return;
+        };
+
+        for arena in &**all_arenas {
+            let Some(source_file) = arena.source_files.first() else {
+                continue;
+            };
+            let text = &source_file.text;
+            let pragma_source = Self::extract_jsx_import_source_pragma_from_text(text);
+            let mode = match crate::jsx::runtime::extract_jsx_runtime_pragma(text) {
+                Some("classic") => JsxMode::React,
+                Some("automatic") => {
+                    if self.ctx.compiler_options.jsx_mode == JsxMode::ReactJsxDev {
+                        JsxMode::ReactJsxDev
+                    } else {
+                        JsxMode::ReactJsx
+                    }
+                }
+                _ => self.ctx.compiler_options.jsx_mode,
+            };
+            let uses_automatic_runtime = matches!(mode, JsxMode::ReactJsx | JsxMode::ReactJsxDev)
+                || pragma_source.is_some()
+                || !self.ctx.compiler_options.jsx_import_source.is_empty();
+            if !uses_automatic_runtime {
+                continue;
+            }
+            let source = if let Some(pragma) = pragma_source {
+                pragma
+            } else if self.ctx.compiler_options.jsx_import_source.is_empty() {
+                "react".to_string()
+            } else {
+                self.ctx.compiler_options.jsx_import_source.clone()
+            };
+            let runtime_suffix = if mode == JsxMode::ReactJsxDev {
+                "jsx-dev-runtime"
+            } else {
+                "jsx-runtime"
+            };
+            modules.insert(format!("{source}/{runtime_suffix}"));
+        }
+    }
+
+    fn extract_jsx_import_source_pragma_from_text(text: &str) -> Option<String> {
+        let scan_limit = text.len().min(4096);
+        let scan_text = &text[..scan_limit];
+        let bytes = scan_text.as_bytes();
+        let mut pos = 0;
+        while pos < bytes.len() {
+            if bytes[pos].is_ascii_whitespace() {
+                pos += 1;
+                continue;
+            }
+            if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'*' {
+                let comment_start = pos + 2;
+                if let Some(end_offset) = scan_text[comment_start..].find("*/") {
+                    let comment_body = &scan_text[comment_start..comment_start + end_offset];
+                    if let Some(idx) = comment_body.find("@jsxImportSource") {
+                        let after = &comment_body[idx + "@jsxImportSource".len()..];
+                        let pkg: String = after
+                            .trim_start()
+                            .chars()
+                            .take_while(|c| {
+                                c.is_alphanumeric()
+                                    || *c == '_'
+                                    || *c == '-'
+                                    || *c == '/'
+                                    || *c == '@'
+                                    || *c == '.'
+                            })
+                            .collect();
+                        if !pkg.is_empty() {
+                            return Some(pkg);
+                        }
+                    }
+                    pos = comment_start + end_offset + 2;
+                } else {
+                    break;
+                }
+                continue;
+            }
+            if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'/' {
+                if let Some(nl) = scan_text[pos..].find('\n') {
+                    pos += nl + 1;
+                } else {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        None
+    }
+
+    fn types_package_root_for_module(module_root: &str) -> Option<String> {
+        if module_root.is_empty() || module_root.starts_with("@types/") {
+            return None;
+        }
+
+        if let Some(scoped) = module_root.strip_prefix('@') {
+            let mut parts = scoped.split('/');
+            let scope = parts.next()?;
+            let package = parts.next()?;
+            if scope.is_empty() || package.is_empty() || parts.next().is_some() {
+                return None;
+            }
+            return Some(format!("@types/{scope}__{package}"));
+        }
+
+        Some(format!("@types/{module_root}"))
+    }
+
+    pub(super) fn resolve_jsx_runtime_export_fallback(
+        &self,
+        runtime_module: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        let runtime_module = runtime_module.replace('\\', "/");
+        let package_root = runtime_module
+            .strip_suffix("/jsx-runtime")
+            .or_else(|| runtime_module.strip_suffix("/jsx-dev-runtime"));
+        let runtime_suffix = if runtime_module.ends_with("/jsx-dev-runtime") {
+            "jsx-dev-runtime"
+        } else {
+            "jsx-runtime"
+        };
+
+        let mut runtime_candidates = vec![runtime_module.clone()];
+        let mut root_candidates = Vec::new();
+        if let Some(root) = package_root {
+            root_candidates.push(root.to_string());
+            if let Some(types_root) = Self::types_package_root_for_module(root) {
+                if !root_candidates
+                    .iter()
+                    .any(|candidate| candidate == &types_root)
+                {
+                    root_candidates.push(types_root.clone());
+                }
+                let typed_runtime = format!("{types_root}/{runtime_suffix}");
+                if !runtime_candidates
+                    .iter()
+                    .any(|candidate| candidate == &typed_runtime)
+                {
+                    runtime_candidates.push(typed_runtime);
+                }
+            }
+        }
+
+        // 1) Direct module-spec lookup across binders. This handles fixtures where
+        // the runtime file is present in the program but not imported from the
+        // current file (resolved_module_paths has no edge from current -> runtime).
+        if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+            for (file_idx, binder) in all_binders.iter().enumerate() {
+                let mut resolved = None;
+                for module_spec in &runtime_candidates {
+                    resolved = binder.resolve_import_with_reexports_type_only(module_spec, "JSX");
+                    if resolved.is_some() {
+                        break;
+                    }
+                }
+                if resolved.is_none() {
+                    for module_spec in &root_candidates {
+                        resolved =
+                            binder.resolve_import_with_reexports_type_only(module_spec, "JSX");
+                        if resolved.is_some() {
+                            break;
+                        }
+                    }
+                }
+                if let Some((sym_id, _)) = resolved {
+                    self.ctx.register_symbol_file_target(sym_id, file_idx);
+                    return Some(sym_id);
+                }
+            }
+        }
+
+        // 2) Match runtime file by suffix under node_modules and query that file's
+        // export surface directly.
+        let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
+            return None;
+        };
+
+        let mut suffixes = Vec::new();
+        for module_spec in &runtime_candidates {
+            suffixes.push(format!("/node_modules/{module_spec}/index.d.ts"));
+            suffixes.push(format!("/node_modules/{module_spec}/index.d.mts"));
+            suffixes.push(format!("/node_modules/{module_spec}/index.d.cts"));
+            suffixes.push(format!("/node_modules/{module_spec}.d.ts"));
+            suffixes.push(format!("/node_modules/{module_spec}.d.mts"));
+            suffixes.push(format!("/node_modules/{module_spec}.d.cts"));
+        }
+        for root in &root_candidates {
+            suffixes.push(format!("/node_modules/{root}/index.d.ts"));
+            suffixes.push(format!("/node_modules/{root}/index.d.mts"));
+            suffixes.push(format!("/node_modules/{root}/index.d.cts"));
+            suffixes.push(format!("/node_modules/{root}.d.ts"));
+            suffixes.push(format!("/node_modules/{root}.d.mts"));
+            suffixes.push(format!("/node_modules/{root}.d.cts"));
+        }
+
+        for (file_idx, arena) in all_arenas.iter().enumerate() {
+            let Some(source_file) = arena.source_files.first() else {
+                continue;
+            };
+            let file_name = source_file.file_name.replace('\\', "/");
+            if !suffixes.iter().any(|suffix| file_name.ends_with(suffix)) {
+                continue;
+            }
+            let Some(binder) = self.ctx.get_binder_for_file(file_idx) else {
+                continue;
+            };
+            let file_key = source_file.file_name.clone();
+            let mut resolved = binder.resolve_import_with_reexports_type_only(&file_key, "JSX");
+            if resolved.is_none() {
+                for module_spec in &runtime_candidates {
+                    resolved = binder.resolve_import_with_reexports_type_only(module_spec, "JSX");
+                    if resolved.is_some() {
+                        break;
+                    }
+                }
+            }
+            if resolved.is_none() {
+                for module_spec in &root_candidates {
+                    resolved = binder.resolve_import_with_reexports_type_only(module_spec, "JSX");
+                    if resolved.is_some() {
+                        break;
+                    }
+                }
+            }
+            if let Some((sym_id, _)) = resolved {
+                self.ctx.register_symbol_file_target(sym_id, file_idx);
+                return Some(sym_id);
+            }
+            if let Some(sym_id) = binder.file_locals.get("JSX") {
+                self.ctx.register_symbol_file_target(sym_id, file_idx);
+                return Some(sym_id);
+            }
+        }
+
+        None
     }
 
     fn report_cross_file_namespace_member_conflicts(
@@ -612,6 +1077,15 @@ impl<'a> CheckerState<'a> {
                 let Some(&remote_flags) = remote_members.get(&name) else {
                     continue;
                 };
+                // For JSX namespace mixing with runtime-exported mapped aliases
+                // (for example Emotion's `type IntrinsicElements = { ... }`),
+                // tsc does not report TS2300 against a local `interface IntrinsicElements`.
+                if name == "IntrinsicElements"
+                    && (flags & tsz_binder::symbol_flags::INTERFACE) != 0
+                    && (remote_flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0
+                {
+                    continue;
+                }
                 if !Self::declarations_conflict(flags, remote_flags) {
                     continue;
                 }
