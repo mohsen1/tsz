@@ -263,6 +263,24 @@ pub(crate) fn add_undefined_for_indexed_access(db: &dyn TypeDatabase, type_id: T
     db.union2(type_id, TypeId::UNDEFINED)
 }
 
+/// Resolve a `Lazy(DefId)` type through the checker environment when available.
+///
+/// This keeps checker code free of raw lazy-definition lookups and keeps the
+/// behavior centralized in the boundary layer.
+pub(crate) fn resolve_lazy_def_with_env(
+    db: &dyn TypeDatabase,
+    env: Option<&tsz_solver::TypeEnvironment>,
+    type_id: TypeId,
+) -> TypeId {
+    if let Some(def_id) = get_lazy_def_id(db, type_id)
+        && let Some(environment) = env
+        && let Some(resolved) = environment.get_def(def_id)
+    {
+        return resolved;
+    }
+    type_id
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
