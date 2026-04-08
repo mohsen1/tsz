@@ -796,6 +796,7 @@ impl<'a> CheckerState<'a> {
         source_display: String,
     ) -> String {
         if self.is_literal_sensitive_assignment_target(target)
+            || source_display.contains("=>")
             || !Self::display_has_member_literals_assignability(&source_display)
         {
             return source_display;
@@ -816,7 +817,9 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         target_display: String,
     ) -> String {
-        if !Self::display_has_member_literals_assignability(&target_display) {
+        if target_display.contains("=>")
+            || !Self::display_has_member_literals_assignability(&target_display)
+        {
             return target_display;
         }
         let evaluated = self.evaluate_type_for_assignability(target);
