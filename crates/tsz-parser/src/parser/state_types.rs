@@ -2339,6 +2339,16 @@ impl ParserState {
                     },
                 );
             } else {
+                // Private identifiers are not currently valid as indexed-access
+                // type arguments (e.g. `C[#bar]`). Keep the malformed tail in the
+                // token stream so declaration-list recovery can emit the same
+                // follow-up diagnostics as tsc.
+                if self.is_token(SyntaxKind::PrivateIdentifier) {
+                    self.parse_expected(SyntaxKind::CloseBracketToken);
+                    self.next_token(); // consume `#bar`, leave trailing `]` for caller recovery
+                    break;
+                }
+
                 // Indexed access type: T[K]
                 let index_type = self.parse_type();
                 self.parse_expected(SyntaxKind::CloseBracketToken);
