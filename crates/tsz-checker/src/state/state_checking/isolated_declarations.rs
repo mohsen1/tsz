@@ -6,6 +6,7 @@
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::state::CheckerState;
+use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -903,7 +904,8 @@ impl<'a> CheckerState<'a> {
             if member.initializer.is_none() {
                 continue;
             }
-            if !self.is_isolated_decl_enum_value(member.initializer, enum_idx) {
+            let mut seen_members = FxHashSet::default();
+            if !self.is_isolated_decl_enum_value(member.initializer, enum_idx, &mut seen_members) {
                 self.error_at_node(
                     member.name,
                     diagnostic_messages::ENUM_MEMBER_INITIALIZERS_MUST_BE_COMPUTABLE_WITHOUT_REFERENCES_TO_EXTERNAL_SYMBO,
@@ -914,7 +916,12 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if an enum member initializer is computable without external references.
-    fn is_isolated_decl_enum_value(&self, init_idx: NodeIndex, enum_idx: NodeIndex) -> bool {
+    fn is_isolated_decl_enum_value(
+        &self,
+        init_idx: NodeIndex,
+        enum_idx: NodeIndex,
+        seen_members: &mut FxHashSet<NodeIndex>,
+    ) -> bool {
         let Some(init_node) = self.ctx.arena.get(init_idx) else {
             return true;
         };
@@ -928,11 +935,13 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_unary_expr(init_node)
-                .is_some_and(|unary| self.is_isolated_decl_enum_value(unary.operand, enum_idx)),
+                .is_some_and(|unary| {
+                    self.is_isolated_decl_enum_value(unary.operand, enum_idx, seen_members)
+                }),
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 if let Some(bin) = self.ctx.arena.get_binary_expr(init_node) {
-                    self.is_isolated_decl_enum_value(bin.left, enum_idx)
-                        && self.is_isolated_decl_enum_value(bin.right, enum_idx)
+                    self.is_isolated_decl_enum_value(bin.left, enum_idx, seen_members)
+                        && self.is_isolated_decl_enum_value(bin.right, enum_idx, seen_members)
                 } else {
                     false
                 }
@@ -941,22 +950,50 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_parenthesized(init_node)
-                .is_some_and(|paren| self.is_isolated_decl_enum_value(paren.expression, enum_idx)),
+                .is_some_and(|paren| {
+                    self.is_isolated_decl_enum_value(paren.expression, enum_idx, seen_members)
+                }),
+            // Runtime-computed enum members are allowed for isolated declarations.
+            // TS9020 is about references to external symbols, not arbitrary computations.
+            k if k == syntax_kind_ext::CALL_EXPRESSION => true,
             k if k == SyntaxKind::Identifier as u16 => {
-                // An unqualified identifier — check if it refers to a member of the same enum
-                self.is_same_enum_member_reference(init_idx, enum_idx)
+                self.is_same_enum_member_reference(init_idx, enum_idx, seen_members)
             }
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 // E.g. `Flag.AB` or `Flag["A"]`
                 if let Some(access) = self.ctx.arena.get_access_expr(init_node) {
-                    self.is_same_enum_access(access.expression, enum_idx)
+                    if !self.is_same_enum_access(access.expression, enum_idx) {
+                        return false;
+                    }
+                    self.ctx
+                        .arena
+                        .get_identifier_at(access.name_or_argument)
+                        .is_some_and(|member_ident| {
+                            self.is_same_enum_member_named_computable(
+                                &member_ident.escaped_text,
+                                enum_idx,
+                                seen_members,
+                            )
+                        })
                 } else {
                     false
                 }
             }
             k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 if let Some(access) = self.ctx.arena.get_access_expr(init_node) {
-                    self.is_same_enum_access(access.expression, enum_idx)
+                    if !self.is_same_enum_access(access.expression, enum_idx) {
+                        return false;
+                    }
+                    self.ctx
+                        .arena
+                        .get_literal_at(access.name_or_argument)
+                        .is_some_and(|literal| {
+                            self.is_same_enum_member_named_computable(
+                                &literal.text,
+                                enum_idx,
+                                seen_members,
+                            )
+                        })
                 } else {
                     false
                 }
@@ -966,12 +1003,24 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if an identifier refers to a member of the same enum.
-    fn is_same_enum_member_reference(&self, id_idx: NodeIndex, enum_idx: NodeIndex) -> bool {
+    fn is_same_enum_member_reference(
+        &self,
+        id_idx: NodeIndex,
+        enum_idx: NodeIndex,
+        seen_members: &mut FxHashSet<NodeIndex>,
+    ) -> bool {
         let Some(ident) = self.ctx.arena.get_identifier_at(id_idx) else {
             return false;
         };
-        let name = &ident.escaped_text;
+        self.is_same_enum_member_named_computable(&ident.escaped_text, enum_idx, seen_members)
+    }
 
+    fn is_same_enum_member_named_computable(
+        &self,
+        name: &str,
+        enum_idx: NodeIndex,
+        seen_members: &mut FxHashSet<NodeIndex>,
+    ) -> bool {
         // Check if this name is a member of the current enum
         let Some(enum_node) = self.ctx.arena.get(enum_idx) else {
             return false;
@@ -983,9 +1032,18 @@ impl<'a> CheckerState<'a> {
             if let Some(member_node) = self.ctx.arena.get(member_idx)
                 && let Some(member) = self.ctx.arena.get_enum_member(member_node)
                 && let Some(member_ident) = self.ctx.arena.get_identifier_at(member.name)
-                && member_ident.escaped_text == *name
+                && member_ident.escaped_text == name
             {
-                return true;
+                if !seen_members.insert(member_idx) {
+                    // Avoid infinite recursion for cyclic member references.
+                    return true;
+                }
+
+                let result = member.initializer.is_none()
+                    || self.is_isolated_decl_enum_value(member.initializer, enum_idx, seen_members);
+
+                seen_members.remove(&member_idx);
+                return result;
             }
         }
         false
