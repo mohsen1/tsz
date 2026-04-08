@@ -786,10 +786,7 @@ impl<'a> CheckerState<'a> {
         let target_str = self.format_assignability_type_for_message(target, source);
         let target_str =
             self.rewrite_target_display_for_non_literal_assignability(target, target_str);
-        (
-            source_str,
-            target_str,
-        )
+        (source_str, target_str)
     }
 
     pub(super) fn rewrite_source_display_for_non_literal_target_assignability(

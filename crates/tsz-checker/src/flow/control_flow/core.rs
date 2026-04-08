@@ -2138,11 +2138,8 @@ impl<'a> FlowAnalyzer<'a> {
                             self.make_narrowing_context()
                         };
                         // Apply the guard with NEGATIVE sense (because of the !)
-                        let narrowed = narrowing.narrow_type(
-                            narrowed_pre_type,
-                            &guard,
-                            GuardSense::Negative,
-                        );
+                        let narrowed =
+                            narrowing.narrow_type(narrowed_pre_type, &guard, GuardSense::Negative);
                         if narrowed != narrowed_pre_type {
                             return narrowed;
                         }

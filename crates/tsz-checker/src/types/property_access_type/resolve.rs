@@ -1433,7 +1433,10 @@ impl<'a> CheckerState<'a> {
                 .and_then(|owner_expr| {
                     // Only for external/imported prototype owners. Local function/class
                     // owners are handled by regular JS prototype-this logic.
-                    if self.js_prototype_owner_function_target(owner_expr).is_some() {
+                    if self
+                        .js_prototype_owner_function_target(owner_expr)
+                        .is_some()
+                    {
                         return None;
                     }
                     let owner_type = self.get_type_of_node(owner_expr);
@@ -1936,13 +1939,15 @@ impl<'a> CheckerState<'a> {
                     let this_prototype_owner_expr = self
                         .find_enclosing_non_arrow_function(access.expression)
                         .and_then(|func_idx| self.js_prototype_owner_expression_for_node(func_idx));
-                    let this_owner_is_js_prototype_method = this_prototype_owner_expr
-                        .is_some_and(|owner_expr| {
-                            self.js_prototype_owner_function_target(owner_expr).is_some()
+                    let this_owner_is_js_prototype_method =
+                        this_prototype_owner_expr.is_some_and(|owner_expr| {
+                            self.js_prototype_owner_function_target(owner_expr)
+                                .is_some()
                         });
                     let this_owner_is_external_js_prototype_method = this_prototype_owner_expr
                         .is_some_and(|owner_expr| {
-                            self.js_prototype_owner_function_target(owner_expr).is_none()
+                            self.js_prototype_owner_function_target(owner_expr)
+                                .is_none()
                         });
                     if is_this_access
                         && this_owner_is_object_literal

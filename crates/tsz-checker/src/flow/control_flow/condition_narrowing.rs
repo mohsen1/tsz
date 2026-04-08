@@ -756,11 +756,8 @@ impl<'a> FlowAnalyzer<'a> {
                             // Some complex generic predicates are not reduced by direct
                             // negative narrowing. Mirror tsc behavior by subtracting the
                             // positively narrowed subset from the source when possible.
-                            let positive = narrowing.narrow_type(
-                                type_id,
-                                &guard,
-                                GuardSense::Positive,
-                            );
+                            let positive =
+                                narrowing.narrow_type(type_id, &guard, GuardSense::Positive);
                             if positive != type_id && positive != TypeId::NEVER {
                                 let excluded = narrowing.narrow_excluding_type(type_id, positive);
                                 if excluded != type_id {
@@ -787,12 +784,8 @@ impl<'a> FlowAnalyzer<'a> {
                         }
                         if result == type_id
                             && let Some(call) = self.arena.get_call_expr(cond_node)
-                            && let Some(retry) = self.narrow_by_call_predicate(
-                                type_id,
-                                call,
-                                target,
-                                is_true_branch,
-                            )
+                            && let Some(retry) =
+                                self.narrow_by_call_predicate(type_id, call, target, is_true_branch)
                             && retry != type_id
                         {
                             return retry;
