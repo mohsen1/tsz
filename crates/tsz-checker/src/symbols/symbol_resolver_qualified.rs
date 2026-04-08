@@ -168,6 +168,8 @@ impl<'a> CheckerState<'a> {
             if let Some(exports) = left_symbol.exports.as_ref()
                 && let Some(member_sym) = exports.get(right_name)
             {
+                let member_sym =
+                    self.propagate_cross_file_member_target(left_sym, member_sym, right_name);
                 let is_value_only = (self
                     .alias_resolves_to_value_only(member_sym, Some(right_name))
                     || self.symbol_is_value_only(member_sym, Some(right_name)))
@@ -192,6 +194,11 @@ impl<'a> CheckerState<'a> {
                     visited_aliases,
                 )
             {
+                let reexported_sym = self.propagate_cross_file_member_target(
+                    left_sym,
+                    reexported_sym,
+                    right_name,
+                );
                 let is_value_only = (self
                     .alias_resolves_to_value_only(reexported_sym, Some(right_name))
                     || self.symbol_is_value_only(reexported_sym, Some(right_name)))
@@ -205,6 +212,11 @@ impl<'a> CheckerState<'a> {
             if let Some(reexported_sym) =
                 self.resolve_member_from_import_equals_alias(left_sym, right_name, visited_aliases)
             {
+                let reexported_sym = self.propagate_cross_file_member_target(
+                    left_sym,
+                    reexported_sym,
+                    right_name,
+                );
                 let is_value_only = (self
                     .alias_resolves_to_value_only(reexported_sym, Some(right_name))
                     || self.symbol_is_value_only(reexported_sym, Some(right_name)))
@@ -222,6 +234,8 @@ impl<'a> CheckerState<'a> {
                     visited_aliases,
                 )
             {
+                let augmented_sym =
+                    self.propagate_cross_file_member_target(left_sym, augmented_sym, right_name);
                 let is_value_only = (self
                     .alias_resolves_to_value_only(augmented_sym, Some(right_name))
                     || self.symbol_is_value_only(augmented_sym, Some(right_name)))
@@ -312,6 +326,8 @@ impl<'a> CheckerState<'a> {
         if let Some(exports) = left_symbol.exports.as_ref()
             && let Some(member_sym) = exports.get(right_name)
         {
+            let member_sym =
+                self.propagate_cross_file_member_target(left_sym, member_sym, right_name);
             let is_value_only = (self.alias_resolves_to_value_only(member_sym, Some(right_name))
                 || self.symbol_is_value_only(member_sym, Some(right_name)))
                 && !self.symbol_is_type_only(member_sym, Some(right_name));
@@ -336,6 +352,11 @@ impl<'a> CheckerState<'a> {
             if let Some(reexported_sym) =
                 self.resolve_reexported_member_symbol(module_specifier, right_name, visited_aliases)
             {
+                let reexported_sym = self.propagate_cross_file_member_target(
+                    left_sym,
+                    reexported_sym,
+                    right_name,
+                );
                 let is_value_only = (self
                     .alias_resolves_to_value_only(reexported_sym, Some(right_name))
                     || self.symbol_is_value_only(reexported_sym, Some(right_name)))
@@ -350,6 +371,8 @@ impl<'a> CheckerState<'a> {
         if let Some(reexported_sym) =
             self.resolve_member_from_import_equals_alias(left_sym, right_name, visited_aliases)
         {
+            let reexported_sym =
+                self.propagate_cross_file_member_target(left_sym, reexported_sym, right_name);
             let is_value_only = (self
                 .alias_resolves_to_value_only(reexported_sym, Some(right_name))
                 || self.symbol_is_value_only(reexported_sym, Some(right_name)))
@@ -367,6 +390,8 @@ impl<'a> CheckerState<'a> {
                 visited_aliases,
             )
         {
+            let augmented_sym =
+                self.propagate_cross_file_member_target(left_sym, augmented_sym, right_name);
             let is_value_only = (self
                 .alias_resolves_to_value_only(augmented_sym, Some(right_name))
                 || self.symbol_is_value_only(augmented_sym, Some(right_name)))
@@ -378,6 +403,46 @@ impl<'a> CheckerState<'a> {
         }
 
         TypeSymbolResolution::NotFound
+    }
+
+    /// Propagate cross-file symbol ownership from a resolved namespace/module symbol
+    /// to one of its exported members.
+    ///
+    /// Without this, member `SymbolId`s discovered through cross-file namespace exports
+    /// can be interpreted against the current file's binder (SymbolId collision), which
+    /// yields incorrect types (for example resolving `Foo.Thing` to `number` instead of
+    /// the exported interface).
+    fn propagate_cross_file_member_target(
+        &self,
+        parent_sym_id: SymbolId,
+        member_sym_id: SymbolId,
+        member_name: &str,
+    ) -> SymbolId {
+        if self.ctx.has_symbol_file_index(member_sym_id) {
+            return member_sym_id;
+        }
+
+        let parent_file_idx = self.ctx.resolve_symbol_file_index(parent_sym_id).or_else(|| {
+            self.get_cross_file_symbol(parent_sym_id).and_then(|symbol| {
+                if symbol.decl_file_idx != u32::MAX {
+                    Some(symbol.decl_file_idx as usize)
+                } else {
+                    None
+                }
+            })
+        });
+
+        if let Some(file_idx) = parent_file_idx {
+            if let Some(local_sym) = self.ctx.binder.get_symbol(member_sym_id) {
+                if local_sym.escaped_name.as_str() != member_name {
+                    self.ctx.register_symbol_file_target(member_sym_id, file_idx);
+                }
+            } else {
+                self.ctx.register_symbol_file_target(member_sym_id, file_idx);
+            }
+        }
+
+        member_sym_id
     }
 
     pub(crate) fn resolve_identifier_symbol_from_all_binders(

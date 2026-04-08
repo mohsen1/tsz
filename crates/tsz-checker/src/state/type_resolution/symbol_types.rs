@@ -109,9 +109,29 @@ impl<'a> CheckerState<'a> {
                         flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0;
                     let should_force_interface_decl_path =
                         has_interface_decl && (flags & symbol_flags::INTERFACE) == 0;
+                    // Cross-file interface symbols can share SymbolId values with
+                    // local symbols in the current binder. Resolve them through a
+                    // delegated checker anchored to the symbol's home arena first.
+                    let prefer_cross_file_interface = self
+                        .ctx
+                        .resolve_symbol_file_index(sym_id)
+                        .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx);
 
                     let mut structural_type =
-                        if is_merged_with_namespace || should_force_interface_decl_path {
+                        if prefer_cross_file_interface {
+                            let delegated = self.delegate_cross_arena_interface_type(sym_id);
+                            delegated.unwrap_or_else(|| {
+                                    if is_merged_with_namespace || should_force_interface_decl_path
+                                    {
+                                        // Compute the interface type directly, bypassing
+                                        // get_type_of_symbol which would return the namespace
+                                        // type for merged symbols.
+                                        self.compute_interface_type_from_declarations(sym_id)
+                                    } else {
+                                        self.get_type_of_symbol(sym_id)
+                                    }
+                                })
+                        } else if is_merged_with_namespace || should_force_interface_decl_path {
                             // Compute the interface type directly, bypassing get_type_of_symbol
                             // which would return the namespace type for merged symbols.
                             self.compute_interface_type_from_declarations(sym_id)
@@ -174,13 +194,19 @@ impl<'a> CheckerState<'a> {
                         && structural_type != TypeId::ANY
                         && structural_type != TypeId::UNKNOWN
                     {
+                        if prefer_cross_file_interface {
+                            // Cross-file SymbolId collisions can leave a stale local
+                            // cache entry for this symbol. Refresh the symbol cache
+                            // with the delegated interface body.
+                            self.ctx.symbol_types.insert(sym_id, structural_type);
+                        }
                         // Only register if not already present in type_env
                         let needs_registration = self
                             .ctx
                             .type_env
                             .try_borrow()
                             .is_ok_and(|env| env.get_def(def_id).is_none());
-                        if needs_registration {
+                        if needs_registration || prefer_cross_file_interface {
                             let type_params =
                                 self.ctx.get_def_type_params(def_id).unwrap_or_default();
                             if type_params.is_empty() {

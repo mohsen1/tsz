@@ -566,6 +566,7 @@ impl<'a> CheckerState<'a> {
                         &message,
                         diagnostic_codes::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
                     );
+                    self.ctx.import_conflict_names.insert(name.clone());
                     return;
                 }
             }
@@ -656,6 +657,7 @@ impl<'a> CheckerState<'a> {
                             &message,
                             diagnostic_codes::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
                         );
+                        self.ctx.import_conflict_names.insert(name.clone());
                         return; // Don't emit further errors for this import
                     }
                 }

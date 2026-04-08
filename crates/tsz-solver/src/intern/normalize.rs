@@ -471,7 +471,7 @@ impl TypeInterner {
         }
     }
 
-    fn unit_values_are_disjoint(&self, left: &UnitValueKey, right: &UnitValueKey) -> bool {
+    fn unit_values_are_disjoint(left: &UnitValueKey, right: &UnitValueKey) -> bool {
         use UnitValueKey::*;
 
         match (left, right) {
@@ -484,11 +484,11 @@ impl TypeInterner {
                 if def_a != def_b {
                     true
                 } else {
-                    self.unit_values_are_disjoint(key_a, key_b)
+                    Self::unit_values_are_disjoint(key_a, key_b)
                 }
             }
             (Enum(_, key), other) | (other, Enum(_, key)) => {
-                self.unit_values_are_disjoint(key, other)
+                Self::unit_values_are_disjoint(key, other)
             }
             _ => true,
         }
@@ -503,7 +503,7 @@ impl TypeInterner {
             };
             if seen
                 .iter()
-                .any(|existing| self.unit_values_are_disjoint(existing, &key))
+                .any(|existing| Self::unit_values_are_disjoint(existing, &key))
             {
                 return true;
             }
