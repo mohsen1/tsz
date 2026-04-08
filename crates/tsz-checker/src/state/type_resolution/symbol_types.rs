@@ -117,27 +117,25 @@ impl<'a> CheckerState<'a> {
                         .resolve_symbol_file_index(sym_id)
                         .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx);
 
-                    let mut structural_type =
-                        if prefer_cross_file_interface {
-                            let delegated = self.delegate_cross_arena_interface_type(sym_id);
-                            delegated.unwrap_or_else(|| {
-                                    if is_merged_with_namespace || should_force_interface_decl_path
-                                    {
-                                        // Compute the interface type directly, bypassing
-                                        // get_type_of_symbol which would return the namespace
-                                        // type for merged symbols.
-                                        self.compute_interface_type_from_declarations(sym_id)
-                                    } else {
-                                        self.get_type_of_symbol(sym_id)
-                                    }
-                                })
-                        } else if is_merged_with_namespace || should_force_interface_decl_path {
-                            // Compute the interface type directly, bypassing get_type_of_symbol
-                            // which would return the namespace type for merged symbols.
-                            self.compute_interface_type_from_declarations(sym_id)
-                        } else {
-                            self.get_type_of_symbol(sym_id)
-                        };
+                    let mut structural_type = if prefer_cross_file_interface {
+                        let delegated = self.delegate_cross_arena_interface_type(sym_id);
+                        delegated.unwrap_or_else(|| {
+                            if is_merged_with_namespace || should_force_interface_decl_path {
+                                // Compute the interface type directly, bypassing
+                                // get_type_of_symbol which would return the namespace
+                                // type for merged symbols.
+                                self.compute_interface_type_from_declarations(sym_id)
+                            } else {
+                                self.get_type_of_symbol(sym_id)
+                            }
+                        })
+                    } else if is_merged_with_namespace || should_force_interface_decl_path {
+                        // Compute the interface type directly, bypassing get_type_of_symbol
+                        // which would return the namespace type for merged symbols.
+                        self.compute_interface_type_from_declarations(sym_id)
+                    } else {
+                        self.get_type_of_symbol(sym_id)
+                    };
                     // Cross-file fallback: if the structural type could not be
                     // computed locally, the declarations may be in a different
                     // arena/binder. Delegate to a child checker with the symbol's

@@ -194,11 +194,8 @@ impl<'a> CheckerState<'a> {
                     visited_aliases,
                 )
             {
-                let reexported_sym = self.propagate_cross_file_member_target(
-                    left_sym,
-                    reexported_sym,
-                    right_name,
-                );
+                let reexported_sym =
+                    self.propagate_cross_file_member_target(left_sym, reexported_sym, right_name);
                 let is_value_only = (self
                     .alias_resolves_to_value_only(reexported_sym, Some(right_name))
                     || self.symbol_is_value_only(reexported_sym, Some(right_name)))
@@ -212,11 +209,8 @@ impl<'a> CheckerState<'a> {
             if let Some(reexported_sym) =
                 self.resolve_member_from_import_equals_alias(left_sym, right_name, visited_aliases)
             {
-                let reexported_sym = self.propagate_cross_file_member_target(
-                    left_sym,
-                    reexported_sym,
-                    right_name,
-                );
+                let reexported_sym =
+                    self.propagate_cross_file_member_target(left_sym, reexported_sym, right_name);
                 let is_value_only = (self
                     .alias_resolves_to_value_only(reexported_sym, Some(right_name))
                     || self.symbol_is_value_only(reexported_sym, Some(right_name)))
@@ -352,11 +346,8 @@ impl<'a> CheckerState<'a> {
             if let Some(reexported_sym) =
                 self.resolve_reexported_member_symbol(module_specifier, right_name, visited_aliases)
             {
-                let reexported_sym = self.propagate_cross_file_member_target(
-                    left_sym,
-                    reexported_sym,
-                    right_name,
-                );
+                let reexported_sym =
+                    self.propagate_cross_file_member_target(left_sym, reexported_sym, right_name);
                 let is_value_only = (self
                     .alias_resolves_to_value_only(reexported_sym, Some(right_name))
                     || self.symbol_is_value_only(reexported_sym, Some(right_name)))
@@ -422,23 +413,29 @@ impl<'a> CheckerState<'a> {
             return member_sym_id;
         }
 
-        let parent_file_idx = self.ctx.resolve_symbol_file_index(parent_sym_id).or_else(|| {
-            self.get_cross_file_symbol(parent_sym_id).and_then(|symbol| {
-                if symbol.decl_file_idx != u32::MAX {
-                    Some(symbol.decl_file_idx as usize)
-                } else {
-                    None
-                }
-            })
-        });
+        let parent_file_idx = self
+            .ctx
+            .resolve_symbol_file_index(parent_sym_id)
+            .or_else(|| {
+                self.get_cross_file_symbol(parent_sym_id)
+                    .and_then(|symbol| {
+                        if symbol.decl_file_idx != u32::MAX {
+                            Some(symbol.decl_file_idx as usize)
+                        } else {
+                            None
+                        }
+                    })
+            });
 
         if let Some(file_idx) = parent_file_idx {
             if let Some(local_sym) = self.ctx.binder.get_symbol(member_sym_id) {
                 if local_sym.escaped_name.as_str() != member_name {
-                    self.ctx.register_symbol_file_target(member_sym_id, file_idx);
+                    self.ctx
+                        .register_symbol_file_target(member_sym_id, file_idx);
                 }
             } else {
-                self.ctx.register_symbol_file_target(member_sym_id, file_idx);
+                self.ctx
+                    .register_symbol_file_target(member_sym_id, file_idx);
             }
         }
 
