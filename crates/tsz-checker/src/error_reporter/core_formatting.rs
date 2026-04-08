@@ -385,6 +385,14 @@ impl<'a> CheckerState<'a> {
         if ty_symbol.escaped_name != other_symbol.escaped_name {
             return None;
         }
+        if self.is_exported_external_module_symbol(ty_sym)
+            && let Some(module_name) = self.module_specifier_for_symbol(ty_sym)
+        {
+            return Some(format!(
+                "import(\"{module_name}\").{}",
+                ty_symbol.escaped_name
+            ));
+        }
         let qualified = self.qualified_symbol_name_for_message(ty_sym)?;
         if qualified == ty_symbol.escaped_name {
             return None;
@@ -395,7 +403,10 @@ impl<'a> CheckerState<'a> {
     fn nominal_shape_symbol_for_display(&mut self, ty: TypeId) -> Option<tsz_binder::SymbolId> {
         let resolved = self.evaluate_type_for_assignability(ty);
         [ty, resolved].into_iter().find_map(|candidate| {
-            tsz_solver::type_queries::get_type_shape_symbol(self.ctx.types, candidate)
+            tsz_solver::type_queries::get_type_shape_symbol(self.ctx.types, candidate).or_else(|| {
+                let def_id = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, candidate)?;
+                self.ctx.def_to_symbol_id_with_fallback(def_id)
+            })
         })
     }
 
@@ -421,6 +432,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_exported_external_module_enum_symbol(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        self.is_exported_external_module_symbol(sym_id)
+    }
+
+    fn is_exported_external_module_symbol(&self, sym_id: tsz_binder::SymbolId) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };
