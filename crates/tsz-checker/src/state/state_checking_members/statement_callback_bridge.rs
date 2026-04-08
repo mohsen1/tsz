@@ -357,11 +357,16 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                                 }
                             })
                         {
-                            let lma_error_node =
-                                self.get_declaration_name_node(lma_decl_idx).unwrap_or(lma_decl_idx);
+                            let lma_error_node = self
+                                .get_declaration_name_node(lma_decl_idx)
+                                .unwrap_or(lma_decl_idx);
                             let lma_message = "Duplicate identifier 'LibraryManagedAttributes'.";
-                            let lma_start =
-                                self.ctx.arena.get(lma_error_node).map(|n| n.pos).unwrap_or(u32::MAX);
+                            let lma_start = self
+                                .ctx
+                                .arena
+                                .get(lma_error_node)
+                                .map(|n| n.pos)
+                                .unwrap_or(u32::MAX);
                             let already_reported = self.ctx.diagnostics.iter().any(|diag| {
                                 diag.code
                                     == crate::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER

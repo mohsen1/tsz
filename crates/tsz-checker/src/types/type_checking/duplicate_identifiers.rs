@@ -947,8 +947,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     if is_external_module
-                        && ((decl_is_module_scoped_local
-                            && other_is_remote_global_namespace_alias)
+                        && ((decl_is_module_scoped_local && other_is_remote_global_namespace_alias)
                             || (other_is_module_scoped_local
                                 && decl_is_remote_global_namespace_alias))
                     {
