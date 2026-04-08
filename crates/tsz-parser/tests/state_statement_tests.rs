@@ -217,6 +217,30 @@ fn variable_declaration_recovery_prefers_ts1134_for_unknown_identifier_tail() {
 }
 
 #[test]
+fn variable_declaration_recovery_private_identifier_indexed_access_tail() {
+    let (parser, _root) = parse_source("const badForNow: C[#bar] = 3;");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+
+    let ts1005_count = codes
+        .iter()
+        .filter(|&&code| code == diagnostic_codes::EXPECTED)
+        .count();
+    let ts1134_count = codes
+        .iter()
+        .filter(|&&code| code == diagnostic_codes::VARIABLE_DECLARATION_EXPECTED)
+        .count();
+
+    assert_eq!(
+        ts1005_count, 2,
+        "expected two TS1005 diagnostics (']' and ',') for private-name indexed access tail, got {codes:?}"
+    );
+    assert_eq!(
+        ts1134_count, 2,
+        "expected two TS1134 diagnostics at assignment tail after malformed indexed access, got {codes:?}"
+    );
+}
+
+#[test]
 fn parse_invalid_import_non_clause_start_reports_ts1128() {
     // `import 10;` — `10` is not a valid import clause start (not an identifier,
     // not `*`, `{`, `type`, or `defer`). tsc emits TS1128 "Declaration or statement

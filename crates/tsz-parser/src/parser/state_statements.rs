@@ -1821,7 +1821,7 @@ impl ParserState {
                 // When the variable name itself was erroneous (e.g., TS1389 for a
                 // reserved word like `const export`), suppress the follow-up TS1005
                 // comma error to match tsc's recovery behavior.
-                if decl_had_error {
+                if decl_had_error && !self.is_token(SyntaxKind::CloseBracketToken) {
                     break;
                 }
 
@@ -1963,6 +1963,29 @@ impl ParserState {
                             diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
                         );
                         self.next_token();
+                    } else if unexpected_token == SyntaxKind::CloseBracketToken
+                        && self.is_token(SyntaxKind::EqualsToken)
+                    {
+                        // `const x: C[#bar] = 3;` is recovered as a malformed
+                        // declaration tail after `]`, producing TS1134 at `=`
+                        // and at the initializer start (matching tsc).
+                        self.parse_error_at_current_token(
+                            "Variable declaration expected.",
+                            diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
+                        );
+                        self.next_token();
+                        if !matches!(
+                            self.token(),
+                            SyntaxKind::SemicolonToken
+                                | SyntaxKind::CloseBraceToken
+                                | SyntaxKind::EndOfFileToken
+                        ) {
+                            self.parse_error_at_current_token(
+                                "Variable declaration expected.",
+                                diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
+                            );
+                            self.next_token();
+                        }
                     }
                     if was_dot && token_is_keyword(self.token()) {
                         use tsz_common::diagnostics::diagnostic_messages;
