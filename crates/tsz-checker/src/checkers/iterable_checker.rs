@@ -944,17 +944,23 @@ impl<'a> CheckerState<'a> {
         }
 
         if resolved_type == TypeId::UNKNOWN {
-            // tsc emits TS2571 ("Object is of type 'unknown'") before TS2488 when
-            // the array binding pattern has elements (e.g. `const [a, b] = f()`).
-            // For empty patterns (`const [] = f()`), only TS2488 is emitted.
-            // For catch clause destructuring, tsc does NOT emit TS2571 — only TS2488.
-            let is_catch_clause = self.is_binding_pattern_in_catch_clause(pattern_idx);
-            if !is_catch_clause
+            // tsc emits TS2571 ("Object is of type 'unknown'") for empty array
+            // binding patterns (`const [] = f()`), together with TS2488.
+            // For non-empty patterns (`const [a, b] = f()`), only TS2488 is emitted.
+            // For catch clause destructuring, tsc does NOT emit TS2571.
+            let ts2571_span = if !self.is_binding_pattern_in_catch_clause(pattern_idx)
                 && let Some(pattern_node) = self.ctx.arena.get(pattern_idx)
                 && let Some(binding_pattern) = self.ctx.arena.get_binding_pattern(pattern_node)
-                && !binding_pattern.elements.nodes.is_empty()
-                && let Some((start, end)) = self.get_node_span(pattern_idx)
+                && binding_pattern.elements.nodes.is_empty()
             {
+                self.get_node_span(pattern_idx)
+            } else {
+                None
+            };
+
+            // tsc reports TS2488 before TS2571 for this path.
+            self.emit_ts2488_not_iterable(pattern_type, pattern_idx, is_assignment_array_target);
+            if let Some((start, end)) = ts2571_span {
                 self.error(
                     start,
                     end.saturating_sub(start),
@@ -962,7 +968,6 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN,
                 );
             }
-            self.emit_ts2488_not_iterable(pattern_type, pattern_idx, is_assignment_array_target);
             return false;
         }
 
