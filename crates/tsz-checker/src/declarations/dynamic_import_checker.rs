@@ -169,13 +169,55 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Check assignability — emit TS2322/TS2559 if not assignable
-        self.check_assignable_or_report_at_exact_anchor(
-            options_type,
-            import_call_options_type,
-            options_idx,
-            options_idx,
-        );
+        // For import attribute options (`with` / `assert`), prefer a top-level
+        // TS2322 anchored at the options object, matching tsc fingerprints.
+        if self.import_options_has_attribute_property(options_idx) {
+            if !self.is_assignable_to(options_type, import_call_options_type) {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                let source_str = self.format_type(options_type);
+                let message = format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_str, "ImportCallOptions"],
+                );
+                self.error_at_node(
+                    options_idx,
+                    &message,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                );
+            }
+        } else {
+            // Check assignability — emit TS2322/TS2559 if not assignable
+            self.check_assignable_or_report_at_exact_anchor(
+                options_type,
+                import_call_options_type,
+                options_idx,
+                options_idx,
+            );
+        }
+    }
+
+    fn import_options_has_attribute_property(&self, obj_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let children = self.ctx.arena.get_children(obj_idx);
+        for child_idx in children {
+            let Some(child_node) = self.ctx.arena.get(child_idx) else {
+                continue;
+            };
+            if child_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                continue;
+            }
+            let Some(prop) = self.ctx.arena.get_property_assignment(child_node) else {
+                continue;
+            };
+            let Some(name) = self.get_property_name(prop.name) else {
+                continue;
+            };
+            if name == "with" || name == "assert" {
+                return true;
+            }
+        }
+        false
     }
 
     /// Build an object type from a dynamic import options literal, using string literal
