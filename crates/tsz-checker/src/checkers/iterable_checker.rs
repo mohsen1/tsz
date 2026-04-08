@@ -7,6 +7,7 @@ use crate::query_boundaries::checkers::iterable::{
     function_shape_for_type, is_array_type, is_string_literal_type, is_string_type, is_this_type,
     is_tuple_type, union_members_for_type,
 };
+use crate::query_boundaries::checkers::generic::get_object_shape;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -1303,7 +1304,7 @@ impl<'a> CheckerState<'a> {
     fn emit_ts2488_not_iterable(&mut self, type_id: TypeId, error_node: NodeIndex) {
         if let Some((start, end)) = self.get_node_span(error_node) {
             let is_fresh_object_literal = self.ctx.types.get_display_properties(type_id).is_some()
-                && tsz_solver::type_queries::get_object_shape(self.ctx.types, type_id)
+                && get_object_shape(self.ctx.types, type_id)
                     .is_some_and(|shape| shape.symbol.is_none());
             let type_str = if is_fresh_object_literal {
                 self.format_type_diagnostic_widened(type_id)
