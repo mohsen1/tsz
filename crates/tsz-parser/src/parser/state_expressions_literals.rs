@@ -2729,6 +2729,31 @@ impl ParserState {
         self.push_label_scope();
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
+        } else if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+            // tsc prefers "'{' expected." on `=>` in object methods written like:
+            // `m(n) => T {}` (should be `m(n): T {}`), then TS1434 on the stray type token.
+            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
+            self.next_token(); // consume =>
+            if self.is_identifier_or_keyword() {
+                self.parse_error_at_current_token(
+                    diagnostic_messages::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                    diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                );
+                self.next_token();
+            }
+            if self.is_token(SyntaxKind::OpenBraceToken) {
+                let block = self.parse_block();
+                if self.is_token(SyntaxKind::CloseBraceToken) {
+                    self.parse_error_at_current_token(
+                        diagnostic_messages::DECLARATION_OR_STATEMENT_EXPECTED,
+                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                    );
+                }
+                block
+            } else {
+                NodeIndex::NONE
+            }
         } else {
             // tsc emits TS1005 "'{' expected." when an object method body is missing
             use tsz_common::diagnostics::diagnostic_codes;
