@@ -1263,29 +1263,59 @@ impl<'a> CheckerState<'a> {
 
                         let allow_namespace_default = self
                             .source_file_import_uses_system_default_namespace_fallback(module_name)
+                            || (!self.ctx.compiler_options.module.is_node_module()
+                                && self.ctx.allow_synthetic_default_imports()
+                                && export_equals_type.is_some())
                             || (self.ctx.compiler_options.module.is_node_module()
+                                && self.ctx.file_is_esm == Some(true)
+                                && !self.module_is_esm(module_name)
                                 && self.module_can_use_synthetic_default_import(module_name));
 
-                        // Namespace imports only get a synthetic required `default`
-                        // when the target actually has an export= surface.
-                        if let Some(eq_type) = export_equals_type
-                            && allow_namespace_default
-                        {
+                        // Namespace imports in CJS-fallback mode need a synthetic
+                        // required `default` that points to the module object surface.
+                        // This must be present even when there is no explicit `export =`,
+                        // and it must override an existing `default` property exported
+                        // as a regular value (e.g. `exports.default = "x"`), so that
+                        // `import * as ns from "./m.cjs"; ns.default.a` is valid.
+                        if allow_namespace_default {
                             let default_atom = self.ctx.types.intern_string("default");
-                            if !props.iter().any(|p| p.name == default_atom) {
-                                props.push(PropertyInfo {
-                                    name: default_atom,
-                                    type_id: eq_type,
-                                    write_type: eq_type,
-                                    optional: false,
-                                    readonly: false,
-                                    is_method: false,
-                                    is_class_prototype: false,
-                                    visibility: Visibility::Public,
-                                    parent_id: None,
-                                    declaration_order: 0,
-                                    is_string_named: false,
-                                });
+                            let can_use_cjs_namespace_default =
+                                self.module_can_use_synthetic_default_import(module_name);
+                            let has_named_default_prop =
+                                props.iter().any(|p| p.name == default_atom);
+                            let synthetic_default_type = if can_use_cjs_namespace_default
+                                && has_named_default_prop
+                            {
+                                Some(factory.object(props.clone()))
+                            } else {
+                                export_equals_type.or_else(|| {
+                                    can_use_cjs_namespace_default
+                                        .then(|| factory.object(props.clone()))
+                                })
+                            };
+                            if let Some(eq_type) = synthetic_default_type {
+                                if let Some(existing_default) =
+                                    props.iter_mut().find(|p| p.name == default_atom)
+                                {
+                                    existing_default.type_id = eq_type;
+                                    existing_default.write_type = eq_type;
+                                    existing_default.optional = false;
+                                    existing_default.readonly = false;
+                                } else {
+                                    props.push(PropertyInfo {
+                                        name: default_atom,
+                                        type_id: eq_type,
+                                        write_type: eq_type,
+                                        optional: false,
+                                        readonly: false,
+                                        is_method: false,
+                                        is_class_prototype: false,
+                                        visibility: Visibility::Public,
+                                        parent_id: None,
+                                        declaration_order: 0,
+                                        is_string_named: false,
+                                    });
+                                }
                             }
                         }
 
@@ -1314,7 +1344,11 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.types,
                                     export_equals_type,
                                 );
-                                if is_object_like && allow_namespace_default {
+                                let is_callable_like = tsz_solver::type_queries::is_callable_type(
+                                    self.ctx.types,
+                                    export_equals_type,
+                                );
+                                if allow_namespace_default && (is_object_like || is_callable_like) {
                                     return (namespace_type, Vec::new());
                                 }
                                 return (export_equals_type, Vec::new());
@@ -1355,12 +1389,15 @@ impl<'a> CheckerState<'a> {
                         Some(self.ctx.current_file_idx),
                     )
                     && surface.has_commonjs_exports
-                    && let Some(direct_export_type) = surface.direct_export_type
-                    && direct_export_type != TypeId::ANY
-                    && direct_export_type != TypeId::UNKNOWN
-                    && direct_export_type != TypeId::ERROR
                 {
-                    return (direct_export_type, Vec::new());
+                    if let Some(direct_export_type) = surface.direct_export_type
+                        && direct_export_type != TypeId::ANY
+                        && direct_export_type != TypeId::UNKNOWN
+                        && direct_export_type != TypeId::ERROR
+                    {
+                        return (direct_export_type, Vec::new());
+                    }
+
                 }
 
                 // In node16/nodenext, when an ESM file default-imports a CJS module,
@@ -1612,9 +1649,7 @@ impl<'a> CheckerState<'a> {
                         // For default imports without a default export, only
                         // synthesize a namespace fallback for CommonJS-shaped
                         // modules. Pure ESM modules must still report TS1192.
-                        if uses_system_namespace_default
-                            || self.module_can_use_synthetic_default_import(module_name)
-                        {
+                        if uses_system_namespace_default || is_node_esm_importing_cjs {
                             // Same circular module guard as namespace imports above
                             if self
                                 .ctx

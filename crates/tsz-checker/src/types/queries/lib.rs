@@ -2005,6 +2005,22 @@ impl<'a> CheckerState<'a> {
             )
         };
 
+        // Node ESM -> CJS namespace interop: `import * as ns from "./m.cjs"`
+        // should treat `ns.default` as the namespace object (module.exports),
+        // not as a potentially unrelated named `default` export value.
+        if property_name == "default"
+            && let Some(module_specifier) = import_module.as_deref()
+            && self.ctx.compiler_options.module.is_node_module()
+            && self.ctx.file_is_esm == Some(true)
+            && !self.module_is_esm(module_specifier)
+            && self.module_can_use_synthetic_default_import(module_specifier)
+        {
+            let namespace_type = self.get_type_of_symbol(sym_id);
+            if namespace_type != TypeId::ERROR && namespace_type != TypeId::UNKNOWN {
+                return Some(namespace_type);
+            }
+        }
+
         if let Some(member_id) = direct_member_id {
             // Check type-only wildcard export guard for direct members
             if let Some(ref module_specifier) = import_module
