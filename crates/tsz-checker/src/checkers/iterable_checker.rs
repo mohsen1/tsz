@@ -1,13 +1,13 @@
 //! Iterable/iterator protocol checking and for-of element type computation.
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+use crate::query_boundaries::checkers::generic::get_object_shape;
 use crate::query_boundaries::checkers::iterable::{
     AsyncIterableTypeKind, ForOfElementKind, FullIterableTypeKind, call_signatures_for_type,
     classify_async_iterable_type, classify_for_of_element_type, classify_full_iterable_type,
     function_shape_for_type, is_array_type, is_string_literal_type, is_string_type, is_this_type,
     is_tuple_type, union_members_for_type,
 };
-use crate::query_boundaries::checkers::generic::get_object_shape;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
