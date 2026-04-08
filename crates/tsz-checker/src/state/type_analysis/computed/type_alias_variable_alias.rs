@@ -1283,16 +1283,15 @@ impl<'a> CheckerState<'a> {
                                 self.module_can_use_synthetic_default_import(module_name);
                             let has_named_default_prop =
                                 props.iter().any(|p| p.name == default_atom);
-                            let synthetic_default_type = if can_use_cjs_namespace_default
-                                && has_named_default_prop
-                            {
-                                Some(factory.object(props.clone()))
-                            } else {
-                                export_equals_type.or_else(|| {
-                                    can_use_cjs_namespace_default
-                                        .then(|| factory.object(props.clone()))
-                                })
-                            };
+                            let synthetic_default_type =
+                                if can_use_cjs_namespace_default && has_named_default_prop {
+                                    Some(factory.object(props.clone()))
+                                } else {
+                                    export_equals_type.or_else(|| {
+                                        can_use_cjs_namespace_default
+                                            .then(|| factory.object(props.clone()))
+                                    })
+                                };
                             if let Some(eq_type) = synthetic_default_type {
                                 if let Some(existing_default) =
                                     props.iter_mut().find(|p| p.name == default_atom)
@@ -1397,7 +1396,6 @@ impl<'a> CheckerState<'a> {
                     {
                         return (direct_export_type, Vec::new());
                     }
-
                 }
 
                 // In node16/nodenext, when an ESM file default-imports a CJS module,
