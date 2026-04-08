@@ -101,6 +101,10 @@ impl<'a> CheckerState<'a> {
                 self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name);
             let global_scope_declarations =
                 self.global_scope_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let jsx_runtime_conflict_declarations =
+                self.jsx_runtime_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let default_import_alias_conflicts = self
+                .default_import_alias_conflict_declarations_for_current_file(&symbol.escaped_name);
 
             // Check if single NodeIndex has multiple arenas (cross-file duplicate with
             // same NodeIndex due to identical file structure). In this case, declarations
@@ -117,6 +121,8 @@ impl<'a> CheckerState<'a> {
                     && module_augmentation_declarations.is_empty()
                     && script_scope_declarations.is_empty()
                     && global_scope_declarations.is_empty()
+                    && jsx_runtime_conflict_declarations.is_empty()
+                    && default_import_alias_conflicts.is_empty()
                 {
                     continue;
                 }
@@ -163,6 +169,8 @@ impl<'a> CheckerState<'a> {
             if !module_augmentation_declarations.is_empty()
                 || !script_scope_declarations.is_empty()
                 || !global_scope_declarations.is_empty()
+                || !jsx_runtime_conflict_declarations.is_empty()
+                || !default_import_alias_conflicts.is_empty()
             {
                 has_remote = true;
             }
@@ -225,6 +233,10 @@ impl<'a> CheckerState<'a> {
                 self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name);
             let global_scope_declarations =
                 self.global_scope_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let jsx_runtime_conflict_declarations =
+                self.jsx_runtime_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let default_import_alias_conflicts = self
+                .default_import_alias_conflict_declarations_for_current_file(&symbol.escaped_name);
 
             if emit_ts6200
                 && cross_file_conflicts
@@ -247,6 +259,8 @@ impl<'a> CheckerState<'a> {
                     && module_augmentation_declarations.is_empty()
                     && script_scope_declarations.is_empty()
                     && global_scope_declarations.is_empty()
+                    && jsx_runtime_conflict_declarations.is_empty()
+                    && default_import_alias_conflicts.is_empty()
                 {
                     continue;
                 }
@@ -338,6 +352,8 @@ impl<'a> CheckerState<'a> {
             }
             declarations.extend(module_augmentation_declarations);
             declarations.extend(global_scope_declarations);
+            declarations.extend(jsx_runtime_conflict_declarations);
+            declarations.extend(default_import_alias_conflicts);
 
             if declarations.len() <= 1 {
                 continue;
@@ -864,6 +880,30 @@ impl<'a> CheckerState<'a> {
                         declarations[i];
                     let (other_idx, other_flags, other_is_local, other_is_exported, other_origin) =
                         declarations[j];
+                    let decl_arena = self
+                        .ctx
+                        .binder
+                        .get_arena_for_declaration(sym_id, decl_idx)
+                        .map(|arena| arena.as_ref())
+                        .unwrap_or(self.ctx.arena);
+                    let other_arena = self
+                        .ctx
+                        .binder
+                        .get_arena_for_declaration(sym_id, other_idx)
+                        .map(|arena| arena.as_ref())
+                        .unwrap_or(self.ctx.arena);
+                    let decl_conflict_flags =
+                        self.normalize_duplicate_conflict_flags(decl_arena, decl_idx, decl_flags);
+                    let other_conflict_flags = self.normalize_duplicate_conflict_flags(
+                        other_arena,
+                        other_idx,
+                        other_flags,
+                    );
+                    let same_source_file = decl_arena
+                        .source_files
+                        .first()
+                        .zip(other_arena.source_files.first())
+                        .is_some_and(|(a, b)| a.file_name == b.file_name);
 
                     if !decl_is_local && !other_is_local {
                         continue;
@@ -877,9 +917,11 @@ impl<'a> CheckerState<'a> {
                         && self.get_enclosing_namespace(other_idx).is_none();
 
                     let decl_is_skippable_remote = !decl_is_local
-                        && decl_origin == DuplicateDeclarationOrigin::SymbolDeclaration;
+                        && decl_origin == DuplicateDeclarationOrigin::SymbolDeclaration
+                        && (decl_conflict_flags & symbol_flags::ALIAS) == 0;
                     let other_is_skippable_remote = !other_is_local
-                        && other_origin == DuplicateDeclarationOrigin::SymbolDeclaration;
+                        && other_origin == DuplicateDeclarationOrigin::SymbolDeclaration
+                        && (other_conflict_flags & symbol_flags::ALIAS) == 0;
 
                     // In external modules, top-level module-scope declarations do not
                     // participate in global namespace duplicate checking against lib
@@ -888,6 +930,7 @@ impl<'a> CheckerState<'a> {
                     // conflicts, but explicit module augmentations still target this
                     // file's exports and must participate in duplicate checking.
                     if is_external_module
+                        && !same_source_file
                         && ((decl_is_module_scoped_local && other_is_skippable_remote)
                             || (other_is_module_scoped_local && decl_is_skippable_remote))
                     {
@@ -1036,10 +1079,10 @@ impl<'a> CheckerState<'a> {
                     // other is a block-scoped global augmentation value. Two
                     // namespace exports from different files do NOT conflict
                     // (first one wins — see umdGlobalConflict.ts).
-                    let is_cross_file_umd = (decl_is_local != other_is_local)
+                    let is_cross_file_umd_candidate = (decl_is_local != other_is_local)
                         && (decl_origin == DuplicateDeclarationOrigin::GlobalScopeConflict
                             || other_origin == DuplicateDeclarationOrigin::GlobalScopeConflict);
-                    if is_cross_file_umd {
+                    if is_cross_file_umd_candidate {
                         let (local_idx, local_flags, remote_flags) = if decl_is_local {
                             (decl_idx, decl_flags, other_flags)
                         } else {
@@ -1068,8 +1111,11 @@ impl<'a> CheckerState<'a> {
                             if other_is_local {
                                 conflicts.insert(other_idx);
                             }
+                            continue;
                         }
-                        continue;
+                        // Non-UMD GlobalScopeConflict pairs still need regular
+                        // duplicate-identifier checks (for example JSX/runtime
+                        // and synthetic default-import alias conflicts).
                     }
 
                     let decl_is_namespace = (decl_flags
@@ -1078,8 +1124,14 @@ impl<'a> CheckerState<'a> {
                     let other_is_namespace = (other_flags
                         & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
                         != 0;
+                    let decl_is_namespace_for_conflict = (decl_conflict_flags
+                        & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+                        != 0;
+                    let other_is_namespace_for_conflict = (other_conflict_flags
+                        & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+                        != 0;
 
-                    if decl_is_namespace && other_is_namespace {
+                    if decl_is_namespace_for_conflict && other_is_namespace_for_conflict {
                         continue;
                     }
 
@@ -1174,7 +1226,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    if Self::declarations_conflict(decl_flags, other_flags) {
+                    if Self::declarations_conflict(decl_conflict_flags, other_conflict_flags) {
                         propagate_type_alias_conflict_to_namespaces |=
                             (decl_flags & symbol_flags::TYPE_ALIAS) != 0
                                 || (other_flags & symbol_flags::TYPE_ALIAS) != 0;
@@ -1394,6 +1446,13 @@ impl<'a> CheckerState<'a> {
                     (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
                 }
             });
+            let has_remote_block_scoped_alias_conflict =
+                declarations.iter().any(|(_, flags, is_local, _, origin)| {
+                    !*is_local
+                        && *origin == DuplicateDeclarationOrigin::GlobalScopeConflict
+                        && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                        && (flags & symbol_flags::ALIAS) != 0
+                });
 
             let name = symbol.escaped_name.clone();
 
@@ -1425,7 +1484,10 @@ impl<'a> CheckerState<'a> {
             // TS2323: Check exported variable conflict using symbol.is_exported
             let has_exported_variable_conflict = symbol.is_exported && has_variable_conflict;
 
-            let (message, code) = if !has_non_block_scoped || has_umd_global_value_conflict {
+            let (message, code) = if (!has_non_block_scoped
+                && !has_remote_block_scoped_alias_conflict)
+                || has_umd_global_value_conflict
+            {
                 (
                     format_message(
                         diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
@@ -1437,6 +1499,7 @@ impl<'a> CheckerState<'a> {
                 && has_variable_conflict
                 && !has_non_variable_conflict
                 && !has_accessor_conflict
+                && !has_remote_block_scoped_alias_conflict
             {
                 (
                     format_message(
@@ -1478,8 +1541,10 @@ impl<'a> CheckerState<'a> {
                         conflicts.contains(decl_idx) && (flags & symbol_flags::FUNCTION) != 0
                     });
                 let use_ts2451 = if has_remote_declaration && has_block_scoped_conflict {
-                    // Cross-file mixed conflicts always use TS2451.
-                    true
+                    // Cross-file mixed conflicts generally use TS2451, except for
+                    // synthetic default-import alias collisions where tsc reports
+                    // TS2300 (for example impliedNodeFormatInterop1.ts).
+                    !has_remote_block_scoped_alias_conflict
                 } else if has_block_scoped_conflict && has_function_conflict {
                     // When a function declaration conflicts with a block-scoped
                     // variable (let/const) at the same scope, tsc uses TS2300.
@@ -1606,6 +1671,16 @@ impl<'a> CheckerState<'a> {
             if has_ts2481_var {
                 continue;
             }
+
+            if code == diagnostic_codes::DUPLICATE_IDENTIFIER
+                && has_remote_block_scoped_alias_conflict
+                && let Some(default_export_ident) =
+                    self.current_file_default_export_identifier_named(&name)
+            {
+                self.error_at_node(default_export_ident, &message, code);
+                continue;
+            }
+
             for (decl_idx, _decl_flags, is_local, _, _) in declarations {
                 if is_local && conflicts.contains(&decl_idx) {
                     let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
