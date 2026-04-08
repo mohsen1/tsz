@@ -848,6 +848,11 @@ impl<'a> CheckerState<'a> {
             }
 
             let expr_type = self.get_type_of_node(expr_idx);
+            let expr_display_type = if expr_type == TypeId::UNKNOWN && source != TypeId::UNKNOWN {
+                source
+            } else {
+                expr_type
+            };
             // Only use the node-derived type when it plausibly represents the
             // source of the assignment, not the target.  For-of loops pass the
             // element type as `source` but anchor the diagnostic at the loop
@@ -856,24 +861,26 @@ impl<'a> CheckerState<'a> {
             // not the source, the anchor is the assignment target — skip
             // node-based resolution to avoid confusing "Type 'X' is not
             // assignable to type 'X'" messages.
-            let node_is_target_not_source = expr_type == target && expr_type != source;
-            let node_type_matches_source = expr_type != TypeId::ERROR && !node_is_target_not_source;
+            let node_is_target_not_source =
+                expr_display_type == target && expr_display_type != source;
+            let node_type_matches_source =
+                expr_display_type != TypeId::ERROR && !node_is_target_not_source;
             if node_type_matches_source {
                 if let Some(annotation_text) =
                     self.declared_diagnostic_source_annotation_text(expr_idx)
                     && self.should_prefer_declared_source_annotation_display(
                         expr_idx,
-                        expr_type,
+                        expr_display_type,
                         &annotation_text,
                     )
                 {
                     return self.format_declared_annotation_for_diagnostic(&annotation_text);
                 }
                 let display_type =
-                    if self.should_widen_enum_member_assignment_source(expr_type, target) {
-                        self.widen_enum_member_type(expr_type)
+                    if self.should_widen_enum_member_assignment_source(expr_display_type, target) {
+                        self.widen_enum_member_type(expr_display_type)
                     } else {
-                        expr_type
+                        expr_display_type
                     };
                 let display_type = self.widen_function_like_display_type(display_type);
                 let display_type = if self.is_literal_sensitive_assignment_target(target) {
@@ -886,6 +893,13 @@ impl<'a> CheckerState<'a> {
                 };
                 if let Some(display) =
                     self.new_expression_nominal_source_display(expr_idx, display_type)
+                {
+                    return display;
+                }
+                if tsz_solver::type_queries::get_array_element_type(self.ctx.types, display_type)
+                    == Some(TypeId::UNKNOWN)
+                    && let Some(display) =
+                        self.call_unknown_array_source_display(expr_idx, target)
                 {
                     return display;
                 }
@@ -927,19 +941,24 @@ impl<'a> CheckerState<'a> {
             }
 
             let expr_type = self.get_type_of_node(expr_idx);
+            let expr_display_type = if expr_type == TypeId::UNKNOWN && source != TypeId::UNKNOWN {
+                source
+            } else {
+                expr_type
+            };
             if expr_type != TypeId::ERROR
                 && let Some(annotation_text) =
                     self.declared_diagnostic_source_annotation_text(expr_idx)
                 && self.should_prefer_declared_source_annotation_display(
                     expr_idx,
-                    expr_type,
+                    expr_display_type,
                     &annotation_text,
                 )
             {
                 return self.format_declared_annotation_for_diagnostic(&annotation_text);
             }
-            let display_type = if expr_type != TypeId::ERROR {
-                let widened_expr_type = self.widen_type_for_display(expr_type);
+            let display_type = if expr_display_type != TypeId::ERROR {
+                let widened_expr_type = self.widen_type_for_display(expr_display_type);
                 if self.should_widen_enum_member_assignment_source(widened_expr_type, target) {
                     self.widen_enum_member_type(widened_expr_type)
                 } else {
@@ -951,6 +970,12 @@ impl<'a> CheckerState<'a> {
             let display_type = self.widen_function_like_display_type(display_type);
             if let Some(display) =
                 self.new_expression_nominal_source_display(expr_idx, display_type)
+            {
+                return display;
+            }
+            if tsz_solver::type_queries::get_array_element_type(self.ctx.types, display_type)
+                == Some(TypeId::UNKNOWN)
+                && let Some(display) = self.call_unknown_array_source_display(expr_idx, target)
             {
                 return display;
             }
@@ -1174,6 +1199,37 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(self.format_property_receiver_type_for_diagnostic(display_type))
+    }
+
+    fn call_unknown_array_source_display(
+        &mut self,
+        expr_idx: NodeIndex,
+        target: TypeId,
+    ) -> Option<String> {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let node = self.ctx.arena.get(expr_idx)?;
+        let call = self.ctx.arena.get_call_expr(node)?;
+
+        let first_arg = *call.arguments.as_ref()?.nodes.first()?;
+        let first_arg_type = self.get_type_of_node(first_arg);
+        if matches!(first_arg_type, TypeId::ERROR | TypeId::UNKNOWN) {
+            return None;
+        }
+
+        let element_type = tsz_solver::type_queries::get_array_element_type(
+            self.ctx.types,
+            first_arg_type,
+        )
+        .or_else(|| {
+            tsz_solver::operations::get_iterator_info(self.ctx.types, first_arg_type, false)
+                .map(|info| info.yield_type)
+        })?;
+        if matches!(element_type, TypeId::ERROR | TypeId::UNKNOWN) {
+            return None;
+        }
+
+        let recovered = self.ctx.types.array(self.widen_type_for_display(element_type));
+        Some(self.format_assignability_type_for_message(recovered, target))
     }
 
     fn preferred_evaluated_source_display(&mut self, source: TypeId) -> Option<String> {
