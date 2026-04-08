@@ -189,3 +189,82 @@ fn jsx_attribute_with_leading_spread_in_initializer_reports_expression_then_iden
         "expected tsc-style recovery for attribute initializer spread syntax, got {diagnostics:?}"
     );
 }
+
+#[test]
+fn jsx_attribute_names_starting_with_number_or_minus_follow_tsc_recovery() {
+    let source = "declare namespace JSX {\n\tinterface Element { }\n\tinterface IntrinsicElements {\n\t\ttest1: { \"data-foo\"?: string };\n\t\ttest2: { \"data-foo\"?: string };\n\t}\n}\n\n<test1 32data={32} />;\n<test2 -data={32} />;\n";
+    let diagnostics = parse_diagnostics(source);
+
+    let first_numeric = source.find("32data").expect("first numeric attr start") as u32;
+    let first_data = first_numeric + 2;
+    let first_close_brace = source
+        .find("32} />;")
+        .map(|idx| idx as u32 + 2)
+        .expect("first close brace");
+    let first_slash = source
+        .find(" />;\n<test2")
+        .map(|idx| idx as u32 + 1)
+        .expect("first slash");
+    let first_gt = first_slash + 1;
+    let first_semi = first_gt + 1;
+
+    let second_minus = source.find("-data={32}").expect("second minus attr start") as u32;
+    let second_equals = second_minus + 5;
+    let second_slash = source
+        .rfind(" />;")
+        .map(|idx| idx as u32 + 1)
+        .expect("second slash");
+
+    assert_eq!(
+        diagnostics,
+        vec![
+            (
+                diagnostic_codes::IDENTIFIER_EXPECTED,
+                first_numeric,
+                "Identifier expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::EXPECTED,
+                first_data,
+                "';' expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+                first_data,
+                "An identifier or keyword cannot immediately follow a numeric literal."
+                    .to_string(),
+            ),
+            (
+                diagnostic_codes::EXPECTED,
+                first_close_brace,
+                "':' expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::EXPRESSION_EXPECTED,
+                first_gt,
+                "Expression expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::EXPRESSION_EXPECTED,
+                first_semi,
+                "Expression expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::IDENTIFIER_EXPECTED,
+                second_minus,
+                "Identifier expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::EXPECTED,
+                second_equals,
+                "';' expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::UNTERMINATED_REGULAR_EXPRESSION_LITERAL,
+                second_slash,
+                "Unterminated regular expression literal.".to_string(),
+            ),
+        ],
+        "expected tsc-style recovery for invalid JSX attribute starters, got {diagnostics:?}"
+    );
+}

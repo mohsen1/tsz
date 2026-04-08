@@ -2255,8 +2255,26 @@ impl ParserState {
                 self.next_token();
             }
         } else if !self.can_parse_semicolon() {
-            if !self.current_token_has_numeric_literal_follow_error() {
+            let jsx_head_needs_semicolon = self.arena.get(expression).is_some_and(|node| {
+                matches!(
+                    node.kind,
+                    syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                        | syntax_kind_ext::JSX_OPENING_ELEMENT
+                        | syntax_kind_ext::JSX_ELEMENT
+                )
+            });
+            let has_numeric_follow_error = self.current_token_has_numeric_literal_follow_error();
+            if jsx_head_needs_semicolon && has_numeric_follow_error {
+                self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            } else if !has_numeric_follow_error {
                 self.parse_error_for_missing_semicolon_after(expression);
+            }
+            // For malformed JSX heads like `<X -attr={...} />`, tsc reports `';' expected`
+            // at `=` and then continues from the `{...}` tail, which can surface
+            // downstream slash-regex diagnostics. Consume the standalone `=` token to
+            // align that recovery shape without affecting numeric-literal follow cases.
+            if jsx_head_needs_semicolon && self.is_token(SyntaxKind::EqualsToken) {
+                self.next_token();
             }
             // Recovery for malformed fragments like `this.x: any;`.
             // Consume stray `:` so the following token can still be parsed as

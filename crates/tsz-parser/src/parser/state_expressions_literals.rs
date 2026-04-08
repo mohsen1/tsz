@@ -944,16 +944,16 @@ impl ParserState {
         // Check for unterminated regex literal (TS1161)
         if (self.scanner.get_token_flags() & TokenFlags::Unterminated as u32) != 0 {
             // Suppress TS1161 when the unterminated "regex" body looks like a JSX
-            // closing tag artifact (e.g., `</a:b>` parsed outside JSX context where
-            // `/` is misinterpreted as a regex start). These bodies contain `>`
-            // before any semicolon, which never occurs in a real regex literal at
-            // statement level (the scanner stops at newlines, so `>` would only
-            // appear if the `/` was actually part of a `</tag>` construct).
+            // closing-tag artifact (e.g., `</a:b>` parsed outside JSX context where
+            // `/` is misinterpreted as a regex start). Require `<` before `>` so
+            // malformed self-closing tails like `/>;` still surface TS1161, matching
+            // tsc's recovery for invalid JSX heads.
             let regex_body = self.scanner.get_token_text_ref();
-            let is_jsx_artifact = regex_body.find('>').is_some_and(|gt_pos| {
-                regex_body
-                    .find(';')
-                    .is_none_or(|semi_pos| gt_pos < semi_pos)
+            let is_jsx_artifact = regex_body.find('<').is_some_and(|lt_pos| {
+                regex_body.find('>').is_some_and(|gt_pos| {
+                    lt_pos < gt_pos
+                        && regex_body.find(';').is_none_or(|semi_pos| gt_pos < semi_pos)
+                })
             });
             if !is_jsx_artifact {
                 use tsz_common::diagnostics::diagnostic_codes;

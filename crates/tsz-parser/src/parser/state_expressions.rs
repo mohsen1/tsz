@@ -162,6 +162,29 @@ impl ParserState {
         };
 
         if self.is_assignment_operator(op) {
+            // JSX heads from malformed recovery (`<X -attr` / `<X 32attr`) are
+            // never valid assignment targets. Preserve the JSX expression as-is
+            // so statement-level recovery can surface tsc's `';' expected` and
+            // follow-up diagnostics at the assignment token.
+            let left_is_jsx_expression = self.arena.get(left).is_some_and(|node| {
+                matches!(
+                    node.kind,
+                    syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                        | syntax_kind_ext::JSX_OPENING_ELEMENT
+                        | syntax_kind_ext::JSX_ELEMENT
+                        | syntax_kind_ext::JSX_FRAGMENT
+                )
+            });
+            if left_is_jsx_expression {
+                if deferred_failed_async_arrow_colon_recovery
+                    && !self.is_token(SyntaxKind::ColonToken)
+                {
+                    self.pending_failed_async_arrow_colon_recovery =
+                        saved_pending_failed_async_arrow_colon_recovery;
+                }
+                return left;
+            }
+
             let operator_token = op as u16;
             self.next_token();
             let right = self.parse_assignment_expression();
