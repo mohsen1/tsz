@@ -1389,10 +1389,24 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // Synthesize the children type:
                     // - 0 children → None (no children prop synthesized)
                     // - 1 child → the child's type directly
-                    // - 2+ children → array of union of child types
+                    // - 2+ children without spread → fixed tuple of child types
+                    // - 2+ children with spread → array of union of child types
                     let children_ctx = if !child_types.is_empty() {
+                        let child_count = child_types.len();
                         let synthesized_type = if child_types.len() == 1 && !has_spread_child {
                             child_types[0]
+                        } else if !has_spread_child {
+                            let elements = child_types
+                                .iter()
+                                .copied()
+                                .map(|type_id| tsz_solver::TupleElement {
+                                    type_id,
+                                    name: None,
+                                    optional: false,
+                                    rest: false,
+                                })
+                                .collect();
+                            self.checker.ctx.types.factory().tuple(elements)
                         } else {
                             // Multiple children: synthesize as an array type.
                             // tsc uses the union of all child types as the element type.
@@ -1401,9 +1415,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             self.checker.ctx.types.factory().array(element_type)
                         };
                         let normalized_child_count = if has_spread_child {
-                            child_types.len().max(2)
+                            child_count.max(2)
                         } else {
-                            child_types.len()
+                            child_count
                         };
                         Some(crate::checkers_domain::JsxChildrenContext {
                             child_count: normalized_child_count,
