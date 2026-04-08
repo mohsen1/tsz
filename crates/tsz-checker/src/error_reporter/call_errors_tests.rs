@@ -403,6 +403,53 @@ func(s => ({ a: blah }));
 }
 
 #[test]
+fn ts2769_bind_call_with_non_undefined_this_arg_anchors_bind_member() {
+    let source = r#"
+function bar<T extends unknown[]>(callback: (this: 1, ...args: T) => void) {
+    callback.bind(2);
+}
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2769)
+        .expect("expected TS2769");
+
+    let bind_start = source.find("bind(2)").expect("expected bind call token") as u32;
+    assert_eq!(
+        diag.start, bind_start,
+        "TS2769 should anchor at `bind` for callback.bind(2)-style failures"
+    );
+    assert_eq!(diag.length, 4, "TS2769 should cover only `bind`");
+}
+
+#[test]
+fn ts2769_bind_call_with_undefined_this_arg_anchors_argument() {
+    let source = r#"
+class C {
+    foo(this: C, a: number, b: string): string { return ""; }
+}
+declare const c: C;
+c.foo.bind(undefined);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2769)
+        .expect("expected TS2769");
+
+    let undefined_start = source
+        .find("undefined")
+        .expect("expected undefined argument") as u32;
+    assert_eq!(
+        diag.start, undefined_start,
+        "TS2769 should anchor at the `undefined` argument for bind(undefined)"
+    );
+}
+
+#[test]
 fn ts2769_array_literal_overload_mismatch_anchors_nested_property() {
     let source = r#"
 function foo(bar:{a:number;}[]):string;

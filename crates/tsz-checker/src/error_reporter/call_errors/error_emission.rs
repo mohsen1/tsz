@@ -278,7 +278,7 @@ impl<'a> CheckerState<'a> {
                     == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
             })
             .collect();
-        let literal_anchor = self.overload_literal_argument_anchor(idx, failures);
+        let mut literal_anchor = self.overload_literal_argument_anchor(idx, failures);
         let shared_argument_anchor = self
             .shared_overload_argument_anchor_from_spans(idx, &argument_failures)
             .or_else(|| self.shared_overload_argument_anchor(idx, &argument_failures));
@@ -362,12 +362,14 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|ident| ident.escaped_text == "undefined");
                 !first_arg_is_undefined
             });
-        let bind_call_preserves_shared_argument_anchor = is_bind_method_call
-            && anchor_argument_from_all_failures
-            && shared_argument_anchor.is_some();
+        if is_bind_method_call {
+            // For `callback.bind(2)`-style overload failures, tsc anchors TS2769
+            // at `bind`, not at the argument literal.
+            literal_anchor = None;
+        }
         let anchor_first_argument = !is_new_call
             && !argument_anchor_is_callback
-            && (!is_bind_method_call || bind_call_preserves_shared_argument_anchor)
+            && !is_bind_method_call
             && (identical_argument_failures
                 && !remaining_failures.is_empty()
                 && remaining_failures_are_count_mismatches
