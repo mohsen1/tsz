@@ -6,6 +6,17 @@ use tsz_common::Atom;
 use tsz_scanner::SyntaxKind;
 
 impl ParserState {
+    const fn is_jsx_attribute_list_abort_token(kind: SyntaxKind) -> bool {
+        matches!(
+            kind,
+            SyntaxKind::NumericLiteral | SyntaxKind::MinusToken | SyntaxKind::PlusToken
+        )
+    }
+
+    const fn jsx_attribute_abort_consumes_following_identifier(kind: SyntaxKind) -> bool {
+        matches!(kind, SyntaxKind::MinusToken | SyntaxKind::PlusToken)
+    }
+
     pub(crate) fn look_ahead_next_is_identifier_or_keyword_or_greater_than(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
@@ -862,7 +873,7 @@ impl ParserState {
         };
 
         // Parse attributes
-        let attributes = self.parse_jsx_attributes();
+        let (attributes, aborted_for_outer_recovery) = self.parse_jsx_attributes();
 
         // In JavaScript JSX files, `<Comp<T> ... />` is not legal type-argument syntax.
         // When the remainder still looks like JSX (`</...>` or `/>` on the same line),
@@ -917,6 +928,22 @@ impl ParserState {
                     tsz_common::diagnostics::diagnostic_codes::EXPECTED_CORRESPONDING_JSX_CLOSING_TAG_FOR,
                 );
             }
+            return self.arena.add_jsx_opening(
+                syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT,
+                start_pos,
+                self.token_pos(),
+                crate::parser::node::JsxOpeningData {
+                    tag_name,
+                    type_arguments,
+                    attributes,
+                },
+            );
+        }
+
+        if aborted_for_outer_recovery
+            && !self.is_token(SyntaxKind::GreaterThanToken)
+            && !self.is_token(SyntaxKind::SlashToken)
+        {
             return self.arena.add_jsx_opening(
                 syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT,
                 start_pos,
@@ -1128,9 +1155,10 @@ impl ParserState {
     }
 
     /// Parse JSX attributes list.
-    pub(crate) fn parse_jsx_attributes(&mut self) -> NodeIndex {
+    pub(crate) fn parse_jsx_attributes(&mut self) -> (NodeIndex, bool) {
         let start_pos = self.token_pos();
         let mut properties = Vec::new();
+        let mut aborted_for_outer_recovery = false;
 
         while !self.is_token(SyntaxKind::GreaterThanToken)
             && !self.is_token(SyntaxKind::SlashToken)
@@ -1169,18 +1197,37 @@ impl ParserState {
                 } else {
                     self.error_identifier_expected();
                 }
+                let unexpected = self.token();
+                let should_abort = Self::is_jsx_attribute_list_abort_token(unexpected);
                 self.next_token();
+                // Certain malformed attribute starters (`<X 32foo=...>`,
+                // `<X -foo=...>`) are recovered by tsc as the end of the JSX
+                // head after consuming the bad token. Keep the following
+                // identifier for outer expression recovery instead of treating
+                // it as another JSX attribute.
+                if should_abort {
+                    if Self::jsx_attribute_abort_consumes_following_identifier(unexpected)
+                        && self.is_identifier_or_keyword()
+                    {
+                        self.next_token();
+                    }
+                    aborted_for_outer_recovery = true;
+                    break;
+                }
             }
         }
 
         let end_pos = self.token_end();
-        self.arena.add_jsx_attributes(
-            syntax_kind_ext::JSX_ATTRIBUTES,
-            start_pos,
-            end_pos,
-            crate::parser::node::JsxAttributesData {
-                properties: self.make_node_list(properties),
-            },
+        (
+            self.arena.add_jsx_attributes(
+                syntax_kind_ext::JSX_ATTRIBUTES,
+                start_pos,
+                end_pos,
+                crate::parser::node::JsxAttributesData {
+                    properties: self.make_node_list(properties),
+                },
+            ),
+            aborted_for_outer_recovery,
         )
     }
 
