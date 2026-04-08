@@ -3071,6 +3071,88 @@ fn test_js_unary_tilde_then_malformed_jsx_reports_ts1003() {
 }
 
 #[test]
+fn test_js_unary_plus_then_numeric_jsx_head_reports_ts1003_without_ts1109() {
+    let source = r#"
+const x = "oops";
+const y = + <1234> x;
+"#;
+    let mut parser = ParserState::new("index.js".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED),
+        "Expected TS1003 for malformed JSX tag head `<1234>`, got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "Expected no TS1109 fallback for malformed numeric JSX tag head, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_js_unary_bang_then_braced_jsx_head_reports_ts17008_without_ts1109() {
+    let source = "!< {:>";
+    let mut parser = ParserState::new("a.js".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED),
+        "Expected TS1003 for malformed braced JSX tag head, got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::JSX_ELEMENT_HAS_NO_CORRESPONDING_CLOSING_TAG),
+        "Expected TS17008 unclosed JSX element recovery for `!< {{:>`, got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "Expected no TS1109 fallback for malformed braced JSX tag head, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_tsx_malformed_extends_in_generic_arrow_ambiguity_prefers_jsx_ts1382() {
+    let source = r#"
+declare namespace JSX {
+    interface Element { isElement; }
+}
+
+var x4 = <T extends={true}>() => {}</T>;
+x4.isElement;
+
+var x5 = <T extends>() => {}</T>;
+x5.isElement;
+"#;
+    let mut parser = ParserState::new("file.tsx".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    let ts1382_count = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_GT)
+        .count();
+
+    assert!(
+        ts1382_count >= 2,
+        "Expected malformed `extends` TSX ambiguity to emit TS1382 on both forms, got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_EXPECTED),
+        "Expected no TS1110 Type expected diagnostics for malformed `extends` JSX ambiguity, got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "Expected no TS1109 diagnostics for malformed `extends` JSX ambiguity, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_tsx_fragment_errors_conformance_shape_has_no_diagnostics() {
     let source = r#"
 declare namespace JSX {

@@ -287,15 +287,100 @@ impl ParserState {
         // Skip <
         self.next_token();
 
+        let mut at_type_parameter_start = true;
+        let mut type_parameter_count = 0u32;
+        let mut saw_top_level_type_parameter_delimiter = false;
+        let mut saw_top_level_constraint_or_default = false;
+        let mut paren_depth = 0u32;
+        let mut brace_depth = 0u32;
+        let mut bracket_depth = 0u32;
+
         // Skip type parameters until we find >
         let mut depth = 1;
         while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
-            if self.is_token(SyntaxKind::LessThanToken) {
-                depth += 1;
-            } else if self.is_token(SyntaxKind::GreaterThanToken) {
-                depth -= 1;
+            let token = self.token();
+            let at_type_parameter_top_level =
+                depth == 1 && paren_depth == 0 && brace_depth == 0 && bracket_depth == 0;
+
+            // In TSX/JSX ambiguity resolution, malformed `extends` clauses such as
+            // `<T extends>() => {}` and `<T extends={...}>() => {}` should NOT commit
+            // to generic-arrow parsing. tsc treats these as JSX and surfaces JSX
+            // diagnostics (for example TS1382), not type-parameter TS1110/TS1109.
+            if at_type_parameter_top_level {
+                if token == SyntaxKind::CommaToken {
+                    at_type_parameter_start = true;
+                    saw_top_level_type_parameter_delimiter = true;
+                } else if at_type_parameter_start {
+                    if !matches!(
+                        token,
+                        SyntaxKind::ConstKeyword | SyntaxKind::InKeyword | SyntaxKind::OutKeyword
+                    ) && (self.is_identifier_or_keyword() || self.is_reserved_word())
+                    {
+                        at_type_parameter_start = false;
+                        type_parameter_count += 1;
+                    }
+                } else if token == SyntaxKind::ExtendsKeyword {
+                    saw_top_level_constraint_or_default = true;
+                    self.next_token();
+                    if matches!(
+                        self.token(),
+                        SyntaxKind::GreaterThanToken
+                            | SyntaxKind::EqualsToken
+                            | SyntaxKind::CommaToken
+                            | SyntaxKind::CloseParenToken
+                    ) {
+                        self.scanner.restore_state(snapshot);
+                        self.current_token = current;
+                        return false;
+                    }
+                    continue;
+                } else if token == SyntaxKind::EqualsToken {
+                    saw_top_level_constraint_or_default = true;
+                }
+            }
+
+            match token {
+                SyntaxKind::LessThanToken => {
+                    depth += 1;
+                }
+                SyntaxKind::GreaterThanToken => {
+                    depth -= 1;
+                }
+                SyntaxKind::OpenParenToken => {
+                    paren_depth += 1;
+                }
+                SyntaxKind::CloseParenToken => {
+                    paren_depth = paren_depth.saturating_sub(1);
+                }
+                SyntaxKind::OpenBraceToken => {
+                    brace_depth += 1;
+                }
+                SyntaxKind::CloseBraceToken => {
+                    brace_depth = brace_depth.saturating_sub(1);
+                }
+                SyntaxKind::OpenBracketToken => {
+                    bracket_depth += 1;
+                }
+                SyntaxKind::CloseBracketToken => {
+                    bracket_depth = bracket_depth.saturating_sub(1);
+                }
+                _ => {}
             }
             self.next_token();
+        }
+
+        // In JSX language variants, `<T>() => ...` remains JSX (not a generic arrow)
+        // unless the type parameter list is disambiguated by:
+        // - multiple/trailing parameters (`<T,>()`, `<T, U>()`)
+        // - a constraint/default (`<T extends X>()`, `<T = X>()`)
+        if self.is_jsx_file()
+            && type_parameter_count == 1
+            && !saw_top_level_type_parameter_delimiter
+            && !saw_top_level_constraint_or_default
+        {
+            self.scanner.restore_state(snapshot);
+            self.current_token = current;
+            return false;
         }
 
         // After >, should have (
@@ -2469,6 +2554,25 @@ impl ParserState {
             }
             SyntaxKind::LessThanToken => {
                 if self.is_jsx_file() {
+                    let (
+                        next_token_is_numeric_literal,
+                        next_token_is_open_brace,
+                        next_token_pos,
+                        next_token_end,
+                    ) = {
+                        let snapshot = self.scanner.save_state();
+                        let current = self.current_token;
+                        self.next_token();
+                        let result = (
+                            self.is_token(SyntaxKind::NumericLiteral),
+                            self.is_token(SyntaxKind::OpenBraceToken),
+                            self.token_pos(),
+                            self.token_end(),
+                        );
+                        self.scanner.restore_state(snapshot);
+                        self.current_token = current;
+                        result
+                    };
                     let allow_malformed_jsx_after_tilde = self
                         .get_source_text()
                         .get(..self.token_pos() as usize)
@@ -2483,7 +2587,20 @@ impl ParserState {
                             self.current_token = current;
                             result
                         };
-                    if self.look_ahead_next_is_identifier_or_keyword_or_greater_than()
+                    if next_token_is_numeric_literal {
+                        // In JS/JSX recovery, `<1234> x` should retain the right-hand
+                        // expression `x` as part of the same malformed construct,
+                        // avoiding a trailing `';' expected` cascade. Emit TS1003
+                        // at the numeric head to match conformance expectations.
+                        self.parse_error_at(
+                            next_token_pos,
+                            next_token_end.saturating_sub(next_token_pos),
+                            "Identifier expected.",
+                            diagnostic_codes::IDENTIFIER_EXPECTED,
+                        );
+                        self.parse_type_assertion()
+                    } else if self.look_ahead_next_is_identifier_or_keyword_or_greater_than()
+                        || next_token_is_open_brace
                         || allow_malformed_jsx_after_tilde
                     {
                         self.parse_jsx_element_or_self_closing_or_fragment(true)

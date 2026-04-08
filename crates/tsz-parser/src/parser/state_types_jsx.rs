@@ -807,6 +807,7 @@ impl ParserState {
     ) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::LessThanToken);
+        let initial_tag_head_token = self.token();
 
         // Check for fragment: <>
         if self.is_token(SyntaxKind::GreaterThanToken) {
@@ -935,8 +936,16 @@ impl ParserState {
         if self.is_token(SyntaxKind::GreaterThanToken) {
             let end_pos = self.token_end();
             self.next_token(); // consume >
+            let kind = if tag_name_is_missing && initial_tag_head_token == SyntaxKind::NumericLiteral
+            {
+                // `<1234>` in JS/JSX recovery should not force an unclosed-tag
+                // trailing diagnostic; treat this malformed head as self-closing.
+                syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+            } else {
+                syntax_kind_ext::JSX_OPENING_ELEMENT
+            };
             return self.arena.add_jsx_opening(
-                syntax_kind_ext::JSX_OPENING_ELEMENT,
+                kind,
                 start_pos,
                 end_pos,
                 crate::parser::node::JsxOpeningData {
@@ -994,11 +1003,13 @@ impl ParserState {
                 self.error_identifier_expected();
             }
             // Create a missing identifier node
-            let end_pos = self.token_end();
+            // Match tsc's missing-node span behavior: anchor to token full-start
+            // so downstream JSX unclosed-tag diagnostics point at `<` + trivia.
+            let missing_pos = self.token_full_start();
             return self.arena.add_identifier(
                 SyntaxKind::Identifier as u16,
-                start_pos,
-                end_pos,
+                missing_pos,
+                missing_pos,
                 node::IdentifierData {
                     atom: Atom::NONE,
                     escaped_text: String::new(),
