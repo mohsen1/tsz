@@ -55,12 +55,14 @@ impl<'a> CheckerState<'a> {
             return source;
         }
 
-        let element_type =
-            tsz_solver::type_queries::get_array_element_type(self.ctx.types, first_arg_type)
-                .or_else(|| {
-                    tsz_solver::operations::get_iterator_info(self.ctx.types, first_arg_type, false)
-                        .map(|info| info.yield_type)
-                });
+        let element_type = tsz_solver::type_queries::get_array_element_type(
+            self.ctx.types,
+            first_arg_type,
+        )
+        .or_else(|| {
+            tsz_solver::operations::get_iterator_info(self.ctx.types, first_arg_type, false)
+                .map(|info| info.yield_type)
+        });
         let Some(element_type) = element_type else {
             return source;
         };
@@ -68,9 +70,7 @@ impl<'a> CheckerState<'a> {
             return source;
         }
 
-        self.ctx
-            .types
-            .array(self.widen_type_for_display(element_type))
+        self.ctx.types.array(self.widen_type_for_display(element_type))
     }
 
     /// Recursively render a `SubtypeFailureReason` into a Diagnostic.
@@ -1419,8 +1419,29 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 );
             }
-            let src_str = self.format_type_diagnostic(source_type);
-            let tgt_str = self.format_type_diagnostic(target_type);
+            let src_str = if depth == 0 {
+                if source_type == TypeId::OBJECT {
+                    "{}".to_string()
+                } else {
+                    let source_display =
+                        self.format_assignment_source_type_for_diagnostic(source, target, idx);
+                    self.rewrite_source_display_for_non_literal_target_assignability(
+                        source,
+                        target,
+                        source_display,
+                    )
+                }
+            } else if source_type == TypeId::OBJECT {
+                "{}".to_string()
+            } else {
+                let widened_source = self.widen_type_for_display(source_type);
+                self.format_type_diagnostic(widened_source)
+            };
+            let tgt_str = if depth == 0 {
+                self.format_assignability_type_for_message(target, source)
+            } else {
+                self.format_type_diagnostic(target_type)
+            };
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&src_str, &tgt_str],
@@ -1893,7 +1914,7 @@ impl<'a> CheckerState<'a> {
         length: u32,
         file_name: String,
     ) -> Diagnostic {
-        let source_str = if depth == 0 {
+        let mut source_str = if depth == 0 {
             let display = self.format_assignment_source_type_for_diagnostic(source, target, idx);
             // tsc preserves literal union structure (e.g., `"c" | "d"`) in error
             // messages. If format_assignment_source_type_for_diagnostic widened the
@@ -1920,11 +1941,29 @@ impl<'a> CheckerState<'a> {
         } else {
             self.format_nested_assignment_source_type_for_diagnostic(source, target, idx)
         };
-        let target_str = if depth == 0 {
-            self.format_assignability_type_for_message(target, source)
+        let mut target_str = if depth == 0 {
+            self.format_assignment_target_type_for_diagnostic(target, source, idx)
         } else {
             self.format_type_for_assignability_message(target)
         };
+        if depth == 0 {
+            source_str = self.rewrite_source_display_for_non_literal_target_assignability(
+                source, target, source_str,
+            );
+            let has_declared_target_annotation = self
+                .assignment_target_expression(idx)
+                .and_then(|expr| self.declared_type_annotation_text_for_expression(expr))
+                .is_some();
+            if !has_declared_target_annotation {
+                target_str =
+                    self.rewrite_target_display_for_non_literal_assignability(target, target_str);
+            }
+        }
+        if depth == 0 && target_str == "Object" {
+            let evaluated = self.evaluate_type_for_assignability(source);
+            let widened = crate::query_boundaries::common::widen_type(self.ctx.types, evaluated);
+            source_str = self.format_type_diagnostic_widened(widened);
+        }
         if depth == 0
             && (target_str == "Callable" || target_str == "Applicable")
             && !tsz_solver::is_primitive_type(self.ctx.types, source)

@@ -677,8 +677,25 @@ impl<'a> CheckerState<'a> {
         let (_, rhs_expr, expando_root) = best_match?;
         let rhs_type =
             self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr, expando_root.as_deref());
+
         if rhs_type == TypeId::UNDEFINED {
-            return None;
+            let mut candidate_type: Option<TypeId> = None;
+            for (_, candidate_rhs, candidate_root) in candidates {
+                let ty = self.infer_commonjs_export_rhs_type(
+                    target_file_idx,
+                    candidate_rhs,
+                    candidate_root.as_deref(),
+                );
+                if ty == TypeId::UNDEFINED {
+                    continue;
+                }
+                candidate_type = match candidate_type {
+                    None => Some(ty),
+                    Some(existing) if existing == ty => Some(existing),
+                    Some(_) => Some(TypeId::ANY),
+                };
+            }
+            return candidate_type;
         }
 
         let expected_widened = crate::query_boundaries::common::widen_literal_type(

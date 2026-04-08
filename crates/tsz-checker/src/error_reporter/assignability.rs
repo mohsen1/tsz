@@ -779,10 +779,161 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> (String, String) {
+        let source_str = self.format_assignability_type_for_message(source, target);
+        let source_str = self.rewrite_source_display_for_non_literal_target_assignability(
+            source, target, source_str,
+        );
+        let target_str = self.format_assignability_type_for_message(target, source);
+        let target_str =
+            self.rewrite_target_display_for_non_literal_assignability(target, target_str);
         (
-            self.format_assignability_type_for_message(source, target),
-            self.format_assignability_type_for_message(target, source),
+            source_str,
+            target_str,
         )
+    }
+
+    pub(super) fn rewrite_source_display_for_non_literal_target_assignability(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_display: String,
+    ) -> String {
+        if self.is_literal_sensitive_assignment_target(target)
+            || !Self::display_has_member_literals_assignability(&source_display)
+        {
+            return source_display;
+        }
+        let evaluated = self.evaluate_type_for_assignability(source);
+        let widened = crate::query_boundaries::common::widen_type(self.ctx.types, evaluated);
+        let widened = self.widen_function_like_display_type(widened);
+        let widened_display = self.format_type_diagnostic_widened(widened);
+        if Self::display_has_member_literals_assignability(&widened_display) {
+            Self::widen_member_literals_in_display_text(&widened_display)
+        } else {
+            widened_display
+        }
+    }
+
+    pub(super) fn rewrite_target_display_for_non_literal_assignability(
+        &mut self,
+        target: TypeId,
+        target_display: String,
+    ) -> String {
+        if !Self::display_has_member_literals_assignability(&target_display) {
+            return target_display;
+        }
+        let evaluated = self.evaluate_type_for_assignability(target);
+        let widened = crate::query_boundaries::common::widen_type(self.ctx.types, evaluated);
+        let widened = self.widen_function_like_display_type(widened);
+        let widened_display = self.format_type_diagnostic_widened(widened);
+        if Self::display_has_member_literals_assignability(&widened_display) {
+            Self::widen_member_literals_in_display_text(&widened_display)
+        } else {
+            widened_display
+        }
+    }
+
+    pub(super) fn display_has_member_literals_assignability(display: &str) -> bool {
+        let bytes = display.as_bytes();
+        if bytes.len() < 3 {
+            return false;
+        }
+        for i in 0..(bytes.len() - 2) {
+            if bytes[i] != b':' || bytes[i + 1] != b' ' {
+                continue;
+            }
+            let rest = &display[i + 2..];
+            if rest.starts_with('"') || rest.starts_with("true") || rest.starts_with("false") {
+                return true;
+            }
+            if rest
+                .as_bytes()
+                .first()
+                .is_some_and(|b| b.is_ascii_digit() || *b == b'-')
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub(super) fn widen_member_literals_in_display_text(display: &str) -> String {
+        let bytes = display.as_bytes();
+        let mut out = String::with_capacity(display.len());
+        let mut i = 0usize;
+        let is_boundary = |b: u8| {
+            matches!(
+                b,
+                b';' | b',' | b'}' | b'>' | b')' | b'|' | b'&' | b']' | b' '
+            )
+        };
+        while i < bytes.len() {
+            if i + 2 < bytes.len() && bytes[i] == b':' && bytes[i + 1] == b' ' {
+                out.push(':');
+                out.push(' ');
+                i += 2;
+
+                if i < bytes.len() && bytes[i] == b'"' {
+                    i += 1;
+                    while i < bytes.len() {
+                        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                            i += 2;
+                            continue;
+                        }
+                        if bytes[i] == b'"' {
+                            i += 1;
+                            break;
+                        }
+                        i += 1;
+                    }
+                    out.push_str("string");
+                    continue;
+                }
+
+                if display[i..].starts_with("true")
+                    && (i + 4 >= bytes.len() || is_boundary(bytes[i + 4]))
+                {
+                    out.push_str("boolean");
+                    i += 4;
+                    continue;
+                }
+                if display[i..].starts_with("false")
+                    && (i + 5 >= bytes.len() || is_boundary(bytes[i + 5]))
+                {
+                    out.push_str("boolean");
+                    i += 5;
+                    continue;
+                }
+
+                if i < bytes.len() && (bytes[i] == b'-' || bytes[i].is_ascii_digit()) {
+                    let mut j = i;
+                    if bytes[j] == b'-' {
+                        j += 1;
+                    }
+                    let mut saw_digit = false;
+                    while j < bytes.len() && bytes[j].is_ascii_digit() {
+                        j += 1;
+                        saw_digit = true;
+                    }
+                    if j < bytes.len() && bytes[j] == b'.' {
+                        j += 1;
+                        while j < bytes.len() && bytes[j].is_ascii_digit() {
+                            j += 1;
+                            saw_digit = true;
+                        }
+                    }
+                    if saw_digit && (j >= bytes.len() || is_boundary(bytes[j])) {
+                        out.push_str("number");
+                        i = j;
+                        continue;
+                    }
+                }
+            }
+
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+        out
     }
 
     /// Internal generic error reporting for type assignability failures.
