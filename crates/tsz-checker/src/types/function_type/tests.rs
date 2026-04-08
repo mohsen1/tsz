@@ -4,6 +4,10 @@ fn diagnostics_for_source(source: &str) -> Vec<u32> {
     crate::test_utils::check_source_codes(source)
 }
 
+fn diagnostics_with_spans(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+    crate::test_utils::check_source_diagnostics(source)
+}
+
 #[test]
 fn expression_body_arrow_with_return_annotation_reports_type_mismatch() {
     let diagnostics = diagnostics_for_source("const f = (): number => \"str\";");
@@ -12,6 +16,21 @@ fn expression_body_arrow_with_return_annotation_reports_type_mismatch() {
     assert!(
         diagnostics.contains(&target),
         "expected TS2322, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn block_body_arrow_return_type_mismatch_anchors_return_statement() {
+    let source = "const f = <T>(x: T): T => { return null; };";
+    let diagnostics = diagnostics_with_spans(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .expect("expected TS2322");
+    let return_start = source.find("return").expect("expected return keyword") as u32;
+    assert_eq!(
+        diag.start, return_start,
+        "TS2322 for block-body arrow return mismatch should anchor at `return`: {diag:?}"
     );
 }
 
