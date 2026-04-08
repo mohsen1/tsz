@@ -567,6 +567,15 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
         arg_idx: NodeIndex,
     ) -> String {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
+        if let Some(expr_node) = self.ctx.arena.get(expr_idx)
+            && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
+            && ident.escaped_text == "arguments"
+            && self.has_enclosing_regular_function(expr_idx)
+        {
+            return "IArguments".to_string();
+        }
+
         if self.is_literal_sensitive_assignment_target(param_type)
             && let Some(display) = self.literal_call_argument_display(arg_idx)
         {
@@ -579,7 +588,6 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
-        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
         if let Some(display) =
             self.identifier_array_object_literal_source_display(expr_idx, param_type)
         {
