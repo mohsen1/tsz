@@ -16,6 +16,8 @@ struct JsxAttrInfo {
     type_id: TypeId,
     /// Whether this attribute came from a spread (`{...obj}`) vs explicit (`name={val}`)
     from_spread: bool,
+    /// Source node for explicit attribute names; absent for spread-sourced/synthesized attrs.
+    name_node_idx: Option<NodeIndex>,
 }
 
 /// Collected JSX attribute information for overload matching.
@@ -76,11 +78,15 @@ impl<'a> CheckerState<'a> {
                 name: children_prop_name,
                 type_id: children.synthesized_type,
                 from_spread: false,
+                name_node_idx: None,
             });
         }
 
         // Try each overload
         let has_any_attrs = !attrs_info.attrs.is_empty() || attrs_info.has_spread;
+        let mut shared_explicit_anchor_name: Option<String> = None;
+        let mut all_overload_failures_share_explicit_anchor = true;
+        let mut considered_overload_failures: usize = 0;
 
         // When an `any`-typed spread exists, any non-0-param overload matches.
         // The `any` spread dominates the merged type, making it `any`.
@@ -135,11 +141,47 @@ impl<'a> CheckerState<'a> {
                 self.check_jsx_sfc_return_type(instantiated_return, tag_name_idx);
                 return;
             }
+
+            considered_overload_failures += 1;
+            if let Some(overload_anchor_name) =
+                self.jsx_overload_explicit_failure_attr(&attrs_info, props_resolved)
+            {
+                if let Some(shared_name) = shared_explicit_anchor_name.as_deref() {
+                    if shared_name != overload_anchor_name.as_str() {
+                        all_overload_failures_share_explicit_anchor = false;
+                    }
+                } else {
+                    shared_explicit_anchor_name = Some(overload_anchor_name);
+                }
+            } else {
+                all_overload_failures_share_explicit_anchor = false;
+            }
         }
 
         // No overload matched — roll back speculative diagnostics and emit TS2769.
-        // tsc anchors JSX TS2769 at the tag name.
+        // tsc often anchors at the tag name, but when every non-0-param overload
+        // fails on the same explicit attribute, anchor that attribute instead.
         guard.rollback(&mut self.ctx);
+        let anchor_idx = if considered_overload_failures > 0
+            && all_overload_failures_share_explicit_anchor
+        {
+            shared_explicit_anchor_name
+                .as_deref()
+                .and_then(|shared_name| {
+                    attrs_info
+                        .attrs
+                        .iter()
+                        .find(|a| {
+                            !a.from_spread
+                                && a.name_node_idx.is_some()
+                                && a.name.as_str() == shared_name
+                        })
+                        .and_then(|a| a.name_node_idx)
+                })
+                .unwrap_or(tag_name_idx)
+        } else {
+            tag_name_idx
+        };
 
         // TS2786: When no overload matches, also check if the component's return
         // type is compatible with JSX.Element. tsc emits TS2786 alongside TS2769
@@ -148,7 +190,7 @@ impl<'a> CheckerState<'a> {
 
         use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
         self.error_at_node(
-            tag_name_idx,
+            anchor_idx,
             diagnostic_messages::NO_OVERLOAD_MATCHES_THIS_CALL,
             diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL,
         );
@@ -239,11 +281,13 @@ impl<'a> CheckerState<'a> {
                 if let Some(existing) = attr_map.iter_mut().find(|a| a.name == attr_name) {
                     existing.type_id = attr_type;
                     existing.from_spread = false;
+                    existing.name_node_idx = Some(attr_data.name);
                 } else {
                     attr_map.push(JsxAttrInfo {
                         name: attr_name,
                         type_id: attr_type,
                         from_spread: false,
+                        name_node_idx: Some(attr_data.name),
                     });
                 }
             } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
@@ -269,11 +313,13 @@ impl<'a> CheckerState<'a> {
                         if let Some(existing) = attr_map.iter_mut().find(|a| a.name == name) {
                             existing.type_id = prop.type_id;
                             existing.from_spread = true;
+                            existing.name_node_idx = None;
                         } else {
                             attr_map.push(JsxAttrInfo {
                                 name,
                                 type_id: prop.type_id,
                                 from_spread: true,
+                                name_node_idx: None,
                             });
                         }
                     }
@@ -372,6 +418,53 @@ impl<'a> CheckerState<'a> {
         }
 
         true
+    }
+
+    /// Returns the explicit attribute name that best explains an overload mismatch.
+    ///
+    /// We prefer explicit attribute failures (type mismatch or excess property) and
+    /// ignore spread-sourced/synthesized attrs. Missing-required-property failures
+    /// do not produce an explicit anchor candidate.
+    fn jsx_overload_explicit_failure_attr(
+        &mut self,
+        info: &JsxAttrsInfo,
+        props_type: TypeId,
+    ) -> Option<String> {
+        if props_type == TypeId::ANY || props_type == TypeId::ERROR {
+            return None;
+        }
+
+        let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)
+        else {
+            return None;
+        };
+        let has_string_index = shape.string_index.is_some();
+
+        for attr in &info.attrs {
+            if attr.from_spread || attr.name_node_idx.is_none() || attr.name.contains('-') {
+                continue;
+            }
+
+            use crate::query_boundaries::common::PropertyAccessResult;
+            if let PropertyAccessResult::Success { type_id, .. } =
+                self.resolve_property_access_with_env(props_type, &attr.name)
+            {
+                if attr.type_id == TypeId::ANY || attr.type_id == TypeId::ERROR {
+                    continue;
+                }
+                let expected = tsz_solver::remove_undefined(self.ctx.types, type_id);
+                if !self.is_assignable_to(attr.type_id, expected) {
+                    return Some(attr.name.clone());
+                }
+                continue;
+            }
+
+            if !has_string_index {
+                return Some(attr.name.clone());
+            }
+        }
+
+        None
     }
 
     /// Build an object type from collected JSX attribute info.
