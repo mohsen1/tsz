@@ -1609,6 +1609,116 @@ const a = (null as any as import("pkg", { with: {1234, "resolution-mode": "requi
 }
 
 #[test]
+fn test_typeof_import_defer_reports_missing_parens_in_type_query() {
+    let source = r#"
+export type X = typeof import.defer("./a").Foo;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1005_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::EXPECTED)
+        .map(|d| d.message.as_str())
+        .collect();
+
+    assert!(
+        ts1005_messages.iter().any(|m| m.contains("'(' expected.")),
+        "Expected TS1005 '(' expected for typeof import.defer, got {diagnostics:?}",
+    );
+    assert!(
+        ts1005_messages.iter().any(|m| m.contains("')' expected.")),
+        "Expected TS1005 ')' expected for typeof import.defer, got {diagnostics:?}",
+    );
+}
+
+#[test]
+fn test_import_attributes_double_comma_recovers_with_missing_brace_and_ts1128() {
+    let source = r#"
+export type Test3 = typeof import("./a.json", {
+  with: {
+    type: "json"
+  },,
+});
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED && d.message.contains("'}' expected.")),
+        "Expected TS1005 '}}' expected recovery for malformed import attributes, got {diagnostics:?}",
+    );
+
+    let ts1128_count = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED)
+        .count();
+    assert!(
+        ts1128_count >= 2,
+        "Expected at least two TS1128 diagnostics in tail recovery, got {diagnostics:?}",
+    );
+}
+
+#[test]
+fn test_import_type_options_array_recovery_reports_ts1005_and_ts1128() {
+    let source = r#"
+export type LocalInterface =
+    & import("pkg", [ {"resolution-mode": "require"} ]).RequireInterface
+    & import("pkg", [ {"resolution-mode": "import"} ]).ImportInterface;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED && d.message.contains("'{' expected.")),
+        "Expected TS1005 '{{' expected for array import options recovery, got {diagnostics:?}",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED && d.message.contains("';' expected.")),
+        "Expected TS1005 ';' expected for array import options recovery, got {diagnostics:?}",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "Expected TS1128 in array import options recovery, got {diagnostics:?}",
+    );
+}
+
+#[test]
+fn test_import_type_options_identifier_recovery_reports_ts1134() {
+    let source = r#"
+type Attribute1 = { with: {"resolution-mode": "require"} };
+export const a = (null as any as import("pkg", Attribute1).RequireInterface);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED && d.message.contains("'{' expected.")),
+        "Expected TS1005 '{{' expected for indirected import options, got {diagnostics:?}",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::VARIABLE_DECLARATION_EXPECTED),
+        "Expected TS1134 for indirected import options recovery, got {diagnostics:?}",
+    );
+}
+
+#[test]
 fn test_type_argument_with_empty_jsdoc_wildcard_has_no_ts1110() {
     // `Foo<?>` should emit TS8020 but avoid TS17020/TS1110 cascading.
     let source = r#"
