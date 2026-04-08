@@ -279,18 +279,22 @@ impl<'a> CheckerState<'a> {
             })
             .collect();
         let literal_anchor = self.overload_literal_argument_anchor(idx, failures);
-        let shared_argument_anchor = self.shared_overload_argument_anchor(idx, &argument_failures);
-        let mut formatter = self.ctx.create_type_formatter();
-        let identical_argument_failures = argument_failures
-            .first()
-            .map(|first| {
-                let rendered_first = formatter.render(first);
-                argument_failures
-                    .iter()
-                    .skip(1)
-                    .all(|failure| formatter.render(failure).message == rendered_first.message)
-            })
-            .unwrap_or(false);
+        let shared_argument_anchor = self
+            .shared_overload_argument_anchor_from_spans(idx, &argument_failures)
+            .or_else(|| self.shared_overload_argument_anchor(idx, &argument_failures));
+        let identical_argument_failures = {
+            let mut formatter = self.ctx.create_type_formatter();
+            argument_failures
+                .first()
+                .map(|first| {
+                    let rendered_first = formatter.render(first);
+                    argument_failures
+                        .iter()
+                        .skip(1)
+                        .all(|failure| formatter.render(failure).message == rendered_first.message)
+                })
+                .unwrap_or(false)
+        };
         let remaining_failures: Vec<_> = failures
             .iter()
             .filter(|failure| {
@@ -310,11 +314,18 @@ impl<'a> CheckerState<'a> {
                 failure.code
                     == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
             });
+        let anchor_argument_from_first_argument_mismatch = all_failures_are_argument_mismatches
+            && shared_argument_anchor.is_none()
+            && self.first_argument_mismatches_all_overload_expected_types(idx, &argument_failures);
         let anchor_argument_from_mixed_failures = shared_argument_anchor.is_some()
             && !remaining_failures.is_empty()
             && remaining_failures_are_count_mismatches;
         let anchor_argument_from_all_failures =
             all_failures_are_argument_mismatches && shared_argument_anchor.is_some();
+        let raw_argument_anchor =
+            shared_argument_anchor.or_else(|| self.first_call_argument_anchor(idx));
+        let argument_anchor_is_callback = raw_argument_anchor
+            .is_some_and(|anchor_idx| self.is_callback_expression_argument(anchor_idx));
         let is_new_call = self.is_new_expression(idx);
         let is_bind_method_call = self
             .ctx
@@ -355,12 +366,14 @@ impl<'a> CheckerState<'a> {
             && anchor_argument_from_all_failures
             && shared_argument_anchor.is_some();
         let anchor_first_argument = !is_new_call
+            && !argument_anchor_is_callback
             && (!is_bind_method_call || bind_call_preserves_shared_argument_anchor)
             && (identical_argument_failures
                 && !remaining_failures.is_empty()
                 && remaining_failures_are_count_mismatches
                 || anchor_argument_from_mixed_failures
-                || anchor_argument_from_all_failures);
+                || anchor_argument_from_all_failures
+                || anchor_argument_from_first_argument_mismatch);
 
         let anchor_kind = if literal_anchor.is_some() {
             DiagnosticAnchorKind::Exact
@@ -375,9 +388,7 @@ impl<'a> CheckerState<'a> {
         let anchor_idx = if let Some(anchor_idx) = literal_anchor {
             anchor_idx
         } else if anchor_first_argument {
-            let raw_anchor = shared_argument_anchor
-                .or_else(|| self.first_call_argument_anchor(idx))
-                .unwrap_or(idx);
+            let raw_anchor = raw_argument_anchor.unwrap_or(idx);
             // When the anchor is an object literal expression, tsc drills down
             // to the first property so the TS2769 diagnostic points at the
             // first property name (e.g. `z` in `{ z: 3 }`) rather than `{`.
@@ -390,6 +401,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
         let mut related = Vec::new();
+        let mut formatter = self.ctx.create_type_formatter();
         let span =
             tsz_solver::SourceSpan::new(self.ctx.file_name.as_str(), anchor.start, anchor.length);
 

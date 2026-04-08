@@ -331,6 +331,78 @@ fn(true);
 }
 
 #[test]
+fn ts2769_literal_overload_mismatch_anchors_first_failing_argument() {
+    let source = r#"
+function foo(x: "hi", items: string[]): number;
+function foo(x: "bye", items: string[]): string;
+function foo(x: string, items: string[]): string | number {
+    return 1;
+}
+foo("um", []);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2769)
+        .expect("expected TS2769");
+
+    let arg_start = source.rfind("\"um\"").expect("expected argument literal") as u32;
+    assert_eq!(
+        diag.start, arg_start,
+        "TS2769 should anchor at the mismatched literal argument"
+    );
+    assert_eq!(
+        diag.length, 4,
+        "TS2769 should cover only the literal argument token"
+    );
+}
+
+#[test]
+fn ts2769_provisional_callback_failures_anchor_callee_not_callback_argument() {
+    let source = r#"
+declare var func: {
+    (s: string): number;
+    (lambda: (s: string) => { a: number; b: number }): string;
+};
+
+func(s => ({}));
+func(s => ({ a: blah, b: 3 }));
+func(s => ({ a: blah }));
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let ts2769: Vec<_> = diagnostics.iter().filter(|d| d.code == 2769).collect();
+    assert_eq!(
+        ts2769.len(),
+        2,
+        "expected two TS2769 diagnostics, got: {diagnostics:?}"
+    );
+
+    let first_call_start = source
+        .find("func(s => ({}));")
+        .expect("expected first call") as u32;
+    let third_call_start = source
+        .find("func(s => ({ a: blah }));")
+        .expect("expected third call") as u32;
+    let callback_start = source.find("s => ({})").expect("expected callback") as u32;
+
+    let starts: Vec<u32> = ts2769.iter().map(|diag| diag.start).collect();
+    assert!(
+        starts.contains(&first_call_start),
+        "expected TS2769 at first call callee, got: {ts2769:?}"
+    );
+    assert!(
+        starts.contains(&third_call_start),
+        "expected TS2769 at third call callee, got: {ts2769:?}"
+    );
+    assert!(
+        !starts.contains(&callback_start),
+        "TS2769 should anchor at callee, not callback argument: {ts2769:?}"
+    );
+}
+
+#[test]
 fn ts2769_array_literal_overload_mismatch_anchors_nested_property() {
     let source = r#"
 function foo(bar:{a:number;}[]):string;

@@ -59,6 +59,18 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    pub(super) fn is_callback_expression_argument(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+
+        node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+    }
+
     pub(super) fn overload_literal_argument_anchor(
         &mut self,
         idx: NodeIndex,
@@ -123,7 +135,8 @@ impl<'a> CheckerState<'a> {
                 _ => return None,
             };
 
-            let mut matching_args = Vec::new();
+            let mut actual_matches = Vec::new();
+            let mut expected_mismatch_matches = Vec::new();
             for &arg_idx in &args.nodes {
                 let arg_type = self.get_type_of_node(arg_idx);
                 let matches_actual = arg_type == actual_type
@@ -133,7 +146,55 @@ impl<'a> CheckerState<'a> {
                     && expected_type != TypeId::UNKNOWN
                     && !self.is_assignable_to(arg_type, expected_type);
 
-                if matches_actual || mismatches_expected {
+                if matches_actual {
+                    actual_matches.push(arg_idx);
+                } else if mismatches_expected {
+                    expected_mismatch_matches.push(arg_idx);
+                }
+            }
+
+            let anchor_idx = match actual_matches.as_slice() {
+                [single] => *single,
+                [] => {
+                    let [single] = expected_mismatch_matches.as_slice() else {
+                        return None;
+                    };
+                    *single
+                }
+                _ => return None,
+            };
+            if let Some(existing) = shared {
+                if existing != anchor_idx {
+                    return None;
+                }
+            } else {
+                shared = Some(anchor_idx);
+            }
+        }
+
+        shared
+    }
+
+    pub(super) fn shared_overload_argument_anchor_from_spans(
+        &self,
+        idx: NodeIndex,
+        failures: &[&tsz_solver::PendingDiagnostic],
+    ) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(idx)?;
+        let call = self.ctx.arena.get_call_expr(node)?;
+        let args = call.arguments.as_ref()?;
+
+        let mut shared = None;
+        for failure in failures {
+            let span = failure.span.as_ref()?;
+            let mut matching_args = Vec::new();
+
+            for &arg_idx in &args.nodes {
+                let Some(arg_loc) = self.get_source_location(arg_idx) else {
+                    continue;
+                };
+                let arg_end = arg_loc.end;
+                if span.start >= arg_loc.start && span.start < arg_end {
                     matching_args.push(arg_idx);
                 }
             }
@@ -151,6 +212,41 @@ impl<'a> CheckerState<'a> {
         }
 
         shared
+    }
+
+    pub(super) fn first_argument_mismatches_all_overload_expected_types(
+        &mut self,
+        idx: NodeIndex,
+        failures: &[&tsz_solver::PendingDiagnostic],
+    ) -> bool {
+        use crate::diagnostics::diagnostic_codes;
+
+        let Some(first_arg_idx) = self.first_call_argument_anchor(idx) else {
+            return false;
+        };
+        let first_arg_type = self.get_type_of_node(first_arg_idx);
+        let mut saw_expected = false;
+
+        for failure in failures {
+            if failure.code
+                != diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+            {
+                return false;
+            }
+            let expected_type = match failure.args.as_slice() {
+                [_, tsz_solver::DiagnosticArg::Type(expected_type)] => *expected_type,
+                _ => return false,
+            };
+            if matches!(expected_type, TypeId::ERROR | TypeId::UNKNOWN) {
+                continue;
+            }
+            saw_expected = true;
+            if self.is_assignable_to(first_arg_type, expected_type) {
+                return false;
+            }
+        }
+
+        saw_expected
     }
 
     pub(super) fn literal_argument_mismatch_anchor(
