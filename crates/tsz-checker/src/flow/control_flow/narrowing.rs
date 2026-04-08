@@ -502,17 +502,16 @@ impl<'a> FlowAnalyzer<'a> {
                         .collect();
                     if concrete_members.iter().any(|&m| {
                         let evaluated = flow_query::evaluate_type_structure(self.interner, m);
-                        crate::query_boundaries::common::contains_type_parameters(
-                            self.interner,
-                            m,
-                        ) || crate::query_boundaries::common::contains_type_parameters(
-                            self.interner,
-                            evaluated,
-                        ) || crate::query_boundaries::state::checking::object_shape(
-                            self.interner,
-                            evaluated,
-                        )
-                        .is_some()
+                        crate::query_boundaries::common::contains_type_parameters(self.interner, m)
+                            || crate::query_boundaries::common::contains_type_parameters(
+                                self.interner,
+                                evaluated,
+                            )
+                            || crate::query_boundaries::state::checking::object_shape(
+                                self.interner,
+                                evaluated,
+                            )
+                            .is_some()
                     }) {
                         continue;
                     }

@@ -1562,8 +1562,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.ctx.types.factory().union(widened_types)
                 };
-                let display =
-                    self.format_assignability_type_for_message(value_type, target);
+                let display = self.format_assignability_type_for_message(value_type, target);
                 format!("{name}: {display}")
             })
             .collect::<Vec<_>>()
