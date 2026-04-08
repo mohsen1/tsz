@@ -855,7 +855,7 @@ impl<'a> CheckerState<'a> {
                 if error_code == 6504 {
                     self.error_program_level(error_message, error_code);
                 } else {
-                self.error_at_node(specifier_node, &error_message, error_code);
+                    self.error_at_node(specifier_node, &error_message, error_code);
                 }
             }
             return TypeId::ERROR;

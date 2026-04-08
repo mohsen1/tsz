@@ -11,8 +11,8 @@ use crate::control_flow::FlowGraph;
 use crate::diagnostics::{Diagnostic, diagnostic_codes};
 use crate::module_resolution::module_specifier_candidates;
 use tsz_binder::{BinderState, SymbolId};
-use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 use super::{CheckerContext, LibContext, ResolutionError, ResolutionModeOverride, TypeCache};
@@ -144,7 +144,9 @@ impl<'a> CheckerContext<'a> {
                 name_idx
                     .and_then(|name_idx| self.arena.get(name_idx))
                     .and_then(|name_node| self.arena.get_identifier(name_node))
-                    .is_some_and(|ident| self.arena.resolve_identifier_text(ident) == symbol.escaped_name)
+                    .is_some_and(|ident| {
+                        self.arena.resolve_identifier_text(ident) == symbol.escaped_name
+                    })
             };
 
             if declaration_name_matches(symbol.value_declaration)

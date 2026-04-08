@@ -555,9 +555,7 @@ impl<'a> CheckerState<'a> {
 
     /// Record a cross-file symbol origin for proper arena delegation.
     fn record_cross_file_member(&self, member_id: SymbolId, _member_name: &str, file_idx: usize) {
-        if file_idx != self.ctx.current_file_idx
-            && !self.ctx.has_symbol_file_index(member_id)
-        {
+        if file_idx != self.ctx.current_file_idx && !self.ctx.has_symbol_file_index(member_id) {
             self.ctx.register_symbol_file_target(member_id, file_idx);
         }
     }
