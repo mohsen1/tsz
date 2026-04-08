@@ -403,10 +403,13 @@ impl<'a> CheckerState<'a> {
     fn nominal_shape_symbol_for_display(&mut self, ty: TypeId) -> Option<tsz_binder::SymbolId> {
         let resolved = self.evaluate_type_for_assignability(ty);
         [ty, resolved].into_iter().find_map(|candidate| {
-            tsz_solver::type_queries::get_type_shape_symbol(self.ctx.types, candidate).or_else(|| {
-                let def_id = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, candidate)?;
-                self.ctx.def_to_symbol_id_with_fallback(def_id)
-            })
+            tsz_solver::type_queries::get_type_shape_symbol(self.ctx.types, candidate).or_else(
+                || {
+                    let def_id =
+                        tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, candidate)?;
+                    self.ctx.def_to_symbol_id_with_fallback(def_id)
+                },
+            )
         })
     }
 
