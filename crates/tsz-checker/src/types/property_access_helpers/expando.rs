@@ -397,6 +397,93 @@ impl<'a> CheckerState<'a> {
         }))
     }
 
+    pub(in crate::types_domain) fn prior_js_prototype_object_literal_assignment_node(
+        &self,
+        prototype_root_expr: NodeIndex,
+        read_pos: u32,
+    ) -> Option<NodeIndex> {
+        let root_key = Self::property_access_chain_in_arena(self.ctx.arena, prototype_root_expr)?;
+        let expected_key = format!("{root_key}.prototype");
+        let mut latest_match: Option<(u32, NodeIndex)> = None;
+
+        for raw_idx in 0..self.ctx.arena.len() {
+            let idx = NodeIndex(raw_idx as u32);
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::BINARY_EXPRESSION || node.pos >= read_pos {
+                continue;
+            }
+            let Some(binary) = self.ctx.arena.get_binary_expr(node) else {
+                continue;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+            if Self::expando_assignment_access_key_in_arena(self.ctx.arena, binary.left)
+                .as_deref()
+                != Some(expected_key.as_str())
+            {
+                continue;
+            }
+
+            let rhs_idx = self.ctx.arena.skip_parenthesized(binary.right);
+            let Some(rhs_node) = self.ctx.arena.get(rhs_idx) else {
+                continue;
+            };
+            if rhs_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                continue;
+            }
+            if latest_match.is_none_or(|(best_pos, _)| node.pos >= best_pos) {
+                latest_match = Some((node.pos, rhs_idx));
+            }
+        }
+
+        latest_match.map(|(_, rhs_idx)| rhs_idx)
+    }
+
+    pub(in crate::types_domain) fn prior_js_prototype_object_literal_declares_property(
+        &self,
+        prototype_root_expr: NodeIndex,
+        property_name: &str,
+        read_pos: u32,
+    ) -> Option<bool> {
+        let rhs_idx =
+            self.prior_js_prototype_object_literal_assignment_node(prototype_root_expr, read_pos)?;
+        let rhs_node = self.ctx.arena.get(rhs_idx)?;
+        let obj_lit = self.ctx.arena.get_literal_expr(rhs_node)?;
+
+        Some(obj_lit.elements.nodes.iter().copied().any(|elem_idx| {
+                let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                    return false;
+                };
+                let elem_prop_name = match elem_node.kind {
+                    syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                        .ctx
+                        .arena
+                        .get_property_assignment(elem_node)
+                        .and_then(|prop| self.get_property_name(prop.name)),
+                    syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
+                        .ctx
+                        .arena
+                        .get_shorthand_property(elem_node)
+                        .and_then(|prop| self.get_property_name(prop.name)),
+                    syntax_kind_ext::METHOD_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_method_decl(elem_node)
+                        .and_then(|method| self.get_property_name(method.name)),
+                    syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => self
+                        .ctx
+                        .arena
+                        .get_accessor(elem_node)
+                        .and_then(|accessor| self.get_property_name(accessor.name)),
+                    _ => None,
+                };
+                elem_prop_name.is_some_and(|name| name == property_name)
+            }))
+    }
+
     /// Check if a property access is an expando function assignment pattern.
     ///
     /// TypeScript allows assigning properties to function and class declarations:
@@ -461,6 +548,33 @@ impl<'a> CheckerState<'a> {
         if let Some(sym_id) = sym_id
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
         {
+            let prop_name = self
+                .ctx
+                .arena
+                .get(property_access_idx)
+                .and_then(|n| self.ctx.arena.get_access_expr(n))
+                .and_then(|a| {
+                    self.ctx
+                        .arena
+                        .get(a.name_or_argument)
+                        .and_then(|n| self.ctx.arena.get_identifier(n))
+                        .map(|id| id.escaped_text.clone())
+                });
+
+            if let Some(prop_name) = prop_name.as_deref()
+                && let Some(prototype_root_expr) = prototype_root_expr
+                && let Some(read_pos) = self.ctx.arena.get(property_access_idx).map(|n| n.pos)
+                && self
+                    .prior_js_prototype_object_literal_declares_property(
+                        prototype_root_expr,
+                        prop_name,
+                        read_pos,
+                    )
+                    .is_some_and(|declares| !declares)
+            {
+                return false;
+            }
+
             let is_declared_function_or_class =
                 (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0;
             let is_callable_variable = (symbol.flags
@@ -487,19 +601,7 @@ impl<'a> CheckerState<'a> {
             // constructor type (e.g., `Base.instanceProp = 2`) should produce
             // TS2339, not be silently accepted as an expando.
             if prototype_root_expr.is_none() && (symbol.flags & symbol_flags::CLASS) != 0 {
-                let prop_name = self
-                    .ctx
-                    .arena
-                    .get(property_access_idx)
-                    .and_then(|n| self.ctx.arena.get_access_expr(n))
-                    .and_then(|a| {
-                        self.ctx
-                            .arena
-                            .get(a.name_or_argument)
-                            .and_then(|n| self.ctx.arena.get_identifier(n))
-                            .map(|id| id.escaped_text.as_str())
-                    });
-                if let Some(prop_name) = prop_name {
+                if let Some(prop_name) = prop_name.as_deref() {
                     let obj_key = symbol.escaped_name.as_str();
                     if self.class_has_instance_member(obj_key, prop_name) {
                         return false;
