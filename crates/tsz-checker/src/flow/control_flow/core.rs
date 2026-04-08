@@ -2047,7 +2047,8 @@ impl<'a> FlowAnalyzer<'a> {
         // Check if predicate_target is a negated expression (!innerCall)
         // This handles cases like assert(!typeGuard(x)) where we need to narrow
         // based on the inner call's predicate but with negative sense.
-        if let Some(pred_node) = self.arena.get(predicate_target)
+        if resolved_predicate.type_id.is_some()
+            && let Some(pred_node) = self.arena.get(predicate_target)
             && pred_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
             && let Some(unary) = self.arena.get_unary_expr(pred_node)
             && unary.operator == SyntaxKind::ExclamationToken as u16
@@ -2137,11 +2138,14 @@ impl<'a> FlowAnalyzer<'a> {
                             self.make_narrowing_context()
                         };
                         // Apply the guard with NEGATIVE sense (because of the !)
-                        return narrowing.narrow_type(
+                        let narrowed = narrowing.narrow_type(
                             narrowed_pre_type,
                             &guard,
                             GuardSense::Negative,
                         );
+                        if narrowed != narrowed_pre_type {
+                            return narrowed;
+                        }
                     }
                 }
             }
