@@ -194,9 +194,7 @@ fn variable_declaration_recovery_prefers_ts1134_over_negated_regex_tail_ts1161()
 #[test]
 fn variable_declaration_recovery_prefers_ts1134_for_unknown_identifier_tail() {
     let subscript_one = '\u{2081}';
-    let source = format!(
-        "var a{subscript_one} = \"hello\"; alert(a{subscript_one})"
-    );
+    let source = format!("var a{subscript_one} = \"hello\"; alert(a{subscript_one})");
     let (parser, _root) = parse_source(&source);
     let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
 
