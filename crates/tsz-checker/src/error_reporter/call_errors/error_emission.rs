@@ -384,7 +384,8 @@ impl<'a> CheckerState<'a> {
             // at `bind`, not at the argument literal.
             literal_anchor = None;
         }
-        let anchor_first_argument = !is_new_call
+        let allow_new_argument_anchor = is_new_call && anchor_argument_from_all_failures;
+        let anchor_first_argument = (!is_new_call || allow_new_argument_anchor)
             && !argument_anchor_is_callback
             && !is_bind_method_call
             && (identical_argument_failures
