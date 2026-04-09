@@ -3701,6 +3701,72 @@ fn test_lookup_skips_fallback_for_nodenext_exports_authoritative_not_found() {
 }
 
 #[test]
+fn test_lookup_skips_fallback_for_bundler_exports_authoritative_not_found() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_lookup_skip_fallback_bundler_exports_not_found");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/pkg/package.json"),
+        r#"{
+            "name": "pkg",
+            "version": "1.0.0",
+            "type": "commonjs",
+            "exports": {
+                "require": "./index.js"
+            }
+        }"#,
+    )
+    .unwrap();
+    let fallback_target = dir.join("node_modules/pkg/index.d.ts");
+    fs::write(&fallback_target, "export const x: number;").unwrap();
+    fs::write(
+        dir.join("src/index.mts"),
+        "import { x } from 'pkg';\nx;\n",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "pkg",
+        containing_file: &dir.join("src/index.mts"),
+        specifier_span: Span::new(18, 23),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+
+    let fallback_clone = fallback_target.clone();
+    let result = resolver.lookup(&request, |_, _| Some(fallback_clone), |_| false, None);
+    let outcome = result.classify();
+
+    assert!(
+        !outcome.is_resolved,
+        "Fallback must be skipped for exports-authoritative NotFound in Bundler mode"
+    );
+    let error = outcome
+        .error
+        .expect("Expected TS2307 after skipping fallback in Bundler mode");
+    assert_eq!(
+        error.code, CANNOT_FIND_MODULE,
+        "Expected TS2307 when exports blocks resolution in Bundler mode, got TS{}",
+        error.code
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_lookup_skips_fallback_for_nodenext_literal_star_specifier_not_found() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_lookup_skip_fallback_literal_star");
