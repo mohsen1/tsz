@@ -1129,11 +1129,22 @@ impl<'a> CheckerState<'a> {
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(module_name)
         {
-            if let Some(target_idx) = self.ctx.resolve_import_target(module_name) {
-                let resolution_mode =
-                    self.requested_resolution_mode(import.attributes, is_type_only_import);
+            let resolution_mode =
+                self.requested_resolution_mode(import.attributes, is_type_only_import);
+            if let Some(target_idx) = self
+                .ctx
+                .resolve_import_target_from_file_with_mode(
+                    self.ctx.current_file_idx,
+                    module_name,
+                    resolution_mode,
+                )
+                .or_else(|| self.ctx.resolve_import_target(module_name))
+            {
                 let has_typed_export_surface = self
-                    .resolve_effective_module_exports_with_mode(module_name, resolution_mode)
+                    .resolve_effective_module_exports_with_mode(
+                        module_name,
+                        self.requested_resolution_mode(import.attributes, is_type_only_import),
+                    )
                     .is_some();
                 // When a module was successfully resolved to a target file, do NOT
                 // emit TS2307 regardless of its export surface. TS2307 means the

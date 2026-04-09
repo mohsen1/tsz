@@ -2060,17 +2060,13 @@ fn resolve_package_root(
         }
     }
 
-    // Try index file fallback, but only if the package root is NOT a symlink.
-    // Symlinked packages represent workspace-link directories where tsc requires
-    // an explicit entry point (via exports/main/types) and emits TS2307 when
-    // none is configured, even when an index file exists in the target directory.
-    // This matches the primary resolver's guard in node_modules_resolution.rs.
-    let is_symlinked_package_root = std::fs::symlink_metadata(package_root)
-        .map(|meta| meta.file_type().is_symlink())
-        .unwrap_or(false);
-    if !is_symlinked_package_root
-        && let Some(resolved) = resolve_package_entry(package_root, "index", options, package_type)
-    {
+    // Try index file fallback.
+    //
+    // For symlinked package roots with an explicit package.json, keep requiring an
+    // explicit entry point (exports/main/types). But for symlinked roots without
+    // package.json, allow index fallback (matches tsc's module resolution behavior
+    // used by declaration-emit symlink conformance cases).
+    if let Some(resolved) = resolve_package_entry(package_root, "index", options, package_type) {
         return Some(resolved);
     }
 
