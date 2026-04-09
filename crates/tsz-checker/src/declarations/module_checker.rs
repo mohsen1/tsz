@@ -115,7 +115,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if the module exists in the module_exports map (cross-file module resolution)
-        if self.ctx.binder.module_exports.contains_key(module_name) {
+        if self.ctx.binder.module_exports.contains_key(module_name)
+            && self
+                .ctx
+                .get_resolution_error_with_mode(module_name, resolution_mode)
+                .is_none()
+        {
             self.check_export_target_is_module(
                 export_decl.module_specifier,
                 module_name,
