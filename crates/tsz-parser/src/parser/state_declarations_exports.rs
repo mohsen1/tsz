@@ -643,10 +643,17 @@ impl ParserState {
             SyntaxKind::FunctionKeyword => self.parse_function_declaration(),
             SyntaxKind::AsyncKeyword => self.parse_export_async_declaration_or_expression(),
             SyntaxKind::ClassKeyword => self.parse_class_declaration(),
-            SyntaxKind::InterfaceKeyword => self.parse_interface_declaration(),
-            SyntaxKind::TypeKeyword => self.parse_export_type_alias_declaration(),
+            SyntaxKind::InterfaceKeyword => {
+                self.report_export_invalid_name_statement_expected(start_pos);
+                self.parse_interface_declaration()
+            }
+            SyntaxKind::TypeKeyword => {
+                self.report_export_invalid_name_statement_expected(start_pos);
+                self.parse_export_type_alias_declaration()
+            }
             SyntaxKind::EnumKeyword => self.parse_enum_declaration(),
             SyntaxKind::NamespaceKeyword | SyntaxKind::ModuleKeyword => {
+                self.report_export_invalid_name_statement_expected(start_pos);
                 self.parse_module_declaration()
             }
             SyntaxKind::AbstractKeyword => self.parse_abstract_class_declaration(),
@@ -750,14 +757,80 @@ impl ParserState {
         }
     }
 
+    fn report_export_invalid_name_statement_expected(&mut self, export_pos: u32) {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let should_report =
+            !self.scanner.has_preceding_line_break() && self.is_token(SyntaxKind::NumericLiteral);
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+
+        if should_report {
+            self.parse_error_at(
+                export_pos,
+                6,
+                "Declaration or statement expected.",
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            );
+        }
+    }
+
     fn parse_export_type_alias_declaration(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::TypeKeyword);
+        let mut has_invalid_numeric_name = false;
 
-        let name = self.parse_identifier();
+        let name = if self.is_token(SyntaxKind::NumericLiteral) {
+            let id_start = self.token_pos();
+            let id_end = self.token_end();
+            let text = self.scanner.get_token_value();
+            self.parse_error_at(
+                id_start,
+                id_end - id_start,
+                &format!("Type alias name cannot be '{text}'."),
+                diagnostic_codes::TYPE_ALIAS_NAME_CANNOT_BE,
+            );
+            self.next_token();
+            has_invalid_numeric_name = true;
+            self.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                id_start,
+                id_end,
+                crate::parser::node::IdentifierData {
+                    atom: tsz_common::interner::Atom::NONE,
+                    escaped_text: String::new(),
+                    original_text: None,
+                    type_arguments: None,
+                },
+            )
+        } else {
+            self.parse_identifier()
+        };
         let type_parameters = self
             .is_token(SyntaxKind::LessThanToken)
             .then(|| self.parse_type_parameters());
+
+        if has_invalid_numeric_name {
+            if self.is_token(SyntaxKind::OpenBraceToken) {
+                let brace_pos = self.token_pos();
+                self.parse_error_at(brace_pos, 1, "';' expected.", diagnostic_codes::EXPECTED);
+                let _ = self.parse_block();
+            }
+            self.parse_optional(SyntaxKind::SemicolonToken);
+            let end_pos = self.token_end();
+            return self.arena.add_type_alias(
+                syntax_kind_ext::TYPE_ALIAS_DECLARATION,
+                start_pos,
+                end_pos,
+                crate::parser::node::TypeAliasData {
+                    modifiers: None,
+                    name,
+                    type_parameters,
+                    type_node: NodeIndex::NONE,
+                },
+            );
+        }
 
         let type_node = if self.is_token(SyntaxKind::EqualsToken) {
             let equals_end = self.token_end();

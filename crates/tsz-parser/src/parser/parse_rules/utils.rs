@@ -106,7 +106,9 @@ pub fn look_ahead_is_type_alias_declaration(
     scanner: &mut ScannerState,
     current_token: SyntaxKind,
 ) -> bool {
-    look_ahead_is_on_same_line(scanner, current_token, is_identifier_or_keyword)
+    look_ahead_is_on_same_line(scanner, current_token, |token| {
+        is_identifier_or_keyword(token) || token == SyntaxKind::NumericLiteral
+    })
 }
 
 /// Look ahead to check if we have `const enum`.

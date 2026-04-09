@@ -46,11 +46,8 @@ fn write_file(path: &Path, contents: &str) {
 
 /// Run tsc and return its stderr output (where diagnostics go) with ANSI codes stripped.
 fn run_tsc(cwd: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("tsc")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .ok()?;
+    let mut cmd = tsc_command()?;
+    let output = cmd.args(args).current_dir(cwd).output().ok()?;
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -108,11 +105,8 @@ fn run_tsz_with_exit_code(cwd: &Path, args: &[&str]) -> Option<(i32, String)> {
 
 /// Run tsc and return (`exit_code`, `combined_output`).
 fn run_tsc_with_exit_code(cwd: &Path, args: &[&str]) -> Option<(i32, String)> {
-    let output = Command::new("tsc")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .ok()?;
+    let mut cmd = tsc_command()?;
+    let output = cmd.args(args).current_dir(cwd).output().ok()?;
 
     let code = output.status.code().unwrap_or(-1);
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -157,6 +151,24 @@ fn assert_tsc_tsz_match_with_exit_code(cwd: &Path, args: &[&str], label: &str) {
 
 /// Find the tsz binary in the target directory.
 fn find_tsz_binary() -> Option<PathBuf> {
+    // Cargo sets this for integration tests when the package builds a `tsz` binary.
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_tsz") {
+        let p = PathBuf::from(path);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    // Nextest may not provide CARGO_BIN_EXE_tsz; derive from the current test binary path.
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(debug_dir) = current_exe.parent().and_then(|p| p.parent()) {
+            let candidate = debug_dir.join("tsz");
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
 
     // Try workspace root (two directories up from crates/tsz-cli)
@@ -252,7 +264,25 @@ fn diff_outputs(tsc_output: &str, tsz_output: &str) -> Option<String> {
 
 /// Check that tsc is available on the system.
 fn tsc_available() -> bool {
-    Command::new("tsc").arg("--version").output().is_ok()
+    tsc_command()
+        .and_then(|mut cmd| cmd.arg("--version").output().ok())
+        .is_some()
+}
+
+/// Create a command that runs the pinned repo TypeScript compiler when available.
+/// Falls back to PATH `tsc` for environments without scripts/node_modules installed.
+fn tsc_command() -> Option<Command> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent()?.parent()?;
+    let local_tsc_js = workspace_root.join("scripts/node_modules/typescript/lib/tsc.js");
+
+    if local_tsc_js.exists() {
+        let mut cmd = Command::new("node");
+        cmd.arg(local_tsc_js);
+        return Some(cmd);
+    }
+
+    Some(Command::new("tsc"))
 }
 
 // ===========================================================================

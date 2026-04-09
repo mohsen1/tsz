@@ -662,7 +662,9 @@ impl ParserState {
             SyntaxKind::InterfaceKeyword => {
                 // ASI: `interface\nI {}` should be parsed as expression statement
                 // 'interface' followed by identifier 'I', not InterfaceDeclaration.
-                if self.look_ahead_next_is_identifier_or_keyword_on_same_line() {
+                if self.look_ahead_next_is_identifier_or_keyword_on_same_line()
+                    || self.look_ahead_next_is_numeric_literal_on_same_line()
+                {
                     self.parse_interface_declaration()
                 } else if self.look_ahead_next_is_open_brace_on_same_line() {
                     // `interface { }` — parse as interface with missing name (TS1438)
@@ -887,7 +889,9 @@ impl ParserState {
     }
 
     fn parse_statement_type_keyword(&mut self) -> NodeIndex {
-        if self.look_ahead_is_type_alias_declaration() {
+        if self.look_ahead_is_type_alias_declaration()
+            || self.look_ahead_next_is_numeric_literal_on_same_line()
+        {
             self.parse_type_alias_declaration()
         } else {
             self.parse_expression_statement()
@@ -1063,6 +1067,19 @@ impl ParserState {
         let current = self.current_token;
         self.next_token(); // skip the modifier keyword
         let result = !self.scanner.has_preceding_line_break() && self.is_identifier_or_keyword();
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
+    }
+
+    /// Check if the next token is a numeric literal on the same line.
+    /// Used for invalid declaration-name recovery (e.g., `interface 100 {}`).
+    pub(super) fn look_ahead_next_is_numeric_literal_on_same_line(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let result =
+            !self.scanner.has_preceding_line_break() && self.is_token(SyntaxKind::NumericLiteral);
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         result

@@ -325,12 +325,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         let computed = arena.get_computed_property(name_node)?;
         if let Some(symbol_name) =
-            self.well_known_symbol_property_name_in_arena(arena, computed.expression)
+            Self::well_known_symbol_property_name_in_arena(arena, computed.expression)
         {
             return Some(symbol_name);
         }
 
-        let sym_id = self.resolve_computed_property_symbol_in_arena(
+        let sym_id = Self::resolve_computed_property_symbol_in_arena(
             arena,
             computed.expression,
             resolve_text_symbol,
@@ -340,7 +340,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     }
 
     fn well_known_symbol_property_name_in_arena(
-        &self,
         arena: &NodeArena,
         expr_idx: NodeIndex,
     ) -> Option<String> {
@@ -348,7 +347,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         if node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION {
             let paren = arena.get_parenthesized(node)?;
-            return self.well_known_symbol_property_name_in_arena(arena, paren.expression);
+            return Self::well_known_symbol_property_name_in_arena(arena, paren.expression);
         }
 
         if node.kind != tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
@@ -383,7 +382,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     }
 
     fn resolve_computed_property_symbol_in_arena<F>(
-        &self,
         arena: &NodeArena,
         expr_idx: NodeIndex,
         resolve_text_symbol: &F,
@@ -395,7 +393,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         if node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION {
             let paren = arena.get_parenthesized(node)?;
-            return self.resolve_computed_property_symbol_in_arena(
+            return Self::resolve_computed_property_symbol_in_arena(
                 arena,
                 paren.expression,
                 resolve_text_symbol,
@@ -407,11 +405,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return resolve_text_symbol(&ident.escaped_text);
         }
 
-        let qualified = self.expression_name_text_in_arena(arena, expr_idx)?;
+        let qualified = Self::expression_name_text_in_arena(arena, expr_idx)?;
         resolve_text_symbol(&qualified)
     }
 
-    fn expression_name_text_in_arena(&self, arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+    fn expression_name_text_in_arena(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
         let node = arena.get(idx)?;
 
         if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
@@ -422,20 +420,20 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         if node.kind == tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME {
             let qn = arena.get_qualified_name(node)?;
-            let left = self.expression_name_text_in_arena(arena, qn.left)?;
-            let right = self.expression_name_text_in_arena(arena, qn.right)?;
+            let left = Self::expression_name_text_in_arena(arena, qn.left)?;
+            let right = Self::expression_name_text_in_arena(arena, qn.right)?;
             return Some(format!("{left}.{right}"));
         }
 
         if node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION {
             let paren = arena.get_parenthesized(node)?;
-            return self.expression_name_text_in_arena(arena, paren.expression);
+            return Self::expression_name_text_in_arena(arena, paren.expression);
         }
 
         if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access) = arena.get_access_expr(node)
         {
-            let left = self.expression_name_text_in_arena(arena, access.expression)?;
+            let left = Self::expression_name_text_in_arena(arena, access.expression)?;
             let right_node = arena.get(access.name_or_argument)?;
             let right = arena.get_identifier(right_node)?;
             return Some(format!("{left}.{}", right.escaped_text));

@@ -163,6 +163,36 @@ fn test_parse_and_bind_single_uses_json_synthetic_bind_path() {
     assert!(!result.arena.is_empty());
 }
 
+#[test]
+fn test_parse_and_bind_single_json_identifier_root_emits_tsc_recovery_sequence() {
+    let result =
+        parse_and_bind_single("settings.json".to_string(), "contents Not read".to_string());
+
+    let got: Vec<(u32, u32, String)> = result
+        .parse_diagnostics
+        .iter()
+        .map(|d| (d.code, d.start, d.message.clone()))
+        .collect();
+
+    let expected = vec![
+        (1005, 0, "'{' expected.".to_string()),
+        (1136, 0, "Property assignment expected.".to_string()),
+        (1005, 9, "',' expected.".to_string()),
+        (1136, 9, "Property assignment expected.".to_string()),
+        (1005, 13, "',' expected.".to_string()),
+        (1136, 13, "Property assignment expected.".to_string()),
+        (1005, 17, "'}' expected.".to_string()),
+    ];
+
+    assert_eq!(got, expected);
+}
+
+#[test]
+fn test_parse_and_bind_single_json_keyword_root_is_valid() {
+    let result = parse_and_bind_single("settings.json".to_string(), "true".to_string());
+    assert!(result.parse_diagnostics.is_empty());
+}
+
 // =========================================================================
 // Parallel Binding Tests
 // =========================================================================

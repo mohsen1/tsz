@@ -1,6 +1,21 @@
 use std::path::Path;
 use std::process::Command;
 
+fn detect_tsc_version_from_local_scripts(manifest_dir: &str) -> Option<String> {
+    let package_json_path = Path::new(manifest_dir)
+        .parent()?
+        .parent()?
+        .join("scripts/node_modules/typescript/package.json");
+    let content = std::fs::read_to_string(package_json_path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let version = json.get("version")?.as_str()?.trim();
+    if version.is_empty() {
+        None
+    } else {
+        Some(version.to_string())
+    }
+}
+
 fn detect_tsc_version_from_path() -> Option<String> {
     let output = Command::new("tsc").arg("--version").output().ok()?;
     if !output.status.success() {
@@ -28,19 +43,21 @@ fn main() {
         .unwrap()
         .join("scripts/conformance/typescript-versions.json");
 
-    let version = detect_tsc_version_from_path().unwrap_or_else(|| {
-        if versions_path.exists() {
-            let content = std::fs::read_to_string(&versions_path).unwrap();
-            let json: serde_json::Value = serde_json::from_str(&content).unwrap();
-            let current_sha = json["current"].as_str().unwrap().to_string();
-            json["mappings"][&current_sha]["npm"]
-                .as_str()
-                .unwrap_or("6.0.0-dev")
-                .to_string()
-        } else {
-            "6.0.0-dev".to_string()
-        }
-    });
+    let version = detect_tsc_version_from_local_scripts(&manifest_dir)
+        .or_else(detect_tsc_version_from_path)
+        .unwrap_or_else(|| {
+            if versions_path.exists() {
+                let content = std::fs::read_to_string(&versions_path).unwrap();
+                let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+                let current_sha = json["current"].as_str().unwrap().to_string();
+                json["mappings"][&current_sha]["npm"]
+                    .as_str()
+                    .unwrap_or("6.0.0-dev")
+                    .to_string()
+            } else {
+                "6.0.0-dev".to_string()
+            }
+        });
 
     println!("cargo:rustc-env=TSZ_TSC_VERSION={version}");
     println!("cargo:rerun-if-changed={}", versions_path.display());
