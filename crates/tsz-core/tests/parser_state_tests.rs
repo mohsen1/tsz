@@ -3733,7 +3733,7 @@ fn test_parser_type_alias_missing_equals_recovers_with_object_type() {
 #[test]
 fn test_parser_function_keyword_in_class_recovers() {
     // Test: class C { function foo() {} }
-    // The parser should recover and treat 'function' as a property name or emit a specific error
+    // tsc emits TS1068 at `function` plus TS1128 recovery at the class close.
     let source = "class C { function foo() {} }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
@@ -3743,15 +3743,23 @@ fn test_parser_function_keyword_in_class_recovers() {
         !parser.arena.nodes.is_empty(),
         "Parser should recover and build class AST"
     );
-    // Should not emit TS1068 (unexpected token in class) - should handle gracefully
+    // Match tsc recovery: TS1068 + TS1128.
     let codes: Vec<u32> = parser
         .get_diagnostics()
         .iter()
         .map(|diag| diag.code)
         .collect();
     assert!(
-        !codes.contains(&diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED),
-        "Should not emit TS1068 for function keyword in class, got: {:?}",
+        codes.contains(
+            &diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED
+        ),
+        "Expected TS1068 for function keyword in class, got: {:?}",
+        parser.get_diagnostics()
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED)
+            || codes.contains(&diagnostic_codes::EXPECTED),
+        "Expected TS1128 or TS1005 recovery after invalid function keyword in class, got: {:?}",
         parser.get_diagnostics()
     );
 }
