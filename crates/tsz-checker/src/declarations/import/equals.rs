@@ -823,6 +823,51 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // TS1471: require-like import only resolves to an ES module.
+        // For Node16/Node18, `import x = require("...")` must not target ESM.
+        // Node20/NodeNext suppress this diagnostic due newer interop semantics.
+        if self.ctx.compiler_options.module.is_node16_or_node18()
+            && !import.is_type_only
+            && !in_wrong_context
+            && !inside_namespace
+            && let Some(target_idx) = self
+                .ctx
+                .resolve_import_target_from_file_with_mode(
+                    self.ctx.current_file_idx,
+                    module_name,
+                    Some(crate::context::ResolutionModeOverride::Require),
+                )
+                .or_else(|| self.ctx.resolve_import_target(module_name))
+        {
+            let arena = self.ctx.get_arena_for_file(target_idx as u32);
+            if let Some(source_file) = arena.source_files.first() {
+                let file_name = source_file.file_name.as_str();
+                let target_is_json = file_name.ends_with(".json");
+                let target_ext_is_esm = !target_is_json
+                    && (file_name.ends_with(".mjs") || file_name.ends_with(".mts"));
+                let target_is_esm = target_ext_is_esm
+                    || self
+                        .ctx
+                        .file_is_esm_map
+                        .as_ref()
+                        .and_then(|m| m.get(file_name))
+                        .copied()
+                        .unwrap_or(false);
+                if target_is_esm {
+                    let message = format_message(
+                        diagnostic_messages::MODULE_CANNOT_BE_IMPORTED_USING_THIS_CONSTRUCT_THE_SPECIFIER_ONLY_RESOLVES_TO_AN,
+                        &[module_name],
+                    );
+                    self.error_at_position(
+                        spec_start,
+                        spec_length,
+                        &message,
+                        diagnostic_codes::MODULE_CANNOT_BE_IMPORTED_USING_THIS_CONSTRUCT_THE_SPECIFIER_ONLY_RESOLVES_TO_AN,
+                    );
+                }
+            }
+        }
+
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(module_name)
         {
