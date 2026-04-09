@@ -343,6 +343,27 @@ impl<'a> CheckerState<'a> {
             shared_argument_anchor.or_else(|| self.first_call_argument_anchor(idx));
         let argument_anchor_is_callback = raw_argument_anchor
             .is_some_and(|anchor_idx| self.is_callback_expression_argument(anchor_idx));
+        let callback_overloads_are_callable_only = argument_failures.iter().all(|failure| {
+            matches!(failure.args.get(1), Some(tsz_solver::DiagnosticArg::Type(param_ty))
+                if tsz_solver::type_queries::get_function_shape(self.ctx.types, *param_ty).is_some()
+                    || crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, *param_ty).is_some())
+        });
+        let callback_argument_has_prior_diagnostics = raw_argument_anchor.is_some_and(|anchor_idx| {
+            self.ctx.arena.get(anchor_idx).is_some_and(|arg_node| {
+                self.ctx.diagnostics.iter().any(|diag| {
+                    diag.code != diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL
+                    && diag.start >= arg_node.pos
+                        && diag.start < arg_node.end
+                })
+            })
+        });
+        let single_callback_argument = self
+            .ctx
+            .arena
+            .get(idx)
+            .and_then(|call_node| self.ctx.arena.get_call_expr(call_node))
+            .and_then(|call_expr| call_expr.arguments.as_ref())
+            .is_some_and(|args| args.nodes.len() == 1);
         let is_new_call = self.is_new_expression(idx);
         let is_bind_method_call = self
             .ctx
@@ -384,9 +405,14 @@ impl<'a> CheckerState<'a> {
             // at `bind`, not at the argument literal.
             literal_anchor = None;
         }
+        let allow_callback_argument_anchor = argument_anchor_is_callback
+            && single_callback_argument
+            && all_failures_are_argument_mismatches
+            && callback_overloads_are_callable_only
+            && !callback_argument_has_prior_diagnostics;
         let allow_new_argument_anchor = is_new_call && anchor_argument_from_all_failures;
         let anchor_first_argument = (!is_new_call || allow_new_argument_anchor)
-            && !argument_anchor_is_callback
+            && (!argument_anchor_is_callback || allow_callback_argument_anchor)
             && !is_bind_method_call
             && (identical_argument_failures
                 && !remaining_failures.is_empty()
