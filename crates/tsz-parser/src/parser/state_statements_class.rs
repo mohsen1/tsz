@@ -827,18 +827,35 @@ impl ParserState {
 
         let heritage_clauses = self.parse_heritage_clauses();
 
-        self.parse_expected(SyntaxKind::OpenBraceToken);
-
-        // Set ambient context for class members
-        let saved_flags = self.context_flags;
-        self.context_flags |= CONTEXT_FLAG_AMBIENT | CONTEXT_FLAG_IN_CLASS;
-
-        let members = self.parse_class_members();
-
-        // Restore context flags
-        self.context_flags = saved_flags;
-
-        self.parse_expected(SyntaxKind::CloseBraceToken);
+        let members = if self.parse_expected(SyntaxKind::OpenBraceToken) {
+            // Set ambient context for class members
+            let saved_flags = self.context_flags;
+            self.context_flags |= CONTEXT_FLAG_AMBIENT | CONTEXT_FLAG_IN_CLASS;
+            let members = self.parse_class_members();
+            // Restore context flags
+            self.context_flags = saved_flags;
+            self.parse_expected(SyntaxKind::CloseBraceToken);
+            members
+        } else if self.is_token(SyntaxKind::OpenParenToken) {
+            // `declare class Foo();` should recover with TS1109 at `(` and not
+            // cascade into class-member TS1068 diagnostics.
+            self.parse_error_at(
+                self.token_pos().saturating_add(1),
+                1,
+                "Expression expected.",
+                tsz_common::diagnostics::diagnostic_codes::EXPRESSION_EXPECTED,
+            );
+            self.recover_parenthesized_class_declaration_tail();
+            self.make_node_list(Vec::new())
+        } else {
+            // Preserve existing fallback behavior for other malformed class bodies.
+            let saved_flags = self.context_flags;
+            self.context_flags |= CONTEXT_FLAG_AMBIENT | CONTEXT_FLAG_IN_CLASS;
+            let members = self.parse_class_members();
+            self.context_flags = saved_flags;
+            self.parse_expected(SyntaxKind::CloseBraceToken);
+            members
+        };
 
         let end_pos = self.token_end();
         self.arena.add_class(
@@ -885,18 +902,32 @@ impl ParserState {
 
         let heritage_clauses = self.parse_heritage_clauses();
 
-        self.parse_expected(SyntaxKind::OpenBraceToken);
-
-        // Set ambient context for class members
-        let saved_flags = self.context_flags;
-        self.context_flags |= CONTEXT_FLAG_AMBIENT | CONTEXT_FLAG_IN_CLASS;
-
-        let members = self.parse_class_members();
-
-        // Restore context flags
-        self.context_flags = saved_flags;
-
-        self.parse_expected(SyntaxKind::CloseBraceToken);
+        let members = if self.parse_expected(SyntaxKind::OpenBraceToken) {
+            // Set ambient context for class members
+            let saved_flags = self.context_flags;
+            self.context_flags |= CONTEXT_FLAG_AMBIENT | CONTEXT_FLAG_IN_CLASS;
+            let members = self.parse_class_members();
+            // Restore context flags
+            self.context_flags = saved_flags;
+            self.parse_expected(SyntaxKind::CloseBraceToken);
+            members
+        } else if self.is_token(SyntaxKind::OpenParenToken) {
+            self.parse_error_at(
+                self.token_pos().saturating_add(1),
+                1,
+                "Expression expected.",
+                tsz_common::diagnostics::diagnostic_codes::EXPRESSION_EXPECTED,
+            );
+            self.recover_parenthesized_class_declaration_tail();
+            self.make_node_list(Vec::new())
+        } else {
+            let saved_flags = self.context_flags;
+            self.context_flags |= CONTEXT_FLAG_AMBIENT | CONTEXT_FLAG_IN_CLASS;
+            let members = self.parse_class_members();
+            self.context_flags = saved_flags;
+            self.parse_expected(SyntaxKind::CloseBraceToken);
+            members
+        };
 
         let end_pos = self.token_end();
         self.arena.add_class(
@@ -1096,6 +1127,36 @@ impl ParserState {
                     );
                 }
                 self.parse_expression_statement()
+            }
+        }
+    }
+
+    fn recover_parenthesized_class_declaration_tail(&mut self) {
+        let mut paren_depth = 0usize;
+        while !self.is_token(SyntaxKind::EndOfFileToken) {
+            match self.token() {
+                SyntaxKind::OpenParenToken => {
+                    paren_depth += 1;
+                    self.next_token();
+                }
+                SyntaxKind::CloseParenToken => {
+                    paren_depth = paren_depth.saturating_sub(1);
+                    self.next_token();
+                    if paren_depth == 0 && self.is_token(SyntaxKind::SemicolonToken) {
+                        self.next_token();
+                        break;
+                    }
+                }
+                SyntaxKind::SemicolonToken if paren_depth == 0 => {
+                    self.next_token();
+                    break;
+                }
+                SyntaxKind::OpenBraceToken if paren_depth == 0 => {
+                    break;
+                }
+                _ => {
+                    self.next_token();
+                }
             }
         }
     }
