@@ -185,6 +185,13 @@ pub struct ParserState {
     /// When true, suppress escape-sequence errors in template literals.
     /// Tagged templates (ES2018+) allow invalid escape sequences.
     pub(crate) in_tagged_template: bool,
+    /// Number of JSX child-expression recoveries in the current expression
+    /// statement that deferred a missing `}`. When the statement terminator is
+    /// reached, emit TS1005 `'}' expected.` at `;` to match tsc recovery.
+    pub(crate) pending_jsx_missing_close_brace_in_expression_statement: u32,
+    /// Current lower bound for scanning parse diagnostics when JSX recovery
+    /// absorbs statement terminators into `JsxText`.
+    pub(crate) jsx_missing_brace_semicolon_window_start: Option<u32>,
 }
 
 impl ParserState {
@@ -236,6 +243,8 @@ impl ParserState {
             pending_failed_async_arrow_colon_recovery: false,
             type_member_container_depth: 0,
             in_tagged_template: false,
+            pending_jsx_missing_close_brace_in_expression_statement: 0,
+            jsx_missing_brace_semicolon_window_start: None,
         }
     }
 
@@ -267,6 +276,8 @@ impl ParserState {
         self.pending_failed_async_arrow_colon_recovery = false;
         self.type_member_container_depth = 0;
         self.in_tagged_template = false;
+        self.pending_jsx_missing_close_brace_in_expression_statement = 0;
+        self.jsx_missing_brace_semicolon_window_start = None;
     }
 
     /// Check recursion limit - returns true if we can continue, false if limit exceeded
@@ -303,6 +314,39 @@ impl ParserState {
         // This prevents multiple errors for the same position while still
         // catching genuine secondary errors
         current.abs_diff(self.last_error_pos) > ERROR_SUPPRESSION_DISTANCE
+    }
+
+    pub(crate) fn should_emit_jsx_missing_close_brace_at_semicolon(
+        &self,
+        range_start: u32,
+        semicolon_pos: u32,
+    ) -> bool {
+        let has_unexpected_brace = self.parse_diagnostics.iter().any(|diag| {
+            diag.start >= range_start
+                && diag.start < semicolon_pos
+                && diag.code == diagnostic_codes::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_RBRACE
+        });
+        if !has_unexpected_brace {
+            return false;
+        }
+
+        let has_jsx_unclosed_tag = self.parse_diagnostics.iter().any(|diag| {
+            diag.start >= range_start
+                && diag.start < semicolon_pos
+                && diag.code == diagnostic_codes::JSX_ELEMENT_HAS_NO_CORRESPONDING_CLOSING_TAG
+        });
+        if !has_jsx_unclosed_tag {
+            return false;
+        }
+
+        let has_missing_close_brace = self.parse_diagnostics.iter().any(|diag| {
+            diag.start >= range_start
+                && diag.start <= semicolon_pos
+                && diag.code == diagnostic_codes::EXPECTED
+                && diag.message == "'}' expected."
+        });
+
+        !has_missing_close_brace
     }
 
     /// Check if the last emitted parse diagnostic was an unterminated literal error.

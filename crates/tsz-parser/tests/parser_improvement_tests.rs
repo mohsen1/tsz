@@ -3216,23 +3216,34 @@ x = <foo>x</foo>, x = <foo/>;
 
     let diagnostics = parser.get_diagnostics();
     let ts1003_count = diagnostics.iter().filter(|d| d.code == 1003).count();
-    let semicolon_pos = source
-        .find("x = <foo test={<foo>{}}>hello</foo>;")
-        .expect("target JSX statement should exist") as u32
-        + "x = <foo test={<foo>{}}>hello</foo>".len() as u32;
+    let malformed_jsx_statement_terminators = [
+        "x = <foo>hello {<foo>{}} </foo>;",
+        "x = <foo test={<foo>{}}>hello</foo>;",
+        "x = <foo test={<foo>{}}>hello{<foo>{}}</foo>;",
+    ]
+    .into_iter()
+    .map(|statement| {
+        source
+            .find(statement)
+            .map(|start| start as u32 + statement.len() as u32 - 1)
+            .expect("target JSX statement should exist")
+    })
+    .collect::<Vec<_>>();
 
     assert_eq!(
         ts1003_count, 0,
         "Expected no TS1003 for jsxAndTypeAssertion.tsx parser diagnostics, got diagnostics: {diagnostics:?}"
     );
-    assert!(
-        diagnostics.iter().any(|diag| {
-            diag.code == diagnostic_codes::EXPECTED
-                && diag.start == semicolon_pos
-                && diag.message == "'}' expected."
-        }),
-        "Expected TS1005 \"'}}' expected.\" at the malformed JSX statement terminator, got diagnostics: {diagnostics:?}"
-    );
+    for semicolon_pos in malformed_jsx_statement_terminators {
+        assert!(
+            diagnostics.iter().any(|diag| {
+                diag.code == diagnostic_codes::EXPECTED
+                    && diag.start == semicolon_pos
+                    && diag.message == "'}' expected."
+            }),
+            "Expected TS1005 \"'}}' expected.\" at malformed JSX statement terminator pos {semicolon_pos}, got diagnostics: {diagnostics:?}"
+        );
+    }
 }
 
 #[test]
