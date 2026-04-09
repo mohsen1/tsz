@@ -565,7 +565,19 @@ impl ModuleResolver {
                 // CJS require() call, emit TS7016 alongside the successful resolution.
                 // ESM imports go through the checker's import-declaration path which
                 // handles ambient declarations and other suppression rules.
-                if resolved_module.is_external
+                if resolved_module.extension.is_javascript()
+                    && request.no_implicit_any
+                    && !self.allow_js
+                    && !matches!(import_kind, ImportKind::CjsRequire)
+                {
+                    ModuleLookupResult::resolved_with_error(
+                        FILE_IS_A_JAVASCRIPT_FILE_ENABLE_ALLOWJS,
+                        format!(
+                            "File '{}' is a JavaScript file. Did you mean to enable the 'allowJs' option?",
+                            resolved_module.resolved_path.display()
+                        ),
+                    )
+                } else if resolved_module.is_external
                     && resolved_module.extension.is_javascript()
                     && request.no_implicit_any
                     && matches!(import_kind, ImportKind::CjsRequire)
