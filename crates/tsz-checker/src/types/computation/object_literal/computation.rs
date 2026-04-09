@@ -13,6 +13,106 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    fn function_like_has_explicit_signature_annotations(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        match expr_node.kind {
+            k if k == syntax_kind_ext::ARROW_FUNCTION || k == syntax_kind_ext::FUNCTION_EXPRESSION => {
+                let Some(func) = self.ctx.arena.get_function(expr_node) else {
+                    return false;
+                };
+                if func.type_annotation.is_some() {
+                    return true;
+                }
+                func.parameters.nodes.iter().any(|&param_node| {
+                    self.ctx
+                        .arena
+                        .get(param_node)
+                        .and_then(|node| self.ctx.arena.get_parameter(node))
+                        .is_some_and(|param| param.type_annotation.is_some())
+                })
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => self
+                .ctx
+                .arena
+                .get_parenthesized(expr_node)
+                .is_some_and(|paren| {
+                    self.function_like_has_explicit_signature_annotations(paren.expression)
+                }),
+            _ => false,
+        }
+    }
+
+    fn simple_computed_name_expr_text_for_duplicates(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+        match expr_node.kind {
+            k if k == tsz_scanner::SyntaxKind::Identifier as u16 => self
+                .ctx
+                .arena
+                .get_identifier(expr_node)
+                .map(|ident| ident.escaped_text.clone()),
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = self.ctx.arena.get_access_expr(expr_node)?;
+                let left = self.simple_computed_name_expr_text_for_duplicates(access.expression)?;
+                let right = self
+                    .ctx
+                    .arena
+                    .get_identifier_text(access.name_or_argument)?;
+                Some(format!("{left}.{right}"))
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                let call = self.ctx.arena.get_call_expr(expr_node)?;
+                let callee = self.simple_computed_name_expr_text_for_duplicates(call.expression)?;
+                let args = call.arguments.as_ref()?;
+                if !args.nodes.is_empty() {
+                    return None;
+                }
+                Some(format!("{callee}()"))
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                let paren = self.ctx.arena.get_parenthesized(expr_node)?;
+                self.simple_computed_name_expr_text_for_duplicates(paren.expression)
+            }
+            _ => None,
+        }
+    }
+
+    fn is_zero_arg_call_like_expr_for_duplicates(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        match expr_node.kind {
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                self.ctx.arena.get_call_expr(expr_node).is_some_and(|call| {
+                    call.arguments.as_ref().is_some_and(|args| args.nodes.is_empty())
+                        && self
+                            .simple_computed_name_expr_text_for_duplicates(call.expression)
+                            .is_some()
+                })
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => self
+                .ctx
+                .arena
+                .get_parenthesized(expr_node)
+                .is_some_and(|paren| self.is_zero_arg_call_like_expr_for_duplicates(paren.expression)),
+            _ => false,
+        }
+    }
+
+    fn simple_computed_call_name_for_duplicates(&self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.ctx.arena.get(name_idx)?;
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return None;
+        }
+        let computed = self.ctx.arena.get_computed_property(name_node)?;
+        if !self.is_zero_arg_call_like_expr_for_duplicates(computed.expression) {
+            return None;
+        }
+        let expr_text = self.simple_computed_name_expr_text_for_duplicates(computed.expression)?;
+        Some(format!("[{expr_text}]"))
+    }
+
     pub(crate) fn get_type_of_object_literal_with_request(
         &mut self,
         idx: NodeIndex,
@@ -522,12 +622,22 @@ impl<'a> CheckerState<'a> {
                         }
                         declared_type
                     } else {
-                        // Apply bidirectional type inference - use contextual type to narrow the value type
-                        let value_type = tsz_solver::apply_contextual_type(
-                            self.ctx.types,
-                            value_type,
-                            property_context_type,
-                        );
+                        // Apply bidirectional type inference - use contextual type to narrow
+                        // the value type, except for function-like values with explicit
+                        // signature annotations. For those, tsc preserves the explicit
+                        // source signature in diagnostics (e.g. lastPropertyInLiteralWins).
+                        let value_type = if initializer_is_function_like
+                            && self
+                                .function_like_has_explicit_signature_annotations(prop.initializer)
+                        {
+                            value_type
+                        } else {
+                            tsz_solver::apply_contextual_type(
+                                self.ctx.types,
+                                value_type,
+                                property_context_type,
+                            )
+                        };
 
                         // Widen literal types for object literal properties.
                         // Object literal properties are mutable by default, so `{ x: "a" }`
@@ -729,12 +839,14 @@ impl<'a> CheckerState<'a> {
                             }
                             explicit_property_names.insert(atom);
                         }
+                        let mut handled_by_literal_type = false;
                         if let Some(atom) =
                             crate::query_boundaries::type_computation::access::literal_property_name(
                                 self.ctx.types,
                                 prop_name_type,
                             )
                         {
+                            handled_by_literal_type = true;
                             if resolved_computed_name.is_none() {
                                 resolved_computed_name =
                                     Some(self.ctx.types.resolve_atom(atom).to_string());
@@ -762,6 +874,34 @@ impl<'a> CheckerState<'a> {
                                 }
                                 explicit_property_names.insert(atom);
                             }
+                        }
+                        if !handled_by_name
+                            && !handled_by_literal_type
+                            && let Some(name) =
+                                self.simple_computed_call_name_for_duplicates(prop.name)
+                        {
+                            let atom = self.ctx.types.intern_string(&name);
+                            if resolved_computed_name.is_none() {
+                                resolved_computed_name = Some(name.clone());
+                            }
+                            if !skip_duplicate_check
+                                && explicit_property_names.contains(&atom)
+                                && !self.ctx.has_parse_errors
+                                && (!self.is_js_file()
+                                    || self.ctx.js_strict_mode_diagnostics_enabled())
+                            {
+                                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                                let message = crate::diagnostics::format_message(
+                                    diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
+                                    &[&name],
+                                );
+                                self.error_at_node(
+                                    prop.name,
+                                    &message,
+                                    diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
+                                );
+                            }
+                            explicit_property_names.insert(atom);
                         }
                     }
                     let index_ctx_type = if let Some(ctx_type) = contextual_type {

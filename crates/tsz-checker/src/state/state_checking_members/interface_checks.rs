@@ -745,6 +745,129 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn is_zero_arg_call_like_expr(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        match expr_node.kind {
+            k if k == tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION => self
+                .ctx
+                .arena
+                .get_call_expr(expr_node)
+                .is_some_and(|call| {
+                    call.arguments.as_ref().is_some_and(|args| args.nodes.is_empty())
+                        && self
+                            .get_simple_computed_name_expr_text(call.expression)
+                            .is_some()
+                }),
+            k if k == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION => self
+                .ctx
+                .arena
+                .get_parenthesized(expr_node)
+                .is_some_and(|paren| self.is_zero_arg_call_like_expr(paren.expression)),
+            _ => false,
+        }
+    }
+
+    fn should_check_late_bound_class_property_name(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        (self.is_zero_arg_call_like_expr(computed.expression)
+            && self
+                .get_simple_computed_name_expr_text(computed.expression)
+                .is_some())
+            || self.is_const_symbol_for_identifier_expr(computed.expression)
+    }
+
+    fn is_symbol_for_call_expression(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = self.ctx.arena.get_call_expr(expr_node) else {
+            return false;
+        };
+        let Some(callee_node) = self.ctx.arena.get(call.expression) else {
+            return false;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        let Some(obj_node) = self.ctx.arena.get(access.expression) else {
+            return false;
+        };
+        let Some(obj_ident) = self.ctx.arena.get_identifier(obj_node) else {
+            return false;
+        };
+        obj_ident.escaped_text == "Symbol"
+            && self
+                .ctx
+                .arena
+                .get_identifier_text(access.name_or_argument)
+                .is_some_and(|name| name == "for")
+    }
+
+    fn is_const_symbol_for_identifier_expr(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(sym_id) = self
+            .ctx
+            .binder
+            .get_node_symbol(expr_idx)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, expr_idx))
+        else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let mut decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else if let Some(&first_decl) = symbol.declarations.first() {
+            first_decl
+        } else {
+            return false;
+        };
+        let mut decl_node = match self.ctx.arena.get(decl_idx) {
+            Some(node) => node,
+            None => return false,
+        };
+        if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+            && let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+            && ext.parent.is_some()
+            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+        {
+            decl_idx = ext.parent;
+            decl_node = parent_node;
+        }
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION
+            || !self.is_const_variable_declaration(decl_idx)
+        {
+            return false;
+        }
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        var_decl.initializer.is_some() && self.is_symbol_for_call_expression(var_decl.initializer)
+    }
+
     /// Returns `true` if the name node is a computed property with a non-statically-determinable
     /// expression (e.g., `[someVariable]` or `[expr()]`). TSC skips duplicate member checking
     /// for such "late-bound" names because the actual property name can't be known at compile time.
@@ -782,21 +905,39 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        // Check if the expression resolves to a statically determinable type.
-        // tsc treats unique symbols and single literal types as statically determinable
-        // property keys, but not unions or non-literal types.
+        // Check whether any request variant resolves to a statically determinable key.
+        // This catches cases where plain get_type_of_node widens too aggressively.
+        let prev = self.ctx.preserve_literal_types;
+        self.ctx.preserve_literal_types = true;
         let expr_type = self.get_type_of_node(computed.expression);
-        if tsz_solver::unique_symbol_ref(self.ctx.types.as_type_database(), expr_type).is_some() {
-            return false;
-        }
-        if !matches!(
-            tsz_solver::type_queries::classify_literal_type(
-                self.ctx.types.as_type_database(),
-                expr_type
-            ),
-            tsz_solver::type_queries::LiteralTypeKind::NotLiteral
-        ) {
-            return false;
+        self.ctx.preserve_literal_types = prev;
+
+        let evaluated_expr_type = self.evaluate_type_with_env(expr_type);
+        let resolved_for_property_access =
+            self.resolve_type_for_property_access(evaluated_expr_type);
+        let resolved_expr_type = self.resolve_lazy_type(resolved_for_property_access);
+        let assignability_expr_type = self.evaluate_type_for_assignability(expr_type);
+
+        for candidate in [
+            expr_type,
+            evaluated_expr_type,
+            resolved_expr_type,
+            assignability_expr_type,
+        ] {
+            if tsz_solver::unique_symbol_ref(self.ctx.types.as_type_database(), candidate)
+                .is_some()
+            {
+                return false;
+            }
+            if !matches!(
+                tsz_solver::type_queries::classify_literal_type(
+                    self.ctx.types.as_type_database(),
+                    candidate
+                ),
+                tsz_solver::type_queries::LiteralTypeKind::NotLiteral
+            ) {
+                return false;
+            }
         }
         // Everything else (unions, non-literal types, etc.) is late-bound
         true
@@ -1101,8 +1242,12 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get_property_decl(member_node)
                     .and_then(|prop| {
-                        // Skip late-bound computed names — tsc doesn't check duplicates for these
-                        if self.is_late_bound_member_name(prop.name) {
+                        // Skip late-bound computed names unless the key is a simple
+                        // zero-arg call expression (e.g. `[getKey()]`), where tsc
+                        // still reports TS2300 duplicates for class properties.
+                        if self.is_late_bound_member_name(prop.name)
+                            && !self.should_check_late_bound_class_property_name(prop.name)
+                        {
                             return None;
                         }
                         let is_static = self.has_static_modifier(&prop.modifiers);
