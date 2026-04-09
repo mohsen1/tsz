@@ -1217,6 +1217,18 @@ impl ParserState {
             } else if self.is_identifier_or_keyword() {
                 // Regular attribute: name="value" or name={expr} or just name
                 properties.push(self.parse_jsx_attribute());
+            } else if self.is_token(SyntaxKind::SemicolonToken) {
+                // The JSX head recovery reached a statement terminator that belongs
+                // to the outer expression statement. tsc reports this as a missing
+                // `}` in malformed JSX-attribute expression recovery.
+                self.parse_error_at(
+                    self.token_pos(),
+                    0,
+                    "'}' expected.",
+                    tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                );
+                aborted_for_outer_recovery = true;
+                break;
             } else if self.is_token(SyntaxKind::LessThanToken) {
                 // A `<` in the attribute list means we've hit a JSX child or closing
                 // tag. This token belongs to an outer parsing context (JsxChildren),
