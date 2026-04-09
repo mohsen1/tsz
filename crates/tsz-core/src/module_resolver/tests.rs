@@ -3701,6 +3701,68 @@ fn test_lookup_skips_fallback_for_nodenext_exports_authoritative_not_found() {
 }
 
 #[test]
+fn test_lookup_skips_fallback_for_nodenext_literal_star_specifier_not_found() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_lookup_skip_fallback_literal_star");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::create_dir_all(dir.join("node_modules/double-asterisk")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/double-asterisk/package.json"),
+        r#"{
+            "name":"double-asterisk",
+            "exports":{"./a/*/b/*/c/*":"./example.js"}
+        }"#,
+    )
+    .unwrap();
+    let fallback_target = dir.join("node_modules/double-asterisk/example.d.ts");
+    fs::write(&fallback_target, "export {};").unwrap();
+    fs::write(
+        dir.join("src/index.mts"),
+        "import {} from 'double-asterisk/a/*/b/*/c/*';\n",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::NodeNext),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "double-asterisk/a/*/b/*/c/*",
+        containing_file: &dir.join("src/index.mts"),
+        specifier_span: Span::new(16, 44),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+
+    let fallback_clone = fallback_target.clone();
+    let result = resolver.lookup(&request, |_, _| Some(fallback_clone), |_| false, None);
+    let outcome = result.classify();
+
+    assert!(
+        !outcome.is_resolved,
+        "Fallback must be skipped for literal '*' package specifier in NodeNext"
+    );
+    let error = outcome
+        .error
+        .expect("Expected TS2307 after skipping fallback for literal '*'");
+    assert_eq!(
+        error.code, CANNOT_FIND_MODULE,
+        "Expected TS2307 for literal '*' package specifier, got TS{}",
+        error.code
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_lookup_should_try_fallback_not_for_hard_failures() {
     // Hard failures like ImportPathNeedsExtension should NOT trigger fallback.
     // Verify the should_try_fallback contract on failure variants.
