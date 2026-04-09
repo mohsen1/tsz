@@ -3190,6 +3190,52 @@ x5.isElement;
 }
 
 #[test]
+fn test_jsx_and_type_assertion_conformance_codes_exclude_ts1003() {
+    let source = r#"
+declare var createElement: any;
+
+class foo {}
+
+var x: any;
+x = <any> { test: <any></any> };
+
+x = <any><any></any>;
+ 
+x = <foo>hello {<foo>{}} </foo>;
+
+x = <foo test={<foo>{}}>hello</foo>;
+
+x = <foo test={<foo>{}}>hello{<foo>{}}</foo>;
+
+x = <foo>x</foo>, x = <foo/>;
+
+<foo>{<foo><foo>{/foo/.test(x) ? <foo><foo></foo> : <foo><foo></foo>}</foo>}</foo>
+"#;
+    let mut parser = ParserState::new("jsxAndTypeAssertion.tsx".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1003_count = diagnostics.iter().filter(|d| d.code == 1003).count();
+    let semicolon_pos = source
+        .find("x = <foo test={<foo>{}}>hello</foo>;")
+        .expect("target JSX statement should exist") as u32
+        + "x = <foo test={<foo>{}}>hello</foo>".len() as u32;
+
+    assert_eq!(
+        ts1003_count, 0,
+        "Expected no TS1003 for jsxAndTypeAssertion.tsx parser diagnostics, got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == diagnostic_codes::EXPECTED
+                && diag.start == semicolon_pos
+                && diag.message == "'}' expected."
+        }),
+        "Expected TS1005 \"'}}' expected.\" at the malformed JSX statement terminator, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_type_literal_invalid_member_lt_minus_reports_ts1109_not_ts1128() {
     let source = r#"
 var f: {
