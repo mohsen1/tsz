@@ -1679,9 +1679,11 @@ impl<'a> CheckerState<'a> {
             .get(arg_idx)
             .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
             && expected_context_type.is_some_and(|ty| {
+                let evaluated = self.evaluate_type_with_env(ty);
                 common::contains_type_parameters(self.ctx.types, ty)
                     || common::contains_infer_types(self.ctx.types, ty)
-                    || should_preserve_contextual_application_shape(self.ctx.types, ty)
+                    || common::contains_type_parameters(self.ctx.types, evaluated)
+                    || common::contains_infer_types(self.ctx.types, evaluated)
             });
         let _concrete_callback_context = expected_context_type.is_some_and(|ty| {
             ty != TypeId::ANY
