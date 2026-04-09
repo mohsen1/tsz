@@ -503,11 +503,19 @@ impl<'a> CheckerState<'a> {
         let callable_ctx = CallableContext::new(callee_type_for_context);
         if is_generic_call
             || args.iter().enumerate().any(|(i, &arg_idx)| {
-                base_contextual_param_types.get(i).copied().flatten().is_some()
-                    && self.ctx.arena.get(self.ctx.arena.skip_parenthesized_and_assertions(arg_idx)).is_some_and(|node| {
-                        node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                            || node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                    })
+                base_contextual_param_types
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .is_some()
+                    && self
+                        .ctx
+                        .arena
+                        .get(self.ctx.arena.skip_parenthesized_and_assertions(arg_idx))
+                        .is_some_and(|node| {
+                            node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                || node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                        })
             })
         {
             self.ctx.preserve_literal_types = true;

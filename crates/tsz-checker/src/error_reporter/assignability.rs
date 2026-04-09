@@ -308,7 +308,10 @@ impl<'a> CheckerState<'a> {
         if !self.is_assignment_operator(binary.operator_token) {
             return false;
         }
-        let rhs_idx = self.ctx.arena.skip_parenthesized_and_assertions(binary.right);
+        let rhs_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(binary.right);
         let Some(rhs_node) = self.ctx.arena.get(rhs_idx) else {
             return false;
         };
