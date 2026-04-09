@@ -808,7 +808,21 @@ impl<'a> CheckerState<'a> {
         //    packages or ambient modules — the binder has complete information.
         let is_relative = module_name.starts_with("./") || module_name.starts_with("../");
         if !is_relative {
-            if report_unresolved_imports {
+            // Import type specifiers are not always pre-scanned by the driver, so
+            // binder/global indexes can miss package modules that still resolve from
+            // the current file (notably symlinked declaration-emit scenarios).
+            // Only emit module-not-found if direct resolution from this file also
+            // fails.
+            let resolves_from_current_file = self
+                .ctx
+                .resolve_import_target_from_file_with_mode(
+                    self.ctx.current_file_idx,
+                    &module_name,
+                    resolution_mode_override,
+                )
+                .is_some()
+                || self.ctx.resolve_import_target(&module_name).is_some();
+            if report_unresolved_imports && !resolves_from_current_file {
                 let (message, code) = self.module_not_found_diagnostic_for_site(
                     &module_name,
                     ModuleNotFoundSite::ImportType,
