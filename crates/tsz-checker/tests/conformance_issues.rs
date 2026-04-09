@@ -19031,14 +19031,16 @@ test({
         .collect();
 
     assert!(
-        ts2322_messages.iter().any(|message| message
-            .contains("Type '(num: number) => void' is not assignable to type '(str: string) => void'")),
+        ts2322_messages.iter().any(|message| message.contains(
+            "Type '(num: number) => void' is not assignable to type '(str: string) => void'"
+        )),
         "Expected TS2322 to preserve explicit source signature from the last object literal property.\nActual diagnostics: {diagnostics:#?}"
     );
 
     assert!(
-        !ts2322_messages.iter().any(|message| message
-            .contains("Type '(str: string) => void' is not assignable to type '(str: string) => void'")),
+        !ts2322_messages.iter().any(|message| message.contains(
+            "Type '(str: string) => void' is not assignable to type '(str: string) => void'"
+        )),
         "Did not expect contextualized source signature in TS2322 for duplicate object literal property.\nActual diagnostics: {diagnostics:#?}"
     );
 }

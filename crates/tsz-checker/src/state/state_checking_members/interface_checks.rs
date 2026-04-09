@@ -750,16 +750,16 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         match expr_node.kind {
-            k if k == tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION => self
-                .ctx
-                .arena
-                .get_call_expr(expr_node)
-                .is_some_and(|call| {
-                    call.arguments.as_ref().is_some_and(|args| args.nodes.is_empty())
+            k if k == tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION => {
+                self.ctx.arena.get_call_expr(expr_node).is_some_and(|call| {
+                    call.arguments
+                        .as_ref()
+                        .is_some_and(|args| args.nodes.is_empty())
                         && self
                             .get_simple_computed_name_expr_text(call.expression)
                             .is_some()
-                }),
+                })
+            }
             k if k == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION => self
                 .ctx
                 .arena
@@ -924,8 +924,7 @@ impl<'a> CheckerState<'a> {
             resolved_expr_type,
             assignability_expr_type,
         ] {
-            if tsz_solver::unique_symbol_ref(self.ctx.types.as_type_database(), candidate)
-                .is_some()
+            if tsz_solver::unique_symbol_ref(self.ctx.types.as_type_database(), candidate).is_some()
             {
                 return false;
             }

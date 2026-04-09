@@ -872,7 +872,8 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut elaborated = false;
-        let mut seen_named_properties: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
+        let mut seen_named_properties: rustc_hash::FxHashSet<String> =
+            rustc_hash::FxHashSet::default();
         let mut duplicate_named_properties: rustc_hash::FxHashSet<String> =
             rustc_hash::FxHashSet::default();
         let mut first_named_property_name_idx: rustc_hash::FxHashMap<String, NodeIndex> =
@@ -914,11 +915,12 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
             let prop_name = match self.object_literal_property_name_text(prop_name_idx) {
                 Some(name) => name,
-                None if is_computed_property => match self.get_property_name_resolved(prop_name_idx)
-                {
-                    Some(name) => name,
-                    None => continue,
-                },
+                None if is_computed_property => {
+                    match self.get_property_name_resolved(prop_name_idx) {
+                        Some(name) => name,
+                        None => continue,
+                    }
+                }
                 None => continue,
             };
 
@@ -1032,15 +1034,14 @@ impl<'a> CheckerState<'a> {
             // from the source object type instead, which reflects the actual
             // (non-contextual) type as seen at the argument level.
             let source_obj_prop_type = if is_function_value {
-                let node_source_prop = match self
-                    .resolve_property_access_with_env(node_source_type, &prop_name)
-                {
-                    tsz_solver::operations::property::PropertyAccessResult::Success {
-                        type_id,
-                        ..
-                    } => Some(type_id),
-                    _ => None,
-                };
+                let node_source_prop =
+                    match self.resolve_property_access_with_env(node_source_type, &prop_name) {
+                        tsz_solver::operations::property::PropertyAccessResult::Success {
+                            type_id,
+                            ..
+                        } => Some(type_id),
+                        _ => None,
+                    };
                 let override_source_prop =
                     match self.resolve_property_access_with_env(source_type, &prop_name) {
                         tsz_solver::operations::property::PropertyAccessResult::Success {

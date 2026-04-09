@@ -18,7 +18,9 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         match expr_node.kind {
-            k if k == syntax_kind_ext::ARROW_FUNCTION || k == syntax_kind_ext::FUNCTION_EXPRESSION => {
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
                 let Some(func) = self.ctx.arena.get_function(expr_node) else {
                     return false;
                 };
@@ -85,7 +87,9 @@ impl<'a> CheckerState<'a> {
         match expr_node.kind {
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
                 self.ctx.arena.get_call_expr(expr_node).is_some_and(|call| {
-                    call.arguments.as_ref().is_some_and(|args| args.nodes.is_empty())
+                    call.arguments
+                        .as_ref()
+                        .is_some_and(|args| args.nodes.is_empty())
                         && self
                             .simple_computed_name_expr_text_for_duplicates(call.expression)
                             .is_some()
@@ -95,7 +99,9 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_parenthesized(expr_node)
-                .is_some_and(|paren| self.is_zero_arg_call_like_expr_for_duplicates(paren.expression)),
+                .is_some_and(|paren| {
+                    self.is_zero_arg_call_like_expr_for_duplicates(paren.expression)
+                }),
             _ => false,
         }
     }
