@@ -259,6 +259,55 @@ fn parse_invalid_import_non_clause_start_reports_ts1128() {
 }
 
 #[test]
+fn parse_invalid_numeric_interface_type_names_match_tsc_code_families() {
+    let source = r#"
+namespace 100 {}
+interface 100 {}
+type 100 {}
+
+export namespace 100 {}
+export interface 100 {}
+export type 100 {}
+"#;
+    let (parser, _root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+
+    let ts1128 = codes
+        .iter()
+        .filter(|&&code| code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED)
+        .count();
+    let ts2427 = codes
+        .iter()
+        .filter(|&&code| code == diagnostic_codes::INTERFACE_NAME_CANNOT_BE)
+        .count();
+    let ts2457 = codes
+        .iter()
+        .filter(|&&code| code == diagnostic_codes::TYPE_ALIAS_NAME_CANNOT_BE)
+        .count();
+
+    assert_eq!(
+        ts1128, 3,
+        "expected TS1128 on each invalid export, got {codes:?}"
+    );
+    assert_eq!(
+        ts2427, 2,
+        "expected TS2427 for interface numeric names, got {codes:?}"
+    );
+    assert_eq!(
+        ts2457, 2,
+        "expected TS2457 for type alias numeric names, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED),
+        "numeric declaration names should not fall back to TS1003, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED),
+        "numeric declaration-name recovery should not cascade to TS1131, got {codes:?}"
+    );
+}
+
+#[test]
 fn parse_import_with_operator_reports_ts1128() {
     // `import + x;` — operator after import can't start an import clause.
     let (parser, _root) = parse_source("import + x;");

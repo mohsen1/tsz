@@ -31,6 +31,7 @@ impl ParserState {
         modifiers: Option<NodeList>,
     ) -> NodeIndex {
         self.parse_expected(SyntaxKind::InterfaceKeyword);
+        let mut has_invalid_numeric_name = false;
 
         // Parse interface name - keywords like 'string', 'abstract' can be used as interface names
         // Type keywords like 'void' are parsed as names and rejected by the checker (TS2427)
@@ -63,6 +64,30 @@ impl ParserState {
                 diagnostic_codes::INTERFACE_MUST_BE_GIVEN_A_NAME,
             );
             NodeIndex::NONE
+        } else if self.is_token(SyntaxKind::NumericLiteral) {
+            use tsz_common::diagnostics::diagnostic_codes;
+            let name_start = self.token_pos();
+            let name_end = self.token_end();
+            let name_text = self.scanner.get_token_value();
+            self.parse_error_at(
+                name_start,
+                name_end - name_start,
+                &format!("Interface name cannot be '{name_text}'."),
+                diagnostic_codes::INTERFACE_NAME_CANNOT_BE,
+            );
+            self.next_token();
+            has_invalid_numeric_name = true;
+            self.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                name_start,
+                name_end,
+                IdentifierData {
+                    atom: Atom::NONE,
+                    escaped_text: String::new(),
+                    original_text: None,
+                    type_arguments: None,
+                },
+            )
         } else {
             self.parse_identifier()
         };
@@ -180,6 +205,12 @@ impl ParserState {
                     let _ = self.parse_type_arguments();
                 }
             }
+        }
+
+        if has_invalid_numeric_name && self.is_token(SyntaxKind::OpenBraceToken) {
+            use tsz_common::diagnostics::diagnostic_codes;
+            let brace_pos = self.token_pos();
+            self.parse_error_at(brace_pos, 1, "';' expected.", diagnostic_codes::EXPECTED);
         }
 
         // Parse interface body
@@ -1069,6 +1100,7 @@ impl ParserState {
         modifiers: Option<NodeList>,
     ) -> NodeIndex {
         self.parse_expected(SyntaxKind::TypeKeyword);
+        let mut has_invalid_numeric_name = false;
 
         // TS1142: Line break not permitted between `type` and the alias name.
         // When `declare type\nT1 = ...` has a newline, tsc still parses it as a
@@ -1110,6 +1142,30 @@ impl ParserState {
                     type_arguments: None,
                 },
             )
+        } else if self.is_token(SyntaxKind::NumericLiteral) {
+            use tsz_common::diagnostics::diagnostic_codes;
+            let id_start = self.token_pos();
+            let id_end = self.token_end();
+            let text = self.scanner.get_token_value();
+            self.parse_error_at(
+                id_start,
+                id_end - id_start,
+                &format!("Type alias name cannot be '{text}'."),
+                diagnostic_codes::TYPE_ALIAS_NAME_CANNOT_BE,
+            );
+            self.next_token();
+            has_invalid_numeric_name = true;
+            self.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                id_start,
+                id_end,
+                crate::parser::node::IdentifierData {
+                    atom: Atom::NONE,
+                    escaped_text: String::new(),
+                    original_text: None,
+                    type_arguments: None,
+                },
+            )
         } else {
             self.parse_identifier()
         };
@@ -1118,6 +1174,28 @@ impl ParserState {
         let type_parameters = self
             .is_token(SyntaxKind::LessThanToken)
             .then(|| self.parse_type_parameters());
+
+        if has_invalid_numeric_name {
+            use tsz_common::diagnostics::diagnostic_codes;
+            if self.is_token(SyntaxKind::OpenBraceToken) {
+                let brace_pos = self.token_pos();
+                self.parse_error_at(brace_pos, 1, "';' expected.", diagnostic_codes::EXPECTED);
+                let _ = self.parse_block();
+            }
+            self.parse_semicolon();
+            let end_pos = self.token_end();
+            return self.arena.add_type_alias(
+                syntax_kind_ext::TYPE_ALIAS_DECLARATION,
+                start_pos,
+                end_pos,
+                crate::parser::node::TypeAliasData {
+                    modifiers,
+                    name,
+                    type_parameters,
+                    type_node: NodeIndex::NONE,
+                },
+            );
+        }
 
         // Parse expected equals token, but recover gracefully if missing
         // If the next token can start a type (e.g., {, (, [), emit error and continue parsing

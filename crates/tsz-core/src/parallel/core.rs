@@ -68,6 +68,79 @@ fn validate_json_syntax(source: &str) -> Vec<ParseDiagnostic> {
     let len = bytes.len();
     let mut i = 0;
 
+    let is_ws = |b: u8| matches!(b, b' ' | b'\t' | b'\n' | b'\r');
+    let is_ident_start = |b: u8| b.is_ascii_alphabetic() || b == b'_' || b == b'$';
+    let is_ident_part = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
+
+    // Root-level recovery for invalid bare identifier runs in JSON files.
+    // tsc emits a specific sequence:
+    //   first identifier  -> TS1005 "'{' expected." + TS1136
+    //   next identifiers  -> TS1005 "',' expected." + TS1136
+    //   end of run        -> TS1005 "'}' expected."
+    //
+    // Valid JSON roots `true` / `false` / `null` are explicitly allowed.
+    let mut j = 0usize;
+    while j < len && is_ws(bytes[j]) {
+        j += 1;
+    }
+    if j < len && is_ident_start(bytes[j]) {
+        let mut spans: Vec<(usize, usize)> = Vec::new();
+        let mut k = j;
+        loop {
+            let start = k;
+            while k < len && is_ident_part(bytes[k]) {
+                k += 1;
+            }
+            spans.push((start, k));
+
+            while k < len && is_ws(bytes[k]) {
+                k += 1;
+            }
+
+            if k < len && is_ident_start(bytes[k]) {
+                continue;
+            }
+            break;
+        }
+
+        if k >= len {
+            let single_keyword_root = spans.len() == 1
+                && std::str::from_utf8(&bytes[spans[0].0..spans[0].1])
+                    .map(|s| matches!(s, "true" | "false" | "null"))
+                    .unwrap_or(false);
+
+            if !single_keyword_root {
+                for (idx, (start, _end)) in spans.iter().enumerate() {
+                    let expected_msg = if idx == 0 {
+                        "'{' expected."
+                    } else {
+                        "',' expected."
+                    };
+                    diagnostics.push(ParseDiagnostic {
+                        start: *start as u32,
+                        length: 1,
+                        message: expected_msg.to_string(),
+                        code: tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                    });
+                    diagnostics.push(ParseDiagnostic {
+                        start: *start as u32,
+                        length: 1,
+                        message: tsz_common::diagnostics::diagnostic_messages::PROPERTY_ASSIGNMENT_EXPECTED.to_string(),
+                        code: tsz_common::diagnostics::diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
+                    });
+                }
+                if let Some((_, end)) = spans.last() {
+                    diagnostics.push(ParseDiagnostic {
+                        start: *end as u32,
+                        length: 1,
+                        message: "'}' expected.".to_string(),
+                        code: tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                    });
+                }
+            }
+        }
+    }
+
     // Track whether we're inside an object and expecting a property name.
     // JSON property names must be double-quoted strings per the JSON spec.
     // We use a simple state machine: after `{` or `,` inside an object,
