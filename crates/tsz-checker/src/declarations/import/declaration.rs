@@ -1186,13 +1186,7 @@ impl<'a> CheckerState<'a> {
                             || self.ctx.file_name.ends_with(".mjs");
                         let target_is_esm = target_ext_is_esm
                             || (!skip_esm_map
-                                && self
-                                    .ctx
-                                    .file_is_esm_map
-                                    .as_ref()
-                                    .and_then(|m| m.get(file_name))
-                                    .copied()
-                                    .unwrap_or(false));
+                                && self.lookup_file_is_esm(file_name).unwrap_or(false));
                         let is_dts = source_file.is_declaration_file;
                         (is_dts, Some((skip_exports, target_is_esm)))
                     } else {
