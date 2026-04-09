@@ -227,6 +227,21 @@ fn object_method_arrow_return_token_prefers_brace_expected_then_ts1434() {
 }
 
 #[test]
+fn import_type_arguments_without_call_parens_avoid_ts1005_cascade() {
+    let source = "import<T>\nconst a = import<string, number>";
+    let (parser, _root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::THIS_USE_OF_IMPORT_IS_INVALID_IMPORT_CALLS_CAN_BE_WRITTEN_BUT_THEY_MUST_HAVE_PAR),
+        "Expected TS1326 for `import<T>` usage, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::EXPECTED),
+        "Should not cascade with TS1005 from forced import-call recovery, got {codes:?}"
+    );
+}
+
+#[test]
 fn new_expression_missing_callee_reports_ts1109() {
     let source = "(a,\nnew)";
     let (parser, _root) = parse_source(source);

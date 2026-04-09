@@ -1156,6 +1156,10 @@ impl ParserState {
     pub(crate) fn parse_import_expression(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ImportKeyword);
+        let import_node =
+            self.arena
+                .add_token(SyntaxKind::ImportKeyword as u16, start_pos, start_pos + 6);
+        let mut import_call_type_arguments: Option<NodeList> = None;
 
         // Check for import.meta / import.defer(...)
         if self.is_token(SyntaxKind::DotToken) {
@@ -1187,12 +1191,6 @@ impl ParserState {
                 );
                 self.parse_error_at_current_token("')' expected.", diagnostic_codes::EXPECTED);
             } else {
-                // Create import keyword node
-                let import_node = self.arena.add_token(
-                    SyntaxKind::ImportKeyword as u16,
-                    start_pos,
-                    start_pos + 6,
-                );
                 if prop_name == "defer" && !self.is_token(SyntaxKind::OpenParenToken) {
                     // import.defer without '(' — TS1005 "'(' expected."
                     // Unlike import.meta, import.defer is only valid as a call expression.
@@ -1249,32 +1247,26 @@ impl ParserState {
                 diagnostic_messages::THIS_USE_OF_IMPORT_IS_INVALID_IMPORT_CALLS_CAN_BE_WRITTEN_BUT_THEY_MUST_HAVE_PAR,
                 diagnostic_codes::THIS_USE_OF_IMPORT_IS_INVALID_IMPORT_CALLS_CAN_BE_WRITTEN_BUT_THEY_MUST_HAVE_PAR,
             );
-            // Skip the type arguments for recovery, handling nested <...>
-            self.next_token(); // consume '<'
-            let mut depth: u32 = 1;
-            while depth > 0 {
-                if self.is_token(SyntaxKind::LessThanToken) {
-                    depth += 1;
-                } else if self.is_token(SyntaxKind::GreaterThanToken) {
-                    depth -= 1;
-                    if depth == 0 {
-                        self.next_token(); // consume final '>'
-                        break;
-                    }
-                } else if self.is_token(SyntaxKind::GreaterThanGreaterThanToken) {
-                    // >> can close two levels
-                    if depth <= 2 {
-                        self.next_token();
-                        break;
-                    }
-                    depth -= 2;
-                } else if self.is_token(SyntaxKind::EndOfFileToken)
-                    || self.is_token(SyntaxKind::SemicolonToken)
-                {
-                    break;
-                }
-                self.next_token();
+            // Preserve type arguments so unresolved names still surface as semantic
+            // diagnostics (e.g. TS2304 in `import<T>`).
+            let type_arguments = self.parse_type_arguments();
+            if !self.is_token(SyntaxKind::OpenParenToken) {
+                let end_pos = type_arguments
+                    .nodes
+                    .last()
+                    .and_then(|last| self.arena.get(*last))
+                    .map_or_else(|| self.token_end(), |node| node.end);
+                return self.arena.add_expr_with_type_args(
+                    syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS,
+                    start_pos,
+                    end_pos,
+                    crate::parser::node::ExprWithTypeArgsData {
+                        expression: import_node,
+                        type_arguments: Some(type_arguments),
+                    },
+                );
             }
+            import_call_type_arguments = Some(type_arguments);
         } else if !self.is_token(SyntaxKind::OpenParenToken) {
             // import followed by something other than '(' or '.' — not a valid expression.
             // Emit TS1109 "Expression expected" (matches tsc behavior for e.g. `import { ... } from`)
@@ -1466,9 +1458,6 @@ impl ParserState {
         }
 
         // Create a call expression with import as the callee
-        let import_keyword =
-            self.arena
-                .add_token(SyntaxKind::ImportKeyword as u16, start_pos, start_pos + 6);
         let mut args = vec![argument];
         if let Some(opt) = options {
             args.push(opt);
@@ -1480,8 +1469,8 @@ impl ParserState {
             start_pos,
             end_pos,
             crate::parser::node::CallExprData {
-                expression: import_keyword,
-                type_arguments: None,
+                expression: import_node,
+                type_arguments: import_call_type_arguments,
                 arguments: Some(arguments),
             },
         )
