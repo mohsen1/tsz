@@ -3722,11 +3722,7 @@ fn test_lookup_skips_fallback_for_bundler_exports_authoritative_not_found() {
     .unwrap();
     let fallback_target = dir.join("node_modules/pkg/index.d.ts");
     fs::write(&fallback_target, "export const x: number;").unwrap();
-    fs::write(
-        dir.join("src/index.mts"),
-        "import { x } from 'pkg';\nx;\n",
-    )
-    .unwrap();
+    fs::write(dir.join("src/index.mts"), "import { x } from 'pkg';\nx;\n").unwrap();
 
     let options = ResolvedCompilerOptions {
         module_resolution: Some(ModuleResolutionKind::Bundler),
