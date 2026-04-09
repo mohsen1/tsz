@@ -1261,10 +1261,19 @@ impl<'a> CheckerState<'a> {
                             }
                         }
 
+                        let is_import_equals_alias = self
+                            .ctx
+                            .arena
+                            .get(value_decl)
+                            .is_some_and(|node| {
+                                node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                            });
+
                         let allow_namespace_default = self
                             .source_file_import_uses_system_default_namespace_fallback(module_name)
                             || (!self.ctx.compiler_options.module.is_node_module()
                                 && self.ctx.allow_synthetic_default_imports()
+                                && !is_import_equals_alias
                                 && export_equals_type.is_some())
                             || (self.ctx.compiler_options.module.is_node_module()
                                 && self.ctx.file_is_esm == Some(true)
