@@ -1539,6 +1539,14 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // produces a parse error (TS1477).
             k if k == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS => {
                 if let Some(data) = self.checker.ctx.arena.get_expr_type_args(node) {
+                    if let Some(expr_node) = self.checker.ctx.arena.get(data.expression)
+                        && expr_node.kind == SyntaxKind::ImportKeyword as u16
+                        && let Some(type_arguments) = &data.type_arguments
+                    {
+                        for &type_arg in &type_arguments.nodes {
+                            let _ = self.checker.get_type_from_type_node(type_arg);
+                        }
+                    }
                     self.checker.get_type_of_node(data.expression)
                 } else {
                     TypeId::ERROR
