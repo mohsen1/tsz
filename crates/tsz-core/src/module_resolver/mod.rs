@@ -630,7 +630,13 @@ impl ModuleResolver {
                             specifier,
                             containing_file.parent().unwrap_or_else(|| Path::new(".")),
                             importing_module_kind_for_lookup,
-                        );
+                            )
+                        || (matches!(failure, ResolutionFailure::NotFound { .. })
+                            && matches!(
+                                self.resolution_kind,
+                                ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+                            )
+                            && specifier.contains('*'));
 
                 // 2. Try fallback resolution if this is a "soft" failure
                 if failure.should_try_fallback()
