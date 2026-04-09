@@ -2187,6 +2187,8 @@ impl ParserState {
     // Parse expression statement
     pub(crate) fn parse_expression_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
+        self.pending_jsx_missing_close_brace_in_expression_statement = 0;
+        self.jsx_missing_brace_semicolon_window_start = Some(start_pos);
 
         // Early rejection: If the current token cannot start an expression, fail immediately
         // This prevents TS1109 from being emitted for tokens that are obviously not expressions
@@ -2195,6 +2197,7 @@ impl ParserState {
         if !self.is_expression_start() {
             // Don't emit error here - let the statement-level error handling deal with it
             // Just return NONE to indicate failure
+            self.jsx_missing_brace_semicolon_window_start = None;
             return NodeIndex::NONE;
         }
 
@@ -2215,6 +2218,8 @@ impl ParserState {
                 {
                     self.next_token();
                 }
+                self.pending_jsx_missing_close_brace_in_expression_statement = 0;
+                self.jsx_missing_brace_semicolon_window_start = None;
                 return NodeIndex::NONE;
             }
             // Emit error for unexpected token if we haven't already
@@ -2228,10 +2233,23 @@ impl ParserState {
             // Try to parse semicolon for partial recovery, then resync
             let _ = self.can_parse_semicolon();
             if self.is_token(SyntaxKind::SemicolonToken) {
+                let semicolon_pos = self.token_pos();
+                if self.should_emit_jsx_missing_close_brace_at_semicolon(start_pos, semicolon_pos) {
+                    self.parse_error_at(
+                        semicolon_pos,
+                        0,
+                        "'}' expected.",
+                        diagnostic_codes::EXPECTED,
+                    );
+                }
+                self.jsx_missing_brace_semicolon_window_start =
+                    Some(semicolon_pos.saturating_add(1));
                 self.next_token();
             } else {
                 self.resync_after_error();
             }
+            self.pending_jsx_missing_close_brace_in_expression_statement = 0;
+            self.jsx_missing_brace_semicolon_window_start = None;
             return NodeIndex::NONE;
         }
 
@@ -2241,6 +2259,22 @@ impl ParserState {
         // parseExpressionOrLabeledStatement behavior). Instead of generic TS1005 "';' expected",
         // this checks if the expression is a misspelled keyword and emits TS1435/TS1434.
         if self.is_token(SyntaxKind::SemicolonToken) {
+            let semicolon_pos = self.token_pos();
+            let needs_jsx_semicolon_missing_brace =
+                self.arena.get(expression).is_some_and(|node| {
+                    self.should_emit_jsx_missing_close_brace_at_semicolon(node.pos, semicolon_pos)
+                });
+            if self.pending_jsx_missing_close_brace_in_expression_statement > 0
+                || needs_jsx_semicolon_missing_brace
+            {
+                self.parse_error_at(
+                    semicolon_pos,
+                    0,
+                    "'}' expected.",
+                    diagnostic_codes::EXPECTED,
+                );
+            }
+            self.jsx_missing_brace_semicolon_window_start = Some(semicolon_pos.saturating_add(1));
             self.next_token();
         } else if self.is_token(SyntaxKind::Unknown) {
             // Invalid character (e.g., standalone `\`). Emit TS1127 and skip it,
@@ -2252,6 +2286,9 @@ impl ParserState {
             );
             self.next_token();
             if self.is_token(SyntaxKind::SemicolonToken) {
+                let semicolon_pos = self.token_pos();
+                self.jsx_missing_brace_semicolon_window_start =
+                    Some(semicolon_pos.saturating_add(1));
                 self.next_token();
             }
         } else if !self.can_parse_semicolon() {
@@ -2284,6 +2321,8 @@ impl ParserState {
             }
         }
         let end_pos = self.token_end();
+        self.pending_jsx_missing_close_brace_in_expression_statement = 0;
+        self.jsx_missing_brace_semicolon_window_start = None;
 
         self.arena.add_expr_statement(
             syntax_kind_ext::EXPRESSION_STATEMENT,

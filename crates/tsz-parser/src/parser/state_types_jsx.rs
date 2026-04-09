@@ -1492,7 +1492,19 @@ impl ParserState {
         if self.is_token(SyntaxKind::CloseBraceToken) {
             self.next_token();
         } else if !suppress_missing_close_brace_error {
-            self.parse_expected(SyntaxKind::CloseBraceToken);
+            let parsed_close_brace = self.parse_expected(SyntaxKind::CloseBraceToken);
+            if !parsed_close_brace
+                && (self.is_token(SyntaxKind::LessThanSlashToken)
+                    || self.is_token(SyntaxKind::LessThanToken))
+            {
+                self.pending_jsx_missing_close_brace_in_expression_statement = self
+                    .pending_jsx_missing_close_brace_in_expression_statement
+                    .saturating_add(1);
+            }
+        } else {
+            self.pending_jsx_missing_close_brace_in_expression_statement = self
+                .pending_jsx_missing_close_brace_in_expression_statement
+                .saturating_add(1);
         }
 
         let end_pos = self.token_end();
@@ -1595,6 +1607,35 @@ impl ParserState {
     pub(crate) fn parse_jsx_text(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         let text = self.scanner.get_token_value_ref().to_string();
+        if let Some(mut window_start) = self.jsx_missing_brace_semicolon_window_start {
+            for (offset, byte) in text.as_bytes().iter().enumerate() {
+                if *byte != b';' {
+                    continue;
+                }
+                let semicolon_pos = start_pos.saturating_add(offset as u32);
+                let has_missing_close_brace = self.parse_diagnostics.iter().any(|diag| {
+                    diag.start >= window_start
+                        && diag.start <= semicolon_pos
+                        && diag.code == tsz_common::diagnostics::diagnostic_codes::EXPECTED
+                        && diag.message == "'}' expected."
+                });
+                let segment_has_open_brace = self
+                    .get_source_text()
+                    .get(window_start as usize..semicolon_pos as usize)
+                    .is_some_and(|segment| segment.contains('{'));
+
+                if segment_has_open_brace && !has_missing_close_brace {
+                    self.parse_error_at(
+                        semicolon_pos,
+                        0,
+                        "'}' expected.",
+                        tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                    );
+                }
+                window_start = semicolon_pos.saturating_add(1);
+            }
+            self.jsx_missing_brace_semicolon_window_start = Some(window_start);
+        }
         let end_pos = self.token_end();
         self.next_token();
 
