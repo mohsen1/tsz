@@ -1093,7 +1093,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if an initializer expression is a `Symbol()` or `Symbol("desc")` call.
+    /// Check if an initializer expression is a `Symbol(...)` call.
     pub(crate) fn is_symbol_call_initializer(&self, init_idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
         let Some(node) = self.ctx.arena.get(init_idx) else {
@@ -1108,11 +1108,10 @@ impl<'a> CheckerState<'a> {
         let Some(expr_node) = self.ctx.arena.get(call.expression) else {
             return false;
         };
-        if let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
-            ident.escaped_text == "Symbol"
-        } else {
-            false
-        }
+        self.ctx
+            .arena
+            .get_identifier(expr_node)
+            .is_some_and(|ident| ident.escaped_text == "Symbol")
     }
 
     /// Get the binder SymbolId for a variable declaration's name node.

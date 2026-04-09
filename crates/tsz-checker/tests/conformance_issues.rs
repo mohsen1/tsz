@@ -19003,6 +19003,47 @@ const t3 = {
 }
 
 #[test]
+fn test_last_property_in_object_literal_keeps_explicit_function_source_type_in_ts2322() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+interface Thing {
+    thunk: (str: string) => void;
+}
+function test(thing: Thing) {
+    thing.thunk("str");
+}
+test({
+    thunk: (str: string) => {},
+    thunk: (num: number) => {}
+});
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let ts2322_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert!(
+        ts2322_messages.iter().any(|message| message
+            .contains("Type '(num: number) => void' is not assignable to type '(str: string) => void'")),
+        "Expected TS2322 to preserve explicit source signature from the last object literal property.\nActual diagnostics: {diagnostics:#?}"
+    );
+
+    assert!(
+        !ts2322_messages.iter().any(|message| message
+            .contains("Type '(str: string) => void' is not assignable to type '(str: string) => void'")),
+        "Did not expect contextualized source signature in TS2322 for duplicate object literal property.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_computed_property_contextual_index_signatures_accept_mixed_literal_members() {
     let _diagnostics = compile_and_get_diagnostics_named(
         "test.ts",

@@ -872,6 +872,82 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut elaborated = false;
+        let mut seen_named_properties: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
+        let mut duplicate_named_properties: rustc_hash::FxHashSet<String> =
+            rustc_hash::FxHashSet::default();
+        let mut first_named_property_name_idx: rustc_hash::FxHashMap<String, NodeIndex> =
+            rustc_hash::FxHashMap::default();
+        let mut last_named_property_value_idx: rustc_hash::FxHashMap<String, NodeIndex> =
+            rustc_hash::FxHashMap::default();
+
+        for &elem_idx in &obj.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+
+            let (prop_name_idx, prop_value_idx) = match elem_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    match self.ctx.arena.get_property_assignment(elem_node) {
+                        Some(prop) => (prop.name, prop.initializer),
+                        None => continue,
+                    }
+                }
+                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    match self.ctx.arena.get_shorthand_property(elem_node) {
+                        Some(prop) => (prop.name, prop.name),
+                        None => continue,
+                    }
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    match self.ctx.arena.get_method_decl(elem_node) {
+                        Some(method) => (method.name, elem_idx),
+                        None => continue,
+                    }
+                }
+                _ => continue,
+            };
+
+            let is_computed_property = self
+                .ctx
+                .arena
+                .get(prop_name_idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+            let prop_name = match self.object_literal_property_name_text(prop_name_idx) {
+                Some(name) => name,
+                None if is_computed_property => match self.get_property_name_resolved(prop_name_idx)
+                {
+                    Some(name) => name,
+                    None => continue,
+                },
+                None => continue,
+            };
+
+            if !seen_named_properties.insert(prop_name.clone()) {
+                duplicate_named_properties.insert(prop_name.clone());
+            } else {
+                first_named_property_name_idx.insert(prop_name.clone(), prop_name_idx);
+            }
+            last_named_property_value_idx.insert(prop_name, prop_value_idx);
+        }
+
+        let mut duplicate_winner_source_types: rustc_hash::FxHashMap<String, TypeId> =
+            rustc_hash::FxHashMap::default();
+        for (prop_name, &winner_idx) in &last_named_property_value_idx {
+            if !duplicate_named_properties.contains(prop_name) {
+                continue;
+            }
+            let winner_ty = self.elaboration_source_expression_type(winner_idx);
+            let winner_ty = if winner_ty == TypeId::ERROR || winner_ty == TypeId::ANY {
+                self.get_type_of_node(winner_idx)
+            } else {
+                winner_ty
+            };
+            if winner_ty != TypeId::ERROR && winner_ty != TypeId::ANY {
+                duplicate_winner_source_types.insert(prop_name.clone(), winner_ty);
+            }
+        }
+        let mut emitted_duplicate_primary: rustc_hash::FxHashSet<String> =
+            rustc_hash::FxHashSet::default();
 
         for &elem_idx in &obj.elements.nodes {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
@@ -920,7 +996,6 @@ impl<'a> CheckerState<'a> {
                 }
                 None => continue,
             };
-
             let Some((target_prop_type, target_prop_type_for_diagnostic)) = self
                 .object_literal_target_property_type(
                     effective_param_type,
@@ -957,15 +1032,24 @@ impl<'a> CheckerState<'a> {
             // from the source object type instead, which reflects the actual
             // (non-contextual) type as seen at the argument level.
             let source_obj_prop_type = if is_function_value {
-                if let tsz_solver::operations::property::PropertyAccessResult::Success {
-                    type_id,
-                    ..
-                } = self.resolve_property_access_with_env(source_type, &prop_name)
+                let node_source_prop = match self
+                    .resolve_property_access_with_env(node_source_type, &prop_name)
                 {
-                    Some(type_id)
-                } else {
-                    None
-                }
+                    tsz_solver::operations::property::PropertyAccessResult::Success {
+                        type_id,
+                        ..
+                    } => Some(type_id),
+                    _ => None,
+                };
+                let override_source_prop =
+                    match self.resolve_property_access_with_env(source_type, &prop_name) {
+                        tsz_solver::operations::property::PropertyAccessResult::Success {
+                            type_id,
+                            ..
+                        } => Some(type_id),
+                        _ => None,
+                    };
+                node_source_prop.or(override_source_prop)
             } else {
                 None
             };
@@ -997,7 +1081,53 @@ impl<'a> CheckerState<'a> {
             // Use the source object property type (from the argument-level type) if available,
             // since get_type_of_node on method declarations may return the contextually-typed
             // version that doesn't reflect the actual mismatch.
-            let effective_source_prop = source_obj_prop_type.unwrap_or(source_prop_type);
+            let duplicate_winner_source_prop =
+                duplicate_winner_source_types.get(&prop_name).copied();
+            let is_last_duplicate_value = last_named_property_value_idx
+                .get(&prop_name)
+                .is_some_and(|&winner_idx| winner_idx == prop_value_idx);
+
+            let effective_source_prop = duplicate_winner_source_prop
+                .or(source_obj_prop_type)
+                .unwrap_or(source_prop_type);
+            if is_function_value
+                && duplicate_named_properties.contains(&prop_name)
+                && target_prop_type != TypeId::ERROR
+                && target_prop_type != TypeId::ANY
+            {
+                let duplicate_source_for_check = duplicate_winner_source_prop
+                    .or_else(|| is_last_duplicate_value.then_some(source_prop_type));
+                if let Some(duplicate_source_for_check) = duplicate_source_for_check
+                    && duplicate_source_for_check != TypeId::ERROR
+                    && duplicate_source_for_check != TypeId::ANY
+                    && !self.is_assignable_to(duplicate_source_for_check, target_prop_type)
+                {
+                    let source_prop_type_for_diagnostic =
+                        self.widen_function_like_call_source(duplicate_source_for_check);
+                    let target_for_diag = if target_prop_type != target_prop_type_for_diagnostic {
+                        target_prop_type_for_diagnostic
+                    } else {
+                        target_prop_type
+                    };
+                    if let Some(&first_name_idx) = first_named_property_name_idx.get(&prop_name)
+                        && first_name_idx != prop_name_idx
+                        && emitted_duplicate_primary.insert(prop_name.clone())
+                    {
+                        self.error_type_not_assignable_at_with_display_types(
+                            source_prop_type_for_diagnostic,
+                            target_for_diag,
+                            first_name_idx,
+                        );
+                    }
+                    self.error_type_not_assignable_at_with_display_types(
+                        source_prop_type_for_diagnostic,
+                        target_for_diag,
+                        prop_name_idx,
+                    );
+                    elaborated = true;
+                    continue;
+                }
+            }
             if is_function_value
                 && effective_source_prop != TypeId::ERROR
                 && effective_source_prop != TypeId::ANY
@@ -1014,6 +1144,28 @@ impl<'a> CheckerState<'a> {
                 } else {
                     target_prop_type
                 };
+                if duplicate_named_properties.contains(&prop_name) {
+                    if let Some(&first_name_idx) = first_named_property_name_idx.get(&prop_name)
+                        && first_name_idx != prop_name_idx
+                        && emitted_duplicate_primary.insert(prop_name.clone())
+                    {
+                        self.error_type_not_assignable_at_with_display_types(
+                            source_prop_type_for_diagnostic,
+                            target_for_diag,
+                            first_name_idx,
+                        );
+                    }
+                    // Keep the source/target display types stable for duplicate
+                    // properties; anchor at the property name so both duplicate
+                    // declarations can surface their own TS2322 positions.
+                    self.error_type_not_assignable_at_with_display_types(
+                        source_prop_type_for_diagnostic,
+                        target_for_diag,
+                        prop_name_idx,
+                    );
+                    elaborated = true;
+                    continue;
+                }
                 // For method declarations, emit TS2322 directly to avoid triggering
                 // name resolution on the method name identifier (which would cause
                 // a spurious TS2552 "Cannot find name" error). The anchor-based
