@@ -227,6 +227,22 @@ fn object_method_arrow_return_token_prefers_brace_expected_then_ts1434() {
 }
 
 #[test]
+fn new_expression_missing_callee_reports_ts1109() {
+    let source = "(a,\nnew)";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let expr_expected = diags
+        .iter()
+        .find(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
+        .unwrap_or_else(|| panic!("expected TS1109 for missing `new` callee, got {diags:?}"));
+    assert_eq!(
+        expr_expected.start,
+        source.find(')').expect("closing paren") as u32,
+        "TS1109 should anchor at ')' after bare `new`: {diags:?}"
+    );
+}
+
+#[test]
 fn async_arrow_parameter_recovery_rolls_back_speculation() {
     let source = "var foo = async (a = await => await): Promise<void> => {}";
     let (parser, _root) = parse_source(source);

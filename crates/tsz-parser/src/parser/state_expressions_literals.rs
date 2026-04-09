@@ -3008,6 +3008,9 @@ impl ParserState {
 
         // Parse the callee expression - member access without call (we handle call ourselves)
         let expression = self.parse_member_expression_base();
+        if expression.is_none() {
+            self.error_expression_expected();
+        }
         let mut end_pos = self
             .arena
             .get(expression)
