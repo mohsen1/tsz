@@ -506,24 +506,26 @@ impl ModuleResolver {
         let span = request.specifier_span;
         let import_kind = request.import_kind;
         let importing_module_kind_for_lookup =
-            request.resolution_mode_override.unwrap_or_else(|| match self.module_kind {
-                ModuleKind::Preserve => {
-                    let extension = ModuleExtension::from_path(containing_file);
-                    if extension.forces_esm() {
-                        ImportingModuleKind::Esm
-                    } else if extension.forces_cjs() {
-                        ImportingModuleKind::CommonJs
-                    } else {
-                        match import_kind {
-                            ImportKind::EsmImport
-                            | ImportKind::DynamicImport
-                            | ImportKind::EsmReExport => ImportingModuleKind::Esm,
-                            ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
+            request
+                .resolution_mode_override
+                .unwrap_or_else(|| match self.module_kind {
+                    ModuleKind::Preserve => {
+                        let extension = ModuleExtension::from_path(containing_file);
+                        if extension.forces_esm() {
+                            ImportingModuleKind::Esm
+                        } else if extension.forces_cjs() {
+                            ImportingModuleKind::CommonJs
+                        } else {
+                            match import_kind {
+                                ImportKind::EsmImport
+                                | ImportKind::DynamicImport
+                                | ImportKind::EsmReExport => ImportingModuleKind::Esm,
+                                ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
+                            }
                         }
                     }
-                }
-                _ => self.get_importing_module_kind(containing_file),
-            });
+                    _ => self.get_importing_module_kind(containing_file),
+                });
 
         // 1. Try primary resolution
         match self.resolve_with_kind_and_module_kind(

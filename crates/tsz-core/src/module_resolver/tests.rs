@@ -208,7 +208,11 @@ fn test_imports_pattern_key_is_not_treated_as_exact_match_for_literal_star_speci
         }"##,
     )
     .unwrap();
-    fs::write(dir.join("src/value.d.ts"), "export declare const v: number;").unwrap();
+    fs::write(
+        dir.join("src/value.d.ts"),
+        "export declare const v: number;",
+    )
+    .unwrap();
     fs::write(dir.join("index.ts"), "import { v } from '#a/*/b/*'; v;").unwrap();
 
     let options = ResolvedCompilerOptions {
