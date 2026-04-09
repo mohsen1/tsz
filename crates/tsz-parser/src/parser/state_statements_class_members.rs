@@ -984,6 +984,11 @@ impl ParserState {
             return NodeIndex::NONE;
         }
 
+        if self.look_ahead_is_class_body_function_statement() {
+            self.recover_invalid_class_body_function_statement();
+            return NodeIndex::NONE;
+        }
+
         if self.look_ahead_is_class_body_variable_statement() {
             self.recover_invalid_class_body_variable_statement();
             return NodeIndex::NONE;
@@ -1202,25 +1207,11 @@ impl ParserState {
             return member;
         }
 
-        // Recovery: Handle 'function' keyword used as a modifier in class members
-        // `function foo() {}` is invalid in a class (the `function` keyword is not a modifier).
-        // But `function;` or `function(){}` are valid property/method names.
-        // Only consume `function` as a modifier when followed by an identifier on the same line.
-        if self.is_token(SyntaxKind::FunctionKeyword) {
-            let snapshot = self.scanner.save_state();
-            let current = self.current_token;
-            self.next_token();
-            let next_is_identifier =
-                self.is_identifier_or_keyword() && !self.scanner.has_preceding_line_break();
-            self.scanner.restore_state(snapshot);
-            self.current_token = current;
-
-            if next_is_identifier {
-                // `function foo(){}` — consume `function` and let it parse as a method
-                self.next_token();
-            }
-            // Otherwise, `function` will be parsed as a property/method name below
-        }
+        // `function foo() {}` inside a class body is handled by
+        // `look_ahead_is_class_body_function_statement` above and recovers
+        // via `recover_invalid_module_like_class_member` to match tsc.
+        // Keep `function` as a potential member name here for valid forms like
+        // `function() {}` or `function;`.
 
         // Recovery: Handle 'const'/'let'/'var' used as modifiers in class members
         // Distinguish between: `const x = 1` (invalid, error) vs `const() {}` (valid method name)
@@ -1810,6 +1801,20 @@ impl ParserState {
         is_match
     }
 
+    fn look_ahead_is_class_body_function_statement(&mut self) -> bool {
+        if !self.is_token(SyntaxKind::FunctionKeyword) {
+            return false;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let is_match = self.is_identifier_or_keyword() && !self.scanner.has_preceding_line_break();
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        is_match
+    }
+
     fn recover_invalid_class_body_variable_statement(&mut self) {
         self.parse_error_at_current_token(
             "Unexpected token. A constructor, method, accessor, or property was expected.",
@@ -1827,6 +1832,31 @@ impl ParserState {
             self.next_token();
         }
 
+        if self.is_token(SyntaxKind::CloseBraceToken) {
+            self.parse_error_at_current_token(
+                "Declaration or statement expected.",
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            );
+        }
+    }
+
+    fn recover_invalid_class_body_function_statement(&mut self) {
+        self.parse_error_at_current_token(
+            "Unexpected token. A constructor, method, accessor, or property was expected.",
+            diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+        );
+
+        // Skip the invalid `function ...` statement body on the same line.
+        // Unlike module-like recovery, don't emit an intermediate TS1005
+        // ("';' expected.") here — tsc reports only TS1068 + trailing TS1128.
+        self.next_token();
+        while !self.is_token(SyntaxKind::EndOfFileToken) && !self.scanner.has_preceding_line_break()
+        {
+            self.next_token();
+        }
+
+        // If we're at the class closing brace, report the follow-up statement-level
+        // recovery diagnostic.
         if self.is_token(SyntaxKind::CloseBraceToken) {
             self.parse_error_at_current_token(
                 "Declaration or statement expected.",
