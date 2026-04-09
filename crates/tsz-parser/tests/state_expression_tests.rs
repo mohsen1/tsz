@@ -242,6 +242,23 @@ fn import_type_arguments_without_call_parens_avoid_ts1005_cascade() {
 }
 
 #[test]
+fn import_empty_type_arguments_only_report_ts1326() {
+    let source = "const p = import<>(\"./0\");";
+    let (parser, _root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(
+            &diagnostic_codes::THIS_USE_OF_IMPORT_IS_INVALID_IMPORT_CALLS_CAN_BE_WRITTEN_BUT_THEY_MUST_HAVE_PAR
+        ),
+        "Expected TS1326 for import type arguments, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_ARGUMENT_LIST_CANNOT_BE_EMPTY),
+        "import<> should not emit TS1099 alongside TS1326, got {codes:?}"
+    );
+}
+
+#[test]
 fn new_expression_missing_callee_reports_ts1109() {
     let source = "(a,\nnew)";
     let (parser, _root) = parse_source(source);

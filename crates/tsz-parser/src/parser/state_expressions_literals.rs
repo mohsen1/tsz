@@ -1249,7 +1249,19 @@ impl ParserState {
             );
             // Preserve type arguments so unresolved names still surface as semantic
             // diagnostics (e.g. TS2304 in `import<T>`).
+            //
+            // tsc suppresses TS1099 for `import<>` and reports only TS1326.
+            // Keep that behavior by dropping the empty-type-arg diagnostic only
+            // in this import-call recovery path.
+            let diagnostics_len_before_type_args = self.parse_diagnostics.len();
             let type_arguments = self.parse_type_arguments();
+            if type_arguments.nodes.is_empty()
+                && let Some(last) = self.parse_diagnostics.last()
+                && self.parse_diagnostics.len() > diagnostics_len_before_type_args
+                && last.code == diagnostic_codes::TYPE_ARGUMENT_LIST_CANNOT_BE_EMPTY
+            {
+                self.parse_diagnostics.pop();
+            }
             if !self.is_token(SyntaxKind::OpenParenToken) {
                 let end_pos = type_arguments
                     .nodes
