@@ -1286,10 +1286,11 @@ impl BinderState {
             // Our model merges lib symbols into the file scope, so we simulate shadowing
             // by creating a new symbol instead of merging when a user function or class
             // declaration collides with a lib-originated value symbol.
-            // Note: var/const/let (VARIABLE) shadowing is not yet safe because the checker
-            // may need to infer the local variable's type from an expression referencing the
-            // global (e.g. `const Symbol = globalThis.Symbol`), and creating a separate
-            // symbol breaks that inference path. Functions and classes define their own types.
+            // Note: function-scoped `var` shadowing is still intentionally disabled because
+            // some inference paths rely on the merged symbol behavior in legacy code paths.
+            // However, module-local `let`/`const` MUST shadow lib globals (e.g. `toString`,
+            // `Infinity`) to avoid false TS2451 duplicate-variable diagnostics in external
+            // modules.
             //
             // In SCRIPT mode: interfaces and namespaces merge with globals (augmentation).
             // In MODULE mode: interfaces and type aliases shadow globals (no augmentation
@@ -1311,7 +1312,8 @@ impl BinderState {
                             | symbol_flags::CLASS
                             | symbol_flags::INTERFACE
                             | symbol_flags::TYPE_ALIAS
-                            | symbol_flags::ALIAS))
+                            | symbol_flags::ALIAS
+                            | symbol_flags::BLOCK_SCOPED_VARIABLE))
                         != 0
                 } else {
                     // In scripts, only function/class shadow. Interfaces merge (augmentation).
