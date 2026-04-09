@@ -2750,6 +2750,61 @@ fn test_lookup_resolution_mode_override_selects_import_condition() {
 }
 
 #[test]
+fn test_lookup_bundler_prefers_browser_condition() {
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_lookup_bundler_prefers_browser");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/pkg/package.json"),
+        r#"{"name":"pkg","exports":{".":{"browser":"./browser.d.ts","node":"./node.d.ts"}}}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/pkg/browser.d.ts"),
+        "export const widget: \"browser\";",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/pkg/node.d.ts"),
+        "export const widget: \"node\";",
+    )
+    .unwrap();
+    fs::write(dir.join("src/index.ts"), "import { widget } from 'pkg';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "pkg",
+        containing_file: &dir.join("src/index.ts"),
+        specifier_span: Span::new(24, 29),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
+
+    let resolved = result
+        .resolved_path
+        .expect("bundler resolution should prefer the browser condition");
+    assert_eq!(resolved, dir.join("node_modules/pkg/browser.d.ts"));
+    assert!(result.error.is_none());
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_lookup_module_preserve_uses_syntax_directed_conditions() {
     use std::fs;
 
@@ -3680,8 +3735,12 @@ fn test_lookup_skips_fallback_for_nodenext_exports_authoritative_not_found() {
         implied_classic_resolution: false,
     };
 
-    let fallback_clone = fallback_target.clone();
-    let result = resolver.lookup(&request, |_, _| Some(fallback_clone), |_| false, None);
+    let result = resolver.lookup(
+        &request,
+        |_, _| Some(fallback_target.clone()),
+        |_| false,
+        None,
+    );
     let outcome = result.classify();
 
     assert!(
@@ -3742,8 +3801,12 @@ fn test_lookup_skips_fallback_for_bundler_exports_authoritative_not_found() {
         implied_classic_resolution: false,
     };
 
-    let fallback_clone = fallback_target.clone();
-    let result = resolver.lookup(&request, |_, _| Some(fallback_clone), |_| false, None);
+    let result = resolver.lookup(
+        &request,
+        |_, _| Some(fallback_target.clone()),
+        |_| false,
+        None,
+    );
     let outcome = result.classify();
 
     assert!(
@@ -3804,8 +3867,12 @@ fn test_lookup_skips_fallback_for_nodenext_literal_star_specifier_not_found() {
         implied_classic_resolution: false,
     };
 
-    let fallback_clone = fallback_target.clone();
-    let result = resolver.lookup(&request, |_, _| Some(fallback_clone), |_| false, None);
+    let result = resolver.lookup(
+        &request,
+        |_, _| Some(fallback_target.clone()),
+        |_| false,
+        None,
+    );
     let outcome = result.classify();
 
     assert!(

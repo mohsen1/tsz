@@ -199,10 +199,13 @@ impl ModuleResolver {
         // TypeScript always checks "types" first
         conditions.push("types".to_string());
 
-        // Add platform condition: Node modes get "node", bundler does NOT
+        // Add platform condition: Node modes get "node", bundler uses "browser".
         match self.resolution_kind {
             ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext => {
                 conditions.push("node".to_string());
+            }
+            ModuleResolutionKind::Bundler => {
+                conditions.push("browser".to_string());
             }
             _ => {}
         }
