@@ -630,7 +630,7 @@ impl ModuleResolver {
                             specifier,
                             containing_file.parent().unwrap_or_else(|| Path::new(".")),
                             importing_module_kind_for_lookup,
-                            )
+                        )
                         || (matches!(failure, ResolutionFailure::NotFound { .. })
                             && matches!(
                                 self.resolution_kind,

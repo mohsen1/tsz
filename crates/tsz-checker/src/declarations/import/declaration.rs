@@ -1356,10 +1356,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if self.ctx.binder.module_exports.contains_key(module_name)
-            && self
-                .ctx
-                .get_resolution_error(module_name)
-                .is_none()
+            && self.ctx.get_resolution_error(module_name).is_none()
         {
             tracing::trace!(%module_name, "check_import_declaration: found in module_exports, checking members");
             self.check_imported_members(import, module_name);
