@@ -1986,9 +1986,20 @@ fn resolve_package_specifier(
             {
                 return Some(resolved);
             }
-            // When an "exports" field exists, subpaths not listed in the exports
-            // map are blocked — do not fall through to file-system resolution.
-            // This matches Node.js package encapsulation semantics (TS2307).
+            if let Some(types_versions) = package_json.types_versions.as_ref() {
+                let types_subpath = subpath.unwrap_or("index");
+                if let Some(resolved) = resolve_types_versions(
+                    package_root,
+                    types_subpath,
+                    types_versions,
+                    options,
+                    package_type,
+                ) {
+                    return Some(resolved);
+                }
+            }
+            // When an "exports" field exists and neither exports nor
+            // typesVersions provide a match, treat it as unresolved.
             return None;
         }
 
