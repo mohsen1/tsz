@@ -12,6 +12,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{GuardSense, ParamInfo, TypeGuard, TypeId, TypePredicate, TypePredicateTarget};
 
 use super::{FlowAnalyzer, PredicateSignature};
+use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::flow_analysis::{
     self as flow_query, PredicateSignatureKind, classify_for_predicate_signature,
     is_narrowing_literal, stringify_literal_type, union_members_for_type,
@@ -310,17 +311,12 @@ impl<'a> FlowAnalyzer<'a> {
         // Resolve Lazy(DefId) types before classification — type aliases
         // for callback types (e.g., JSDoc @callback) are stored as Lazy(DefId)
         // and must be resolved to their underlying function type first.
-        let resolved_type =
-            if let Some(def_id) = flow_query::get_lazy_def_id(self.interner, callee_type) {
-                if let Some(env) = self.type_environment {
-                    tsz_solver::TypeResolver::resolve_lazy(&*env.borrow(), def_id, self.interner)
-                        .unwrap_or(callee_type)
-                } else {
-                    callee_type
-                }
-            } else {
-                callee_type
-            };
+        let resolved_type = if let Some(env_ref) = self.type_environment {
+            let env = env_ref.borrow();
+            flow_boundary::resolve_lazy_def_with_env(self.interner, Some(&*env), callee_type)
+        } else {
+            callee_type
+        };
         match classify_for_predicate_signature(self.interner, resolved_type) {
             PredicateSignatureKind::Function(_) | PredicateSignatureKind::Callable(_) => {
                 // Delegate to solver query for Function and Callable types.
@@ -697,11 +693,9 @@ impl<'a> FlowAnalyzer<'a> {
                 // Lazy(DefId) types are type aliases that need resolver lookup.
                 if let Some(env_ref) = &self.type_environment {
                     let env = env_ref.borrow();
-                    // First try to resolve Lazy types via the environment
-                    if let Some(def_id) = flow_query::get_lazy_def_id(self.interner, m)
-                        && let Some(resolved) =
-                            tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.interner)
-                    {
+                    let resolved =
+                        flow_boundary::resolve_lazy_def_with_env(self.interner, Some(&*env), m);
+                    if resolved != m {
                         return resolved;
                     }
                     // Then try Application evaluation
