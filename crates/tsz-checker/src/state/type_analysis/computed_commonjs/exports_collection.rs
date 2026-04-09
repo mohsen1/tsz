@@ -9,7 +9,6 @@ use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
     pub(super) fn collect_direct_commonjs_assignment_exports(
-        &self,
         arena: &tsz_parser::parser::NodeArena,
         expr_idx: NodeIndex,
         pending_props: &mut FxHashMap<String, Vec<(NodeIndex, Option<String>)>>,
@@ -111,7 +110,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        self.collect_direct_commonjs_assignment_exports(
+        Self::collect_direct_commonjs_assignment_exports(
             arena,
             binary.right,
             pending_props,
@@ -121,7 +120,6 @@ impl<'a> CheckerState<'a> {
     }
 
     fn collect_late_bound_commonjs_assignment_candidate(
-        &self,
         arena: &tsz_parser::parser::NodeArena,
         expr_idx: NodeIndex,
         property_name: &str,
@@ -240,7 +238,7 @@ impl<'a> CheckerState<'a> {
             *best_match = Some((node.pos, binary.right, expando_root));
         }
 
-        self.collect_late_bound_commonjs_assignment_candidate(
+        Self::collect_late_bound_commonjs_assignment_candidate(
             arena,
             binary.right,
             property_name,
@@ -251,7 +249,6 @@ impl<'a> CheckerState<'a> {
     }
 
     fn collect_future_commonjs_assignment_candidates(
-        &self,
         arena: &tsz_parser::parser::NodeArena,
         expr_idx: NodeIndex,
         property_name: &str,
@@ -381,7 +378,7 @@ impl<'a> CheckerState<'a> {
             candidates.push((node.pos, binary.right, expando_root));
         }
 
-        self.collect_future_commonjs_assignment_candidates(
+        Self::collect_future_commonjs_assignment_candidates(
             arena,
             binary.right,
             property_name,
@@ -392,7 +389,6 @@ impl<'a> CheckerState<'a> {
     }
 
     fn collect_prior_commonjs_assignment_candidate(
-        &self,
         arena: &tsz_parser::parser::NodeArena,
         expr_idx: NodeIndex,
         property_name: &str,
@@ -525,7 +521,7 @@ impl<'a> CheckerState<'a> {
             *best_match = Some((node.pos, binary.right, expando_root));
         }
 
-        self.collect_prior_commonjs_assignment_candidate(
+        Self::collect_prior_commonjs_assignment_candidate(
             arena,
             binary.right,
             property_name,
@@ -656,7 +652,7 @@ impl<'a> CheckerState<'a> {
             let Some(stmt) = target_arena.get_expression_statement(stmt_node) else {
                 continue;
             };
-            self.collect_future_commonjs_assignment_candidates(
+            Self::collect_future_commonjs_assignment_candidates(
                 &target_arena,
                 stmt.expression,
                 property_name,
@@ -664,7 +660,7 @@ impl<'a> CheckerState<'a> {
                 &export_aliases,
                 &mut candidates,
             );
-            self.collect_late_bound_commonjs_assignment_candidate(
+            Self::collect_late_bound_commonjs_assignment_candidate(
                 &target_arena,
                 stmt.expression,
                 property_name,
@@ -757,7 +753,7 @@ impl<'a> CheckerState<'a> {
             let Some(stmt) = target_arena.get_expression_statement(stmt_node) else {
                 continue;
             };
-            self.collect_prior_commonjs_assignment_candidate(
+            Self::collect_prior_commonjs_assignment_candidate(
                 &target_arena,
                 stmt.expression,
                 property_name,

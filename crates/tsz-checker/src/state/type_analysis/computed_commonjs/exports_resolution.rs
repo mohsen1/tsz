@@ -673,7 +673,7 @@ impl<'a> CheckerState<'a> {
             let Some(stmt) = target_arena.get_expression_statement(stmt_node) else {
                 continue;
             };
-            self.collect_direct_commonjs_assignment_exports(
+            Self::collect_direct_commonjs_assignment_exports(
                 &target_arena,
                 stmt.expression,
                 &mut pending_props,

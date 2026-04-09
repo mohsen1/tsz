@@ -160,12 +160,12 @@ fn find_tsz_binary() -> Option<PathBuf> {
     }
 
     // Nextest may not provide CARGO_BIN_EXE_tsz; derive from the current test binary path.
-    if let Ok(current_exe) = std::env::current_exe() {
-        if let Some(debug_dir) = current_exe.parent().and_then(|p| p.parent()) {
-            let candidate = debug_dir.join("tsz");
-            if candidate.exists() {
-                return Some(candidate);
-            }
+    if let Ok(current_exe) = std::env::current_exe()
+        && let Some(debug_dir) = current_exe.parent().and_then(|p| p.parent())
+    {
+        let candidate = debug_dir.join("tsz");
+        if candidate.exists() {
+            return Some(candidate);
         }
     }
 
@@ -270,7 +270,7 @@ fn tsc_available() -> bool {
 }
 
 /// Create a command that runs the pinned repo TypeScript compiler when available.
-/// Falls back to PATH `tsc` for environments without scripts/node_modules installed.
+/// Falls back to PATH `tsc` for environments without `scripts/node_modules` installed.
 fn tsc_command() -> Option<Command> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = manifest_dir.parent()?.parent()?;

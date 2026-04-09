@@ -329,6 +329,43 @@ fn import_type_something_is_type_only() {
 }
 
 #[test]
+fn import_specifier_string_literal_binding_names_emit_ts1003() {
+    let source = r#"
+import { foo as "invalid 2" } from "./m";
+import { "invalid 1" } from "./m";
+import { type as "invalid 4" } from "./m";
+
+import type { foo as "invalid 2" } from "./m";
+import type { "invalid 1" } from "./m";
+import type { type as "invalid 4" } from "./m";
+
+import { type foo as "invalid 2" } from "./m";
+import { type "invalid 1" } from "./m";
+import { type as as "invalid 4" } from "./m";
+"#;
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    let ts1003_count = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::IDENTIFIER_EXPECTED)
+        .count();
+    assert_eq!(
+        ts1003_count, 9,
+        "expected TS1003 for every invalid import binding name, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn import_specifier_string_literal_export_name_with_identifier_alias_is_valid() {
+    let (parser, _root) = parse_source(r#"import { "valid 1" as bar } from "./m";"#);
+    assert_eq!(
+        parser.get_diagnostics().len(),
+        0,
+        "valid arbitrary module namespace import should parse without diagnostics"
+    );
+}
+
+#[test]
 fn invalid_bigint_import_specifier_preserves_missing_brace_recovery() {
     let (parser, _root) = parse_source(r#"import { 0n as foo } from "./foo";"#);
     let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
