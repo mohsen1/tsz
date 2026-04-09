@@ -366,6 +366,19 @@ impl<'a> CheckerState<'a> {
             .and_then(|call_expr| call_expr.arguments.as_ref())
             .is_some_and(|args| args.nodes.len() == 1);
         let is_new_call = self.is_new_expression(idx);
+        let is_assignment_rhs_call = self
+            .ctx
+            .arena
+            .get_extended(idx)
+            .and_then(|ext| self.ctx.arena.get(ext.parent))
+            .and_then(|parent| {
+                (parent.kind == syntax_kind_ext::BINARY_EXPRESSION)
+                    .then(|| self.ctx.arena.get_binary_expr(parent))
+                    .flatten()
+            })
+            .is_some_and(|binary| {
+                binary.right == idx && self.is_assignment_operator(binary.operator_token)
+            });
         let is_bind_method_call = self
             .ctx
             .arena
@@ -413,6 +426,7 @@ impl<'a> CheckerState<'a> {
             && !callback_argument_has_prior_diagnostics;
         let allow_new_argument_anchor = is_new_call && anchor_argument_from_all_failures;
         let anchor_first_argument = (!is_new_call || allow_new_argument_anchor)
+            && !is_assignment_rhs_call
             && (!argument_anchor_is_callback || allow_callback_argument_anchor)
             && !is_bind_method_call
             && (identical_argument_failures

@@ -285,6 +285,45 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    fn should_suppress_assignment_after_overload_failure(&self, anchor_idx: NodeIndex) -> bool {
+        let Some(anchor_node) = self.ctx.arena.get(anchor_idx) else {
+            return false;
+        };
+        if anchor_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return false;
+        }
+        let Some(expr_stmt) = self.ctx.arena.get_expression_statement(anchor_node) else {
+            return false;
+        };
+        let expr_idx = self.ctx.arena.skip_parenthesized(expr_stmt.expression);
+        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        let Some(binary) = self.ctx.arena.get_binary_expr(expr_node) else {
+            return false;
+        };
+        if !self.is_assignment_operator(binary.operator_token) {
+            return false;
+        }
+        let rhs_idx = self.ctx.arena.skip_parenthesized_and_assertions(binary.right);
+        let Some(rhs_node) = self.ctx.arena.get(rhs_idx) else {
+            return false;
+        };
+        if rhs_node.kind != syntax_kind_ext::CALL_EXPRESSION
+            && rhs_node.kind != syntax_kind_ext::NEW_EXPRESSION
+        {
+            return false;
+        }
+        self.ctx.diagnostics.iter().any(|diag| {
+            diag.code == diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL
+                && diag.start >= rhs_node.pos
+                && diag.start < rhs_node.end
+        })
+    }
+
     pub(super) fn private_or_protected_member_missing_display(
         &self,
         source_type: TypeId,
@@ -526,6 +565,9 @@ impl<'a> CheckerState<'a> {
                     "suppressing TS2322 for non-actionable source/target types"
                 );
             }
+            return;
+        }
+        if self.should_suppress_assignment_after_overload_failure(anchor_idx) {
             return;
         }
 
