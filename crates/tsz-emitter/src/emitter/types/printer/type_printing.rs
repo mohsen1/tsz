@@ -366,7 +366,7 @@ impl<'a> TypePrinter<'a> {
         }
 
         if let Some(computed) = node_arena.get_computed_property(name_node) {
-            let expr = self.render_name_expression(node_arena, computed.expression)?;
+            let expr = Self::render_name_expression(node_arena, computed.expression)?;
             return Some(format!("[{expr}]"));
         }
 
@@ -382,7 +382,6 @@ impl<'a> TypePrinter<'a> {
     }
 
     pub(crate) fn render_name_expression(
-        &self,
         node_arena: &NodeArena,
         expr_idx: tsz_parser::NodeIndex,
     ) -> Option<String> {
@@ -393,14 +392,14 @@ impl<'a> TypePrinter<'a> {
         }
 
         if let Some(access) = node_arena.get_access_expr(expr_node) {
-            let base = self.render_name_expression(node_arena, access.expression)?;
-            let member = self.render_name_expression(node_arena, access.name_or_argument)?;
+            let base = Self::render_name_expression(node_arena, access.expression)?;
+            let member = Self::render_name_expression(node_arena, access.name_or_argument)?;
             return Some(format!("{base}.{member}"));
         }
 
         if let Some(qname) = node_arena.get_qualified_name(expr_node) {
-            let left = self.render_name_expression(node_arena, qname.left)?;
-            let right = self.render_name_expression(node_arena, qname.right)?;
+            let left = Self::render_name_expression(node_arena, qname.left)?;
+            let right = Self::render_name_expression(node_arena, qname.right)?;
             return Some(format!("{left}.{right}"));
         }
 

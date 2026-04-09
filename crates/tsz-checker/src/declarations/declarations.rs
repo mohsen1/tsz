@@ -1382,7 +1382,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             // Cross-file reference under isolatedModules: a single-file transpiler
             // can't trace the value, so downgrade to non-literal. This correctly
             // triggers TS18055/TS18056 for imported string/numeric consts.
-            let inner = self.classify_initializer_kind_in_arena(arena, var_decl.initializer, depth);
+            let inner =
+                Self::classify_initializer_kind_in_arena(arena, var_decl.initializer, depth);
             match inner {
                 IsolatedEnumInitializerKind::LiteralNumeric
                 | IsolatedEnumInitializerKind::NonLiteralNumeric => {
@@ -1403,7 +1404,6 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     fn classify_initializer_kind_in_arena(
-        &self,
         arena: &tsz_parser::parser::NodeArena,
         expr_idx: NodeIndex,
         depth: u32,
@@ -1429,7 +1429,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => arena
                 .get_parenthesized(node)
                 .map_or(IsolatedEnumInitializerKind::Other, |paren| {
-                    self.classify_initializer_kind_in_arena(arena, paren.expression, depth + 1)
+                    Self::classify_initializer_kind_in_arena(arena, paren.expression, depth + 1)
                 }),
             k if k == syntax_kind_ext::AS_EXPRESSION
                 || k == syntax_kind_ext::SATISFIES_EXPRESSION
@@ -1438,7 +1438,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 arena.get_type_assertion(node).map_or(
                     IsolatedEnumInitializerKind::Other,
                     |assertion| {
-                        self.classify_initializer_kind_in_arena(
+                        Self::classify_initializer_kind_in_arena(
                             arena,
                             assertion.expression,
                             depth + 1,
@@ -1449,7 +1449,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => arena
                 .get_unary_expr(node)
                 .map_or(IsolatedEnumInitializerKind::Other, |unary| {
-                    match self.classify_initializer_kind_in_arena(arena, unary.operand, depth + 1) {
+                    match Self::classify_initializer_kind_in_arena(arena, unary.operand, depth + 1)
+                    {
                         IsolatedEnumInitializerKind::LiteralNumeric
                         | IsolatedEnumInitializerKind::NonLiteralNumeric => {
                             IsolatedEnumInitializerKind::NonLiteralNumeric
@@ -1462,11 +1463,11 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     .get_binary_expr(node)
                     .map_or(IsolatedEnumInitializerKind::Other, |binary| {
                         if binary.operator_token == SyntaxKind::PlusToken as u16
-                            && (self.is_syntactically_recognizable_string_initializer_in_arena(
+                            && (Self::is_syntactically_recognizable_string_initializer_in_arena(
                                 arena,
                                 binary.left,
-                            ) || self
-                                .is_syntactically_recognizable_string_initializer_in_arena(
+                            )
+                                || Self::is_syntactically_recognizable_string_initializer_in_arena(
                                     arena,
                                     binary.right,
                                 ))
@@ -1474,12 +1475,12 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                             IsolatedEnumInitializerKind::LiteralString
                         } else {
                             match (
-                                self.classify_initializer_kind_in_arena(
+                                Self::classify_initializer_kind_in_arena(
                                     arena,
                                     binary.left,
                                     depth + 1,
                                 ),
-                                self.classify_initializer_kind_in_arena(
+                                Self::classify_initializer_kind_in_arena(
                                     arena,
                                     binary.right,
                                     depth + 1,
@@ -1518,7 +1519,6 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     fn is_syntactically_recognizable_string_initializer_in_arena(
-        &self,
         arena: &tsz_parser::parser::NodeArena,
         expr_idx: NodeIndex,
     ) -> bool {
@@ -1534,7 +1534,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             }
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 arena.get_parenthesized(node).is_some_and(|paren| {
-                    self.is_syntactically_recognizable_string_initializer_in_arena(
+                    Self::is_syntactically_recognizable_string_initializer_in_arena(
                         arena,
                         paren.expression,
                     )

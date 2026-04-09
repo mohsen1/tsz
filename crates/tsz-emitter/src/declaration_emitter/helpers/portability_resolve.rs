@@ -587,8 +587,8 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         };
 
-        let left_name = self.rightmost_name_text_in_arena(arena, left_idx)?;
-        let type_name = self.rightmost_name_text_in_arena(arena, right_idx)?;
+        let left_name = Self::rightmost_name_text_in_arena(arena, left_idx)?;
+        let type_name = Self::rightmost_name_text_in_arena(arena, right_idx)?;
         if let Some(sym_id) = self.find_symbol_in_arena_by_name(arena, &left_name) {
             let binder = self.binder?;
             let symbol = binder.symbols.get(sym_id)?;
@@ -621,7 +621,6 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(in crate::declaration_emitter) fn rightmost_name_text_in_arena(
-        &self,
         arena: &NodeArena,
         idx: NodeIndex,
     ) -> Option<String> {
@@ -630,10 +629,10 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(ident.escaped_text.clone());
         }
         if let Some(qn) = arena.get_qualified_name(node) {
-            return self.rightmost_name_text_in_arena(arena, qn.right);
+            return Self::rightmost_name_text_in_arena(arena, qn.right);
         }
         if let Some(access) = arena.get_access_expr(node) {
-            return self.rightmost_name_text_in_arena(arena, access.name_or_argument);
+            return Self::rightmost_name_text_in_arena(arena, access.name_or_argument);
         }
         None
     }

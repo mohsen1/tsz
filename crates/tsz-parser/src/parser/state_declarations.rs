@@ -2702,6 +2702,7 @@ impl ParserState {
         // Matches tsc's checkIdentifierIsKeyword/checkIdentifierStart/checkIdentifierEnd.
         // Reserved words (break..with) cannot be binding identifiers in import specifiers.
         let mut check_identifier_is_keyword = self.is_reserved_word();
+        let mut check_identifier_is_string_literal = self.is_token(SyntaxKind::StringLiteral);
         let mut check_identifier_start = self.token_pos();
         let mut check_identifier_end = self.token_end();
 
@@ -2716,6 +2717,7 @@ impl ParserState {
         macro_rules! parse_name_with_keyword_check {
             ($self:expr) => {{
                 check_identifier_is_keyword = $self.is_reserved_word();
+                check_identifier_is_string_literal = $self.is_token(SyntaxKind::StringLiteral);
                 check_identifier_start = $self.token_pos();
                 check_identifier_end = $self.token_end();
                 $self.parse_specifier_identifier_name()
@@ -2768,7 +2770,9 @@ impl ParserState {
 
         // TS1003: For import specifiers, the binding name must be an identifier,
         // not a reserved keyword. Matches tsc's check at the end of parseImportOrExportSpecifier.
-        if kind == syntax_kind_ext::IMPORT_SPECIFIER && check_identifier_is_keyword {
+        if kind == syntax_kind_ext::IMPORT_SPECIFIER
+            && (check_identifier_is_keyword || check_identifier_is_string_literal)
+        {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at(
                 check_identifier_start,

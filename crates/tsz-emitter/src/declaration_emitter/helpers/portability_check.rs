@@ -1090,7 +1090,8 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(symbol) = binder.symbols.get(sym_id)
             {
                 names.insert(symbol.escaped_name.clone());
-            } else if let Some(name) = self.rightmost_name_text_in_arena(arena, indexed.object_type)
+            } else if let Some(name) =
+                Self::rightmost_name_text_in_arena(arena, indexed.object_type)
             {
                 names.insert(name);
             }

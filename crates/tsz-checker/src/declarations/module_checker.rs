@@ -772,6 +772,7 @@ impl<'a> CheckerState<'a> {
         named_exports_idx: tsz_parser::parser::NodeIndex,
     ) {
         use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
 
         let Some(clause_node) = self.ctx.arena.get(named_exports_idx) else {
             return;
@@ -821,14 +822,16 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let name_str = self
-                .get_identifier_text_from_idx(name_idx)
-                .unwrap_or_else(|| String::from("unknown"));
+            let source_name_is_string_literal = self
+                .ctx
+                .arena
+                .get(name_idx)
+                .is_some_and(|name_node| name_node.kind == SyntaxKind::StringLiteral as u16);
 
             // Check for duplicate exported names in the same export clause
             let export_name_str = self
                 .get_identifier_text_from_idx(specifier.name)
-                .unwrap_or_else(|| name_str.clone());
+                .unwrap_or_else(|| String::from("unknown"));
             match seen_export_names.entry(export_name_str.clone()) {
                 std::collections::hash_map::Entry::Occupied(mut entry) => {
                     use tsz_common::diagnostics::{
@@ -850,6 +853,17 @@ impl<'a> CheckerState<'a> {
                     entry.insert(specifier.name);
                 }
             }
+
+            // `export { "x" as y }` / `export type { "x" as y }` are valid with
+            // arbitrary module namespace identifiers. The local-name check only
+            // applies to identifier bindings, so skip TS2661/TS2304 probing here.
+            if source_name_is_string_literal {
+                continue;
+            }
+
+            let name_str = self
+                .get_identifier_text_from_idx(name_idx)
+                .unwrap_or_else(|| String::from("unknown"));
 
             // Check if the symbol is a local declaration or import.
             // file_locals includes merged globals from other files, so we must also
