@@ -191,6 +191,43 @@ fn test_resolver_rejects_root_slash_package_import_with_wildcard() {
 }
 
 #[test]
+fn test_imports_pattern_key_is_not_treated_as_exact_match_for_literal_star_specifier() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_imports_literal_star_specifier");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("package.json"),
+        r##"{
+            "name": "package",
+            "private": true,
+            "imports": {
+                "#a/*/b/*": "./src/value.js"
+            }
+        }"##,
+    )
+    .unwrap();
+    fs::write(dir.join("src/value.d.ts"), "export declare const v: number;").unwrap();
+    fs::write(dir.join("index.ts"), "import { v } from '#a/*/b/*'; v;").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_imports: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve("#a/*/b/*", &dir.join("index.ts"), Span::new(0, 10));
+
+    assert!(
+        matches!(result, Err(ResolutionFailure::NotFound { .. })),
+        "Pattern imports key must not exact-match a literal-* specifier, got {result:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_match_types_versions_pattern() {
     assert_eq!(
         match_types_versions_pattern("*", "index"),
@@ -323,6 +360,53 @@ fn test_node16_pattern_exports_resolves_with_dts() {
         result.is_ok(),
         "Pattern export ./mjs/* should resolve via .d.mts: {:?}",
         result.err()
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_exports_pattern_key_is_not_treated_as_exact_match_for_literal_star_specifier() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_exports_literal_star_specifier");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/double-asterisk")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/double-asterisk/package.json"),
+        r#"{
+            "name":"double-asterisk",
+            "exports":{"./a/*/b/*/c/*":"./example.js"}
+        }"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/double-asterisk/example.d.ts"),
+        "export {};",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/index.ts"),
+        "import {} from 'double-asterisk/a/*/b/*/c/*';",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve(
+        "double-asterisk/a/*/b/*/c/*",
+        &dir.join("src/index.ts"),
+        Span::new(0, 28),
+    );
+
+    assert!(
+        matches!(result, Err(ResolutionFailure::NotFound { .. })),
+        "Pattern exports key must not exact-match a literal-* specifier, got {result:?}"
     );
 
     let _ = fs::remove_dir_all(&dir);
@@ -3543,6 +3627,70 @@ fn test_lookup_fallback_rescues_not_found() {
     assert!(
         outcome.error.is_none(),
         "Fallback success should have no error"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_lookup_skips_fallback_for_nodenext_exports_authoritative_not_found() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_lookup_skip_fallback_exports_not_found");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::create_dir_all(dir.join("node_modules/@types/dedent4")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/@types/dedent4/package.json"),
+        r#"{
+            "name": "@types/dedent4",
+            "version": "1.0.0",
+            "main": "asdfasdfasdf",
+            "exports": "./asdfasdfasdf"
+        }"#,
+    )
+    .unwrap();
+    let fallback_target = dir.join("node_modules/@types/dedent4/index.d.ts");
+    fs::write(&fallback_target, "export {};").unwrap();
+    fs::write(
+        dir.join("src/index.mts"),
+        "import dedent4 from 'dedent4';\ndedent4;\n",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::NodeNext),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "dedent4",
+        containing_file: &dir.join("src/index.mts"),
+        specifier_span: Span::new(22, 31),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+
+    let fallback_clone = fallback_target.clone();
+    let result = resolver.lookup(&request, |_, _| Some(fallback_clone), |_| false, None);
+    let outcome = result.classify();
+
+    assert!(
+        !outcome.is_resolved,
+        "Fallback must be skipped for exports-authoritative NotFound"
+    );
+    let error = outcome
+        .error
+        .expect("Expected TS2307 after skipping fallback");
+    assert_eq!(
+        error.code, CANNOT_FIND_MODULE,
+        "Expected TS2307 when exports blocks resolution, got TS{}",
+        error.code
     );
 
     let _ = fs::remove_dir_all(&dir);

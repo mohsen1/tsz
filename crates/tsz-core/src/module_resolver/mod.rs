@@ -505,6 +505,25 @@ impl ModuleResolver {
         let containing_file = request.containing_file;
         let span = request.specifier_span;
         let import_kind = request.import_kind;
+        let importing_module_kind_for_lookup =
+            request.resolution_mode_override.unwrap_or_else(|| match self.module_kind {
+                ModuleKind::Preserve => {
+                    let extension = ModuleExtension::from_path(containing_file);
+                    if extension.forces_esm() {
+                        ImportingModuleKind::Esm
+                    } else if extension.forces_cjs() {
+                        ImportingModuleKind::CommonJs
+                    } else {
+                        match import_kind {
+                            ImportKind::EsmImport
+                            | ImportKind::DynamicImport
+                            | ImportKind::EsmReExport => ImportingModuleKind::Esm,
+                            ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
+                        }
+                    }
+                }
+                _ => self.get_importing_module_kind(containing_file),
+            });
 
         // 1. Try primary resolution
         match self.resolve_with_kind_and_module_kind(
@@ -603,9 +622,17 @@ impl ModuleResolver {
                     } else {
                         None
                     };
+                let skip_fallback_on_not_found =
+                    matches!(failure, ResolutionFailure::NotFound { .. })
+                        && self.should_skip_fallback_on_not_found(
+                            specifier,
+                            containing_file.parent().unwrap_or_else(|| Path::new(".")),
+                            importing_module_kind_for_lookup,
+                        );
 
                 // 2. Try fallback resolution if this is a "soft" failure
                 if failure.should_try_fallback()
+                    && !skip_fallback_on_not_found
                     && let Some(fallback_path) = fallback_resolve(specifier, containing_file)
                 {
                     // 3. Validate Node16/NodeNext ESM extension requirements
