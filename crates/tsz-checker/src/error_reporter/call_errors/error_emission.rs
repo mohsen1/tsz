@@ -348,15 +348,16 @@ impl<'a> CheckerState<'a> {
                 if tsz_solver::type_queries::get_function_shape(self.ctx.types, *param_ty).is_some()
                     || crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, *param_ty).is_some())
         });
-        let callback_argument_has_prior_diagnostics = raw_argument_anchor.is_some_and(|anchor_idx| {
-            self.ctx.arena.get(anchor_idx).is_some_and(|arg_node| {
-                self.ctx.diagnostics.iter().any(|diag| {
-                    diag.code != diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL
-                    && diag.start >= arg_node.pos
-                        && diag.start < arg_node.end
+        let callback_argument_has_prior_diagnostics =
+            raw_argument_anchor.is_some_and(|anchor_idx| {
+                self.ctx.arena.get(anchor_idx).is_some_and(|arg_node| {
+                    self.ctx.diagnostics.iter().any(|diag| {
+                        diag.code != diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL
+                            && diag.start >= arg_node.pos
+                            && diag.start < arg_node.end
+                    })
                 })
-            })
-        });
+            });
         let single_callback_argument = self
             .ctx
             .arena

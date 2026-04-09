@@ -1261,11 +1261,8 @@ impl<'a> CheckerState<'a> {
                             }
                         }
 
-                        let is_import_equals_alias = self
-                            .ctx
-                            .arena
-                            .get(value_decl)
-                            .is_some_and(|node| {
+                        let is_import_equals_alias =
+                            self.ctx.arena.get(value_decl).is_some_and(|node| {
                                 node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                             });
 
