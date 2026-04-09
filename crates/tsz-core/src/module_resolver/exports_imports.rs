@@ -89,8 +89,11 @@ impl ModuleResolver {
         specifier: &str,
         conditions: &[String],
     ) -> Option<(String, bool)> {
-        // Try exact match first
-        if let Some(value) = imports.get(specifier) {
+        // Try exact match first.
+        // Keys containing '*' are pattern keys and must not be treated as exact matches.
+        if let Some((key, value)) = imports.get_key_value(specifier)
+            && !key.contains('*')
+        {
             return self
                 .resolve_export_target_to_string(value, conditions)
                 .map(|target| (target, false));
@@ -262,8 +265,11 @@ impl ModuleResolver {
                 None
             }
             PackageExports::Map(map) => {
-                // First try exact match
-                if let Some(value) = map.get(subpath) {
+                // First try exact match.
+                // Keys containing '*' are pattern keys and must not be treated as exact matches.
+                if let Some((key, value)) = map.get_key_value(subpath)
+                    && !key.contains('*')
+                {
                     return self.resolve_export_value_with_conditions(
                         package_dir,
                         value,
