@@ -672,10 +672,7 @@ impl<'a> CheckerState<'a> {
         // Imported aliases should not behave as local JS expando objects.
         // Preserve TS2339 for writes like `importedCtor.prototype.foo = ...`.
         let mut root_idx = object_expr_idx;
-        loop {
-            let Some(root_node) = self.ctx.arena.get(root_idx) else {
-                break;
-            };
+        while let Some(root_node) = self.ctx.arena.get(root_idx) {
             if root_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 && root_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
             {

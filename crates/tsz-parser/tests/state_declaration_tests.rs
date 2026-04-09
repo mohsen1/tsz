@@ -576,6 +576,24 @@ fn import_followed_by_reserved_keyword_emits_ts1109_not_ts1005() {
     );
 }
 
+#[test]
+fn declare_class_with_parenthesized_tail_recovers_with_ts1109_not_ts1068() {
+    let (parser, _root) = parse_source("declare class foo();\nfunction foo() {}\n");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1005),
+        "Expected TS1005 for missing class body brace, got {codes:?}"
+    );
+    assert!(
+        codes.contains(&1109),
+        "Expected TS1109 at parenthesized class tail, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1068),
+        "Should not cascade into TS1068 class-member diagnostics, got {codes:?}"
+    );
+}
+
 /// `import class` should not be treated as import-equals (class is a reserved word).
 #[test]
 fn import_reserved_keyword_class_not_import_equals() {
