@@ -497,15 +497,19 @@ impl<'a> CheckerState<'a> {
         // though it has "excess" properties against each individual member type.
         let check_excess_properties = overload_signatures.is_none() && !callee_is_union;
         // Two-pass argument collection for generic calls is only needed when at least one
-        // argument is contextually sensitive (e.g. lambdas/object literals needing contextual type).
-        // Preserve literal types in array literals during generic call argument collection.
-        // This ensures `['foo', 'bar']` is typed as `("foo" | "bar")[]` (not `string[]`),
-        // enabling correct type parameter inference (e.g., K = "foo" | "bar").
-        // tsc preserves literals during inference and only widens at assignment sites.
+        // argument is contextually sensitive; preserve literals for contextual object/array args.
         let prev_preserve_literals = self.ctx.preserve_literal_types;
         let prev_generic_excess_skip = self.ctx.generic_excess_skip.take();
         let callable_ctx = CallableContext::new(callee_type_for_context);
-        if is_generic_call {
+        if is_generic_call
+            || args.iter().enumerate().any(|(i, &arg_idx)| {
+                base_contextual_param_types.get(i).copied().flatten().is_some()
+                    && self.ctx.arena.get(self.ctx.arena.skip_parenthesized_and_assertions(arg_idx)).is_some_and(|node| {
+                        node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            || node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    })
+            })
+        {
             self.ctx.preserve_literal_types = true;
         }
         let mut non_generic_contextual_types: Option<Vec<Option<TypeId>>> = None;
