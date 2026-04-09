@@ -522,17 +522,20 @@ impl<'a> CheckerState<'a> {
             // Explicit duplicate-class guard: class declarations cannot merge
             // with other class declarations (only with namespaces/interfaces).
             // Emit TS2300 for duplicate class declarations in the same symbol set.
-            let local_class_decls: Vec<(NodeIndex, bool)> = declarations
+            let all_class_decls: Vec<(NodeIndex, bool, bool)> = declarations
                 .iter()
-                .filter(|(_, flags, is_local, _, _)| {
-                    *is_local && (flags & symbol_flags::CLASS) != 0
-                })
-                .map(|(decl_idx, _, _, is_exported, _)| (*decl_idx, *is_exported))
+                .filter(|(_, flags, _, _, _)| (flags & symbol_flags::CLASS) != 0)
+                .map(|(decl_idx, _, is_local, is_exported, _)| (*decl_idx, *is_local, *is_exported))
                 .collect();
-            if local_class_decls.len() > 1 {
+            let local_class_decls: Vec<(NodeIndex, bool)> = all_class_decls
+                .iter()
+                .filter(|(_, is_local, _)| *is_local)
+                .map(|(decl_idx, _, is_exported)| (*decl_idx, *is_exported))
+                .collect();
+            if all_class_decls.len() > 1 && !local_class_decls.is_empty() {
                 // Skip TS2300 when all class declarations are `export default` —
                 // TS2528 ("A module cannot have multiple default exports") handles this.
-                let all_default_exports = local_class_decls.iter().all(|&(decl_idx, _)| {
+                let all_default_exports = all_class_decls.iter().all(|&(decl_idx, _, _)| {
                     self.ctx
                         .arena
                         .get_extended(decl_idx)
@@ -548,8 +551,8 @@ impl<'a> CheckerState<'a> {
                 // in export visibility (one exported, one non-exported). tsc allows
                 // an exported class and a non-exported class with the same name to
                 // coexist in merging namespace declarations.
-                let has_exported = local_class_decls.iter().any(|&(_, exp)| exp);
-                let has_non_exported = local_class_decls.iter().any(|&(_, exp)| !exp);
+                let has_exported = all_class_decls.iter().any(|&(_, _, exp)| exp);
+                let has_non_exported = all_class_decls.iter().any(|&(_, _, exp)| !exp);
                 if has_exported && has_non_exported {
                     continue;
                 }
@@ -558,9 +561,9 @@ impl<'a> CheckerState<'a> {
                 // namespace body. In TSC, a non-exported `namespace Z` doesn't merge
                 // with an exported Z from a dot-notation declaration like `namespace X.Y.Z`.
                 // The classes inside them are separate and should not trigger TS2300.
-                let any_in_non_exported_ns = local_class_decls
+                let any_in_non_exported_ns = all_class_decls
                     .iter()
-                    .any(|&(decl_idx, _)| self.is_in_non_exported_namespace_body(decl_idx));
+                    .any(|&(decl_idx, _, _)| self.is_in_non_exported_namespace_body(decl_idx));
                 if any_in_non_exported_ns {
                     continue;
                 }
