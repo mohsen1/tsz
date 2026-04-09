@@ -843,8 +843,8 @@ impl<'a> CheckerState<'a> {
             if let Some(source_file) = arena.source_files.first() {
                 let file_name = source_file.file_name.as_str();
                 let target_is_json = file_name.ends_with(".json");
-                let target_ext_is_esm = !target_is_json
-                    && (file_name.ends_with(".mjs") || file_name.ends_with(".mts"));
+                let target_ext_is_esm =
+                    !target_is_json && (file_name.ends_with(".mjs") || file_name.ends_with(".mts"));
                 let target_is_esm = target_ext_is_esm
                     || self
                         .ctx
