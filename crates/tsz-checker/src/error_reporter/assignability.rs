@@ -795,8 +795,14 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         source_display: String,
     ) -> String {
+        let target_is_constructor_like =
+            tsz_solver::type_queries::get_function_shape(self.ctx.types, target)
+                .is_some_and(|shape| shape.is_constructor)
+                || tsz_solver::type_queries::get_callable_shape(self.ctx.types, target)
+                    .is_some_and(|shape| !shape.construct_signatures.is_empty());
+
         if self.is_literal_sensitive_assignment_target(target)
-            || source_display.contains("=>")
+            || (source_display.contains("=>") && !target_is_constructor_like)
             || !Self::display_has_member_literals_assignability(&source_display)
         {
             return source_display;
