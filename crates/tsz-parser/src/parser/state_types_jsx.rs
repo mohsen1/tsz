@@ -697,7 +697,43 @@ impl ParserState {
         } else if kind == syntax_kind_ext::JSX_OPENING_FRAGMENT {
             // Parse children and closing fragment
             let children = self.parse_jsx_children(None);
-            if self.is_token(SyntaxKind::EndOfFileToken) {
+            let malformed_named_closing_fragment =
+                if !self.is_js_file() && self.is_token(SyntaxKind::LessThanSlashToken) {
+                    let snapshot = self.scanner.save_state();
+                    let current = self.current_token;
+                    self.next_token();
+                    let malformed = !self.is_token(SyntaxKind::GreaterThanToken);
+                    self.scanner.restore_state(snapshot);
+                    self.current_token = current;
+                    malformed
+                } else {
+                    false
+                };
+
+            if malformed_named_closing_fragment {
+                use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+                if let Some(open_fragment) = self.arena.get(opening) {
+                    self.parse_error_at(
+                        open_fragment.pos,
+                        open_fragment.end.saturating_sub(open_fragment.pos),
+                        diagnostic_messages::EXPECTED_CORRESPONDING_CLOSING_TAG_FOR_JSX_FRAGMENT,
+                        diagnostic_codes::EXPECTED_CORRESPONDING_CLOSING_TAG_FOR_JSX_FRAGMENT,
+                    );
+                }
+                self.parse_error_at(
+                    self.token_pos(),
+                    self.token_end().saturating_sub(self.token_pos()),
+                    diagnostic_messages::JSX_FRAGMENT_HAS_NO_CORRESPONDING_CLOSING_TAG,
+                    diagnostic_codes::JSX_FRAGMENT_HAS_NO_CORRESPONDING_CLOSING_TAG,
+                );
+            }
+
+            let has_prior_fragment_mismatch = self.parse_diagnostics.iter().any(|diag| {
+                diag.code
+                    == tsz_common::diagnostics::diagnostic_codes::EXPECTED_CORRESPONDING_CLOSING_TAG_FOR_JSX_FRAGMENT
+            });
+
+            if self.is_token(SyntaxKind::EndOfFileToken) && !has_prior_fragment_mismatch {
                 self.emit_jsx_unclosed_fragment_error(opening);
             }
             let closing = self.parse_jsx_closing_fragment();
@@ -1808,6 +1844,15 @@ impl ParserState {
     pub(crate) fn parse_jsx_closing_fragment(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         if !self.is_js_file() && !self.is_token(SyntaxKind::LessThanSlashToken) {
+            // For non-JS JSX files, EOF still reports the missing `</` token.
+            if self.is_token(SyntaxKind::EndOfFileToken) {
+                self.parse_expected(SyntaxKind::LessThanSlashToken);
+                return self.arena.add_token(
+                    syntax_kind_ext::JSX_CLOSING_FRAGMENT,
+                    start_pos,
+                    self.token_pos(),
+                );
+            }
             while !self.is_token(SyntaxKind::EndOfFileToken)
                 && !self.scanner.has_preceding_line_break()
                 && !self.is_token(SyntaxKind::SemicolonToken)

@@ -3218,7 +3218,7 @@ var f: {
 }
 
 #[test]
-fn test_tsx_fragment_errors_conformance_shape_reports_unclosed_fragment() {
+fn test_tsx_fragment_errors_conformance_shape_matches_mismatch_then_eof_sequence() {
     let source = r#"
 declare namespace JSX {
 	interface Element { }
@@ -3238,14 +3238,19 @@ declare var React: any;
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
 
-    assert!(
-        codes.contains(&diagnostic_codes::JSX_FRAGMENT_HAS_NO_CORRESPONDING_CLOSING_TAG),
-        "Expected TS17014 for current tsxFragmentErrors conformance shape, got diagnostics: {diagnostics:?}"
+    assert_eq!(
+        codes,
+        vec![
+            diagnostic_codes::EXPECTED_CORRESPONDING_CLOSING_TAG_FOR_JSX_FRAGMENT,
+            diagnostic_codes::JSX_FRAGMENT_HAS_NO_CORRESPONDING_CLOSING_TAG,
+            diagnostic_codes::EXPECTED,
+        ],
+        "Expected TS17015/TS17014/TS1005 recovery for malformed + EOF JSX fragments, got diagnostics: {diagnostics:?}"
     );
 }
 
 #[test]
-fn test_tsx_fragment_errors_actual_conformance_file_reports_unclosed_fragment() {
+fn test_tsx_fragment_errors_actual_conformance_file_matches_expected_codes() {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../TypeScript/tests/cases/conformance/jsx/tsxFragmentErrors.tsx"
@@ -3257,9 +3262,14 @@ fn test_tsx_fragment_errors_actual_conformance_file_reports_unclosed_fragment() 
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
 
-    assert!(
-        codes.contains(&diagnostic_codes::JSX_FRAGMENT_HAS_NO_CORRESPONDING_CLOSING_TAG),
-        "Expected TS17014 for actual tsxFragmentErrors conformance file, got diagnostics: {diagnostics:?}"
+    assert_eq!(
+        codes,
+        vec![
+            diagnostic_codes::EXPECTED_CORRESPONDING_CLOSING_TAG_FOR_JSX_FRAGMENT,
+            diagnostic_codes::JSX_FRAGMENT_HAS_NO_CORRESPONDING_CLOSING_TAG,
+            diagnostic_codes::EXPECTED,
+        ],
+        "Expected TS17015/TS17014/TS1005 on actual tsxFragmentErrors conformance file, got diagnostics: {diagnostics:?}"
     );
 }
 
