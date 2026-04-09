@@ -328,9 +328,23 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // No explicit initializer or computed value
-        // This could be an auto-incremented numeric member
-        // Fall back to NUMBER type (not a specific literal)
+        // No explicit initializer or computed value.
+        // For numeric enums, recover the auto-incremented literal value so
+        // callers can preserve member identity (`E.B` -> `0`).
+        if let Some(member_sym) = self
+            .ctx
+            .binder
+            .get_node_symbol(member_decl)
+            .or_else(|| self.ctx.binder.get_node_symbol(member.name))
+            && let Some(symbol) = self.ctx.binder.get_symbol(member_sym)
+            && symbol.flags & symbol_flags::ENUM_MEMBER != 0
+            && symbol.parent.is_some()
+            && let Some(auto_value) = self.compute_auto_increment_value(symbol.parent, member_decl)
+        {
+            return factory.literal_number(auto_value);
+        }
+
+        // Fall back to NUMBER type when we cannot compute a specific literal.
         TypeId::NUMBER
     }
 

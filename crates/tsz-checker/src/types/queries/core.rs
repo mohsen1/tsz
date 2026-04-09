@@ -1071,6 +1071,24 @@ impl<'a> CheckerState<'a> {
                     return Some(self.ctx.types.resolve_atom(atom));
                 }
             }
+            // Fallback for computed keys whose type widens too far to recover a
+            // literal property name (notably auto-increment numeric enum members
+            // such as `E.B` where `B` has no explicit initializer). Reuse enum
+            // constant-expression evaluation so duplicate checks and contextual
+            // lookup still see a stable key like "0".
+            if let Some(value) = self.evaluate_constant_expression(computed.expression) {
+                let canonical = tsz_solver::utils::canonicalize_numeric_name(&format!("{value}"))
+                    .unwrap_or_else(|| format!("{value}"));
+                tracing::trace!(
+                    name_idx = name_idx.0,
+                    expr_idx = computed.expression.0,
+                    prop_name_type = prop_name_type.0,
+                    prop_name_type_str = %self.format_type(prop_name_type),
+                    resolved_name = %canonical,
+                    "get_property_name_resolved: computed property resolved via constant expression"
+                );
+                return Some(canonical);
+            }
             tracing::trace!(
                 name_idx = name_idx.0,
                 expr_idx = computed.expression.0,
