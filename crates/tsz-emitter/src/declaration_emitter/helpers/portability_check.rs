@@ -462,9 +462,20 @@ impl<'a> DeclarationEmitter<'a> {
                 let source_path = self.get_symbol_source_path(candidate.id, binder)?;
                 let package_specifier =
                     self.package_specifier_for_node_modules_path(current_path, &source_path)?;
-                (package_specifier == module_specifier
-                    || package_specifier.starts_with(&format!("{module_specifier}/")))
-                .then_some(candidate.id)
+                if package_specifier == module_specifier
+                    || package_specifier.starts_with(&format!("{module_specifier}/"))
+                {
+                    self.package_root_export_reference_path(
+                        candidate.id,
+                        &candidate.escaped_name,
+                        binder,
+                        current_path,
+                    )
+                    .is_some()
+                    .then_some(candidate.id)
+                } else {
+                    None
+                }
             });
         }
 
@@ -541,7 +552,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         let subpath_start = pkg_start + pkg_len;
         if subpath_start >= components.len() {
-            return module_specifier == package_name;
+            return false;
         }
 
         let relative_path = components[subpath_start..]
@@ -562,7 +573,23 @@ impl<'a> DeclarationEmitter<'a> {
             runtime_subpath.clear();
         }
         if module_specifier == package_name {
-            return runtime_subpath.is_empty();
+            if !runtime_subpath.is_empty() {
+                return false;
+            }
+
+            let package_root = components[..subpath_start].iter().fold(
+                std::path::PathBuf::new(),
+                |mut path, component| {
+                    path.push(component.as_os_str());
+                    path
+                },
+            );
+            return self
+                .reverse_export_specifier_for_runtime_path(&package_root, "./index.ts")
+                .is_some()
+                || self
+                    .reverse_export_specifier_for_runtime_path(&package_root, "./index.d.ts")
+                    .is_some();
         }
         let candidate = if runtime_subpath.is_empty() {
             package_name
@@ -910,6 +937,38 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(printed_type_text) = self.emit_type_node_text(node_idx)
+            && printed_type_text.starts_with("import(\"")
+            && let Some(sym_id) = self.find_symbol_for_import_type_text(&printed_type_text)
+        {
+            if let Some(binder) = self.binder
+                && let Some(current_file_path) = self.current_file_path.as_deref()
+                && let Some(result) = self.check_symbol_portability(
+                    sym_id,
+                    binder,
+                    current_file_path,
+                    visited_types,
+                    visited_symbols,
+                )
+            {
+                if seen.insert(result.clone()) {
+                    results.push(result);
+                }
+            }
+
+            self.collect_non_portable_references_in_symbol_declaration_inner(
+                sym_id,
+                false,
+                results,
+                seen,
+                visited_types,
+                visited_symbols,
+                visited_declaration_symbols,
+                visited_nodes,
+            );
+        }
+
         if let Some(result) =
             self.non_portable_namespace_member_reference(arena, node_idx, source_path)
             && seen.insert(result.clone())
@@ -921,9 +980,11 @@ impl<'a> DeclarationEmitter<'a> {
             let skip_direct_identifier_portability =
                 self.is_indexed_access_object_subtree_node(arena, node_idx);
             let sym_id = self
-                .binder
-                .and_then(|binder| binder.get_node_symbol(node_idx))
-                .or_else(|| self.find_symbol_in_arena_by_name(arena, &identifier.escaped_text));
+                .find_symbol_in_arena_by_name(arena, &identifier.escaped_text)
+                .or_else(|| {
+                    self.binder
+                        .and_then(|binder| binder.get_node_symbol(node_idx))
+                });
             if let Some(sym_id) = sym_id {
                 if let Some(binder) = self.binder
                     && let Some(current_file_path) = self.current_file_path.as_deref()
@@ -1176,9 +1237,36 @@ impl<'a> DeclarationEmitter<'a> {
         length: u32,
     ) -> bool {
         let Some(sym_id) = self.find_symbol_for_import_type_text(printed_type_text) else {
+            if let Some((from_path, type_name)) =
+                self.private_import_type_package_root_reference(printed_type_text)
+            {
+                self.emit_non_portable_named_reference_diagnostic(
+                    decl_name, file, pos, length, &from_path, &type_name,
+                );
+                return true;
+            }
             return false;
         };
         let mut references = self.collect_non_portable_references_in_symbol_declaration(sym_id);
+        if references.is_empty()
+            && let Some(binder) = self.binder
+            && let Some(symbol) = binder.symbols.get(sym_id)
+            && let Some(source_path) = self.get_symbol_source_path(sym_id, binder)
+            && source_path.contains("node_modules")
+            && self
+                .package_root_export_reference_path(
+                    sym_id,
+                    symbol.escaped_name.as_str(),
+                    binder,
+                    file,
+                )
+                .is_none()
+        {
+            references.push((
+                self.strip_ts_extensions(&self.calculate_relative_path(file, &source_path)),
+                symbol.escaped_name.clone(),
+            ));
+        }
         if self.import_type_uses_private_package_subpath(printed_type_text)
             && let Some(parsed_reference) = self.parse_import_type_text(printed_type_text)
             && !references.contains(&parsed_reference)
