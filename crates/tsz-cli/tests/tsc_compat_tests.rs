@@ -620,7 +620,7 @@ fn tsc_compat_exit_code_no_errors() {
 
     let tsc_status = tsc_command()
         .expect("tsc command unavailable")
-        .args(["--noEmit", "--pretty", "false", "--ignoreConfig", "test.ts"])
+        .args(["--noEmit", "--pretty", "false", "test.ts"])
         .current_dir(&temp.path)
         .status()
         .expect("tsc failed");
@@ -653,7 +653,7 @@ fn tsc_compat_exit_code_with_errors() {
 
     let tsc_status = tsc_command()
         .expect("tsc command unavailable")
-        .args(["--noEmit", "--pretty", "false", "--ignoreConfig", "test.ts"])
+        .args(["--noEmit", "--pretty", "false", "test.ts"])
         .current_dir(&temp.path)
         .status()
         .expect("tsc failed");
