@@ -779,11 +779,10 @@ impl<'a> CheckerState<'a> {
         let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
             return false;
         };
-        (self.is_zero_arg_call_like_expr(computed.expression)
-            && self
-                .get_simple_computed_name_expr_text(computed.expression)
-                .is_some())
-            || self.is_const_symbol_for_identifier_expr(computed.expression)
+        // Only check const symbol identifiers for duplicates.
+        // Zero-arg call expressions like `[foo()]` and `[Symbol()]` are NOT
+        // checked by tsc because each call could return a different value.
+        self.is_const_symbol_for_identifier_expr(computed.expression)
     }
 
     fn is_symbol_for_call_expression(&self, expr_idx: NodeIndex) -> bool {
@@ -1241,9 +1240,8 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get_property_decl(member_node)
                     .and_then(|prop| {
-                        // Skip late-bound computed names unless the key is a simple
-                        // zero-arg call expression (e.g. `[getKey()]`), where tsc
-                        // still reports TS2300 duplicates for class properties.
+                        // Skip late-bound computed names unless the key is a
+                        // const symbol identifier (e.g. `[sym]` where `const sym = Symbol()`).
                         if self.is_late_bound_member_name(prop.name)
                             && !self.should_check_late_bound_class_property_name(prop.name)
                         {
