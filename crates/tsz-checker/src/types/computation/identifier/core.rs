@@ -1081,6 +1081,19 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.get_type_of_symbol(sym_id)
             };
+            let declared_type = if self.ctx.is_js_file()
+                && self.ctx.should_resolve_jsdoc()
+                && (flags
+                    & (symbol_flags::FUNCTION_SCOPED_VARIABLE
+                        | symbol_flags::BLOCK_SCOPED_VARIABLE))
+                    != 0
+                && self.is_require_call_bound_identifier(idx)
+            {
+                self.require_call_bound_identifier_type(idx)
+                    .unwrap_or(declared_type)
+            } else {
+                declared_type
+            };
             // In JS files, prefer non-JS cross-file global value types for
             // variables that don't have an explicit JSDoc @type annotation.
             // When a JSDoc @type annotation is present, it takes precedence
@@ -1100,6 +1113,7 @@ impl<'a> CheckerState<'a> {
                         | symbol_flags::BLOCK_SCOPED_VARIABLE))
                     != 0
                 && !has_jsdoc_type_annotation
+                && !self.is_require_call_bound_identifier(idx)
             {
                 self.preferred_non_js_cross_file_global_value_type(name, sym_id)
             } else {

@@ -329,6 +329,66 @@ impl<'a> CheckerState<'a> {
         CROSS_ARENA_DEPTH.with(|c| c.set(c.get().saturating_sub(1)));
     }
 
+    pub(crate) fn is_require_call_bound_identifier(&self, idx: NodeIndex) -> bool {
+        let Some(sym_id) = self
+            .ctx
+            .binder
+            .get_node_symbol(idx)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))
+        else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        symbol.declarations.iter().any(|&decl_idx| {
+            if !decl_idx.is_some() {
+                return false;
+            }
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                return false;
+            };
+            var_decl.initializer.is_some()
+                && self
+                    .get_require_module_specifier(var_decl.initializer)
+                    .is_some()
+        })
+    }
+
+    pub(crate) fn require_call_bound_identifier_type(&mut self, idx: NodeIndex) -> Option<TypeId> {
+        let sym_id = self
+            .ctx
+            .binder
+            .get_node_symbol(idx)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        for &decl_idx in &symbol.declarations {
+            if !decl_idx.is_some() {
+                continue;
+            }
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if var_decl.initializer.is_some()
+                && self
+                    .get_require_module_specifier(var_decl.initializer)
+                    .is_some()
+            {
+                let ty = self.type_of_value_declaration(decl_idx);
+                if !matches!(ty, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
+                    return Some(ty);
+                }
+            }
+        }
+        None
+    }
+
     fn should_apply_flow_narrowing_for_identifier(
         &self,
         idx: NodeIndex,
@@ -342,6 +402,10 @@ impl<'a> CheckerState<'a> {
         // the declared type. Re-narrowing would override that with the narrowed type,
         // hiding assignment errors (TS2322) that tsc correctly emits.
         if self.ctx.daa_error_nodes.contains(&idx.0) {
+            return false;
+        }
+
+        if self.is_require_call_bound_identifier(idx) {
             return false;
         }
 
@@ -428,6 +492,13 @@ impl<'a> CheckerState<'a> {
         let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
             return true;
         };
+        if var_decl.initializer.is_some()
+            && self
+                .get_require_module_specifier(var_decl.initializer)
+                .is_some()
+        {
+            return false;
+        }
         if var_decl.type_annotation.is_some() || var_decl.initializer.is_none() {
             return true;
         }
@@ -550,6 +621,12 @@ impl<'a> CheckerState<'a> {
             let receiver_type = self.get_type_of_node(access.expression);
             if receiver_type != TypeId::ERROR && receiver_type != TypeId::ANY {
                 return substitute_this_type(self.ctx.types, return_type, receiver_type);
+            }
+            if let Some(receiver_sym) = self.resolve_identifier_symbol(access.expression) {
+                let receiver_type = self.get_type_of_symbol(receiver_sym);
+                if receiver_type != TypeId::ERROR && receiver_type != TypeId::ANY {
+                    return substitute_this_type(self.ctx.types, return_type, receiver_type);
+                }
             }
         }
 
@@ -1305,6 +1382,7 @@ impl<'a> CheckerState<'a> {
             else if !skip_flow_narrowing
                 && (is_identifier || is_this_keyword)
                 && !self.ctx.daa_error_nodes.contains(&idx.0)
+                && !self.is_require_call_bound_identifier(idx)
                 && let Some(flow_node) = self.ctx.binder.get_node_flow(idx)
                 && let Some(sym_id) = self
                     .ctx
