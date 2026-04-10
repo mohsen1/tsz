@@ -337,10 +337,17 @@ impl<'a> TypeFormatter<'a> {
                     let name = self.format_def_name(&def);
                     // Enum and namespace value types are displayed as `typeof Name` by tsc.
                     // Class instance types and interfaces use just the name.
+                    // Exception: qualified enum member names like `W.a` are NOT prefixed
+                    // with `typeof` — only the enum container itself gets `typeof W`.
+                    // The `format_def_name` method qualifies names only with enum parents,
+                    // so a dot in the name reliably indicates an enum member reference.
                     if matches!(
                         def.kind,
                         DefKind::Enum | DefKind::Namespace | DefKind::ClassConstructor
                     ) {
+                        if name.contains('.') {
+                            return name.into();
+                        }
                         return format!("typeof {name}").into();
                     }
                     // For generic types, prefer the display_alias (which has the actual
@@ -552,7 +559,11 @@ impl<'a> TypeFormatter<'a> {
                             def.kind,
                             DefKind::Enum | DefKind::Namespace | DefKind::ClassConstructor
                         ) {
-                            Cow::Owned(format!("typeof {name}"))
+                            if name.contains('.') {
+                                Cow::Owned(name)
+                            } else {
+                                Cow::Owned(format!("typeof {name}"))
+                            }
                         } else {
                             Cow::Owned(name)
                         }
@@ -678,7 +689,15 @@ impl<'a> TypeFormatter<'a> {
                 } else {
                     format!("Ref({})", sym.0)
                 };
-                format!("typeof {name}").into()
+                // Enum member TypeQuery types: tsc resolves `typeof W.a` to the
+                // enum member type `W.a` and displays without `typeof` prefix.
+                // The `resolve_symbol_ref_name` qualifies with enum parents, so
+                // a dot in the name reliably indicates an enum member reference.
+                if name.contains('.') {
+                    name.into()
+                } else {
+                    format!("typeof {name}").into()
+                }
             }
             TypeData::KeyOf(operand) => {
                 let operand_str = self.format(*operand);
