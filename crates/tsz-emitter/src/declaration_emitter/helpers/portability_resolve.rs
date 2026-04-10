@@ -1425,7 +1425,7 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     let pkg_json_path = package_root.join("package.json");
                     if let Ok(pkg_content) = std::fs::read_to_string(&pkg_json_path)
-                        && let Ok(pkg_json) =
+                        && let Ok(_pkg_json) =
                             serde_json::from_str::<serde_json::Value>(&pkg_content)
                     {
                         // Before flagging as non-portable, check whether the
