@@ -19,6 +19,20 @@ use tsz_scanner::SyntaxKind;
 
 use super::{BinderOptions, FileFeatures};
 
+/// Returns true if the file extension implies module semantics (.mts, .cts, .mjs, .cjs).
+/// In TypeScript, these extensions always indicate module files regardless of content
+/// or moduleDetection settings. This matches tsc behavior where .mts files are ES modules
+/// and .cts files are CommonJS modules.
+fn is_module_file_extension(file_name: &str) -> bool {
+    // Check for .mts, .cts (TypeScript module extensions)
+    // and .mjs, .cjs (JavaScript module extensions)
+    // Also handle declaration variants: .d.mts, .d.cts
+    file_name.ends_with(".mts")
+        || file_name.ends_with(".cts")
+        || file_name.ends_with(".mjs")
+        || file_name.ends_with(".cjs")
+}
+
 impl BinderStateScopeInputs {
     pub(super) fn with_scopes(scopes: Vec<Scope>, node_scope_ids: FxHashMap<u32, ScopeId>) -> Self {
         Self {
@@ -526,6 +540,9 @@ impl BinderState {
     }
 
     pub(crate) fn source_file_is_external_module(arena: &NodeArena, root: NodeIndex) -> bool {
+        // Note: .mts/.cts/.mjs/.cjs file extension check is handled by the caller
+        // via `is_module_file_extension()`, since this static method doesn't have
+        // access to the file name string.
         let Some(source) = arena.get_source_file_at(root) else {
             return false;
         };
@@ -855,6 +872,12 @@ impl BinderState {
         if let Some(node) = arena.get(root)
             && let Some(sf) = arena.get_source_file(node)
         {
+            // .mts/.cts/.mjs/.cjs files are always modules regardless of content.
+            // This must happen after source_file_is_external_module which only checks
+            // for import/export statements, not file extensions.
+            if !self.is_external_module && is_module_file_extension(&sf.file_name) {
+                self.is_external_module = true;
+            }
             // Detect strict mode: "use strict" prologue or --alwaysStrict option
             self.is_strict_scope = self.options.always_strict
                 || Self::has_use_strict_prologue(arena, &sf.statements.nodes);
@@ -1452,6 +1475,9 @@ impl BinderState {
         if let Some(node) = arena.get(root)
             && let Some(sf) = arena.get_source_file(node)
         {
+            if !self.is_external_module && is_module_file_extension(&sf.file_name) {
+                self.is_external_module = true;
+            }
             self.is_strict_scope = self.options.always_strict
                 || Self::has_use_strict_prologue(arena, &sf.statements.nodes);
         }
