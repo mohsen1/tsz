@@ -663,7 +663,21 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 self.format_type(attr_value_type)
                             };
-                            let source_display = format!("{{ {attr_name}: {attr_type_name}; }}");
+                            let display_name = {
+                                let mut chars = attr_name.chars();
+                                let is_ident = chars.next().is_some_and(|first| {
+                                    (first == '_' || first == '$' || first.is_ascii_alphabetic())
+                                        && chars.all(|ch| {
+                                            ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
+                                        })
+                                });
+                                if is_ident {
+                                    attr_name.clone()
+                                } else {
+                                    format!("\"{}\"", attr_name)
+                                }
+                            };
+                            let source_display = format!("{{ {display_name}: {attr_type_name}; }}");
                             let base = format_message(
                                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                                 &[&source_display, &display_target],

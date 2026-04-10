@@ -138,7 +138,7 @@ fn object_type_with_hyphenated_property_quoted() {
     let obj = db.object(vec![prop]);
     let mut fmt = TypeFormatter::new(&db);
     let result = fmt.format(obj);
-    assert_eq!(result, "{ 'data-prop': boolean; }");
+    assert_eq!(result, "{ \"data-prop\": boolean; }");
 }
 
 #[test]

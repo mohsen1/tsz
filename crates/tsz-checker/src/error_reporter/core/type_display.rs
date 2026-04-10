@@ -350,6 +350,13 @@ impl<'a> CheckerState<'a> {
         if crate::query_boundaries::state::checking::is_type_parameter_like(self.ctx.types, ty) {
             return ty;
         }
+        // Literal types should be preserved as-is — don't evaluate/widen them
+        // to their base type.  tsc shows `"TypeTwo"` in error messages, not
+        // `string`.  Without this guard the else-branch evaluates the literal
+        // and the widened primitive replaces the original.
+        if tsz_solver::literal_value(self.ctx.types, ty).is_some() {
+            return ty;
+        }
         let ty = self
             .materialize_finite_mapped_type_for_display(ty)
             .unwrap_or(ty);
@@ -534,6 +541,23 @@ impl<'a> CheckerState<'a> {
                             self.ctx
                                 .types
                                 .store_display_properties(new_ty, display_props.as_ref().clone());
+                        }
+                        // Propagate display_alias so the formatter can still
+                        // recover the named form (e.g., `Array<string>`) for
+                        // types whose property types changed during normalization.
+                        if let Some(alias_origin) = self.ctx.types.get_display_alias(evaluated) {
+                            self.ctx.types.store_display_alias(new_ty, alias_origin);
+                        }
+                        // Propagate definition store registration so the
+                        // formatter can still show named types (interfaces,
+                        // classes) whose properties changed during
+                        // normalization — e.g., `Date` instead of the full
+                        // structural expansion.
+                        if let Some(def_id) = self.ctx.definition_store.find_def_for_type(evaluated)
+                        {
+                            self.ctx
+                                .definition_store
+                                .register_type_to_def(new_ty, def_id);
                         }
                         new_ty
                     } else {
@@ -735,6 +759,17 @@ impl<'a> CheckerState<'a> {
                         self.ctx
                             .types
                             .store_display_properties(new_ty, display_props.as_ref().clone());
+                    }
+                    // Propagate display_alias and def-store registration so the
+                    // formatter can still show named types (Date, Error, etc.)
+                    // after normalization modifies property types.
+                    if let Some(alias_origin) = self.ctx.types.get_display_alias(evaluated) {
+                        self.ctx.types.store_display_alias(new_ty, alias_origin);
+                    }
+                    if let Some(def_id) = self.ctx.definition_store.find_def_for_type(evaluated) {
+                        self.ctx
+                            .definition_store
+                            .register_type_to_def(new_ty, def_id);
                     }
                     new_ty
                 } else {
