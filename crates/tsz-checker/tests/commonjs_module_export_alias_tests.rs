@@ -122,6 +122,105 @@ fn check_commonjs_two_files(
         .collect()
 }
 
+fn check_commonjs_three_files_with_types(
+    types_name: &str,
+    types_source: &str,
+    producer_name: &str,
+    producer_source: &str,
+    consumer_name: &str,
+    consumer_source: &str,
+    module_specifier: &str,
+) -> Vec<(u32, String)> {
+    let mut parser_types = ParserState::new(types_name.to_string(), types_source.to_string());
+    let root_types = parser_types.parse_source_file();
+    let mut binder_types = BinderState::new();
+    binder_types.bind_source_file(parser_types.get_arena(), root_types);
+
+    let mut parser_producer =
+        ParserState::new(producer_name.to_string(), producer_source.to_string());
+    let root_producer = parser_producer.parse_source_file();
+    let mut binder_producer = BinderState::new();
+    binder_producer.bind_source_file(parser_producer.get_arena(), root_producer);
+
+    let mut parser_consumer =
+        ParserState::new(consumer_name.to_string(), consumer_source.to_string());
+    let root_consumer = parser_consumer.parse_source_file();
+    let mut binder_consumer = BinderState::new();
+    binder_consumer.bind_source_file(parser_consumer.get_arena(), root_consumer);
+
+    let arena_types = Arc::new(parser_types.get_arena().clone());
+    let arena_producer = Arc::new(parser_producer.get_arena().clone());
+    let arena_consumer = Arc::new(parser_consumer.get_arena().clone());
+    let all_arenas = Arc::new(vec![
+        Arc::clone(&arena_types),
+        Arc::clone(&arena_producer),
+        Arc::clone(&arena_consumer),
+    ]);
+
+    let file_exports = binder_producer.module_exports.get(producer_name).cloned();
+    if let Some(exports) = &file_exports {
+        binder_consumer
+            .module_exports
+            .insert(module_specifier.to_string(), exports.clone());
+    }
+
+    let mut cross_file_targets = FxHashMap::default();
+    if let Some(exports) = &file_exports {
+        for (_name, &sym_id) in exports.iter() {
+            cross_file_targets.insert(sym_id, 1usize);
+        }
+    }
+
+    let binder_types = Arc::new(binder_types);
+    let binder_producer = Arc::new(binder_producer);
+    let binder_consumer = Arc::new(binder_consumer);
+    let all_binders = Arc::new(vec![
+        Arc::clone(&binder_types),
+        Arc::clone(&binder_producer),
+        Arc::clone(&binder_consumer),
+    ]);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena_consumer.as_ref(),
+        binder_consumer.as_ref(),
+        &types,
+        consumer_name.to_string(),
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    checker.ctx.set_all_arenas(all_arenas);
+    checker.ctx.set_all_binders(all_binders);
+    checker.ctx.set_current_file_idx(2);
+    for (sym_id, file_idx) in &cross_file_targets {
+        checker.ctx.register_symbol_file_target(*sym_id, *file_idx);
+    }
+
+    let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
+    resolved_module_paths.insert((2, module_specifier.to_string()), 1);
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+
+    let mut resolved_modules: FxHashSet<String> = FxHashSet::default();
+    resolved_modules.insert(module_specifier.to_string());
+    checker.ctx.set_resolved_modules(resolved_modules);
+    checker.check_source_file(root_consumer);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
 #[test]
 fn test_exports_alias_property_assignment() {
     // var exportsAlias = exports; exportsAlias.func1 = function() {};
@@ -531,5 +630,35 @@ module.exports.j = function j() {};
     assert!(
         ts2339.is_empty(),
         "Expected no TS2339 for forward CommonJS export read, got: {ts2339:#?}"
+    );
+}
+
+#[test]
+fn test_require_binding_beats_ambient_global_dts() {
+    let diagnostics = check_commonjs_three_files_with_types(
+        "types.d.ts",
+        r#"
+declare var mod: string;
+"#,
+        "mod.js",
+        r#"
+function A() {}
+function B() {}
+exports.A = A;
+exports.B = B;
+"#,
+        "use.js",
+        r#"
+var mod = require('./mod');
+var a = mod.A;
+var b = mod.B;
+"#,
+        "./mod",
+    );
+
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 2339).collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 for require() binding beating ambient global d.ts, got: {ts2339:#?}\nAll diagnostics: {diagnostics:#?}"
     );
 }
