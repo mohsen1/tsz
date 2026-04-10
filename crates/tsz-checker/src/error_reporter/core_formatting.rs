@@ -110,8 +110,9 @@ impl<'a> CheckerState<'a> {
         // Other types (class expressions, interfaces) keep their display properties
         // to preserve named type display (e.g., `typeof A`).
         // Restrict this to actual anonymous object/object-with-index types.
-        // Intersections are excluded because tsc's widening behavior in intersection
-        // contexts depends on the contextual type (literal targets preserve literals).
+        // Intersections are excluded: tsc's widening behavior in intersection
+        // contexts depends on the target type (literal targets preserve literals,
+        // non-literal targets widen). This context is not available here.
         let is_anonymous_object_type =
             crate::query_boundaries::dispatch::is_object_like_type(self.ctx.types, display_ty)
                 && !tsz_solver::type_queries::is_intersection_type(self.ctx.types, display_ty)

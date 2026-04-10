@@ -367,7 +367,12 @@ impl<'a> TypeFormatter<'a> {
                     // (e.g. `type Foo1 = Id<{...}>`), tsc shows the inner application
                     // form, not the outer alias name.  Fall through to the
                     // display_alias handler below when a display_alias exists.
-                    if self.interner.get_display_alias(type_id).is_none() {
+                    // This only applies to TypeAlias definitions. Interfaces and
+                    // classes (e.g. `interface Element extends ReactElement<any>`)
+                    // always show their own name.
+                    if def.kind != DefKind::TypeAlias
+                        || self.interner.get_display_alias(type_id).is_none()
+                    {
                         return name.into();
                     }
                 }
