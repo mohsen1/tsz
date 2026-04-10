@@ -852,6 +852,18 @@ impl<'a> CheckerState<'a> {
         {
             return source_display;
         }
+
+        let preserves_fresh_intersection_display =
+            [source, self.evaluate_type_for_assignability(source)]
+                .into_iter()
+                .any(|candidate| {
+                    tsz_solver::type_queries::is_intersection_type(self.ctx.types, candidate)
+                        && self.ctx.types.get_display_properties(candidate).is_some()
+                });
+        if preserves_fresh_intersection_display {
+            return source_display;
+        }
+
         let evaluated = self.evaluate_type_for_assignability(source);
         let widened = crate::query_boundaries::common::widen_type(self.ctx.types, evaluated);
         let widened = self.widen_function_like_display_type(widened);

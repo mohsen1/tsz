@@ -74,8 +74,31 @@ with open('$REPO_ROOT/scripts/conformance/conformance-snapshot.json') as f:
 " 2>/dev/null || echo "0")
 fi
 
+EMIT_BASELINE_JS=0
+EMIT_BASELINE_DTS=0
+if [[ -f "$REPO_ROOT/scripts/emit/emit-snapshot.json" ]]; then
+    read -r EMIT_BASELINE_JS EMIT_BASELINE_DTS < <(python3 -c "
+import json
+with open('$REPO_ROOT/scripts/emit/emit-snapshot.json') as f:
+    summary = json.load(f).get('summary', {})
+    print(summary.get('jsPass', 0), summary.get('dtsPass', 0))
+" 2>/dev/null || echo "0 0")
+fi
+
+FOURSLASH_BASELINE_PASS=0
+if [[ -f "$REPO_ROOT/scripts/fourslash/fourslash-snapshot.json" ]]; then
+    FOURSLASH_BASELINE_PASS=$(python3 -c "
+import json
+with open('$REPO_ROOT/scripts/fourslash/fourslash-snapshot.json') as f:
+    data = json.load(f)
+    print(data.get('summary', {}).get('passed', data.get('passed', 0)))
+" 2>/dev/null || echo "0")
+fi
+
 echo -e "${BOLD}TSZ Full Verification Suite${RESET}"
 echo "Conformance baseline: $BASELINE_PASS tests passing"
+echo "Emit baseline: JS=$EMIT_BASELINE_JS DTS=$EMIT_BASELINE_DTS"
+echo "Fourslash baseline: $FOURSLASH_BASELINE_PASS tests passing"
 echo "=========================================="
 
 cd "$REPO_ROOT"
@@ -117,7 +140,44 @@ fi
 
 # --- 3. Emit tests ---
 if ! $QUICK; then
-    run_suite "emit tests" scripts/safe-run.sh ./scripts/emit/run.sh
+    echo ""
+    echo -e "${CYAN}━━━ [emit tests] ━━━${RESET}"
+    EMIT_JSON="$(mktemp "${TMPDIR:-/tmp}/tsz-emit-verify.XXXXXX.json")"
+    echo -e "${CYAN}→${RESET}  scripts/safe-run.sh ./scripts/emit/run.sh --json-out=$EMIT_JSON"
+    echo ""
+
+    scripts/safe-run.sh ./scripts/emit/run.sh --json-out="$EMIT_JSON" || true
+
+    if [[ ! -f "$EMIT_JSON" ]]; then
+        echo -e "${RED}✗${RESET}  emit tests — FAILED: no JSON summary written"
+        RESULTS+=("${RED}✗${RESET}  emit tests (no summary)")
+        FAIL=$((FAIL + 1))
+    else
+        read -r EMIT_JS_PASS EMIT_DTS_PASS < <(python3 -c "
+import json
+with open('$EMIT_JSON') as f:
+    summary = json.load(f).get('summary', {})
+    print(summary.get('jsPass', 0), summary.get('dtsPass', 0))
+" 2>/dev/null || echo "0 0")
+
+        if [[ "$EMIT_JS_PASS" -lt "$EMIT_BASELINE_JS" ]] || [[ "$EMIT_DTS_PASS" -lt "$EMIT_BASELINE_DTS" ]]; then
+            JS_REGRESSION=$((EMIT_BASELINE_JS - EMIT_JS_PASS))
+            DTS_REGRESSION=$((EMIT_BASELINE_DTS - EMIT_DTS_PASS))
+            echo -e "${RED}✗${RESET}  emit tests — REGRESSION: JS -$JS_REGRESSION, DTS -$DTS_REGRESSION ($EMIT_JS_PASS/$EMIT_DTS_PASS vs $EMIT_BASELINE_JS/$EMIT_BASELINE_DTS baseline)"
+            RESULTS+=("${RED}✗${RESET}  emit tests (REGRESSION: JS -$JS_REGRESSION, DTS -$DTS_REGRESSION)")
+            FAIL=$((FAIL + 1))
+        elif [[ "$EMIT_JS_PASS" -gt "$EMIT_BASELINE_JS" ]] || [[ "$EMIT_DTS_PASS" -gt "$EMIT_BASELINE_DTS" ]]; then
+            JS_IMPROVEMENT=$((EMIT_JS_PASS - EMIT_BASELINE_JS))
+            DTS_IMPROVEMENT=$((EMIT_DTS_PASS - EMIT_BASELINE_DTS))
+            echo -e "${GREEN}✓${RESET}  emit tests — IMPROVED: JS +$JS_IMPROVEMENT, DTS +$DTS_IMPROVEMENT ($EMIT_JS_PASS/$EMIT_DTS_PASS vs $EMIT_BASELINE_JS/$EMIT_BASELINE_DTS baseline)"
+            RESULTS+=("${GREEN}✓${RESET}  emit tests (JS +$JS_IMPROVEMENT, DTS +$DTS_IMPROVEMENT)")
+            PASS=$((PASS + 1))
+        else
+            echo -e "${GREEN}✓${RESET}  emit tests — NO CHANGE (JS=$EMIT_JS_PASS DTS=$EMIT_DTS_PASS)"
+            RESULTS+=("${GREEN}✓${RESET}  emit tests (=$EMIT_JS_PASS/$EMIT_DTS_PASS)")
+            PASS=$((PASS + 1))
+        fi
+    fi
 else
     echo ""
     echo -e "${YELLOW}⊘${RESET}  emit tests — SKIPPED (--quick mode)"
@@ -126,7 +186,42 @@ fi
 
 # --- 4. Fourslash/LSP tests ---
 if ! $QUICK && ! $SKIP_LSP; then
-    run_suite "fourslash/LSP" scripts/safe-run.sh ./scripts/fourslash/run-fourslash.sh --max=50
+    echo ""
+    echo -e "${CYAN}━━━ [fourslash/LSP] ━━━${RESET}"
+    FOURSLASH_JSON="$(mktemp "${TMPDIR:-/tmp}/tsz-fourslash-verify.XXXXXX.json")"
+    echo -e "${CYAN}→${RESET}  scripts/safe-run.sh ./scripts/fourslash/run-fourslash.sh --max=50 --json-out=$FOURSLASH_JSON"
+    echo ""
+
+    scripts/safe-run.sh ./scripts/fourslash/run-fourslash.sh --max=50 --json-out="$FOURSLASH_JSON" || true
+
+    if [[ ! -f "$FOURSLASH_JSON" ]]; then
+        echo -e "${RED}✗${RESET}  fourslash/LSP — FAILED: no JSON summary written"
+        RESULTS+=("${RED}✗${RESET}  fourslash/LSP (no summary)")
+        FAIL=$((FAIL + 1))
+    else
+        FOURSLASH_PASS=$(python3 -c "
+import json
+with open('$FOURSLASH_JSON') as f:
+    data = json.load(f)
+    print(data.get('summary', {}).get('passed', data.get('passed', 0)))
+" 2>/dev/null || echo "0")
+
+        if [[ "$FOURSLASH_PASS" -lt "$FOURSLASH_BASELINE_PASS" ]]; then
+            FOURSLASH_REGRESSION=$((FOURSLASH_BASELINE_PASS - FOURSLASH_PASS))
+            echo -e "${RED}✗${RESET}  fourslash/LSP — REGRESSION: lost $FOURSLASH_REGRESSION tests ($FOURSLASH_PASS vs $FOURSLASH_BASELINE_PASS baseline)"
+            RESULTS+=("${RED}✗${RESET}  fourslash/LSP (REGRESSION: -$FOURSLASH_REGRESSION)")
+            FAIL=$((FAIL + 1))
+        elif [[ "$FOURSLASH_PASS" -gt "$FOURSLASH_BASELINE_PASS" ]]; then
+            FOURSLASH_IMPROVEMENT=$((FOURSLASH_PASS - FOURSLASH_BASELINE_PASS))
+            echo -e "${GREEN}✓${RESET}  fourslash/LSP — IMPROVED: +$FOURSLASH_IMPROVEMENT tests ($FOURSLASH_PASS vs $FOURSLASH_BASELINE_PASS baseline)"
+            RESULTS+=("${GREEN}✓${RESET}  fourslash/LSP (+$FOURSLASH_IMPROVEMENT)")
+            PASS=$((PASS + 1))
+        else
+            echo -e "${GREEN}✓${RESET}  fourslash/LSP — NO CHANGE ($FOURSLASH_PASS tests passing)"
+            RESULTS+=("${GREEN}✓${RESET}  fourslash/LSP (=$FOURSLASH_PASS)")
+            PASS=$((PASS + 1))
+        fi
+    fi
 else
     echo ""
     echo -e "${YELLOW}⊘${RESET}  fourslash/LSP — SKIPPED"

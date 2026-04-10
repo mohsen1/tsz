@@ -251,5 +251,9 @@ path = "tests/contextual_typing_tests.rs"
 name = "infer_extends_constraint_substitution_tests"
 path = "tests/infer_extends_constraint_substitution_tests.rs"
 
+[[test]]
+name = "fresh_intersection_display_tests"
+path = "tests/fresh_intersection_display_tests.rs"
+
 [lints]
 workspace = true

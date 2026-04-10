@@ -618,14 +618,15 @@ fn tsc_compat_exit_code_no_errors() {
 
     let tsz_bin = find_tsz_binary().expect("tsz binary not found");
 
-    let tsc_status = Command::new("tsc")
-        .args(["--noEmit", "--pretty", "false", "test.ts"])
+    let tsc_status = tsc_command()
+        .expect("tsc command unavailable")
+        .args(["--noEmit", "--pretty", "false", "--ignoreConfig", "test.ts"])
         .current_dir(&temp.path)
         .status()
         .expect("tsc failed");
 
     let tsz_status = Command::new(&tsz_bin)
-        .args(["--noEmit", "--pretty", "false", "test.ts"])
+        .args(["--noEmit", "--pretty", "false", "--ignoreConfig", "test.ts"])
         .current_dir(&temp.path)
         .status()
         .expect("tsz failed");
@@ -650,14 +651,15 @@ fn tsc_compat_exit_code_with_errors() {
 
     let tsz_bin = find_tsz_binary().expect("tsz binary not found");
 
-    let tsc_status = Command::new("tsc")
-        .args(["--noEmit", "--pretty", "false", "test.ts"])
+    let tsc_status = tsc_command()
+        .expect("tsc command unavailable")
+        .args(["--noEmit", "--pretty", "false", "--ignoreConfig", "test.ts"])
         .current_dir(&temp.path)
         .status()
         .expect("tsc failed");
 
     let tsz_status = Command::new(&tsz_bin)
-        .args(["--noEmit", "--pretty", "false", "test.ts"])
+        .args(["--noEmit", "--pretty", "false", "--ignoreConfig", "test.ts"])
         .current_dir(&temp.path)
         .status()
         .expect("tsz failed");

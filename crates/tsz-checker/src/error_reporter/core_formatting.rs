@@ -104,11 +104,17 @@ impl<'a> CheckerState<'a> {
         // widened types are shown: `{ two: number }` not `{ two: 1 }`.
         // Other types (class expressions, interfaces) keep their display properties
         // to preserve named type display (e.g., `typeof A`).
-        // A fresh object literal has display_properties AND an anonymous shape (no symbol).
-        // Class expressions/interfaces have symbols so they don't match.
-        let is_fresh_object_literal = self.ctx.types.get_display_properties(display_ty).is_some()
-            && tsz_solver::type_queries::get_object_shape(self.ctx.types, display_ty)
-                .is_some_and(|shape| shape.symbol.is_none());
+        // Restrict this to actual anonymous object/object-with-index types.
+        // Intersections can also expose an anonymous structural shape via
+        // `get_object_shape`, but those should keep their display properties so
+        // diagnostics can render `{ fooProp: "frizzlebizzle"; } & Bar`.
+        let is_anonymous_object_type =
+            crate::query_boundaries::dispatch::is_object_like_type(self.ctx.types, display_ty)
+                && !tsz_solver::type_queries::is_intersection_type(self.ctx.types, display_ty)
+                && tsz_solver::type_queries::get_object_shape(self.ctx.types, display_ty)
+                    .is_some_and(|shape| shape.symbol.is_none());
+        let is_fresh_object_literal =
+            self.ctx.types.get_display_properties(display_ty).is_some() && is_anonymous_object_type;
         let mut formatted = if is_fresh_object_literal {
             self.format_type_diagnostic_widened(display_ty)
         } else {

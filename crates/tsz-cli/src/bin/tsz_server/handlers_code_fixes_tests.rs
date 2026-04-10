@@ -41,66 +41,49 @@ fn make_server() -> Server {
 }
 
 #[test]
-fn get_code_fixes_jsdoc_infer_placeholders_match_fourslash_order_24_26() {
+fn get_code_fixes_jsdoc_infer_placeholders_match_fourslash_order_16() {
     let mut server = make_server();
-    let cases = [
-        (
-            "/annotateWithTypeFromJSDoc24.ts",
-            "class C {\n    /**\n     * @private\n     * @param {number} foo\n     * @param {Object} [bar]\n     * @param {String} bar.a\n     * @param {Number} [bar.b]\n     * @param bar.c\n     */\n    m(foo, bar) { }\n}\n",
-            2usize,
-        ),
-        (
-            "/annotateWithTypeFromJSDoc25.ts",
-            "class C {\n    /**\n     * @private\n     * @param {number} foo\n     * @param {Object} [bar]\n     * @param {String} bar.a\n     * @param {Object} [baz]\n     * @param {number} baz.c\n     */\n    m(foo, bar, baz) { }\n}\n",
-            3usize,
-        ),
-        (
-            "/annotateWithTypeFromJSDoc26.ts",
-            "class C {\n    /**\n     * @private\n     * @param {Object} [foo]\n     * @param {Object} foo.a\n     * @param {String} [foo.a.b]\n     */\n    m(foo) { }\n}\n",
-            1usize,
-        ),
-    ];
+    let file = "/annotateWithTypeFromJSDoc16.ts";
+    let content =
+        "/** @type {function(*, ...number, ...boolean): void} */\nvar x = (x, ys, ...zs) => { x; ys; zs; };\n";
+    let annotate_index_zero_based = 3usize;
 
-    for (file, content, annotate_index_one_based) in cases {
-        server
-            .open_files
-            .insert(file.to_string(), content.to_string());
-        let callsite_offset = content.find("m(").expect("expected method declaration");
-        let line_map = LineMap::build(content);
-        let pos = line_map.offset_to_position(callsite_offset as u32, content);
-        let req = TsServerRequest {
-            seq: 1,
-            _msg_type: "request".to_string(),
-            command: "getCodeFixes".to_string(),
-            arguments: serde_json::json!({
-                "file": file,
-                "startLine": pos.line + 1,
-                "startOffset": pos.character + 1,
-                "endLine": pos.line + 1,
-                "endOffset": pos.character + 1,
-                "errorCodes": [80004]
-            }),
-        };
-        let resp = server.handle_get_code_fixes(1, &req);
-        assert!(resp.success, "expected getCodeFixes to succeed for {file}");
-        let actions = resp
-            .body
-            .as_ref()
-            .and_then(serde_json::Value::as_array)
-            .expect("expected getCodeFixes actions array");
-        assert!(
-            actions.len() >= annotate_index_one_based,
-            "expected at least {annotate_index_one_based} actions for {file}, got {actions:?}"
-        );
-        let annotate = &actions[annotate_index_one_based - 1];
-        assert_eq!(
-            annotate
-                .get("description")
-                .and_then(serde_json::Value::as_str),
-            Some("Annotate with type from JSDoc"),
-            "unexpected action order for {file}: {actions:?}"
-        );
-    }
+    server
+        .open_files
+        .insert(file.to_string(), content.to_string());
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": file,
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 1,
+            "errorCodes": [80004]
+        }),
+    };
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed for {file}");
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions array");
+    assert!(
+        actions.len() > annotate_index_zero_based,
+        "expected at least {} actions for {file}, got {actions:?}",
+        annotate_index_zero_based + 1
+    );
+    let annotate = &actions[annotate_index_zero_based];
+    assert_eq!(
+        annotate
+            .get("description")
+            .and_then(serde_json::Value::as_str),
+        Some("Annotate with type from JSDoc"),
+        "unexpected action order for {file}: {actions:?}"
+    );
 }
 
 #[test]

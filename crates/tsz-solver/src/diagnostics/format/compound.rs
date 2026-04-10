@@ -841,6 +841,31 @@ impl<'a> TypeFormatter<'a> {
         formatted.join(" & ")
     }
 
+    pub(super) fn format_intersection_with_display(
+        &mut self,
+        members: &[TypeId],
+        display_props: &[PropertyInfo],
+    ) -> Option<String> {
+        let replacement_idx = members
+            .iter()
+            .position(|&member| self.is_anonymous_object_intersection_member(member))?;
+
+        Some(
+            members
+                .iter()
+                .enumerate()
+                .map(|(idx, &member)| {
+                    if idx == replacement_idx {
+                        self.format_intersection_member_with_display_props(member, display_props)
+                    } else {
+                        self.format_intersection_member(member)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" & "),
+        )
+    }
+
     /// Format an intersection member, parenthesizing union types.
     /// `(A | B) & (C | D)` is semantically different from `A | B & C | D`.
     fn format_intersection_member(&mut self, id: TypeId) -> String {
@@ -849,6 +874,42 @@ impl<'a> TypeFormatter<'a> {
             format!("({formatted})")
         } else {
             formatted.into_owned()
+        }
+    }
+
+    fn is_anonymous_object_intersection_member(&mut self, id: TypeId) -> bool {
+        match self.interner.lookup(id) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                self.resolve_object_shape_name(&shape).is_none()
+            }
+            _ => false,
+        }
+    }
+
+    fn format_intersection_member_with_display_props(
+        &mut self,
+        id: TypeId,
+        display_props: &[PropertyInfo],
+    ) -> String {
+        match self.interner.lookup(id) {
+            Some(TypeData::Object(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                if self.resolve_object_shape_name(&shape).is_none() {
+                    return self.format_object(display_props);
+                }
+                self.format_intersection_member(id)
+            }
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                if self.resolve_object_shape_name(&shape).is_none() {
+                    let mut display_shape = shape.as_ref().clone();
+                    display_shape.properties = display_props.to_vec();
+                    return self.format_object_with_index(&display_shape);
+                }
+                self.format_intersection_member(id)
+            }
+            _ => self.format_intersection_member(id),
         }
     }
 
