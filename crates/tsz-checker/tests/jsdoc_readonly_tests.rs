@@ -86,11 +86,11 @@ function b() {}
     );
 }
 
-/// Dangling @extends between two classes → TS8022
+/// @extends between two classes is NOT orphaned (tsc considers it attached
+/// to the following class, even when separated by an intermediate JSDoc
+/// comment or blank lines).
 #[test]
-fn test_jsdoc_dangling_extends_between_classes_emits_ts8022() {
-    // The @extends comment is NOT the leading comment of class B
-    // (because @constructor is), so it's dangling
+fn test_jsdoc_extends_before_class_not_orphaned() {
     let source = r#"
 class A {
     constructor() {}
@@ -105,9 +105,10 @@ class B extends A {
 "#;
     let diagnostics = check_js_source_diagnostics(source);
     let ts8022 = diagnostics.iter().filter(|d| d.code == 8022).count();
-    assert!(
-        ts8022 >= 1,
-        "Expected TS8022 for dangling @extends, got: {:?}",
+    assert_eq!(
+        ts8022,
+        0,
+        "Expected no TS8022 for @extends before class, got: {:?}",
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
