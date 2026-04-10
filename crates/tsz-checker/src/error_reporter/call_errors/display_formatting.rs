@@ -219,10 +219,15 @@ impl<'a> CheckerState<'a> {
         }
 
         let arg_index = args.iter().position(|&candidate| candidate == arg_idx)?;
-        let callee_type = self.get_type_of_node(callee_expr);
-        let raw_sig = crate::query_boundaries::checkers::call::get_contextual_signature_for_arity(
+        let concrete_callee_type = self.get_type_of_node(callee_expr);
+        let raw_callee_type = self
+            .resolve_qualified_symbol(callee_expr)
+            .or_else(|| self.resolve_identifier_symbol(callee_expr))
+            .map(|sym| self.get_type_of_symbol(sym))
+            .unwrap_or(concrete_callee_type);
+        let raw_sig = crate::query_boundaries::checkers::call::get_call_signature(
             self.ctx.types,
-            callee_type,
+            raw_callee_type,
             args.len(),
         )?;
         if raw_sig.type_params.len() != type_args.nodes.len() {
@@ -345,6 +350,106 @@ impl<'a> CheckerState<'a> {
         ))
     }
 
+    fn generic_call_parameter_alias_display(
+        &mut self,
+        param_type: TypeId,
+        arg_idx: NodeIndex,
+    ) -> Option<String> {
+        let parent_idx = self.ctx.arena.get_extended(arg_idx)?.parent;
+        let parent = self.ctx.arena.get(parent_idx)?;
+        let (callee_expr, args): (NodeIndex, &[NodeIndex]) = match parent.kind {
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                let call = self.ctx.arena.get_call_expr(parent)?;
+                let args = call.arguments.as_ref()?;
+                (call.expression, &args.nodes)
+            }
+            k if k == syntax_kind_ext::NEW_EXPRESSION => {
+                let new_expr = self.ctx.arena.get_call_expr(parent)?;
+                let args = new_expr.arguments.as_ref()?;
+                (new_expr.expression, &args.nodes)
+            }
+            _ => return None,
+        };
+
+        let arg_index = args.iter().position(|&candidate| candidate == arg_idx)?;
+        let callee_type = self.get_type_of_node(callee_expr);
+        let raw_sig = crate::query_boundaries::checkers::call::get_contextual_signature_for_arity(
+            self.ctx.types,
+            callee_type,
+            args.len(),
+        )?;
+        let raw_param_type = raw_sig
+            .params
+            .get(arg_index)
+            .map(|param| param.type_id)
+            .or_else(|| {
+                let last = raw_sig.params.last()?;
+                last.rest.then_some(last.type_id)
+            })?;
+
+        if !crate::query_boundaries::common::contains_type_parameters(
+            self.ctx.types,
+            raw_param_type,
+        ) {
+            return None;
+        }
+
+        let raw_display = self.format_type_for_assignability_message(raw_param_type);
+        if !raw_display.contains('<') {
+            return None;
+        }
+
+        let raw_shape = crate::query_boundaries::checkers::call::get_contextual_signature(
+            self.ctx.types,
+            raw_param_type,
+        )?;
+        let concrete_shape = crate::query_boundaries::checkers::call::get_contextual_signature(
+            self.ctx.types,
+            param_type,
+        )?;
+
+        let mut display = raw_display;
+        let mut replaced_any = false;
+        for tp in &raw_sig.type_params {
+            let tp_name = self.ctx.types.resolve_atom_ref(tp.name);
+            let replacement = raw_shape
+                .params
+                .iter()
+                .zip(concrete_shape.params.iter())
+                .find_map(|(raw_param, concrete_param)| {
+                    let raw_tp = tsz_solver::type_param_info(
+                        self.ctx.types.as_type_database(),
+                        raw_param.type_id,
+                    )?;
+                    (raw_tp.name == tp.name).then(|| {
+                        let widened = crate::query_boundaries::common::widen_type(
+                            self.ctx.types,
+                            concrete_param.type_id,
+                        );
+                        self.format_type_for_assignability_message(widened)
+                    })
+                })
+                .or_else(|| {
+                    let raw_tp = tsz_solver::type_param_info(
+                        self.ctx.types.as_type_database(),
+                        raw_shape.return_type,
+                    )?;
+                    (raw_tp.name == tp.name).then(|| {
+                        let widened = crate::query_boundaries::common::widen_type(
+                            self.ctx.types,
+                            concrete_shape.return_type,
+                        );
+                        self.format_type_for_assignability_message(widened)
+                    })
+                })?;
+
+            display = Self::replace_type_param_name_in_display(&display, &tp_name, &replacement);
+            replaced_any = true;
+        }
+
+        replaced_any.then_some(display)
+    }
+
     fn property_access_call_parameter_annotation_display(
         &mut self,
         param_type: TypeId,
@@ -396,7 +501,6 @@ impl<'a> CheckerState<'a> {
 
         if let Some(base_sym) = self.resolve_identifier_symbol(access.expression)
             && let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym)
-            && base_symbol.value_declaration.is_some()
             && let base_decl = base_symbol.value_declaration
             && let Some(base_decl_node) = self.ctx.arena.get(base_decl)
             && let Some(var_decl) = self.ctx.arena.get_variable_declaration(base_decl_node)
@@ -1245,6 +1349,16 @@ impl<'a> CheckerState<'a> {
 
         if let Some(display) =
             self.contextual_function_parameter_display_with_annotation_fallback(param_type, arg_idx)
+        {
+            return display;
+        }
+
+        if let Some(display) = self.generic_call_parameter_alias_display(param_type, arg_idx) {
+            return display;
+        }
+
+        if let Some(display) =
+            self.property_access_call_parameter_annotation_display(param_type, arg_idx)
         {
             return display;
         }
