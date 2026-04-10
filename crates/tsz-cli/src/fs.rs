@@ -118,11 +118,21 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
                 continue;
             }
 
-            // Avoid canonicalizing unless following links; canonicalizing can change
-            // the base prefix (e.g., /var -> /private/var on macOS) which breaks
-            // relative path expectations in the CLI.
+            // Avoid canonicalizing symlinked package roots so package-link
+            // identities survive into declaration emit. For ordinary linked
+            // files, keep the existing canonicalization behavior.
             let resolved = if options.follow_links {
-                std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+                if path.components().any(|component| {
+                    matches!(
+                        component,
+                        std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
+                    )
+                }) || path_has_symlink_ancestor(path, &options.base_dir)
+                {
+                    path.to_path_buf()
+                } else {
+                    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+                }
             } else {
                 path.to_path_buf()
             };
@@ -138,6 +148,23 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
     let mut list: Vec<PathBuf> = files.into_iter().collect();
     list.sort_by(|a, b| a.to_string_lossy().cmp(&b.to_string_lossy()));
     Ok(list)
+}
+
+fn path_has_symlink_ancestor(path: &Path, base_dir: &Path) -> bool {
+    let mut current = path.parent();
+    while let Some(dir) = current {
+        if dir == base_dir {
+            return false;
+        }
+        if std::fs::symlink_metadata(dir)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        current = dir.parent();
+    }
+    false
 }
 
 fn build_include_patterns(options: &FileDiscoveryOptions) -> Vec<String> {
@@ -720,6 +747,51 @@ mod tests {
         assert!(
             result.iter().any(|p| p.ends_with("lib.js")),
             "explicitly listed .js file should be included even without allowJs"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_follow_links_preserves_symlink_ancestor_identity() {
+        use std::os::unix::fs::symlink;
+
+        let dir = std::env::temp_dir().join("tsz_fs_test_symlink_ancestor");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("core/node_modules/package-a")).unwrap();
+        fs::write(
+            dir.join("core/node_modules/package-a/index.d.ts"),
+            "export interface Box {}",
+        )
+        .unwrap();
+        symlink(
+            dir.join("core/node_modules/package-a"),
+            dir.join("package-a"),
+        )
+        .unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: vec![],
+            files_explicitly_set: false,
+            include: None,
+            exclude: None,
+            out_dir: None,
+            follow_links: true,
+            allow_js: false,
+            resolve_json_module: false,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        assert!(
+            result.iter().any(|p| p.ends_with("package-a/index.d.ts")),
+            "symlinked package root should stay in its original path"
+        );
+        assert!(
+            !result.iter().any(|p| p
+                .to_string_lossy()
+                .contains("core/node_modules/package-a/index.d.ts")),
+            "canonical target path should not replace the symlink path"
         );
 
         let _ = fs::remove_dir_all(&dir);

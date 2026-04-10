@@ -687,7 +687,6 @@ impl<'a> DeclarationEmitter<'a> {
                 .copied()
                 .or_else(|| self.get_node_type_or_names(&[func_name]))
                 .or_else(|| self.get_type_via_symbol_for_func(func_idx, func_name));
-
             if let Some(func_type_id) = func_type_id
                 && let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
             {
@@ -708,6 +707,41 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(type_text) =
                         self.function_body_preferred_return_type_text(func_body)
                 {
+                    if let Some(returned_identifier) =
+                        self.function_body_unique_return_identifier(func_body)
+                        && let Some(return_type_id) =
+                            self.reference_declared_type_id(returned_identifier)
+                        && let Some(name_text) = self.get_identifier_text(func_name)
+                        && let Some(name_node) = self.arena.get(func_name)
+                        && let Some(file_path) = self.current_file_path.clone()
+                    {
+                        self.check_non_portable_type_references(
+                            return_type_id,
+                            &name_text,
+                            &file_path,
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                        );
+                    }
+                    if let Some(name_text) = self.get_identifier_text(func_name)
+                        && let Some(name_node) = self.arena.get(func_name)
+                        && let Some(file_path) = self.current_file_path.clone()
+                    {
+                        self.check_non_portable_type_references(
+                            effective_return_type_id,
+                            &name_text,
+                            &file_path,
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                        );
+                        let _ = self.emit_non_portable_import_type_text_diagnostics(
+                            &type_text,
+                            &name_text,
+                            &file_path,
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                        );
+                    }
                     self.write(": ");
                     if let Some(ref tp) = func.type_parameters
                         && !tp.nodes.is_empty()
@@ -729,16 +763,53 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": typeof ");
                     self.emit_node(func.name);
                 } else {
+                    if func_body.is_some()
+                        && let Some(name_text) = self.get_identifier_text(func_name)
+                        && let Some(name_node) = self.arena.get(func_name)
+                        && let Some(file_path) = self.current_file_path.clone()
+                    {
+                        self.check_non_portable_type_references(
+                            effective_return_type_id,
+                            &name_text,
+                            &file_path,
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                        );
+                    }
                     self.write(": ");
                     if let Some(ref tp) = func.type_parameters
                         && !tp.nodes.is_empty()
                     {
-                        self.write(
-                            &self
-                                .print_type_id_with_outer_type_params(effective_return_type_id, tp),
-                        );
+                        let printed_type_text =
+                            self.print_type_id_with_outer_type_params(effective_return_type_id, tp);
+                        self.write(&printed_type_text);
+                        if let Some(name_text) = self.get_identifier_text(func_name)
+                            && let Some(name_node) = self.arena.get(func_name)
+                            && let Some(file_path) = self.current_file_path.clone()
+                        {
+                            let _ = self.emit_non_portable_import_type_text_diagnostics(
+                                &printed_type_text,
+                                &name_text,
+                                &file_path,
+                                name_node.pos,
+                                name_node.end - name_node.pos,
+                            );
+                        }
                     } else {
-                        self.write(&self.print_type_id(effective_return_type_id));
+                        let printed_type_text = self.print_type_id(effective_return_type_id);
+                        self.write(&printed_type_text);
+                        if let Some(name_text) = self.get_identifier_text(func_name)
+                            && let Some(name_node) = self.arena.get(func_name)
+                            && let Some(file_path) = self.current_file_path.clone()
+                        {
+                            let _ = self.emit_non_portable_import_type_text_diagnostics(
+                                &printed_type_text,
+                                &name_text,
+                                &file_path,
+                                name_node.pos,
+                                name_node.end - name_node.pos,
+                            );
+                        }
                     }
                 }
             } else if func_body.is_some() {
@@ -747,6 +818,30 @@ impl<'a> DeclarationEmitter<'a> {
                 } else if let Some(return_text) =
                     self.function_body_preferred_return_type_text(func_body)
                 {
+                    if let Some(name_text) = self.get_identifier_text(func_name)
+                        && let Some(name_node) = self.arena.get(func_name)
+                        && let Some(file_path) = self.current_file_path.clone()
+                    {
+                        if let Some(func_type_id) = self
+                            .get_node_type_or_names(&[func_name])
+                            .or_else(|| self.get_type_via_symbol_for_func(func_idx, func_name))
+                        {
+                            self.check_non_portable_type_references(
+                                func_type_id,
+                                &name_text,
+                                &file_path,
+                                name_node.pos,
+                                name_node.end - name_node.pos,
+                            );
+                        }
+                        let _ = self.emit_non_portable_import_type_text_diagnostics(
+                            &return_text,
+                            &name_text,
+                            &file_path,
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                        );
+                    }
                     self.write(": ");
                     self.write(&return_text);
                 }
@@ -758,6 +853,30 @@ impl<'a> DeclarationEmitter<'a> {
             } else if let Some(return_text) =
                 self.function_body_preferred_return_type_text(func_body)
             {
+                if let Some(name_text) = self.get_identifier_text(func_name)
+                    && let Some(name_node) = self.arena.get(func_name)
+                    && let Some(file_path) = self.current_file_path.clone()
+                {
+                    if let Some(func_type_id) = self
+                        .get_node_type_or_names(&[func_name])
+                        .or_else(|| self.get_type_via_symbol_for_func(func_idx, func_name))
+                    {
+                        self.check_non_portable_type_references(
+                            func_type_id,
+                            &name_text,
+                            &file_path,
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                        );
+                    }
+                    let _ = self.emit_non_portable_import_type_text_diagnostics(
+                        &return_text,
+                        &name_text,
+                        &file_path,
+                        name_node.pos,
+                        name_node.end - name_node.pos,
+                    );
+                }
                 self.write(": ");
                 self.write(&return_text);
             }

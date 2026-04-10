@@ -1498,8 +1498,12 @@ pub(crate) fn normalize_path(path: &Path) -> PathBuf {
 }
 
 pub(crate) fn normalize_resolved_path(path: &Path, options: &ResolvedCompilerOptions) -> PathBuf {
-    if options.preserve_symlinks {
-        normalize_path(path)
+    if options.preserve_symlinks || path_has_symlink_ancestor(path) {
+        if options.preserve_symlinks {
+            normalize_path(path)
+        } else {
+            path.to_path_buf()
+        }
     } else {
         canonicalize_or_owned(path)
     }
@@ -1530,6 +1534,20 @@ fn find_node_modules_package_root(path: &Path) -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn path_has_symlink_ancestor(path: &Path) -> bool {
+    let mut current = path.parent();
+    while let Some(dir) = current {
+        if std::fs::symlink_metadata(dir)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        current = dir.parent();
+    }
+    false
 }
 
 /// Build a redirect map for duplicate packages (same name+version at different
