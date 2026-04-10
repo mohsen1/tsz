@@ -1089,7 +1089,17 @@ impl<'a> CheckerState<'a> {
                 || display.contains("[P in ")
                 || display.contains("[K in "))
         {
-            return self.format_annotation_like_type(&display);
+            // For `typeof EnumName.Member`, tsc evaluates to the enum member type
+            // and displays as `EnumName.Member` (without `typeof` prefix). Skip the
+            // raw annotation text when the target resolves to an enum member type.
+            if display.starts_with("typeof ")
+                && tsz_solver::type_queries::get_enum_def_id(self.ctx.types, target).is_some()
+            {
+                // Fall through to use the TypeFormatter, which correctly displays
+                // `TypeData::Enum` as qualified `W.a` style names.
+            } else {
+                return self.format_annotation_like_type(&display);
+            }
         }
 
         if let Some(display) = self.declared_type_annotation_text_for_expression(target_expr) {
