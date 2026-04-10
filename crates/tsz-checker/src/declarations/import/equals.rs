@@ -982,8 +982,57 @@ impl<'a> CheckerState<'a> {
                     self.error_cannot_find_namespace_with_suggestion(name, module_ref);
                     return;
                 }
-                // TS1380/TS1379: Check if the referenced declaration is type-only
                 if let Some(sym_id) = resolved {
+                    // Check if the resolved symbol has NAMESPACE meaning.
+                    // For import-equals, the target must be a namespace/module/enum.
+                    // If not:
+                    //   - TYPE meaning → TS2702 ("only refers to a type")
+                    //   - VALUE only   → TS2503 ("cannot find namespace")
+                    //
+                    // When the symbol is an ALIAS (e.g. `import C = r` where r is
+                    // another import alias to a module), follow the alias chain to
+                    // get the underlying symbol's flags.
+                    let lib_binders = self.get_lib_binders();
+                    let raw_flags = self
+                        .ctx
+                        .binder
+                        .get_symbol_with_libs(sym_id, &lib_binders)
+                        .map_or(0, |s| s.flags);
+                    // If the symbol is an ALIAS (import alias pointing at a module),
+                    // resolve through the alias chain. If resolution fails (e.g.
+                    // cross-file require imports), treat as having NAMESPACE meaning
+                    // to avoid false positives — the alias target is a module.
+                    let sym_flags = if (raw_flags & tsz_binder::symbol_flags::ALIAS) != 0 {
+                        let mut visited = Vec::new();
+                        match self.resolve_alias_symbol(sym_id, &mut visited) {
+                            Some(resolved_id) if resolved_id != sym_id => self
+                                .ctx
+                                .binder
+                                .get_symbol_with_libs(resolved_id, &lib_binders)
+                                .map_or(raw_flags, |s| s.flags),
+                            // Can't resolve alias — don't emit false errors
+                            _ => raw_flags | tsz_binder::symbol_flags::NAMESPACE,
+                        }
+                    } else {
+                        raw_flags
+                    };
+                    if (sym_flags & tsz_binder::symbol_flags::NAMESPACE) == 0 {
+                        // If a namespace with this name exists in an outer scope,
+                        // the import-equals resolves to that namespace — the local
+                        // type/value declaration doesn't block it.
+                        if !self.namespace_exists_in_outer_scope(name, module_ref) {
+                            if (sym_flags & tsz_binder::symbol_flags::TYPE) != 0 {
+                                // TS2702: '{0}' only refers to a type, but is being
+                                // used as a namespace here.
+                                self.error_type_used_as_namespace_at(name, module_ref);
+                            } else {
+                                // TS2503: Cannot find namespace '{0}'.
+                                self.error_cannot_find_namespace_with_suggestion(name, module_ref);
+                            }
+                            return;
+                        }
+                    }
+                    // TS1380/TS1379: Check if the referenced declaration is type-only
                     self.check_import_alias_type_only_reference(sym_id, module_ref);
                 }
             }
@@ -1510,6 +1559,38 @@ impl<'a> CheckerState<'a> {
             return self.resolve_leftmost_qualified_name(qn.left);
         }
         None
+    }
+
+    /// Check if a namespace with the given name exists in any outer scope.
+    /// Used to determine if a type-only or value-only local declaration is
+    /// shadowing a namespace that import-equals should resolve through.
+    fn namespace_exists_in_outer_scope(&self, name: &str, node: NodeIndex) -> bool {
+        let Some(scope_id) = self.ctx.binder.find_enclosing_scope(self.ctx.arena, node) else {
+            return false;
+        };
+        let Some(current_scope) = self.ctx.binder.scopes.get(scope_id.0 as usize) else {
+            return false;
+        };
+        let mut walk_id = current_scope.parent;
+        let lib_binders = self.get_lib_binders();
+
+        while let Some(scope) = self.ctx.binder.scopes.get(walk_id.0 as usize) {
+            if let Some(sym_id) = scope.table.get(name) {
+                let sym_flags = self
+                    .ctx
+                    .binder
+                    .get_symbol_with_libs(sym_id, &lib_binders)
+                    .map_or(0, |s| s.flags);
+                if (sym_flags & tsz_binder::symbol_flags::NAMESPACE) != 0 {
+                    return true;
+                }
+            }
+            if walk_id == scope.parent {
+                break;
+            }
+            walk_id = scope.parent;
+        }
+        false
     }
 
     /// Check if a namespace with the given name exists in an outer scope and has
