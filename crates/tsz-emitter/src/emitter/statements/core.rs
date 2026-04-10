@@ -257,25 +257,26 @@ impl<'a> Printer<'a> {
             }
         };
 
-        // Block-level using-declaration lowering for non-ES5 targets below ES2025.
+        // Block-level using-declaration lowering below ES2025.
         // When a block contains `using`/`await using` declarations, tsc wraps ALL
         // statements in the block inside a single try/catch/finally, not just the
         // using declarations. We detect this here and set up the env + try wrapper.
-        let block_using_lowered =
-            if !self.ctx.target_es5 && !self.ctx.options.target.supports_es2025() {
-                self.block_has_using_declarations(&block.statements)
-            } else {
-                false
-            };
+        let block_using_lowered = if !self.ctx.options.target.supports_es2025() {
+            self.block_has_using_declarations(&block.statements)
+        } else {
+            false
+        };
         let prev_block_using_env = self.block_using_env.take();
         let block_using_names: Option<(String, String, String, bool)> = if block_using_lowered {
             let using_async = self.block_has_await_using(&block.statements);
             let (env_name, error_name, result_name) = self.next_disposable_env_names();
+            let env_decl_keyword = if self.ctx.target_es5 { "var" } else { "const" };
 
             // Block-level using: tsc uses `const` for the __addDisposableResource calls
             // inside the try block (no var hoisting needed since the entire try/catch/finally
             // is at the same block scope level).
-            self.write("const ");
+            self.write(env_decl_keyword);
+            self.write(" ");
             self.write(&env_name);
             self.write(" = { stack: [], error: void 0, hasError: false };");
             self.write_line();
@@ -512,7 +513,8 @@ impl<'a> Printer<'a> {
                 } else {
                     "await"
                 };
-                self.write("const ");
+                self.write(if self.ctx.target_es5 { "var" } else { "const" });
+                self.write(" ");
                 self.write(&result_name);
                 self.write(" = ");
                 self.write_helper("__disposeResources");
@@ -641,12 +643,12 @@ impl<'a> Printer<'a> {
             Vec::new()
         };
 
-        // Lower `using`/`await using` declarations for non-ES5 targets below ES2025.
+        // Lower `using`/`await using` declarations below ES2025.
         // When block_using_env is set, the block-level try/catch is already active,
-        // so we just emit `const x = __addDisposableResource(env, expr, async)`.
+        // so we just emit `const/var x = __addDisposableResource(env, expr, async)`.
         // When not set (standalone), emit the full try/catch per-statement.
         let using_is_lowered = has_using_declaration && !self.ctx.options.target.supports_es2025();
-        if using_is_lowered && !self.ctx.target_es5 {
+        if using_is_lowered {
             if let Some((ref env_name, using_async)) = self.block_using_env.clone() {
                 // Block-level try/catch is active — just emit the __addDisposableResource calls
                 for &decl_list_idx in &var_stmt.declarations.nodes {

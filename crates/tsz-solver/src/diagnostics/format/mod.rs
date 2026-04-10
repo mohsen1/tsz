@@ -435,6 +435,13 @@ impl<'a> TypeFormatter<'a> {
             }
             TypeData::Intersection(members) => {
                 let members = self.interner.type_list(*members);
+                if self.use_display_properties
+                    && let Some(display_props) = self.interner.get_display_properties(type_id)
+                    && let Some(rendered) = self
+                        .format_intersection_with_display(members.as_ref(), display_props.as_ref())
+                {
+                    return rendered.into();
+                }
                 self.format_intersection(members.as_ref()).into()
             }
             TypeData::Array(elem) => {

@@ -1,5 +1,6 @@
 use super::*;
 use crate::TypeInterner;
+use crate::caches::db::QueryDatabase;
 use crate::types::{
     CallSignature, CallableShape, FunctionShape, MappedModifier, MappedType, ParamInfo,
     PropertyInfo, StringIntrinsicKind, TemplateSpan, TypeParamInfo,
@@ -404,6 +405,33 @@ fn format_intersection_two_type_params() {
     let result = fmt.format(inter);
     assert!(result.contains("T"));
     assert!(result.contains("U"));
+    assert!(result.contains(" & "));
+}
+
+#[test]
+fn format_intersection_uses_display_properties_for_anonymous_object_member() {
+    let db = TypeInterner::new();
+    let foo_prop = db.intern_string("fooProp");
+    let widened = PropertyInfo::new(foo_prop, TypeId::STRING);
+    let display = PropertyInfo::new(foo_prop, db.literal_string("frizzlebizzle"));
+    let fresh = db
+        .factory()
+        .object_fresh_with_display(vec![widened], vec![display]);
+    let t = db.type_param(TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let intersection = db.intersection2(fresh, t);
+    let mut fmt = TypeFormatter::new(&db).with_display_properties();
+    let result = fmt.format(intersection);
+
+    assert!(
+        result.contains("{ fooProp: \"frizzlebizzle\"; }"),
+        "Expected fresh-object display properties inside intersection, got: {result}"
+    );
     assert!(result.contains(" & "));
 }
 

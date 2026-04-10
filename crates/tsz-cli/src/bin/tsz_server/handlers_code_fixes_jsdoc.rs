@@ -538,14 +538,19 @@ impl Server {
             return 0;
         }
 
-        target[open + 1..close]
+        let param_count = target[open + 1..close]
             .split(',')
             .filter(|segment| {
                 let trimmed = segment.trim();
                 !trimmed.is_empty() && !trimmed.contains(':')
             })
-            .count()
-            .saturating_sub(1)
+            .count();
+
+        if target.contains("=>") {
+            param_count
+        } else {
+            param_count.saturating_sub(1)
+        }
     }
 
     pub(super) fn should_emit_jsdoc_infer_placeholders(file_path: &str) -> bool {
