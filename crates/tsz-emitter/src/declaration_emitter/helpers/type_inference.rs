@@ -199,6 +199,7 @@ impl<'a> DeclarationEmitter<'a> {
                 || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION =>
             {
                 self.reference_declared_type_annotation_text(expr_idx)
+                    .or_else(|| self.value_reference_symbol_type_text(expr_idx))
                     .or_else(|| self.undefined_identifier_type_text(expr_idx))
             }
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
@@ -763,6 +764,18 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    pub(in crate::declaration_emitter) fn value_reference_symbol_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let sym_id = self.value_reference_symbol(expr_idx)?;
+        let binder = self.binder?;
+        let cache = self.type_cache.as_ref()?;
+        let resolved_sym_id = binder.resolve_import_symbol(sym_id).unwrap_or(sym_id);
+        let type_id = cache.symbol_types.get(&resolved_sym_id).copied()?;
+        Some(self.print_type_id(type_id))
     }
 
     pub(in crate::declaration_emitter) fn local_type_annotation_text(
