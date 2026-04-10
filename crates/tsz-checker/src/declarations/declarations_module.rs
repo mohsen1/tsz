@@ -28,8 +28,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         // Namespaces named `globalThis` conflict with the built-in global.
         // `globalThis` only conflicts in script files (non-modules), since
         // module-scoped declarations don't pollute the global scope.
-        // Note: `namespace undefined` is allowed by tsc — TS2397 for `undefined`
-        // is only emitted for value declarations (var/let/const), not namespaces.
+        // Note: `namespace undefined` also gets TS2397 but is handled by
+        // check_built_in_global_identifier_conflicts in cross_file_conflicts.rs.
         if let Some(name_node) = self.ctx.arena.get(module.name)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
         {
