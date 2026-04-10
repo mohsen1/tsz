@@ -812,6 +812,9 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        let overall_target_is_union =
+            crate::query_boundaries::common::union_members(self.ctx.types, param_type).is_some();
+
         // Normalize optional/nullish wrappers (e.g., `{...} | undefined`).
         let effective_param_type = if let (Some(non_nullish), Some(_nullish_cause)) =
             self.split_nullish_type(param_type)
@@ -1009,10 +1012,15 @@ impl<'a> CheckerState<'a> {
                     self.widen_function_like_call_source(effective_source_prop);
                 // Use the diagnostic target type if available (for optional properties),
                 // otherwise use the effective target type
-                let target_for_diag = if target_prop_type != target_prop_type_for_diagnostic {
-                    target_prop_type_for_diagnostic
+                let target_for_diag = if overall_target_is_union {
+                    if let (Some(non_nullish), Some(_)) = self.split_nullish_type(target_prop_type)
+                    {
+                        non_nullish
+                    } else {
+                        target_prop_type_for_diagnostic
+                    }
                 } else {
-                    target_prop_type
+                    target_prop_type_for_diagnostic
                 };
                 // For method declarations, emit TS2322 directly to avoid triggering
                 // name resolution on the method name identifier (which would cause
@@ -1222,12 +1230,20 @@ impl<'a> CheckerState<'a> {
                         .arena
                         .get(prop_value_idx)
                         .is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16);
-                    self.error_type_not_assignable_at_with_anchor_elaboration_inner(
-                        source_prop_type_for_diagnostic,
-                        target_prop_type_for_diagnostic,
-                        prop_name_idx,
-                        value_is_this_keyword,
-                    );
+                    if target_prop_type != target_prop_type_for_diagnostic {
+                        self.error_type_not_assignable_at_with_display_types(
+                            source_prop_type_for_diagnostic,
+                            target_prop_type_for_diagnostic,
+                            prop_name_idx,
+                        );
+                    } else {
+                        self.error_type_not_assignable_at_with_anchor_elaboration_inner(
+                            source_prop_type_for_diagnostic,
+                            target_prop_type_for_diagnostic,
+                            prop_name_idx,
+                            value_is_this_keyword,
+                        );
+                    }
                 }
                 elaborated = true;
             }
