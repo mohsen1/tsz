@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-04-10T16:04:11Z",
-  "git_sha": "4271dad889f68d3c39eaa62ba22bdceaef7f66ce",
+  "timestamp": "2026-04-10T17:06:55Z",
+  "git_sha": "a4576facbe572b0fddd39c76492e0e739ebedf0b",
   "summary": {
     "total_tests": 12581,
-    "passed": 11812,
-    "failed": 769,
+    "passed": 11816,
+    "failed": 765,
     "pass_rate": 93.9
   },
   "areas_by_pass_rate": [
@@ -109,9 +109,9 @@
     {
       "area": "jsx",
       "total": 194,
-      "passed": 162,
-      "failed": 32,
-      "pass_rate": 83.51
+      "passed": 163,
+      "failed": 31,
+      "pass_rate": 84.02
     },
     {
       "area": "types/contextualTypes",
@@ -132,13 +132,6 @@
       "total": 63,
       "passed": 54,
       "failed": 9,
-      "pass_rate": 85.71
-    },
-    {
-      "area": "types/primitives",
-      "total": 35,
-      "passed": 30,
-      "failed": 5,
       "pass_rate": 85.71
     },
     {
@@ -217,6 +210,13 @@
       "passed": 15,
       "failed": 2,
       "pass_rate": 88.24
+    },
+    {
+      "area": "types/primitives",
+      "total": 35,
+      "passed": 31,
+      "failed": 4,
+      "pass_rate": 88.57
     },
     {
       "area": "types/typeParameters",
@@ -319,9 +319,9 @@
     {
       "area": "compiler",
       "total": 6519,
-      "passed": 6169,
-      "failed": 350,
-      "pass_rate": 94.63
+      "passed": 6171,
+      "failed": 348,
+      "pass_rate": 94.66
     },
     {
       "area": "expressions/unaryOperators",
@@ -1540,7 +1540,7 @@
     "false_positive": 13,
     "all_missing": 45,
     "wrong_code": 138,
-    "fingerprint_only": 548,
+    "fingerprint_only": 544,
     "close_to_passing": 72
   }
 }
