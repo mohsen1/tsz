@@ -527,12 +527,38 @@ impl<'a> TypeFormatter<'a> {
                         Cow::Owned(format!("Ref({})", sym.0))
                     }
                 } else {
-                    let formatted = self.format(app.base);
-                    trace!(
-                        base_formatted = %formatted,
-                        "Application base formatted (not Lazy)"
-                    );
-                    formatted
+                    // Check if the base type has a named definition (e.g., an
+                    // interface or class body that was registered in the def store).
+                    // If so, use just the name — the Application's own args replace
+                    // the type parameters.  Without this guard, `self.format(app.base)`
+                    // would render `Name<TypeParamNames>` and the Application would
+                    // then append `<Args>`, producing `Name<T, U><actual, args>`.
+                    if let Some(def_store) = self.def_store
+                        && let Some(def_id) = def_store.find_def_for_type(app.base)
+                        && let Some(def) = def_store.get(def_id)
+                    {
+                        let name = self.format_def_name(&def);
+                        trace!(
+                            base_formatted = %name,
+                            "Application base resolved via def_store (no type params)"
+                        );
+                        use crate::def::DefKind;
+                        if matches!(
+                            def.kind,
+                            DefKind::Enum | DefKind::Namespace | DefKind::ClassConstructor
+                        ) {
+                            Cow::Owned(format!("typeof {name}"))
+                        } else {
+                            Cow::Owned(name)
+                        }
+                    } else {
+                        let formatted = self.format(app.base);
+                        trace!(
+                            base_formatted = %formatted,
+                            "Application base formatted (not Lazy)"
+                        );
+                        formatted
+                    }
                 };
 
                 // TSC shorthand: Array<T> -> T[], ReadonlyArray<T> -> readonly T[]

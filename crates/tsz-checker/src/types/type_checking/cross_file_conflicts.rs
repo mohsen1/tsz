@@ -1432,10 +1432,10 @@ impl<'a> CheckerState<'a> {
                 {
                     continue;
                 }
-                // Namespace declarations named `undefined` only get TS2397 in
-                // script files. In module files they are module-scoped and don't
-                // conflict with the global `undefined`.
-                if node.kind == syntax_kind_ext::MODULE_DECLARATION && is_external_module {
+                // In module files, `namespace undefined` doesn't conflict with the
+                // global `undefined` — it's module-scoped.  tsc only emits TS2397
+                // for namespace `undefined` in global (non-module) scripts.
+                if is_external_module && node.kind == syntax_kind_ext::MODULE_DECLARATION {
                     continue;
                 }
                 let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);

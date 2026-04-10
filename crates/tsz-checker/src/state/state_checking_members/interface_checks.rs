@@ -769,7 +769,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn should_check_late_bound_class_property_name(&self, name_idx: NodeIndex) -> bool {
+    fn should_check_late_bound_class_property_name(&mut self, name_idx: NodeIndex) -> bool {
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
             return false;
         };
@@ -779,10 +779,45 @@ impl<'a> CheckerState<'a> {
         let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
             return false;
         };
-        // Only check const symbol identifiers for duplicates.
-        // Zero-arg call expressions like `[foo()]` and `[Symbol()]` are NOT
-        // checked by tsc because each call could return a different value.
+        // For zero-arg call expressions, check for duplicates UNLESS the call
+        // is a bare `Symbol()` constructor (creates a new unique symbol each
+        // time → never a duplicate).  Other call expressions like
+        // `[getUniqueSymbol0()]` might return the same unique symbol on every
+        // call, so tsc does report TS2300 for those.
+        if self.is_zero_arg_call_like_expr(computed.expression)
+            && !self.is_bare_symbol_constructor_call(computed.expression)
+            && self
+                .get_simple_computed_name_expr_text(computed.expression)
+                .is_some()
+        {
+            return true;
+        }
+        // Const identifiers referencing Symbol.for() values
+        // (e.g., `const x = Symbol.for(""); class C { [x]: T; [x]: U; }`).
         self.is_const_symbol_for_identifier_expr(computed.expression)
+    }
+
+    /// Returns `true` if the expression is a bare `Symbol()` call (not
+    /// `Symbol.for(...)` or `Symbol.xxx`).  Each `Symbol()` call creates a
+    /// new unique symbol, so two `[Symbol()]` properties are never duplicates.
+    fn is_bare_symbol_constructor_call(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = self.ctx.arena.get_call_expr(expr_node) else {
+            return false;
+        };
+        let Some(callee_node) = self.ctx.arena.get(call.expression) else {
+            return false;
+        };
+        // Bare `Symbol()` — the callee is just the `Symbol` identifier
+        if let Some(ident) = self.ctx.arena.get_identifier(callee_node) {
+            return ident.escaped_text.as_str() == "Symbol";
+        }
+        false
     }
 
     fn is_symbol_for_call_expression(&self, expr_idx: NodeIndex) -> bool {
