@@ -99,8 +99,19 @@ impl<'a> TypeFormatter<'a> {
         let readonly = if prop.readonly { "readonly " } else { "" };
         let raw_name = self.atom(prop.name);
         let name = if needs_property_name_quotes(&raw_name) {
-            let escaped = raw_name.replace('\\', "\\\\").replace('"', "\\\"");
-            format!("\"{escaped}\"")
+            // tsc uses double quotes for JSX-specific property names
+            // (namespace-prefixed like "ns:attr" and data attributes like "data-foo")
+            // but single quotes for all other quoted property names.
+            let use_double = raw_name.contains(':')
+                || raw_name.starts_with("data-")
+                || raw_name.chars().next().is_some_and(|c| c.is_ascii_digit());
+            if use_double {
+                let escaped = raw_name.replace('\\', "\\\\").replace('"', "\\\"");
+                format!("\"{escaped}\"")
+            } else {
+                let escaped = raw_name.replace('\\', "\\\\").replace('\'', "\\'");
+                format!("'{escaped}'")
+            }
         } else {
             raw_name.to_string()
         };
