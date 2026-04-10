@@ -110,9 +110,6 @@ impl<'a> CheckerState<'a> {
         // Other types (class expressions, interfaces) keep their display properties
         // to preserve named type display (e.g., `typeof A`).
         // Restrict this to actual anonymous object/object-with-index types.
-        // Intersections are excluded: tsc's widening behavior in intersection
-        // contexts depends on the target type (literal targets preserve literals,
-        // non-literal targets widen). This context is not available here.
         let is_anonymous_object_type =
             crate::query_boundaries::dispatch::is_object_like_type(self.ctx.types, display_ty)
                 && !tsz_solver::type_queries::is_intersection_type(self.ctx.types, display_ty)
@@ -120,7 +117,14 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|shape| shape.symbol.is_none());
         let is_fresh_object_literal =
             self.ctx.types.get_display_properties(display_ty).is_some() && is_anonymous_object_type;
-        let mut formatted = if is_fresh_object_literal {
+        // For intersection types containing fresh object literals, widen the
+        // display properties. tsc widens literal values in intersection contexts
+        // for error messages (e.g., `{ fooProp: string; } & Bar` not
+        // `{ fooProp: "frizzlebizzle"; } & Bar`).
+        let is_intersection_with_fresh_object =
+            tsz_solver::type_queries::is_intersection_type(self.ctx.types, display_ty)
+                && self.ctx.types.get_display_properties(display_ty).is_some();
+        let mut formatted = if is_fresh_object_literal || is_intersection_with_fresh_object {
             self.format_type_diagnostic_widened(display_ty)
         } else {
             self.format_type_diagnostic(display_ty)
