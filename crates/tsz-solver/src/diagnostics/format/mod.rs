@@ -363,7 +363,13 @@ impl<'a> TypeFormatter<'a> {
                             .collect();
                         return format!("{}<{}>", name, params.join(", ")).into();
                     }
-                    return name.into();
+                    // For non-generic type aliases that wrap a generic application
+                    // (e.g. `type Foo1 = Id<{...}>`), tsc shows the inner application
+                    // form, not the outer alias name.  Fall through to the
+                    // display_alias handler below when a display_alias exists.
+                    if self.interner.get_display_alias(type_id).is_none() {
+                        return name.into();
+                    }
                 }
             }
         }
