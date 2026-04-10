@@ -1426,11 +1426,16 @@ impl<'a> CheckerState<'a> {
                 };
                 // Skip pure type declarations and class declarations.
                 // Interfaces get TS2427, classes get TS2414, type aliases are type-only.
-                // Namespace declarations DO get TS2397 (tsc emits it for `namespace undefined`).
                 if node.kind == syntax_kind_ext::INTERFACE_DECLARATION
                     || node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
                     || node.kind == syntax_kind_ext::CLASS_DECLARATION
                 {
+                    continue;
+                }
+                // Namespace declarations named `undefined` only get TS2397 in
+                // script files. In module files they are module-scoped and don't
+                // conflict with the global `undefined`.
+                if node.kind == syntax_kind_ext::MODULE_DECLARATION && is_external_module {
                     continue;
                 }
                 let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
