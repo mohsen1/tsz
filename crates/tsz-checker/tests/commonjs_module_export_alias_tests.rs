@@ -656,7 +656,10 @@ var b = mod.B;
         "./mod",
     );
 
-    let ts2339: Vec<_> = diagnostics.iter().filter(|(code, _)| *code == 2339).collect();
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
     assert!(
         ts2339.is_empty(),
         "Expected no TS2339 for require() binding beating ambient global d.ts, got: {ts2339:#?}\nAll diagnostics: {diagnostics:#?}"
