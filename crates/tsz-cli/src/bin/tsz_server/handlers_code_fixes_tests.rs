@@ -44,8 +44,7 @@ fn make_server() -> Server {
 fn get_code_fixes_jsdoc_infer_placeholders_match_fourslash_order_16() {
     let mut server = make_server();
     let file = "/annotateWithTypeFromJSDoc16.ts";
-    let content =
-        "/** @type {function(*, ...number, ...boolean): void} */\nvar x = (x, ys, ...zs) => { x; ys; zs; };\n";
+    let content = "/** @type {function(*, ...number, ...boolean): void} */\nvar x = (x, ys, ...zs) => { x; ys; zs; };\n";
     let annotate_index_zero_based = 3usize;
 
     server
