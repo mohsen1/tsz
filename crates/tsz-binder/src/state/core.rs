@@ -547,6 +547,18 @@ impl BinderState {
             return false;
         };
 
+        // .mts and .mjs files are always ES modules; .cts and .cjs files are
+        // always CommonJS modules.  Both are module-scoped per the TypeScript
+        // spec, regardless of their content.
+        let fname = &source.file_name;
+        if fname.ends_with(".mts")
+            || fname.ends_with(".mjs")
+            || fname.ends_with(".cts")
+            || fname.ends_with(".cjs")
+        {
+            return true;
+        }
+
         for &stmt_idx in &source.statements.nodes {
             if stmt_idx.is_none() {
                 continue;
