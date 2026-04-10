@@ -87,6 +87,13 @@ fn type_alias_undefined_no_ts2397() {
 }
 
 #[test]
+fn namespace_undefined_emits_ts2397() {
+    // `namespace undefined { ... }` conflicts with built-in `undefined`
+    let source = r#"namespace undefined { export var x = 42; }"#;
+    assert!(has_error_with_code(source, 2397));
+}
+
+#[test]
 fn module_scoped_global_this_no_ts2397() {
     // In an external module (has import/export), `globalThis` declarations
     // should NOT trigger TS2397 because they're module-scoped.

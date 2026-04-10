@@ -1424,13 +1424,12 @@ impl<'a> CheckerState<'a> {
                 let Some(node) = self.ctx.arena.get(decl_idx) else {
                     continue;
                 };
-                // Skip pure type declarations, class declarations, and namespace
-                // declarations. `namespace undefined` is allowed by tsc; TS2397 for
-                // `undefined` is for value declarations (var/let/const/function).
+                // Skip pure type declarations and class declarations.
+                // Interfaces get TS2427, classes get TS2414, type aliases are type-only.
+                // Namespace declarations DO get TS2397 (tsc emits it for `namespace undefined`).
                 if node.kind == syntax_kind_ext::INTERFACE_DECLARATION
                     || node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
                     || node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    || node.kind == syntax_kind_ext::MODULE_DECLARATION
                 {
                     continue;
                 }
