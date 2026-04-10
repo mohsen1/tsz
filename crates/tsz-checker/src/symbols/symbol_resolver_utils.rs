@@ -164,6 +164,39 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Search lib symbols for a function-scoped (var) value symbol with the given name.
+    /// Handles block-scoped local shadowing a lib global var (e.g. `const Symbol = globalThis.Symbol`).
+    pub(crate) fn resolve_lib_global_var_symbol(&self, name: &str) -> Option<SymbolId> {
+        if self.ctx.binder.lib_symbols_are_merged() {
+            for &lib_id in &self.ctx.binder.lib_symbol_ids {
+                if let Some(lib_sym) = self.ctx.binder.get_symbol(lib_id) {
+                    if lib_sym.escaped_name == name
+                        && (lib_sym.flags & symbol_flags::VALUE) != 0
+                        && ((lib_sym.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
+                            || (lib_sym.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0)
+                    {
+                        return Some(lib_id);
+                    }
+                }
+            }
+        } else {
+            let lib_binders = self.get_lib_binders();
+            for lib_binder in lib_binders.iter() {
+                if let Some(sym_id) = lib_binder.file_locals.get(name) {
+                    if let Some(lib_sym) = lib_binder.get_symbol(sym_id) {
+                        if (lib_sym.flags & symbol_flags::VALUE) != 0
+                            && ((lib_sym.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
+                                || (lib_sym.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0)
+                        {
+                            return Some(sym_id);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
     // =========================================================================
     // Heritage Symbol Resolution
     // =========================================================================
