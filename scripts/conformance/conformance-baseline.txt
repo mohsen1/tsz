@@ -33,7 +33,6 @@ FAIL TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingMo
 FAIL TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules2.ts | expected:[] actual:[TS2536,TS2883]
 FAIL TypeScript/tests/cases/compiler/decoratorMetadataNoLibIsolatedModulesTypes.ts
 FAIL TypeScript/tests/cases/compiler/decoratorUsedBeforeDeclaration.ts | expected:[TS2448,TS2450,TS2454,TS2729,TS7006] actual:[TS2448,TS2450,TS2454,TS2729,TS7006]
-FAIL TypeScript/tests/cases/compiler/decoratorsOnComputedProperties.ts | expected:[TS1166,TS1206] actual:[TS1166,TS1206,TS2300]
 FAIL TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/deleteExpressionMustBeOptional_exactOptionalPropertyTypes.ts | expected:[TS2339,TS2790,TS5024] actual:[TS2339,TS2790,TS5024]
 FAIL TypeScript/tests/cases/compiler/destructuringAssignmentWithDefault2.ts | expected:[TS2322] actual:[TS2322]
@@ -2531,6 +2530,7 @@ PASS TypeScript/tests/cases/compiler/decoratorReferenceOnOtherProperty.ts
 PASS TypeScript/tests/cases/compiler/decoratorReferences.ts
 PASS TypeScript/tests/cases/compiler/decoratorWithNegativeLiteralTypeNoCrash.ts
 PASS TypeScript/tests/cases/compiler/decoratorWithUnderscoreMethod.ts
+PASS TypeScript/tests/cases/compiler/decoratorsOnComputedProperties.ts
 PASS TypeScript/tests/cases/compiler/decrementAndIncrementOperators.ts
 PASS TypeScript/tests/cases/compiler/deduplicateImportsInSystem.ts
 PASS TypeScript/tests/cases/compiler/deepComparisons.ts
@@ -4511,6 +4511,7 @@ PASS TypeScript/tests/cases/compiler/jsxNestedWithinTernaryParsesCorrectly.tsx
 PASS TypeScript/tests/cases/compiler/jsxPartialSpread.tsx
 PASS TypeScript/tests/cases/compiler/jsxPreserveWithJsInput.ts
 PASS TypeScript/tests/cases/compiler/jsxPropsAsIdentifierNames.tsx
+PASS TypeScript/tests/cases/compiler/jsxRuntimePragma.ts
 PASS TypeScript/tests/cases/compiler/jsxSpreadFirstUnionNoErrors.tsx
 PASS TypeScript/tests/cases/compiler/jsxSpreadTag.ts
 PASS TypeScript/tests/cases/compiler/jsxViaImport.2.tsx
@@ -9954,7 +9955,6 @@ PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsPackage
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsParameterTagReusesInputNodeInEmit1.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsParameterTagReusesInputNodeInEmit2.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsPrivateFields01.ts
-PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReactComponents.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReexportAliases.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReexportAliasesEsModuleInterop.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReexportedCjsAlias.ts
