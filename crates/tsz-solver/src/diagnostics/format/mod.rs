@@ -684,6 +684,13 @@ impl<'a> TypeFormatter<'a> {
                         .unwrap_or(module_specifier);
                     return format!("typeof import(\"{display_name}\")").into();
                 }
+                if let Some(arena) = self.symbol_arena
+                    && let Some(symbol) = arena.get(SymbolId(sym.0))
+                    && symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
+                    && let Some(name) = self.format_symbol_name(SymbolId(sym.0))
+                {
+                    return name.into();
+                }
                 let name = if let Some(name) = self.resolve_symbol_ref_name(*sym) {
                     name
                 } else {
