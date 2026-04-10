@@ -285,7 +285,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let Some(name) = self.get_property_name_resolved(accessor.name) else {
+            // Use get_property_name (not get_property_name_resolved) to avoid
+            // pairing getter/setter on non-literal computed names like [0 + 1].
+            // tsc only pairs accessors whose names are syntactically resolvable.
+            let Some(name) = self.get_property_name(accessor.name) else {
                 continue;
             };
 
@@ -384,7 +387,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let Some(name) = self.get_property_name_resolved(accessor.name) else {
+            // Use get_property_name (not get_property_name_resolved) to avoid
+            // pairing getter/setter on non-literal computed names like [0 + 1].
+            // tsc only pairs accessors whose names are syntactically resolvable
+            // (identifiers, string/number literals, well-known symbols).
+            let Some(name) = self.get_property_name(accessor.name) else {
                 continue;
             };
 
