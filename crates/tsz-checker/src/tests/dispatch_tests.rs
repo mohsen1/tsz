@@ -122,6 +122,38 @@ function f<T>() {
 }
 
 #[test]
+fn ts2352_typeof_instantiation_expands_constructor_call_intersection() {
+    let diags = check_source_diagnostics(
+        r#"
+class ErrImpl<E> {
+    e!: E;
+}
+
+declare const Err: typeof ErrImpl & (<T>() => T);
+
+type ErrAlias<U> = typeof Err<U>;
+
+declare const e: ErrAlias<number>;
+e as ErrAlias<string>;
+"#,
+    );
+
+    let relevant: Vec<_> = diags.iter().filter(|d| d.code != 2318).collect();
+    let matching: Vec<_> = relevant.iter().filter(|d| d.code == 2352).collect();
+    assert_eq!(matching.len(), 1, "Expected one TS2352, got: {relevant:?}");
+
+    let message = &matching[0].message_text;
+    assert!(
+        message.contains("{ new (): ErrImpl<number>; prototype: ErrImpl<any>; } & (() => number)"),
+        "Expected TS2352 source display to expand instantiated typeof intersection, got: {message:?}"
+    );
+    assert!(
+        message.contains("{ new (): ErrImpl<string>; prototype: ErrImpl<any>; } & (() => string)"),
+        "Expected TS2352 target display to expand instantiated typeof intersection, got: {message:?}"
+    );
+}
+
+#[test]
 fn ts2352_array_assertion_anchors_first_excess_property() {
     let source = r#"
 <{ id: number; }[]>[{ foo: "s" }];
