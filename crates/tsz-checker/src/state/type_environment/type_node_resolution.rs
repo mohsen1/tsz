@@ -803,6 +803,32 @@ impl<'a> CheckerState<'a> {
                 if symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0
                     && symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE == 0
                 {
+                    // Before erroring, check if a lib `var` declaration exists.
+                    // E.g. `const Symbol = globalThis.Symbol` — the local const shadows
+                    // the lib `declare var Symbol: SymbolConstructor`, but globalThis
+                    // should still resolve to the lib var.
+                    if let Some(lib_sym_id) = self.resolve_lib_global_var_symbol(name) {
+                        if let Some(lib_sym) = self.ctx.binder.get_symbol(lib_sym_id).cloned() {
+                            for &decl_idx in &lib_sym.declarations {
+                                if decl_idx.is_none() {
+                                    continue;
+                                }
+                                let vt =
+                                    self.type_of_value_declaration_for_symbol(lib_sym_id, decl_idx);
+                                if vt != TypeId::UNKNOWN && vt != TypeId::ERROR {
+                                    return self.augment_js_global_value_type_with_expandos(
+                                        name, lib_sym_id, vt,
+                                    );
+                                }
+                            }
+                            let vt = self.get_type_of_symbol(lib_sym_id);
+                            if vt != TypeId::UNKNOWN && vt != TypeId::ERROR {
+                                return self.augment_js_global_value_type_with_expandos(
+                                    name, lib_sym_id, vt,
+                                );
+                            }
+                        }
+                    }
                     self.error_property_not_exist_on_global_this(name, error_node, base_display);
                     return TypeId::ERROR;
                 }
