@@ -259,6 +259,73 @@ f2({ toString: (s: string) => s });
 }
 
 #[test]
+fn ts2345_generic_call_parameter_display_preserves_instantiated_alias_name() {
+    let source = r#"
+namespace Underscore {
+    export interface Iterator<T, U> {
+        (value: T, index: any, list: any): U;
+    }
+
+    export interface Static {
+        all<T>(list: T[], iterator?: Iterator<T, boolean>, context?: any): boolean;
+        identity<T>(value: T): T;
+    }
+}
+
+declare var _: Underscore.Static;
+_.all([true, 1, null, 'yes'], _.identity);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text
+            .contains("parameter of type 'Iterator<string | number | boolean | null, boolean>'"),
+        "Expected instantiated alias name in parameter display, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("parameter of type '(value:"),
+        "Parameter display should not expand the iterator alias, got: {diag:?}"
+    );
+}
+
+#[test]
+fn ts2322_optional_function_property_target_display_omits_synthetic_undefined() {
+    let source = r#"
+interface Stuff {
+    a?: () => Promise<number[]>;
+    b: () => Promise<string>;
+}
+
+function foo(): Stuff | string {
+    return {
+        a() { return [123] },
+        b: () => "hello",
+    }
+}
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322");
+
+    assert!(
+        diag.message_text.contains("type '() => error<number[]>'"),
+        "Expected optional property diagnostic to keep the non-nullish callable target, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("| undefined"),
+        "Optional property mismatch should not inject synthetic undefined, got: {diag:?}"
+    );
+}
+
+#[test]
 fn object_literal_call_argument_uses_shared_epc_rules_for_generic_intersections() {
     let source = r#"
 declare function take<T>(value: { nested: T & { a: number } }): void;

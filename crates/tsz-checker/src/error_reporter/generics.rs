@@ -244,6 +244,10 @@ impl<'a> CheckerState<'a> {
         } else {
             type_id
         };
+        if let Some(display) = self.try_format_constructor_call_intersection_display(type_id) {
+            return Some(display);
+        }
+
         let evaluated = self.evaluate_type_with_env(type_id);
         self.try_format_constructor_call_intersection_display(evaluated)
     }
@@ -265,8 +269,23 @@ impl<'a> CheckerState<'a> {
             type_id
         };
         let evaluated = self.evaluate_type_with_env(type_id);
-        if tsz_solver::type_queries::get_type_application(self.ctx.types, type_id).is_some() {
-            return self.format_type_for_assignability_message(type_id);
+        if let Some(alias_origin) = self.ctx.types.get_display_alias(evaluated)
+            && let Some(app) =
+                tsz_solver::type_queries::get_type_application(self.ctx.types, alias_origin)
+            && let Some(def_id) =
+                tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, app.base)
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+            && def.kind == tsz_solver::def::DefKind::TypeAlias
+            && let Some(body) = def.body
+            && def.type_params.len() == app.args.len()
+        {
+            let subst = TypeSubstitution::from_args(self.ctx.types, &def.type_params, &app.args);
+            let instantiated_body = instantiate_type(self.ctx.types, body, &subst);
+            if let Some(display) =
+                self.try_format_constructor_call_intersection_display(instantiated_body)
+            {
+                return display;
+            }
         }
         self.format_type_for_assignability_message(evaluated)
     }
@@ -467,7 +486,11 @@ impl<'a> CheckerState<'a> {
             self.try_format_type_assertion_overlap_special_display(target_type, false);
         let source_str = self.format_type_assertion_overlap_display(source_type, true);
         let target_str = self.format_type_assertion_overlap_display(target_type, false);
-        let (source_str, target_str) = if source_special.is_some() || target_special.is_some() {
+        let (source_str, target_str) = if source_special.is_some()
+            || target_special.is_some()
+            || tsz_solver::type_queries::get_type_application(self.ctx.types, source_type).is_some()
+            || tsz_solver::type_queries::get_type_application(self.ctx.types, target_type).is_some()
+        {
             (source_str, target_str)
         } else if let Some((declared_source, declared_target)) =
             self.assertion_declared_type_texts(idx)
