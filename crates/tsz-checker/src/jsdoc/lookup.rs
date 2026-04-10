@@ -658,12 +658,13 @@ impl<'a> CheckerState<'a> {
             if node.kind == syntax_kind_ext::CLASS_DECLARATION
                 || node.kind == syntax_kind_ext::CLASS_EXPRESSION
             {
-                if let Some(jsdoc) = self.try_leading_jsdoc(comments, node.pos, source_text)
-                    && (Self::jsdoc_contains_tag(&jsdoc, "augments")
-                        || Self::jsdoc_contains_tag(&jsdoc, "extends"))
-                {
-                    handled_comment_positions.push(node.pos);
-                }
+                // Always mark class declarations as handled so that any
+                // preceding `@extends`/`@augments` comment — even one
+                // separated from the class by blank lines or intermediate
+                // JSDoc comments — is not reported as orphaned.  tsc
+                // considers `@extends` on a class valid (possibly redundant)
+                // and never emits TS8022 for it.
+                handled_comment_positions.push(node.pos);
                 continue;
             }
             let Some(jsdoc) = self.try_leading_jsdoc(comments, node.pos, source_text) else {
