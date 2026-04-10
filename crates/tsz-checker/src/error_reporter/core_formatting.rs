@@ -127,6 +127,9 @@ impl<'a> CheckerState<'a> {
         };
 
         // Preserve generic instantiations for nominal class instance names when possible.
+        // First check if the solver has a display_alias (Application type) for the
+        // original type or the display type. If so, format that directly instead
+        // of guessing type args from properties.
         if !formatted.contains('<')
             && let Some(shape) =
                 tsz_solver::type_queries::get_object_shape(self.ctx.types, display_ty)
@@ -135,9 +138,26 @@ impl<'a> CheckerState<'a> {
         {
             let symbol_name = symbol.escaped_name.as_str();
             if formatted == symbol_name {
-                let def_id = self.ctx.get_or_create_def_id(sym_id);
-                let type_param_count =
-                    if let Some(type_params) = self.ctx.get_def_type_params(def_id) {
+                // Prefer display_alias from the solver — it preserves the original
+                // Application type (e.g. `A<number>`) with correct type arguments.
+                let alias_type = self
+                    .ctx
+                    .types
+                    .get_display_alias(display_ty)
+                    .or_else(|| self.ctx.types.get_display_alias(ty));
+                if let Some(alias) = alias_type {
+                    let alias_fmt = self.format_type_diagnostic(alias);
+                    if alias_fmt.starts_with(symbol_name) && alias_fmt.contains('<') {
+                        formatted = alias_fmt;
+                    }
+                }
+
+                // If display_alias didn't provide type args, try heuristic recovery.
+                if !formatted.contains('<') {
+                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    let type_param_count = if let Some(type_params) =
+                        self.ctx.get_def_type_params(def_id)
+                    {
                         type_params.len()
                     } else {
                         symbol
@@ -150,45 +170,119 @@ impl<'a> CheckerState<'a> {
                             })
                             .unwrap_or(0)
                     };
-                if type_param_count > 0 && shape.properties.len() >= type_param_count {
-                    // Recover instantiation args from actual value-carrying members first.
-                    // Methods tend to encode `T` as `() => T`, which produces noisy
-                    // displays like `C<() => string>` instead of `C<string>`.
-                    let build_candidates = |predicate: fn(&tsz_solver::PropertyInfo) -> bool| {
-                        let mut candidates: Vec<(String, TypeId)> = shape
-                            .properties
-                            .iter()
-                            .filter(|prop| predicate(prop))
-                            .filter_map(|prop| {
-                                let name = self.ctx.types.resolve_atom_ref(prop.name).to_string();
-                                if name.starts_with("__private_brand_") {
-                                    None
-                                } else {
-                                    Some((name, prop.type_id))
+                    if type_param_count > 0 && shape.properties.len() >= type_param_count {
+                        // Recover instantiation args from actual value-carrying members.
+                        // For methods, use return type (not the full function signature)
+                        // since method return types often directly reflect type params.
+                        // E.g. `compareTo(other: T): T` with T=number → return type is `number`.
+                        let resolve_candidate_type = |prop: &tsz_solver::PropertyInfo| -> TypeId {
+                            if prop.is_method {
+                                // For methods, extract a representative type instead of
+                                // the full function signature.
+                                // Strategy: prefer return type, but if it's trivial
+                                // (void/never/any/unknown/undefined), use the first
+                                // non-trivial parameter type. This handles both
+                                // `compareTo(other: T): T` → return type `number`, and
+                                // `foo(a: T): void` → param type `{ a: string }`.
+                                let extract_from_shape =
+                                    |params: &[tsz_solver::ParamInfo],
+                                     return_type: TypeId|
+                                     -> TypeId {
+                                        let is_trivial = matches!(
+                                            return_type,
+                                            TypeId::VOID
+                                                | TypeId::NEVER
+                                                | TypeId::ANY
+                                                | TypeId::UNKNOWN
+                                                | TypeId::UNDEFINED
+                                                | TypeId::NULL
+                                        );
+                                        if !is_trivial {
+                                            return return_type;
+                                        }
+                                        // Return type is trivial — use first substantive param
+                                        for param in params {
+                                            if !matches!(
+                                                param.type_id,
+                                                TypeId::VOID
+                                                    | TypeId::NEVER
+                                                    | TypeId::ANY
+                                                    | TypeId::UNKNOWN
+                                                    | TypeId::UNDEFINED
+                                                    | TypeId::NULL
+                                            ) {
+                                                return param.type_id;
+                                            }
+                                        }
+                                        return_type
+                                    };
+                                if let Some(fn_shape) = tsz_solver::type_queries::get_function_shape(
+                                    self.ctx.types,
+                                    prop.type_id,
+                                ) {
+                                    return extract_from_shape(
+                                        &fn_shape.params,
+                                        fn_shape.return_type,
+                                    );
                                 }
-                            })
+                                if let Some(callable) = tsz_solver::type_queries::get_callable_shape(
+                                    self.ctx.types,
+                                    prop.type_id,
+                                ) && callable.call_signatures.len() == 1
+                                {
+                                    let sig = &callable.call_signatures[0];
+                                    return extract_from_shape(&sig.params, sig.return_type);
+                                }
+                            }
+                            prop.type_id
+                        };
+                        let build_candidates =
+                            |predicate: fn(&tsz_solver::PropertyInfo) -> bool,
+                             types: &dyn tsz_solver::TypeDatabase| {
+                                let mut candidates: Vec<(String, TypeId)> = shape
+                                    .properties
+                                    .iter()
+                                    .filter(|prop| predicate(prop))
+                                    .filter_map(|prop| {
+                                        let name = types.resolve_atom_ref(prop.name).to_string();
+                                        if name.starts_with("__private_brand_") {
+                                            None
+                                        } else {
+                                            Some((name, resolve_candidate_type(prop)))
+                                        }
+                                    })
+                                    .collect();
+                                candidates.sort_by(|a, b| a.0.cmp(&b.0));
+                                candidates
+                            };
+                        let mut candidates = build_candidates(
+                            |prop| !prop.is_method && !prop.is_class_prototype,
+                            self.ctx.types.as_type_database(),
+                        );
+                        if candidates.len() < type_param_count {
+                            candidates = build_candidates(
+                                |prop| !prop.is_method,
+                                self.ctx.types.as_type_database(),
+                            );
+                        }
+                        if candidates.len() < type_param_count {
+                            candidates = build_candidates(
+                                |prop| !prop.is_class_prototype,
+                                self.ctx.types.as_type_database(),
+                            );
+                        }
+                        if candidates.len() < type_param_count {
+                            candidates =
+                                build_candidates(|_| true, self.ctx.types.as_type_database());
+                        }
+                        let args: Vec<String> = candidates
+                            .iter()
+                            .take(type_param_count)
+                            .map(|(_, type_id)| self.format_type_diagnostic(*type_id))
                             .collect();
-                        candidates.sort_by(|a, b| a.0.cmp(&b.0));
-                        candidates
-                    };
-                    let mut candidates =
-                        build_candidates(|prop| !prop.is_method && !prop.is_class_prototype);
-                    if candidates.len() < type_param_count {
-                        candidates = build_candidates(|prop| !prop.is_method);
-                    }
-                    if candidates.len() < type_param_count {
-                        candidates = build_candidates(|prop| !prop.is_class_prototype);
-                    }
-                    if candidates.len() < type_param_count {
-                        candidates = build_candidates(|_| true);
-                    }
-                    let args: Vec<String> = candidates
-                        .iter()
-                        .take(type_param_count)
-                        .map(|(_, type_id)| self.format_type_diagnostic(*type_id))
-                        .collect();
-                    if args.len() == type_param_count {
-                        formatted = format!("{}<{}>", symbol_name, args.join(", "));
+                        if args.len() == type_param_count {
+                            formatted = format!("{}<{}>", symbol_name, args.join(", "));
+                        }
                     }
                 }
             }
