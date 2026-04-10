@@ -189,10 +189,10 @@ if ! $QUICK && ! $SKIP_LSP; then
     echo ""
     echo -e "${CYAN}━━━ [fourslash/LSP] ━━━${RESET}"
     FOURSLASH_JSON="$(mktemp "${TMPDIR:-/tmp}/tsz-fourslash-verify.XXXXXX.json")"
-    echo -e "${CYAN}→${RESET}  scripts/safe-run.sh ./scripts/fourslash/run-fourslash.sh --max=50 --json-out=$FOURSLASH_JSON"
+    echo -e "${CYAN}→${RESET}  scripts/safe-run.sh ./scripts/fourslash/run-fourslash.sh --max=50 --workers=8 --json-out=$FOURSLASH_JSON"
     echo ""
 
-    scripts/safe-run.sh ./scripts/fourslash/run-fourslash.sh --max=50 --json-out="$FOURSLASH_JSON" || true
+    scripts/safe-run.sh ./scripts/fourslash/run-fourslash.sh --max=50 --workers=8 --json-out="$FOURSLASH_JSON" || true
 
     if [[ ! -f "$FOURSLASH_JSON" ]]; then
         echo -e "${RED}✗${RESET}  fourslash/LSP — FAILED: no JSON summary written"
