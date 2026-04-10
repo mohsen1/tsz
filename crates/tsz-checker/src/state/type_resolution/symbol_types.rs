@@ -195,8 +195,19 @@ impl<'a> CheckerState<'a> {
                         if prefer_cross_file_interface {
                             // Cross-file SymbolId collisions can leave a stale local
                             // cache entry for this symbol. Refresh the symbol cache
-                            // with the delegated interface body.
-                            self.ctx.symbol_types.insert(sym_id, structural_type);
+                            // with the delegated interface body — but only if the
+                            // cache doesn't already have a valid (non-ERROR/UNKNOWN)
+                            // type from a prior `get_type_of_symbol` computation.
+                            // That earlier computation includes cross-file heritage
+                            // merging that the delegation may not reproduce, so
+                            // overwriting it would lose merged members.
+                            let should_overwrite =
+                                self.ctx.symbol_types.get(&sym_id).is_none_or(|&cached| {
+                                    cached == TypeId::ERROR || cached == TypeId::UNKNOWN
+                                });
+                            if should_overwrite {
+                                self.ctx.symbol_types.insert(sym_id, structural_type);
+                            }
                         }
                         // Only register if not already present in type_env
                         let needs_registration = self
