@@ -853,14 +853,18 @@ impl<'a> CheckerState<'a> {
             return source_display;
         }
 
-        let preserves_fresh_intersection_display =
-            [source, self.evaluate_type_for_assignability(source)]
-                .into_iter()
-                .any(|candidate| {
-                    tsz_solver::type_queries::is_intersection_type(self.ctx.types, candidate)
-                        && self.ctx.types.get_display_properties(candidate).is_some()
-                });
-        if preserves_fresh_intersection_display {
+        // For intersection types with display properties (fresh object literal in an
+        // intersection), check whether the *target* type has literal-typed properties.
+        // tsc preserves literal display when the target expects literals (e.g.
+        // `fooProp: "hello" | "world"`), but widens to primitives when the target
+        // has non-literal property types (e.g. `fooProp: boolean`).
+        let is_intersection_source = [source, self.evaluate_type_for_assignability(source)]
+            .into_iter()
+            .any(|candidate| {
+                tsz_solver::type_queries::is_intersection_type(self.ctx.types, candidate)
+                    && self.ctx.types.get_display_properties(candidate).is_some()
+            });
+        if is_intersection_source && self.target_has_literal_typed_properties(target) {
             return source_display;
         }
 
@@ -894,6 +898,31 @@ impl<'a> CheckerState<'a> {
         } else {
             widened_display
         }
+    }
+
+    /// Check if the target type has any properties whose types contain literal
+    /// types.  Used to decide whether to preserve source literal display in
+    /// intersection contexts: tsc shows `"frizzlebizzle"` when the target expects
+    /// `"hello" | "world"`, but widens to `string` when the target expects `boolean`.
+    fn target_has_literal_typed_properties(&mut self, target: TypeId) -> bool {
+        let target = self.evaluate_type_for_assignability(target);
+        let shape =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, target).or_else(|| {
+                // For intersection/union targets, check members.
+                crate::query_boundaries::common::intersection_members(self.ctx.types, target)
+                    .and_then(|members| {
+                        members.iter().find_map(|&m| {
+                            tsz_solver::type_queries::get_object_shape(self.ctx.types, m)
+                        })
+                    })
+            });
+        let Some(shape) = shape else {
+            return false;
+        };
+        shape
+            .properties
+            .iter()
+            .any(|prop| self.is_literal_sensitive_assignment_target(prop.type_id))
     }
 
     pub(super) fn display_has_member_literals_assignability(display: &str) -> bool {
