@@ -779,18 +779,31 @@ impl<'a> CheckerState<'a> {
         let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
             return false;
         };
-        // For zero-arg call expressions, check for duplicates UNLESS the call
-        // is a bare `Symbol()` constructor (creates a new unique symbol each
-        // time → never a duplicate).  Other call expressions like
-        // `[getUniqueSymbol0()]` might return the same unique symbol on every
-        // call, so tsc does report TS2300 for those.
+        // For zero-arg call expressions, check for duplicates ONLY when the
+        // call returns a unique symbol type. Other calls (e.g., `[foo()]`
+        // where `foo()` returns `string`) produce dynamic names that can't
+        // be statically checked for duplicates.
+        // Exception: bare `Symbol()` creates a new unique symbol each time,
+        // so duplicate `[Symbol()]` properties are never conflicts.
         if self.is_zero_arg_call_like_expr(computed.expression)
             && !self.is_bare_symbol_constructor_call(computed.expression)
             && self
                 .get_simple_computed_name_expr_text(computed.expression)
                 .is_some()
         {
-            return true;
+            // Only check duplicates if the call returns a symbol-like type
+            // (unique symbol, TypeQuery resolving to a symbol variable, etc.).
+            // Non-symbol return types (string, number, etc.) are dynamic and
+            // may produce different values on each call.
+            let call_type = self.get_type_of_node(computed.expression);
+            let db = self.ctx.types.as_type_database();
+            let is_symbol_like = tsz_solver::unique_symbol_ref(db, call_type).is_some()
+                || tsz_solver::type_query_symbol(db, call_type).is_some()
+                || call_type == tsz_solver::TypeId::SYMBOL;
+            if is_symbol_like {
+                return true;
+            }
+            return false;
         }
         // Const identifiers referencing Symbol.for() values
         // (e.g., `const x = Symbol.for(""); class C { [x]: T; [x]: U; }`).
