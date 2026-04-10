@@ -25,19 +25,24 @@ impl<'a> CheckerState<'a> {
         // identity). tsc preserves alias names like "ExoticAnimal" in error messages
         // instead of expanding to "CatDog | ManBearPig | Platypus".
         //
-        // Exception: when the alias body was computed (intersection reduction,
-        // conditional evaluation), tsc shows the expanded form instead. We detect
-        // this via the computed_alias_bodies set in the DefinitionStore.
+        // Exceptions:
+        // 1. Computed bodies (intersection reduction, conditional evaluation) → expand.
+        // 2. Aliases wrapping a generic application (e.g. `type Foo = Id<{...}>`) →
+        //    show the inner application.  Detected via display_alias on the evaluated result.
         if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, ty) {
             if let Some(def) = self.ctx.definition_store.get(def_id) {
                 if def.kind == tsz_solver::def::DefKind::TypeAlias && def.type_params.is_empty() {
-                    // Check if the body was computed — if so, evaluate and format
-                    // the expanded form instead of the alias name.
                     if let Some(body) = def.body {
                         if self.ctx.definition_store.is_computed_body(body) {
                             let evaluated = self.evaluate_type_with_env(ty);
                             return self.format_type_diagnostic(evaluated);
                         }
+                    }
+                    // Evaluate and check if the result wraps a generic application.
+                    // tsc shows `Id<{...}>` not `Foo` for `type Foo = Id<{...}>`.
+                    let evaluated = self.evaluate_type_with_env(ty);
+                    if evaluated != ty && self.ctx.types.get_display_alias(evaluated).is_some() {
+                        return self.format_type_for_assignability_message(evaluated);
                     }
                     let name = self.ctx.types.resolve_atom_ref(def.name);
                     return name.to_string();
@@ -105,9 +110,8 @@ impl<'a> CheckerState<'a> {
         // Other types (class expressions, interfaces) keep their display properties
         // to preserve named type display (e.g., `typeof A`).
         // Restrict this to actual anonymous object/object-with-index types.
-        // Intersections can also expose an anonymous structural shape via
-        // `get_object_shape`, but those should keep their display properties so
-        // diagnostics can render `{ fooProp: "frizzlebizzle"; } & Bar`.
+        // Intersections are excluded because tsc's widening behavior in intersection
+        // contexts depends on the contextual type (literal targets preserve literals).
         let is_anonymous_object_type =
             crate::query_boundaries::dispatch::is_object_like_type(self.ctx.types, display_ty)
                 && !tsz_solver::type_queries::is_intersection_type(self.ctx.types, display_ty)
