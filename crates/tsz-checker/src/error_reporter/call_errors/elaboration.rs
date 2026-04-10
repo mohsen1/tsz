@@ -1228,6 +1228,29 @@ impl<'a> CheckerState<'a> {
                         Some((body_type, expected_ret, func.body))
                     })();
                     if let Some((body_type, expected_ret, body_idx)) = elaborated_body {
+                        // When the body already has a TS2322 diagnostic (from
+                        // contextual return type checking in function_type.rs),
+                        // skip emitting a redundant parent-level error. tsc only
+                        // emits the leaf-level property errors, not the parent
+                        // "Type X is not assignable to Type Y" with "Types of
+                        // property are incompatible" related info.
+                        if let Some(body_node) = self.ctx.arena.get(body_idx) {
+                            if self.has_diagnostic_code_within_span(
+                                body_node.pos,
+                                body_node.end,
+                                tsz_common::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                            ) {
+                                elaborated = true;
+                                continue;
+                            }
+                        }
+                        // Try deeper elaboration into the body expression
+                        // (e.g., object literal properties) before falling back
+                        // to the parent-level error.
+                        if self.try_elaborate_assignment_source_error(body_idx, expected_ret) {
+                            elaborated = true;
+                            continue;
+                        }
                         self.error_type_not_assignable_at_with_anchor(
                             body_type,
                             expected_ret,
