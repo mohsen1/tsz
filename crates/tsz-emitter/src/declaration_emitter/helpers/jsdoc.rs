@@ -1138,11 +1138,24 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
             return;
         };
-        let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+        let (var_stmt, callback_pos) = if let Some(var_stmt) = self.arena.get_variable(stmt_node) {
+            (var_stmt, stmt_node.pos)
+        } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                return;
+            };
+            let Some(export_clause_node) = self.arena.get(export.export_clause) else {
+                return;
+            };
+            let Some(var_stmt) = self.arena.get_variable(export_clause_node) else {
+                return;
+            };
+            (var_stmt, stmt_node.pos)
+        } else {
             return;
         };
 
-        let callback_chain = self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
+        let callback_chain = self.leading_jsdoc_comment_chain_for_pos(callback_pos);
         if callback_chain.is_empty() {
             return;
         }
@@ -1185,7 +1198,7 @@ impl<'a> DeclarationEmitter<'a> {
                 }
 
                 let Some(type_name) = self
-                    .jsdoc_name_like_type_expr_for_pos(stmt_node.pos)
+                    .jsdoc_name_like_type_expr_for_pos(callback_pos)
                     .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl_idx))
                     .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl.name))
                 else {
@@ -1236,8 +1249,7 @@ impl<'a> DeclarationEmitter<'a> {
                     };
                     if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
                         self.emit_jsdoc_callback_type_aliases_for_variable_statement(
-                            export.export_clause,
-                            true,
+                            stmt_idx, true,
                         );
                     }
                 }
