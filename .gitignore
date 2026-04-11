@@ -141,3 +141,4 @@ crates/tsz-website/data/
 .work-expand
 .local-target-main/
 __pycache__
+dist/
