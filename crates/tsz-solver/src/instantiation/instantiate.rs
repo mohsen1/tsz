@@ -1725,6 +1725,78 @@ fn type_references_param(
     }
 }
 
+/// Instantiate a generic function type with explicit type arguments.
+///
+/// Takes a function type and type arguments, applies the substitution to all
+/// parts of the function shape (parameters, return type, `this_type`, predicate),
+/// and returns a new non-generic function type.
+///
+/// Returns `None` if the input is not a function type or has no type parameters.
+///
+/// This is used for JSX components with explicit type arguments like:
+/// ```typescript
+/// declare function Comp<T>(props: { data: T }): JSX.Element;
+/// <Comp<number> data={42} />  // Comp instantiated with T = number
+/// ```
+pub fn instantiate_function_with_type_args(
+    interner: &dyn TypeDatabase,
+    func_type: TypeId,
+    type_args: &[TypeId],
+) -> Option<TypeId> {
+    use crate::visitors::visitor::function_shape_id;
+
+    let shape_id = function_shape_id(interner, func_type)?;
+    let shape = interner.function_shape(shape_id);
+
+    if shape.type_params.is_empty() || type_args.is_empty() {
+        return None;
+    }
+
+    // Only allow partial instantiation if we have enough args
+    if type_args.len() > shape.type_params.len() {
+        return None;
+    }
+
+    let subst = TypeSubstitution::from_args(interner, &shape.type_params, type_args);
+
+    let new_params: Vec<_> = shape
+        .params
+        .iter()
+        .map(|p| {
+            let (new_ty, _) = instantiate_type_with_depth_status(interner, p.type_id, &subst);
+            ParamInfo {
+                name: p.name,
+                type_id: new_ty,
+                optional: p.optional,
+                rest: p.rest,
+            }
+        })
+        .collect();
+
+    let (new_return, _) = instantiate_type_with_depth_status(interner, shape.return_type, &subst);
+
+    let new_this = shape
+        .this_type
+        .map(|t| instantiate_type_with_depth_status(interner, t, &subst).0);
+
+    let new_predicate = shape.type_predicate.map(|tp| TypePredicate {
+        type_id: tp
+            .type_id
+            .map(|t| instantiate_type_with_depth_status(interner, t, &subst).0),
+        ..tp
+    });
+
+    Some(interner.function(FunctionShape {
+        type_params: vec![],
+        params: new_params,
+        this_type: new_this,
+        return_type: new_return,
+        type_predicate: new_predicate,
+        is_constructor: shape.is_constructor,
+        is_method: shape.is_method,
+    }))
+}
+
 #[cfg(test)]
 #[path = "../../tests/instantiate_tests.rs"]
 mod tests;

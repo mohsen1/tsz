@@ -1418,52 +1418,13 @@ impl<'a> CheckerState<'a> {
         component_type: TypeId,
         type_args: &[TypeId],
     ) -> TypeId {
-        // Try Function types (single-signature SFCs)
-        if let Some(shape) =
-            tsz_solver::type_queries::get_function_shape(self.ctx.types, component_type)
-            && !shape.type_params.is_empty()
-            && type_args.len() <= shape.type_params.len()
-        {
-            use crate::query_boundaries::common::TypeSubstitution;
-            use tsz_solver::instantiate_type_with_depth_status;
-
-            let subst = TypeSubstitution::from_args(self.ctx.types, &shape.type_params, type_args);
-            let new_params: Vec<_> = shape
-                .params
-                .iter()
-                .map(|p| {
-                    let (new_ty, _) =
-                        instantiate_type_with_depth_status(self.ctx.types, p.type_id, &subst);
-                    tsz_solver::types::ParamInfo {
-                        name: p.name,
-                        type_id: new_ty,
-                        optional: p.optional,
-                        rest: p.rest,
-                    }
-                })
-                .collect();
-            let (new_return, _) =
-                instantiate_type_with_depth_status(self.ctx.types, shape.return_type, &subst);
-            let new_this = shape
-                .this_type
-                .map(|t| instantiate_type_with_depth_status(self.ctx.types, t, &subst).0);
-            let new_predicate = shape
-                .type_predicate
-                .map(|tp| tsz_solver::types::TypePredicate {
-                    type_id: tp
-                        .type_id
-                        .map(|t| instantiate_type_with_depth_status(self.ctx.types, t, &subst).0),
-                    ..tp
-                });
-            return self.ctx.types.function(tsz_solver::types::FunctionShape {
-                type_params: vec![],
-                params: new_params,
-                this_type: new_this,
-                return_type: new_return,
-                type_predicate: new_predicate,
-                is_constructor: shape.is_constructor,
-                is_method: shape.is_method,
-            });
+        // Try Function types (single-signature SFCs) - use solver helper
+        if let Some(instantiated) = tsz_solver::instantiate_function_with_type_args(
+            self.ctx.types,
+            component_type,
+            type_args,
+        ) {
+            return instantiated;
         }
 
         // Fallback: create Application for class components, type aliases,
