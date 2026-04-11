@@ -156,6 +156,11 @@ pub(crate) fn classify_for_assignability_eval(
 pub(crate) fn is_relation_cacheable(db: &dyn TypeDatabase, source: TypeId, target: TypeId) -> bool {
     !tsz_solver::type_queries::contains_infer_types_db(db, source)
         && !tsz_solver::type_queries::contains_infer_types_db(db, target)
+        // ThisType results are context-dependent (resolver's this_type_stack).
+        // Caching them would poison the checker-level cache with results computed
+        // outside of any class body context, causing incorrect False results later.
+        && !tsz_solver::contains_this_type(db, source)
+        && !tsz_solver::contains_this_type(db, target)
 }
 
 pub(crate) fn contains_infer_types(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

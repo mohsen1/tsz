@@ -442,9 +442,15 @@ impl<'a> CheckerState<'a> {
         // IMPORTANT: This check must come AFTER the ENUM check above because
         // enum-namespace merges have both ENUM and NAMESPACE_MODULE flags. We want to
         // handle them as enums (returning TypeData::Enum) rather than as namespaces.
+        //
+        // IMPORTANT: Skip when the symbol also has TYPE_ALIAS flag — a merged
+        // `type Foo = ...; namespace Foo { ... }` declaration must be resolved
+        // as a type alias (returning the body type) not as a namespace module.
+        // The namespace exports are still accessible via the symbol's exports map.
         if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0
             && flags & symbol_flags::FUNCTION == 0
             && flags & symbol_flags::VARIABLE == 0
+            && flags & symbol_flags::TYPE_ALIAS == 0
         {
             return self.compute_namespace_symbol_type(sym_id, flags);
         }

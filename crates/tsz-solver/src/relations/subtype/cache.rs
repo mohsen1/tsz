@@ -14,7 +14,9 @@ use crate::def::DefId;
 use crate::def::resolver::TypeResolver;
 use crate::relations::subtype::{SubtypeChecker, SubtypeResult, is_disjoint_unit_type};
 use crate::types::{IntrinsicKind, TypeApplicationId, TypeData, TypeId};
-use crate::visitor::{application_id, enum_components, lazy_def_id, union_list_id};
+use crate::visitor::{
+    application_id, contains_this_type, enum_components, lazy_def_id, union_list_id,
+};
 
 // Global thread-local fuel counter for cross-instance subtype check termination.
 //
@@ -285,7 +287,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // the identity-mode flag, so a cached `true` from a normal subtype check
         // would incorrectly short-circuit the identity check (which needs stricter
         // Application type-argument comparison at cycle points for TS2403).
+        // Types containing ThisType are context-dependent (they depend on which class
+        // is currently being checked via the resolver's this_type_stack). Caching them
+        // would poison the cache with results computed outside of any class context
+        // (e.g., during class type construction), causing later legitimate checks
+        // inside class bodies to get the wrong cached result.
+        //
+        // Use contains_this_type (not just is_this_type) because even after
+        // substitute_this_type_if_needed the *target* may still be a class instance
+        // type whose method signatures carry `ThisType` return types.
+        let has_this_type =
+            contains_this_type(self.interner, source) || contains_this_type(self.interner, target);
         if !self.identity_cycle_check
+            && !has_this_type
             && let Some(db) = self.query_db
         {
             let key = self.make_cache_key(source, target);
@@ -628,7 +642,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     self.def_guard.leave(dp);
                 }
                 self.guard.leave(pair);
-                if let Some(db) = self.query_db {
+                if !has_this_type && let Some(db) = self.query_db {
                     let key = self.make_cache_key(source, target);
                     match result {
                         SubtypeResult::True => db.insert_subtype_cache(key, true),
@@ -698,7 +712,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.guard.leave(pair);
 
         // Cache definitive results for cross-checker memoization.
-        if let Some(db) = self.query_db {
+        // Skip ThisType: results are context-dependent (see lookup guard above).
+        if !has_this_type && let Some(db) = self.query_db {
             let key = self.make_cache_key(source, target);
             match result {
                 SubtypeResult::True => db.insert_subtype_cache(key, true),

@@ -1394,10 +1394,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(def) = self.ctx.definition_store.get(def_id) {
                     if def.kind == tsz_solver::def::DefKind::TypeAlias {
                         if let Some(body) = def.body {
-                            if tsz_solver::type_queries::is_deferred_type_operation(
-                                self.ctx.types,
-                                body,
-                            ) {
+                            if tsz_solver::is_index_access_type(self.ctx.types, body)
+                                || tsz_solver::is_conditional_type(self.ctx.types, body)
+                            {
                                 return true;
                             }
                         }
