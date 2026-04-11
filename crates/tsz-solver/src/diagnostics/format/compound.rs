@@ -980,7 +980,10 @@ impl<'a> TypeFormatter<'a> {
                 let is_enum = sym.has_any_flags(symbol_flags::ENUM);
                 let is_class = sym.has_flags(symbol_flags::CLASS);
                 let is_interface = sym.has_any_flags(symbol_flags::INTERFACE);
-                if is_interface || (!is_namespace && !is_enum && !is_class) {
+                // Classes have both CLASS and INTERFACE flags; only skip typeof
+                // for pure interfaces (no CLASS flag). Class constructors should
+                // display as "typeof ClassName" to match tsc.
+                if (is_interface && !is_class) || (!is_namespace && !is_enum && !is_class) {
                     return name;
                 }
             }
@@ -1193,7 +1196,13 @@ impl<'a> TypeFormatter<'a> {
         if let Some(def_store) = self.def_store
             && let Some(def) = def_store.get(def_id)
         {
-            return self.format_def_name(&def);
+            let name = self.format_def_name(&def);
+            // Class constructor defs represent the static side of a class.
+            // tsc displays these as "typeof ClassName".
+            if def.is_class_constructor() {
+                return format!("typeof {name}");
+            }
+            return name;
         }
         if let Some(name) = self.format_raw_def_id_symbol_fallback(def_id) {
             return name;
@@ -1216,15 +1225,22 @@ impl<'a> TypeFormatter<'a> {
             && let Some(def) = def_store.get(def_id)
         {
             let name = self.format_def_name(&def);
+            // Class constructor defs (DefKind::ClassConstructor) represent the
+            // static side of a class. tsc displays these as "typeof ClassName".
+            let prefix = if def.is_class_constructor() {
+                "typeof "
+            } else {
+                ""
+            };
             if def.type_params.is_empty() {
-                return name;
+                return format!("{prefix}{name}");
             }
             let params: Vec<String> = def
                 .type_params
                 .iter()
                 .map(|tp| self.atom(tp.name).to_string())
                 .collect();
-            return format!("{}<{}>", name, params.join(", "));
+            return format!("{prefix}{}<{}>", name, params.join(", "));
         }
         if let Some(name) = self.format_raw_def_id_symbol_fallback(def_id) {
             return name;
