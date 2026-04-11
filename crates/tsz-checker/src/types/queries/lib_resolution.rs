@@ -1019,10 +1019,6 @@ impl<'a> CheckerState<'a> {
             if let Some(defs) = self.ctx.definition_store.find_defs_by_name(name_atom) {
                 if let Some(&def_id) = defs.first() {
                     self.ctx.definition_store.register_type_to_def(ty, def_id);
-                    eprintln!(
-                        "[DEBUG lib_res] pre-aug register_type_to_def({}, {:?}) for '{}'",
-                        ty.0, def_id, name
-                    );
                 }
             }
         }
@@ -1127,10 +1123,6 @@ impl<'a> CheckerState<'a> {
             if let Some(defs) = self.ctx.definition_store.find_defs_by_name(name_atom) {
                 if let Some(&def_id) = defs.first() {
                     self.ctx.definition_store.register_type_to_def(ty, def_id);
-                    eprintln!(
-                        "[DEBUG lib_res] post-aug register_type_to_def({}, {:?}) for '{}'",
-                        ty.0, def_id, name
-                    );
                 }
             }
         }
