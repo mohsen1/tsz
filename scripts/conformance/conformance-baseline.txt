@@ -15,7 +15,6 @@ FAIL TypeScript/tests/cases/compiler/conflictMarkerTrivia3.tsx | expected:[TS100
 FAIL TypeScript/tests/cases/compiler/conflictMarkerTrivia4.ts | expected:[TS1109,TS1185] actual:[TS1109,TS1185]
 FAIL TypeScript/tests/cases/compiler/constraintWithIndexedAccess.ts | expected:[TS2344,TS2536] actual:[TS2344,TS2536]
 FAIL TypeScript/tests/cases/compiler/constructorWithIncompleteTypeAnnotation.ts | expected:[TS1002,TS1005,TS1011,TS1068,TS1109,TS1110,TS1127,TS1128,TS1135] actual:[TS1002,TS1005,TS1011,TS1068,TS1109,TS1128,TS1135,TS1435,TS1472]
-FAIL TypeScript/tests/cases/compiler/contextualTypeBasedOnIntersectionWithAnyInTheMix4.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/contextualTypeFunctionObjectPropertyIntersection.ts | expected:[TS2353,TS7006] actual:[TS2353,TS7006]
 FAIL TypeScript/tests/cases/compiler/contextuallyTypedOptionalProperty.ts | expected:[TS5024,TS18048] actual:[TS5024,TS18048]
 FAIL TypeScript/tests/cases/compiler/contextuallyTypedParametersWithInitializers1.ts | expected:[TS7006] actual:[TS7006]
@@ -28,6 +27,7 @@ FAIL TypeScript/tests/cases/compiler/convertKeywordsYes.ts | expected:[TS1212,TS
 FAIL TypeScript/tests/cases/compiler/crashDeclareGlobalTypeofExport.ts | expected:[TS2451,TS2502] actual:[TS2440,TS2451]
 FAIL TypeScript/tests/cases/compiler/declarationEmitBundlerConditions.ts | expected:[] actual:[TS2883]
 FAIL TypeScript/tests/cases/compiler/declarationEmitExpressionInExtends6.ts | expected:[TS2451] actual:[]
+FAIL TypeScript/tests/cases/compiler/declarationEmitIsolatedDeclarationErrorNotEmittedForNonEmittedFile.ts | expected:[TS9010] actual:[TS2339,TS9010]
 FAIL TypeScript/tests/cases/compiler/declarationEmitMixinPrivateProtected.ts | expected:[TS4094] actual:[TS4094]
 FAIL TypeScript/tests/cases/compiler/declarationEmitObjectAssignedDefaultExport.ts | expected:[TS2883] actual:[TS2883]
 FAIL TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingModules1.ts | expected:[] actual:[TS2536,TS2883]
@@ -102,7 +102,6 @@ FAIL TypeScript/tests/cases/compiler/inKeywordTypeguard.ts | expected:[TS2322,TS
 FAIL TypeScript/tests/cases/compiler/incrementalTsBuildInfoFile.ts
 FAIL TypeScript/tests/cases/compiler/indexAt.ts | expected:[TS2550] actual:[TS2550]
 FAIL TypeScript/tests/cases/compiler/indexedAccessRelation.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/indirectGlobalSymbolPartOfObjectType.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/inexistentPropertyInsideToStringType.ts | expected:[TS2339,TS2394] actual:[]
 FAIL TypeScript/tests/cases/compiler/inferFromGenericFunctionReturnTypes3.ts | expected:[TS2322,TS2345] actual:[TS2322,TS2345]
 FAIL TypeScript/tests/cases/compiler/inferTypePredicates.ts | expected:[TS2322,TS2345,TS2740,TS2741,TS18048] actual:[TS2322,TS2345,TS2740,TS2741,TS18048]
@@ -1952,6 +1951,7 @@ PASS TypeScript/tests/cases/compiler/contextualTypeArrayReturnType.ts
 PASS TypeScript/tests/cases/compiler/contextualTypeBasedOnIntersectionWithAnyInTheMix1.ts
 PASS TypeScript/tests/cases/compiler/contextualTypeBasedOnIntersectionWithAnyInTheMix2.ts
 PASS TypeScript/tests/cases/compiler/contextualTypeBasedOnIntersectionWithAnyInTheMix3.ts
+PASS TypeScript/tests/cases/compiler/contextualTypeBasedOnIntersectionWithAnyInTheMix4.ts
 PASS TypeScript/tests/cases/compiler/contextualTypeBasedOnIntersectionWithAnyInTheMix5.ts
 PASS TypeScript/tests/cases/compiler/contextualTypeCaching.ts
 PASS TypeScript/tests/cases/compiler/contextualTypeForInitalizedVariablesFiltersUndefined.ts
@@ -2348,7 +2348,6 @@ PASS TypeScript/tests/cases/compiler/declarationEmitInvalidExport.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitInvalidReference.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitInvalidReference2.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitInvalidReferenceAllowJs.ts
-PASS TypeScript/tests/cases/compiler/declarationEmitIsolatedDeclarationErrorNotEmittedForNonEmittedFile.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitJsReExportDefault.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitKeywordDestructuring.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitLambdaWithMissingTypeParameterNoCrash.ts
@@ -3942,6 +3941,7 @@ PASS TypeScript/tests/cases/compiler/indexerReturningTypeParameter1.ts
 PASS TypeScript/tests/cases/compiler/indexerSignatureWithRestParam.ts
 PASS TypeScript/tests/cases/compiler/indexingTypesWithNever.ts
 PASS TypeScript/tests/cases/compiler/indirectDiscriminantAndExcessProperty.ts
+PASS TypeScript/tests/cases/compiler/indirectGlobalSymbolPartOfObjectType.ts
 PASS TypeScript/tests/cases/compiler/indirectSelfReference.ts
 PASS TypeScript/tests/cases/compiler/indirectSelfReferenceGeneric.ts
 PASS TypeScript/tests/cases/compiler/indirectTypeParameterReferences.ts
@@ -3972,7 +3972,6 @@ PASS TypeScript/tests/cases/compiler/inferenceContextualReturnTypeUnion3.ts
 PASS TypeScript/tests/cases/compiler/inferenceContextualReturnTypeUnion4.ts
 PASS TypeScript/tests/cases/compiler/inferenceDoesNotAddUndefinedOrNull.ts
 PASS TypeScript/tests/cases/compiler/inferenceDoesntCompareAgainstUninstantiatedTypeParameter.ts
-PASS TypeScript/tests/cases/compiler/inferenceErasedSignatures.ts
 PASS TypeScript/tests/cases/compiler/inferenceExactOptionalProperties1.ts
 PASS TypeScript/tests/cases/compiler/inferenceFromGenericClassNoCrash1.ts
 PASS TypeScript/tests/cases/compiler/inferenceFromParameterlessLambda.ts
