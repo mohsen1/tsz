@@ -454,7 +454,11 @@ impl<'a> TypeFormatter<'a> {
         // Application form.
         let is_simple_type = matches!(
             &key,
-            TypeData::Literal(_) | TypeData::Array(_) | TypeData::Tuple(_) | TypeData::Union(_)
+            TypeData::Literal(_)
+                | TypeData::Array(_)
+                | TypeData::Tuple(_)
+                | TypeData::Union(_)
+                | TypeData::Function(_)
         );
         if !is_simple_type
             && let Some(alias_origin) = self.interner.get_display_alias(type_id)
