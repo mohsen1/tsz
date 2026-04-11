@@ -964,7 +964,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             })
                     })
             });
-            if has_generic_contextual_type {
+            let target_is_pure_placeholder = target_fn.type_params.is_empty()
+                && target_param_types.iter().all(|&pt| {
+                    matches!(self.interner.lookup(pt), Some(TypeData::TypeParameter(_)))
+                })
+                && matches!(
+                    self.interner.lookup(target_fn.return_type),
+                    Some(TypeData::TypeParameter(_))
+                );
+            if has_generic_contextual_type || target_is_pure_placeholder {
                 // Case 2: let constrain_types handle it with fresh variables
                 return source_ty;
             }
