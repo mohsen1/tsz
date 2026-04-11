@@ -1181,6 +1181,13 @@ impl<'a> CheckerState<'a> {
                 return display;
             }
 
+            if self.is_literal_sensitive_assignment_target(target)
+                && let Some(display) =
+                    self.call_object_literal_intersection_source_display(expr_idx, source, target)
+            {
+                return display;
+            }
+
             let expr_type = self.get_type_of_node(expr_idx);
             let display_type = if expr_type != TypeId::ERROR {
                 let widened_expr_type = if self.is_literal_sensitive_assignment_target(target) {
@@ -1547,6 +1554,47 @@ impl<'a> CheckerState<'a> {
             self.normalize_assignability_display_type(self.widen_type_for_display(element_type));
         let rebuilt = self.ctx.types.array(widened_element);
         Some(self.format_assignability_type_for_message(rebuilt, target))
+    }
+
+    fn call_object_literal_intersection_source_display(
+        &mut self,
+        expr_idx: NodeIndex,
+        source_type: TypeId,
+        target: TypeId,
+    ) -> Option<String> {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.ctx.arena.get_call_expr(node)?;
+        let first_arg = *call.arguments.as_ref()?.nodes.first()?;
+        let object_display = self.object_literal_source_type_display(first_arg, Some(target))?;
+
+        let members =
+            tsz_solver::type_queries::get_intersection_members(self.ctx.types, source_type)?;
+        let mut displays = Vec::with_capacity(members.len());
+        let mut replaced_object_member = false;
+
+        for &member in members.iter() {
+            let evaluated = self.evaluate_type_for_assignability(member);
+            let is_object_like_member =
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, evaluated)
+                    .is_some()
+                    || crate::query_boundaries::common::get_merged_object_shape_for_type(
+                        self.ctx.types,
+                        evaluated,
+                    )
+                    .is_some();
+            if !replaced_object_member && is_object_like_member {
+                displays.push(object_display.clone());
+                replaced_object_member = true;
+            } else {
+                displays.push(self.format_assignability_type_for_message(member, target));
+            }
+        }
+
+        replaced_object_member.then(|| displays.join(" & "))
     }
 
     pub(in crate::error_reporter) fn identifier_array_object_literal_source_display(
