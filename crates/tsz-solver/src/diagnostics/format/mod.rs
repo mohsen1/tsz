@@ -320,6 +320,8 @@ impl<'a> TypeFormatter<'a> {
                 | TypeData::Callable(_)
                 | TypeData::Function(_)
                 | TypeData::Mapped(_)
+                | TypeData::Conditional(_)
+                | TypeData::IndexAccess(_, _)
         ) && let Some(def_store) = self.def_store
         {
             if let Some(def_id) = def_store.find_def_for_type(type_id)

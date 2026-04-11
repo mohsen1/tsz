@@ -857,14 +857,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // result differs from the original Application, record the mapping
             // so the formatter can display `Dictionary<string>` instead of the
             // expanded `{ [index: string]: string; }`.
-            // Only store when args are fully concrete to avoid conflating
-            // generic contexts where the same type arises from different sources.
-            if result != original_type_id
-                && !app.args.iter().any(|&arg| {
+            //
+            // For concrete args: always store (safe, no conflation risk).
+            // For generic args: only store when the result is a Conditional or
+            // IndexAccess type. These types are structurally unique per alias
+            // (unlike Mapped/Object types which can collide with built-in aliases
+            // like Record, Partial, Pick, Omit due to interning dedup).
+            if result != original_type_id {
+                let has_param_args = app.args.iter().any(|&arg| {
                     crate::type_queries::contains_type_parameters_db(self.interner, arg)
-                })
-            {
-                self.interner.store_display_alias(result, original_type_id);
+                });
+                if !has_param_args
+                    || matches!(
+                        self.interner.lookup(result),
+                        Some(
+                            crate::types::TypeData::Conditional(_)
+                                | crate::types::TypeData::IndexAccess(_, _)
+                        )
+                    )
+                {
+                    self.interner.store_display_alias(result, original_type_id);
+                }
             }
 
             result
