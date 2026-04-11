@@ -1979,6 +1979,35 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 _ => result,
             };
         }
+        for (i, (&arg_type, raw_param)) in final_args.iter().zip(func.params.iter()).enumerate() {
+            let raw_param_type = raw_param.type_id;
+            let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(raw_param_type) else {
+                continue;
+            };
+            let Some(constraint) = tp.constraint else {
+                continue;
+            };
+            let constraint =
+                instantiate_call_type(self.interner, constraint, &final_subst, actual_this_type);
+            if crate::type_queries::contains_type_parameters_db(
+                self.interner.as_type_database(),
+                constraint,
+            ) && let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(constraint)
+                && tp.constraint.is_none()
+            {
+                continue;
+            }
+            if !self.checker.is_assignable_to(arg_type, constraint)
+                && !self.is_function_union_compat(arg_type, constraint)
+            {
+                return CallResult::ArgumentTypeMismatch {
+                    index: i,
+                    expected: constraint,
+                    actual: arg_type,
+                    fallback_return: return_type,
+                };
+            }
+        }
         tracing::debug!("Final check succeeded");
 
         // Instantiate the type predicate if present, so the checker can use it

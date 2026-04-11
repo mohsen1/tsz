@@ -377,6 +377,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let Some(param_type) = self.param_type_for_arg_index(params, i, arg_count) else {
                 break;
             };
+            if let Some(param_info) = self.param_info_for_arg_index(params, i)
+                && let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(param_info.type_id)
+                && let Some(constraint) = tp.constraint
+                && !crate::type_queries::contains_type_parameters_db(
+                    self.interner.as_type_database(),
+                    constraint,
+                )
+                && !self.checker.is_assignable_to(*arg_type, constraint)
+                && !self.is_function_union_compat(*arg_type, constraint)
+            {
+                return Some(CallResult::ArgumentTypeMismatch {
+                    index: i,
+                    expected: constraint,
+                    actual: *arg_type,
+                    fallback_return: TypeId::ERROR,
+                });
+            }
             if *arg_type == param_type {
                 continue;
             }

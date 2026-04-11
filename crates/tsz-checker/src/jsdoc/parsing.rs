@@ -671,8 +671,8 @@ impl<'a> CheckerState<'a> {
                 }
                 continue;
             }
-            if let Some(rest) = line.strip_prefix("@typedef") {
-                let rest = rest.trim();
+            if let Some(tag_idx) = line.find("@typedef") {
+                let rest = line[tag_idx + "@typedef".len()..].trim();
                 if rest.starts_with("{{") && !rest.contains("}}") {
                     if let Some(previous_name) = current_name.take() {
                         typedefs.push((previous_name, current_info));
@@ -718,8 +718,8 @@ impl<'a> CheckerState<'a> {
                 }
                 continue;
             }
-            if let Some(rest) = line.strip_prefix("@callback") {
-                let name = rest.trim().to_string();
+            if let Some(tag_idx) = line.find("@callback") {
+                let name = line[tag_idx + "@callback".len()..].trim().to_string();
                 if !name.is_empty()
                     && name
                         .chars()
