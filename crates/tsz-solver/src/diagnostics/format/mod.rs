@@ -370,18 +370,10 @@ impl<'a> TypeFormatter<'a> {
                             .collect();
                         return format!("{}<{}>", name, params.join(", ")).into();
                     }
-                    // For non-generic type aliases that wrap a generic application
-                    // (e.g. `type Foo1 = Id<{...}>`), tsc shows the inner application
-                    // form, not the outer alias name.  Fall through to the
-                    // display_alias handler below when a display_alias exists.
-                    // This only applies to TypeAlias definitions. Interfaces and
-                    // classes (e.g. `interface Element extends ReactElement<any>`)
-                    // always show their own name.
-                    if def.kind != DefKind::TypeAlias
-                        || self.interner.get_display_alias(type_id).is_none()
-                    {
-                        return name.into();
-                    }
+                    // When a type resolves to a named definition (interface,
+                    // class, or type alias), show that name. tsc preserves alias
+                    // symbols: `type Bar = Omit<Foo, "c">` displays as "Bar".
+                    return name.into();
                 }
             }
         }
