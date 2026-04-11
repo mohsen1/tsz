@@ -1243,13 +1243,18 @@ impl<'a> DeclarationEmitter<'a> {
         let original_symbol = binder.symbols.get(original_sym_id)?;
         let original_type_name = original_symbol.escaped_name.clone();
         let original_source_path = self.get_symbol_source_path(original_sym_id, binder)?;
-        if original_symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
+        // Only check for transitive imports when the source path has nested
+        // node_modules (i.e., 2+ occurrences).  A single node_modules means
+        // the package is a direct dependency and its exports are portable.
+        let nm_count_in_original = Path::new(&original_source_path)
+            .components()
+            .filter(|c| matches!(c, Component::Normal(part) if *part == "node_modules"))
+            .count();
+        if nm_count_in_original >= 2
+            && original_symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
             && let Some(import_module) = original_symbol.import_module.as_deref()
             && !import_module.starts_with('.')
             && !import_module.starts_with('/')
-            && Path::new(&original_source_path).components().any(
-                |component| matches!(component, Component::Normal(part) if part == "node_modules"),
-            )
             && self
                 .package_root_export_reference_path(
                     original_sym_id,
@@ -1314,7 +1319,7 @@ impl<'a> DeclarationEmitter<'a> {
         // Example: foo/index.d.ts has `import { NestedProps } from "nested"`
         // where foo is in node_modules and nested is in foo/node_modules/nested.
         // The "from" path is "foo/node_modules/nested".
-        if !nm_positions.is_empty()
+        if nm_positions.len() >= 2
             && symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
             && let Some(import_module) = &symbol.import_module
             && !import_module.starts_with('.')
