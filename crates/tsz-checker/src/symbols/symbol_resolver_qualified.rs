@@ -592,8 +592,18 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let (member_id, file_idx) = preferred.or(fallback)?;
+        let Some((member_id, file_idx)) = preferred.or(fallback) else {
+            self.ctx
+                .namespace_member_resolution_cache
+                .borrow_mut()
+                .insert(cache_key, None);
+            return None;
+        };
         self.record_cross_file_member(member_id, member_name, file_idx);
+        self.ctx
+            .namespace_member_resolution_cache
+            .borrow_mut()
+            .insert(cache_key, Some(member_id));
         Some(member_id)
     }
 
