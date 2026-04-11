@@ -412,20 +412,6 @@ impl<'a> TypeFormatter<'a> {
             return collapsed;
         }
 
-        let nullish_suffix_len = usize::from(has_null) + usize::from(has_undefined);
-        let sortable_len = ordered.len().saturating_sub(nullish_suffix_len);
-        if sortable_len > 1
-            && let Some(mut named_keys) = ordered[..sortable_len]
-                .iter()
-                .map(|&m| self.named_union_member_display_key(m).map(|key| (m, key)))
-                .collect::<Option<Vec<_>>>()
-        {
-            named_keys.sort_by(|(_, left), (_, right)| left.cmp(right));
-            for (idx, (member, _)) in named_keys.into_iter().enumerate() {
-                ordered[idx] = member;
-            }
-        }
-
         if ordered.len() > self.max_union_members {
             let first: Vec<String> = ordered
                 .iter()
@@ -439,41 +425,6 @@ impl<'a> TypeFormatter<'a> {
             .map(|&m| self.format_union_member(m))
             .collect();
         formatted.join(" | ")
-    }
-
-    fn named_union_member_display_key(&mut self, type_id: TypeId) -> Option<String> {
-        match self.interner.lookup(type_id) {
-            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => self
-                .interner
-                .object_shape(shape_id)
-                .symbol
-                .map(|_| self.format(type_id).into_owned())
-                .filter(|rendered| !rendered.starts_with('{')),
-            Some(TypeData::Callable(shape_id)) => self
-                .interner
-                .callable_shape(shape_id)
-                .symbol
-                .map(|_| self.format(type_id).into_owned())
-                .filter(|rendered| {
-                    !rendered.starts_with('{')
-                        && !rendered.starts_with('(')
-                        && !rendered.starts_with("new ")
-                        && !rendered.starts_with("abstract new ")
-                }),
-            Some(TypeData::Lazy(_) | TypeData::TypeQuery(_)) => {
-                Some(self.format(type_id).into_owned())
-            }
-            Some(TypeData::Application(app_id)) => {
-                let app = self.interner.type_application(app_id);
-                match self.interner.lookup(app.base) {
-                    Some(TypeData::Lazy(_) | TypeData::TypeQuery(_)) => {
-                        Some(self.format(type_id).into_owned())
-                    }
-                    _ => None,
-                }
-            }
-            _ => None,
-        }
     }
 
     fn collapse_same_enum_members_for_display(&mut self, members: &[TypeId]) -> Option<String> {
