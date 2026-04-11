@@ -1231,6 +1231,13 @@ impl<'a> FlowAnalyzer<'a> {
                     return is_narrowing_literal(self.interner, type_id);
                 }
 
+                // Third fallback: for const variables with explicit literal type annotations
+                // (e.g., `const myNull: null = null`), extract the type from the annotation.
+                // This enables narrowing like `if (x === myNull) { ... }` to work correctly.
+                if let Some(type_id) = self.literal_type_from_const_variable(idx, node) {
+                    return Some(type_id);
+                }
+
                 None
             }
         }
@@ -1351,6 +1358,143 @@ impl<'a> FlowAnalyzer<'a> {
         env.get(sym_ref)
     }
 
+    /// Extract a literal type from a const variable with an explicit literal type annotation.
+    ///
+    /// Handles patterns like `const myNull: null = null` where the identifier `myNull`
+    /// should be treated as the literal type `null` for narrowing purposes.
+    /// This enables flow analysis to narrow `x` to `null` in `if (x === myNull) { ... }`.
+    fn literal_type_from_const_variable(
+        &self,
+        idx: NodeIndex,
+        node: &tsz_parser::parser::node::Node,
+    ) -> Option<TypeId> {
+        // Must be an identifier
+        let _ident = self.arena.get_identifier(node)?;
+
+        // Resolve the symbol for this identifier
+        let sym_id = self
+            .binder
+            .resolve_identifier(self.arena, idx)
+            .or_else(|| self.binder.get_node_symbol(idx))?;
+        let sym = self.binder.get_symbol(sym_id)?;
+
+        // Must be a variable (not function, class, etc.)
+        if sym.flags & symbol_flags::VARIABLE == 0 {
+            return None;
+        }
+
+        // Get the value declaration and check it's a const variable
+        let value_decl = sym.value_declaration;
+        if !value_decl.is_some() || !self.arena.is_const_variable_declaration(value_decl) {
+            return None;
+        }
+
+        // Get the variable declaration data
+        let decl_node = self.arena.get(value_decl)?;
+        let var_decl = self.arena.get_variable_declaration(decl_node)?;
+
+        // Check the type annotation
+        let type_annotation = var_decl.type_annotation;
+        if !type_annotation.is_some() {
+            return None;
+        }
+
+        // Get the type annotation node and check if it's a literal type
+        let type_node = self.arena.get(type_annotation)?;
+
+        // In type position, `null` and `undefined` are parsed as identifiers with those names
+        // rather than as NullKeyword/UndefinedKeyword tokens. Check for identifier first.
+        if let Some(ident) = self.arena.get_identifier(type_node) {
+            if ident.escaped_text == "null" {
+                return Some(TypeId::NULL);
+            }
+            if ident.escaped_text == "undefined" {
+                return Some(TypeId::UNDEFINED);
+            }
+            // Not a literal type identifier
+            return None;
+        }
+
+        match type_node.kind {
+            k if k == SyntaxKind::NullKeyword as u16 => Some(TypeId::NULL),
+            k if k == SyntaxKind::UndefinedKeyword as u16 => Some(TypeId::UNDEFINED),
+            k if k == SyntaxKind::TrueKeyword as u16 => Some(self.interner.literal_boolean(true)),
+            k if k == SyntaxKind::FalseKeyword as u16 => Some(self.interner.literal_boolean(false)),
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                let lit = self.arena.get_literal(type_node)?;
+                Some(self.interner.literal_string(&lit.text))
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                let lit = self.arena.get_literal(type_node)?;
+                let value = self.parse_numeric_literal_value(lit.value, &lit.text)?;
+                Some(self.interner.literal_number(value))
+            }
+            k if k == tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE => {
+                // TYPE_REFERENCE wraps a type name - check if it's `null` or `undefined`
+                if let Some(type_ref) = self.arena.get_type_ref(type_node) {
+                    let name_node = self.arena.get(type_ref.type_name)?;
+                    if let Some(ident) = self.arena.get_identifier(name_node) {
+                        if ident.escaped_text == "null" {
+                            return Some(TypeId::NULL);
+                        }
+                        if ident.escaped_text == "undefined" {
+                            return Some(TypeId::UNDEFINED);
+                        }
+                    }
+                }
+                None
+            }
+            k if k == tsz_parser::parser::syntax_kind_ext::LITERAL_TYPE => {
+                // LiteralType wraps a literal - extract the inner literal
+                if let Some(wrapped) = self.arena.get_wrapped_type(type_node) {
+                    let inner_node = self.arena.get(wrapped.type_node)?;
+                    match inner_node.kind {
+                        k if k == SyntaxKind::NullKeyword as u16 => Some(TypeId::NULL),
+                        k if k == SyntaxKind::TrueKeyword as u16 => {
+                            Some(self.interner.literal_boolean(true))
+                        }
+                        k if k == SyntaxKind::FalseKeyword as u16 => {
+                            Some(self.interner.literal_boolean(false))
+                        }
+                        k if k == SyntaxKind::StringLiteral as u16
+                            || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+                        {
+                            let lit = self.arena.get_literal(inner_node)?;
+                            Some(self.interner.literal_string(&lit.text))
+                        }
+                        k if k == SyntaxKind::NumericLiteral as u16 => {
+                            let lit = self.arena.get_literal(inner_node)?;
+                            let value = self.parse_numeric_literal_value(lit.value, &lit.text)?;
+                            Some(self.interner.literal_number(value))
+                        }
+                        k if k == tsz_parser::parser::syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                            // Handle negative literals like `-1`
+                            let unary = self.arena.get_unary_expr(inner_node)?;
+                            if unary.operator != SyntaxKind::MinusToken as u16 {
+                                return None;
+                            }
+                            let operand_node = self.arena.get(unary.operand)?;
+                            if operand_node.kind == SyntaxKind::NumericLiteral as u16 {
+                                let lit = self.arena.get_literal(operand_node)?;
+                                let value =
+                                    self.parse_numeric_literal_value(lit.value, &lit.text)?;
+                                Some(self.interner.literal_number(-value))
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn nullish_literal_type(&self, idx: NodeIndex) -> Option<TypeId> {
         let idx = self.skip_parenthesized(idx);
         let node = self.arena.get(idx)?;
@@ -1366,6 +1510,14 @@ impl<'a> FlowAnalyzer<'a> {
             && ident.escaped_text == "undefined"
         {
             return Some(TypeId::UNDEFINED);
+        }
+
+        // Check if this is an identifier referencing a const variable with null/undefined type
+        // E.g., `const myNull: null = null` should be treated as null for narrowing
+        if let Some(type_id) = self.literal_type_from_const_variable(idx, node) {
+            if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
+                return Some(type_id);
+            }
         }
 
         None
