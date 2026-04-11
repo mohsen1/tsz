@@ -1316,14 +1316,21 @@ impl<'a> TypeLowering<'a> {
                 continue;
             };
 
-            if let Some(name_node) = self.arena.get(param_data.name)
-                && let Some(id_data) = self.arena.get_identifier(name_node)
-                && id_data.escaped_text == "this"
-            {
-                if this_type.is_none() {
-                    this_type = Some(self.lower_type(param_data.type_annotation));
+            // Check for `this` parameter — both as a ThisKeyword node
+            // (the parser's normal representation) and as an identifier
+            // named "this" (fallback for edge cases).
+            if let Some(name_node) = self.arena.get(param_data.name) {
+                let is_this = name_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
+                    || self
+                        .arena
+                        .get_identifier(name_node)
+                        .is_some_and(|id_data| id_data.escaped_text == "this");
+                if is_this {
+                    if this_type.is_none() {
+                        this_type = Some(self.lower_type(param_data.type_annotation));
+                    }
+                    continue;
                 }
-                continue;
             }
 
             let type_id = self.lower_type(param_data.type_annotation);
