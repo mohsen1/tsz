@@ -1740,7 +1740,17 @@ impl<'a> CheckerState<'a> {
                     // Substitute polymorphic `this` type with the receiver type.
                     // E.g., for `class C<T> { x = this; }`, accessing `c.x` where
                     // `c: C<string>` should yield `C<string>`, not raw `ThisType`.
-                    if tsz_solver::contains_this_type(self.ctx.types, prop_type) {
+                    //
+                    // Skip substitution when prop_type IS the receiver type. This
+                    // prevents creating a new TypeId when accessing properties like
+                    // `self2: D` where D is the current class instance type. Without
+                    // this guard, `this.self2` would return D_subst (a new TypeId)
+                    // instead of D, causing assignment mismatches in polymorphic
+                    // `this` checks (e.g., `this.self = this.self2` would fail
+                    // because D_subst != D even though they're semantically equal).
+                    if tsz_solver::contains_this_type(self.ctx.types, prop_type)
+                        && prop_type != original_object_type
+                    {
                         prop_type = tsz_solver::substitute_this_type(
                             self.ctx.types,
                             prop_type,

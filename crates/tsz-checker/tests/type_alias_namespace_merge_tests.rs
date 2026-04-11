@@ -27,6 +27,34 @@ fn get_error_codes(source: &str) -> Vec<u32> {
     checker.ctx.diagnostics.iter().map(|d| d.code).collect()
 }
 
+#[allow(dead_code)]
+fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
+    let mut parser =
+        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = tsz_binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = tsz_checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        tsz_checker::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
 #[test]
 fn test_type_alias_namespace_merge_basic() {
     // type Foo = Foo.A | Foo.B merged with namespace Foo should resolve
@@ -44,7 +72,7 @@ const y: Foo = "hello";
     );
     assert!(
         !codes.contains(&2322),
-        "Should not emit TS2322: number and string are assignable to Foo = number | string. Got: {codes:?}"
+        "Should not emit TS2322: number and string are assignable to Foo = number | string. Got codes: {codes:?}"
     );
 }
 

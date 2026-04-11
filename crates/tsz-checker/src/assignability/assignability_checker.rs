@@ -1454,9 +1454,19 @@ impl<'a> CheckerState<'a> {
         let instance_type = self.get_class_instance_type(class_idx, class_data);
 
         if tsz_solver::is_this_type(self.ctx.types, type_id) {
+            // Substitute bare `ThisType` with the concrete class instance type so
+            // that `return this` / `f(this)` assignability succeeds by identity check.
             instance_type
         } else {
-            tsz_solver::substitute_this_type(self.ctx.types, type_id, instance_type)
+            // Do NOT substitute complex types that merely contain `ThisType` in nested
+            // positions (e.g. `Builder_instance` whose methods return `this`).  The
+            // solver's `bind_property_receiver_this` already substitutes `this` during
+            // property comparison using the object shape's receiver symbol.
+            // Pre-substituting here creates a new TypeId (Builder_instance_subst) with no
+            // symbol, so the subsequent `bind_property_receiver_this` call on the *target*
+            // produces a Lazy/ref TypeId while the source stays as the concrete TypeId,
+            // causing spurious TS2322 errors for fluent/builder patterns.
+            type_id
         }
     }
 

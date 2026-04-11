@@ -1652,7 +1652,8 @@ impl<'a> CheckerState<'a> {
     /// Check if an expression produces a `this`-typed value.
     ///
     /// Returns true if the expression is the `this` keyword, or a property
-    /// access on `this` where the property's raw type contains `ThisType`.
+    /// access on `this` where the property's raw type is `ThisType` or IS
+    /// the current class instance type (semantically equivalent to `this`).
     fn expression_has_this_type(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
@@ -1663,7 +1664,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Check for `this.prop` where prop has ThisType
+        // Check for `this.prop` where prop has ThisType or is the class instance type
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             if let Some(access) = self.ctx.arena.get_access_expr(node) {
                 let is_this_receiver = self
@@ -1687,7 +1688,169 @@ impl<'a> CheckerState<'a> {
                             ..
                         } = raw
                         {
-                            return tsz_solver::is_this_type(self.ctx.types, type_id);
+                            // Property is this-typed if the raw type IS `ThisType`
+                            if tsz_solver::is_this_type(self.ctx.types, type_id) {
+                                return true;
+                            }
+                            // For properties with class instance type (like `self2: D`),
+                            // check the property's INITIALIZER to see if it was assigned
+                            // from a this-typed expression. This distinguishes:
+                            // - `self2 = this.self` → this-typed (initialized from this)
+                            // - `d = new D()` → NOT this-typed (new instance)
+                            if let Some(init_is_this) =
+                                self.property_initializer_is_this_typed(&ident.escaped_text)
+                            {
+                                return init_is_this;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check if a property's initializer is a this-typed expression.
+    ///
+    /// Looks up the property declaration in the current class and checks if
+    /// its initializer is `this`, `this.prop` (where prop is this-typed),
+    /// or `this.method()` (where method returns `this`).
+    fn property_initializer_is_this_typed(&self, prop_name: &str) -> Option<bool> {
+        let class_info = self.ctx.enclosing_class.as_ref()?;
+        let member_nodes = &class_info.member_nodes;
+
+        // Find the property declaration with this name
+        for &member_idx in member_nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                continue;
+            }
+            let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                continue;
+            };
+            let Some(name_node) = self.ctx.arena.get(prop.name) else {
+                continue;
+            };
+            let Some(name_ident) = self.ctx.arena.get_identifier(name_node) else {
+                continue;
+            };
+            if name_ident.escaped_text != prop_name {
+                continue;
+            }
+
+            // Found the property. Check if it has an initializer.
+            let init_idx = prop.initializer;
+            if init_idx.is_none() {
+                return Some(false);
+            }
+
+            // Check if the initializer is this-typed
+            return Some(self.initializer_is_this_expression(init_idx));
+        }
+
+        // Property not found in current class - might be inherited
+        // For inherited properties, defer to the raw type check
+        None
+    }
+
+    /// Check if an initializer expression is `this` or a this-typed property access.
+    fn initializer_is_this_expression(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        // Direct `this` keyword
+        if node.kind == SyntaxKind::ThisKeyword as u16 {
+            return true;
+        }
+
+        // `this.prop` where the property's raw type is ThisType
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if let Some(access) = self.ctx.arena.get_access_expr(node) {
+                let is_this_receiver = self
+                    .ctx
+                    .arena
+                    .get(access.expression)
+                    .is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16);
+
+                if is_this_receiver {
+                    if let Some(concrete_this) = self.current_this_type()
+                        && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        let raw =
+                            crate::query_boundaries::property_access::resolve_property_access_raw_this(
+                                self.ctx.types,
+                                concrete_this,
+                                &ident.escaped_text,
+                            );
+                        if let crate::query_boundaries::common::PropertyAccessResult::Success {
+                            type_id,
+                            ..
+                        } = raw
+                        {
+                            // Check if the accessed property has ThisType
+                            if tsz_solver::is_this_type(self.ctx.types, type_id) {
+                                return true;
+                            }
+                            // Recursively check if the accessed property was
+                            // initialized from a this-typed expression
+                            if let Some(init_is_this) =
+                                self.property_initializer_is_this_typed(&ident.escaped_text)
+                            {
+                                return init_is_this;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // `this.method()` where method returns `this`
+        if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+            if let Some(call) = self.ctx.arena.get_call_expr(node) {
+                if let Some(callee_node) = self.ctx.arena.get(call.expression)
+                    && callee_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && let Some(access) = self.ctx.arena.get_access_expr(callee_node)
+                {
+                    let is_this_receiver = self
+                        .ctx
+                        .arena
+                        .get(access.expression)
+                        .is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16);
+
+                    if is_this_receiver {
+                        if let Some(concrete_this) = self.current_this_type()
+                            && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
+                            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                        {
+                            // Check if the method's return type is ThisType
+                            let raw = crate::query_boundaries::property_access::resolve_property_access_raw_this(
+                                self.ctx.types,
+                                concrete_this,
+                                &ident.escaped_text,
+                            );
+                            if let crate::query_boundaries::common::PropertyAccessResult::Success {
+                                type_id,
+                                ..
+                            } = raw
+                            {
+                                // Check if this is a callable with ThisType return
+                                if let Some(callable) = tsz_solver::type_queries::get_callable_shape(
+                                    self.ctx.types,
+                                    type_id,
+                                ) {
+                                    for sig in &callable.call_signatures {
+                                        if tsz_solver::is_this_type(self.ctx.types, sig.return_type)
+                                        {
+                                            return true;
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
