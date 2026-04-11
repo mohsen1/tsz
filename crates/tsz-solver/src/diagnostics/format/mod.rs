@@ -522,6 +522,16 @@ impl<'a> TypeFormatter<'a> {
                     "Formatting Application"
                 );
 
+                // When the base type has already been evaluated to a concrete
+                // type (Array, Tuple, etc.), the type arguments are already
+                // incorporated into the base.  Formatting the base directly
+                // produces the correct display (e.g., `D<number>[]`); appending
+                // the Application's args would duplicate them (producing
+                // `D<number>[]<D<number>>`).
+                if matches!(base_key, Some(TypeData::Array(_) | TypeData::Tuple(_))) {
+                    return self.format(app.base);
+                }
+
                 // Special handling for Application(Lazy(def_id), args)
                 // Format as "TypeName<Args>" instead of "Lazy(def_id)<Args>"
                 let base_str: Cow<'_, str> = if let Some(TypeData::Lazy(def_id)) = base_key {

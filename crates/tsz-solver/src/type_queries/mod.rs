@@ -53,7 +53,8 @@ pub use classifiers::{
     InterfaceMergeKind, classify_for_assignability_eval, classify_for_augmentation,
     classify_for_constructor_access, classify_for_excess_properties, classify_for_interface_merge,
     get_application_lazy_def_id, get_conditional_type_id, get_keyof_type, get_lazy_def_id,
-    get_mapped_type_id, get_type_query_symbol_ref, is_only_false_or_never,
+    get_mapped_type_id, get_type_query_symbol_ref, is_deferred_type_operation,
+    is_only_false_or_never,
 };
 // `get_def_id` is an alias for `get_lazy_def_id` (identical semantics).
 pub use classifiers::get_lazy_def_id as get_def_id;
