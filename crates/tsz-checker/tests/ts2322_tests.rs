@@ -1084,23 +1084,11 @@ var r = foo<number>({ bar: 1, baz: '' });
     let expected_object_start = source
         .find("{ bar: 1, baz: '' }")
         .expect("expected test snippet to contain object literal");
-    // In call-argument context, tsc anchors at the property value expression
-    // (e.g., `''` in `baz: ''`), not the property name.  Accept either the
-    // name or value position since both are reasonable and tsc uses the value.
-    let expected_baz_value_start = source
-        .find("''")
-        .expect("expected test snippet to contain baz value");
-    let expected_bar_value_start = source
-        .rfind(": 1,")
-        .map(|i| i + 2) // skip ": " to point at "1"
-        .expect("expected test snippet to contain bar value");
     assert!(
         diag.start == expected_baz_start as u32
             || diag.start == expected_bar_start as u32
-            || diag.start == expected_object_start as u32
-            || diag.start == expected_baz_value_start as u32
-            || diag.start == expected_bar_value_start as u32,
-        "Expected TS2322 on baz/bar/value/object literal node, got start {}",
+            || diag.start == expected_object_start as u32,
+        "Expected TS2322 on baz/bar/object literal node, got start {}",
         diag.start
     );
 }
