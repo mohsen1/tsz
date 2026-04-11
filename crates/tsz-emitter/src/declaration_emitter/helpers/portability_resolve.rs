@@ -1282,23 +1282,18 @@ impl<'a> DeclarationEmitter<'a> {
         let type_name = symbol.escaped_name.clone();
         let source_path = self.get_symbol_source_path(sym_id, binder)?;
 
-        // If the symbol is exported from a package entry point that can be
-        // referenced via a bare specifier, the type IS portable.
-        // When the symbol's source IS the package entry point (same file),
-        // it's directly accessible — skip the expensive declaration walk
-        // to avoid infinite recursion in collect_non_portable_references.
-        if let Some(ref_path) =
-            self.package_root_export_reference_path(sym_id, &type_name, binder, current_file_path)
-        {
-            if ref_path.is_empty() {
-                return None;
-            }
-            if self
+        // If the symbol is re-exported from a module accessible via a bare
+        // package specifier (no subpath), the type IS portable -- consumers
+        // can reference it through the package root.  tsc does not emit
+        // TS2883 in this situation.
+        if self
+            .package_root_export_reference_path(sym_id, &type_name, binder, current_file_path)
+            .is_some()
+            && self
                 .collect_non_portable_references_in_symbol_declaration(sym_id)
                 .is_empty()
-            {
-                return None;
-            }
+        {
+            return None;
         }
 
         // Parse node_modules segments from the source path
@@ -1761,7 +1756,7 @@ impl<'a> DeclarationEmitter<'a> {
             .find_map(|(module_path, exports)| {
                 let exported = exports.get(type_name)?;
                 let exported = self.resolve_portability_symbol(exported, binder);
-                if exported != sym_id {
+                if module_path == &source_path || exported != sym_id {
                     return None;
                 }
 
@@ -1770,15 +1765,6 @@ impl<'a> DeclarationEmitter<'a> {
                 if specifier.contains('/') {
                     return None;
                 }
-
-                // When the symbol is defined and exported from the same file
-                // (module_path == source_path), the type is still portable if
-                // this file is the package entry point — consumers can reference
-                // it via the bare package specifier.
-                if module_path == &source_path {
-                    return Some(String::new());
-                }
-
                 let package_root = std::path::Path::new(module_path)
                     .parent()
                     .unwrap_or_else(|| std::path::Path::new(""));

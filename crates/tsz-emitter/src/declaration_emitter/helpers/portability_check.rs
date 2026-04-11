@@ -1261,6 +1261,12 @@ impl<'a> DeclarationEmitter<'a> {
                     file,
                 )
                 .is_none()
+            // Skip if the source file is a direct-dependency entry point
+            // (accessible via bare specifier). package_root_export_reference_path
+            // filters same-file entries, so we check explicitly here.
+            && self
+                .package_specifier_for_node_modules_path(file, &source_path)
+                .map_or(true, |spec| spec.contains('/'))
         {
             references.push((
                 self.strip_ts_extensions(&self.calculate_relative_path(file, &source_path)),
