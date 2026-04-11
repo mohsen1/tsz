@@ -22,16 +22,31 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
         return Vec::new();
     }
 
-    let tslib_file = program.files.iter().find(|file| {
-        let path = file.file_name.replace('\\', "/");
-        // Match tslib by directory or filename: the package's main declaration
-        // file may be `tslib.d.ts` or `index.d.ts` inside a `tslib/` directory.
-        path.contains("/tslib/")
-            || Path::new(&file.file_name)
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.eq_ignore_ascii_case("tslib.d.ts"))
-    });
+    let tslib_file = {
+        // Prefer `.d.ts` over `.d.mts`/`.d.cts` re-export stubs.  In nodenext
+        // with conditional exports the ESM entry (`.d.mts`) may only contain
+        // `export * from "./index.js"` without actual helper declarations.
+        let mut candidates: Vec<_> = program
+            .files
+            .iter()
+            .filter(|file| {
+                let path = file.file_name.replace('\\', "/");
+                path.contains("/tslib/")
+                    || Path::new(&file.file_name)
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.eq_ignore_ascii_case("tslib.d.ts"))
+            })
+            .collect();
+        candidates.sort_by_key(|f| {
+            if f.file_name.ends_with(".d.mts") || f.file_name.ends_with(".d.cts") {
+                1
+            } else {
+                0
+            }
+        });
+        candidates.into_iter().next()
+    };
 
     // Resolved via program files — check exports directly.
     if let Some(tslib_file) = tslib_file {
