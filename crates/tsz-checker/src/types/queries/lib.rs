@@ -601,6 +601,11 @@ impl<'a> CheckerState<'a> {
         member_id: SymbolId,
         property_name: &str,
     ) -> Option<TypeId> {
+        let parent_name = self
+            .get_cross_file_symbol(parent_sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(parent_sym_id))
+            .map(|symbol| symbol.escaped_name.clone());
+        let mut member_id = member_id;
         self.propagate_cross_file_target(parent_sym_id, member_id);
 
         // Check is_type_only on the original export specifier BEFORE alias
@@ -611,7 +616,16 @@ impl<'a> CheckerState<'a> {
             .or_else(|| self.ctx.binder.get_symbol(member_id))
             && member_symbol.is_type_only
         {
-            return None;
+            if let Some(parent_name) = parent_name.as_deref()
+                && let Some(alt_member_id) =
+                    self.resolve_namespace_member_from_all_binders(parent_name, property_name)
+                && alt_member_id != member_id
+            {
+                member_id = alt_member_id;
+                self.propagate_cross_file_target(parent_sym_id, member_id);
+            } else {
+                return None;
+            }
         }
 
         let resolved_member_id = if let Some(member_symbol) = self.get_cross_file_symbol(member_id)
@@ -665,6 +679,16 @@ impl<'a> CheckerState<'a> {
         }
 
         self.get_validated_member_type(resolved_member_id, property_name)
+            .or_else(|| {
+                let parent_name = parent_name.as_deref()?;
+                let alt_member_id =
+                    self.resolve_namespace_member_from_all_binders(parent_name, property_name)?;
+                if alt_member_id == resolved_member_id {
+                    return None;
+                }
+                self.propagate_cross_file_target(parent_sym_id, alt_member_id);
+                self.get_validated_member_type(alt_member_id, property_name)
+            })
     }
 
     fn namespace_has_umd_augmentation_member(
@@ -835,7 +859,9 @@ impl<'a> CheckerState<'a> {
 
                 // Extract needed data from symbol before mutable borrows below.
                 let (sym_flags, sym_name, direct_member_id, module_export_member_id, import_module) = {
-                    let symbol = self.get_cross_file_symbol(sym_id)?;
+                    let symbol = self
+                        .get_cross_file_symbol(sym_id)
+                        .or_else(|| self.ctx.binder.get_symbol(sym_id))?;
                     if symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM) == 0 {
                         return None;
                     }
@@ -1983,7 +2009,9 @@ impl<'a> CheckerState<'a> {
             import_module,
             decl_file_idx,
         ) = {
-            let symbol = self.get_cross_file_symbol(sym_id)?;
+            let symbol = self
+                .get_cross_file_symbol(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(sym_id))?;
             if symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM | symbol_flags::ALIAS) == 0
             {
                 return None;

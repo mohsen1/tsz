@@ -30,6 +30,40 @@ pub(crate) struct RunCheckResult {
 }
 
 impl Server {
+    const SUPPRESSED_TYPE_CODES_FOR_DEPRECATION: &[i32] = &[
+        2322, // TS2322: Type not assignable
+        2345, // TS2345: Argument not assignable
+        2339, // TS2339: Property does not exist
+        2343, // TS2343: Access modifier error
+        2882, // TS2882: Cannot find module/type declarations for side-effect import
+        2304, // TS2304: Cannot find name
+        2307, // TS2307: Cannot find module
+        7006, // TS7006: Parameter implicitly has 'any' type
+        7005, // TS7005: Variable implicitly has 'any' type
+        2323, // TS2323: Cannot redeclare exported variable
+        2741, // TS2741: Missing properties
+        2510, // TS2510: Cannot assign to read-only property
+        2694, // TS2694: Namespace not found
+        2531, // TS2531: Possibly null
+        2532, // TS2532: Possibly undefined
+        2533, // TS2533: Object is possibly null or undefined
+        2564, // TS2564: Property has no initializer
+        2454, // TS2454: Variable used before being assigned
+        2403, // TS2403: Subsequent variable declarations must have same type
+        2411, // TS2411: Property conflict
+        2300, // TS2300: Duplicate identifier
+    ];
+
+    #[inline]
+    fn is_deprecated_type_suppression_code(code: i32) -> bool {
+        Self::SUPPRESSED_TYPE_CODES_FOR_DEPRECATION.contains(&code)
+    }
+
+    #[inline]
+    fn has_deprecation_diagnostics(codes: &[i32]) -> bool {
+        codes.iter().any(|&code| matches!(code, 5101 | 5107))
+    }
+
     /// Get full semantic diagnostics for a single file (with position info).
     pub(crate) fn get_semantic_diagnostics_full(
         &mut self,
@@ -206,6 +240,14 @@ impl Server {
         if category == DiagnosticCategory::Error {
             diagnostics
                 .retain(|diag| !Self::should_suppress_namespace_global_ts2403(diag, content));
+
+            if diagnostics
+                .iter()
+                .any(|diag| matches!(diag.code, 5101 | 5107))
+            {
+                diagnostics
+                    .retain(|diag| !Self::is_deprecated_type_suppression_code(diag.code as i32));
+            }
         }
 
         diagnostics
@@ -493,6 +535,10 @@ impl Server {
                     all_codes.push(diag.code as i32);
                 }
             }
+        }
+
+        if Self::has_deprecation_diagnostics(&all_codes) {
+            all_codes.retain(|code| !Self::is_deprecated_type_suppression_code(*code));
         }
 
         Ok(RunCheckResult {

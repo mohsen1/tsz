@@ -553,6 +553,7 @@ impl<'a> CheckerState<'a> {
                 expando_root,
                 ty,
             );
+            ty = self.widen_fresh_object_literal_properties_for_display(ty);
             return crate::query_boundaries::common::widen_freshness(self.ctx.types, ty);
         }
 
@@ -600,6 +601,7 @@ impl<'a> CheckerState<'a> {
             expando_root,
             ty,
         );
+        ty = checker.widen_fresh_object_literal_properties_for_display(ty);
         ty = crate::query_boundaries::common::widen_freshness(checker.ctx.types, ty);
         ty = if crate::query_boundaries::common::is_unique_symbol_type(checker.ctx.types, ty) {
             ty

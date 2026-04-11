@@ -106,7 +106,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn root_symbol_supports_js_expando_read(&self, sym_id: SymbolId) -> bool {
-        let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
+        let Some(symbol) = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+        else {
             return false;
         };
 
@@ -497,7 +500,7 @@ impl<'a> CheckerState<'a> {
     ///    or a variable initialized with a function expression / arrow function
     /// 3. The object type is a function type
     pub(in crate::types_domain) fn is_expando_function_assignment(
-        &self,
+        &mut self,
         property_access_idx: NodeIndex,
         object_expr_idx: NodeIndex,
         object_type: TypeId,
@@ -514,12 +517,11 @@ impl<'a> CheckerState<'a> {
             (ident.escaped_text == "prototype").then_some(access.expression)
         });
 
-        // Check if object type is a function type. In JS files, also allow
-        // `Ctor.prototype.method = ...` writes when `Ctor` resolves to a
-        // function/class symbol; the prototype object itself is not callable.
-        if prototype_root_expr.is_none() && !is_function_type(self.ctx.types, object_type) {
-            return false;
-        }
+        // Keep the current receiver type as a fast signal, but don't return
+        // early on non-function shapes. Checked-JS expando writes can reach
+        // this path before the receiver type has stabilized, and the symbol/
+        // declaration checks below are the more authoritative source.
+        let object_type_is_function = is_function_type(self.ctx.types, object_type);
 
         // Check if property access is LHS of a `=` assignment
         let parent_idx = match self.ctx.arena.get_extended(property_access_idx) {
@@ -545,8 +547,30 @@ impl<'a> CheckerState<'a> {
             .or_else(|| self.resolve_qualified_symbol(symbol_target_expr));
 
         if let Some(sym_id) = sym_id
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && let Some(symbol) = self
+                .get_cross_file_symbol(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(sym_id))
         {
+            let symbol_flags = symbol.flags;
+            let symbol_value_declaration = symbol.value_declaration;
+            let symbol_declarations = symbol.declarations.clone();
+            let symbol_escaped_name = symbol.escaped_name.clone();
+
+            if self.is_js_file()
+                && self.ctx.compiler_options.check_js
+                && prototype_root_expr.is_none()
+                && let Some(root_ident) = self.ctx.arena.get(symbol_target_expr)
+                && root_ident.kind == SyntaxKind::Identifier as u16
+                && let Some(ident) = self.ctx.arena.get_identifier(root_ident)
+                && let Some(non_js_value_type) =
+                    self.cross_file_global_value_type_by_name(&ident.escaped_text, false)
+                && non_js_value_type != TypeId::ANY
+                && non_js_value_type != TypeId::UNKNOWN
+                && !is_function_type(self.ctx.types, non_js_value_type)
+            {
+                return false;
+            }
+
             let prop_name = self
                 .ctx
                 .arena
@@ -574,14 +598,141 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
 
+            let declaration_is_function_value_in_arena =
+                |arena: &tsz_parser::parser::node::NodeArena, decl_idx: NodeIndex| -> bool {
+                    if decl_idx.is_none() {
+                        return false;
+                    }
+                    let Some(node) = arena.get(decl_idx) else {
+                        return false;
+                    };
+                    match node.kind {
+                        syntax_kind_ext::FUNCTION_DECLARATION => true,
+                        syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                            let Some(ext) = arena.get_extended(decl_idx) else {
+                                return false;
+                            };
+                            if ext.parent.is_none() {
+                                return false;
+                            };
+                            let parent_idx = ext.parent;
+                            let Some(parent_node) = arena.get(parent_idx) else {
+                                return false;
+                            };
+                            let Some(binary) = arena.get_binary_expr(parent_node) else {
+                                return false;
+                            };
+                            if binary.left != decl_idx
+                                || !self.is_assignment_operator(binary.operator_token)
+                            {
+                                return false;
+                            }
+                            arena.get(binary.right).is_some_and(|rhs| {
+                                rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                                    || rhs.kind == syntax_kind_ext::ARROW_FUNCTION
+                            })
+                        }
+                        syntax_kind_ext::BINARY_EXPRESSION => {
+                            let Some(binary_node) = arena.get(decl_idx) else {
+                                return false;
+                            };
+                            let Some(binary) = arena.get_binary_expr(binary_node) else {
+                                return false;
+                            };
+                            if !self.is_assignment_operator(binary.operator_token) {
+                                return false;
+                            }
+                            arena.get(binary.right).is_some_and(|rhs| {
+                                rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                                    || rhs.kind == syntax_kind_ext::ARROW_FUNCTION
+                            })
+                        }
+                        syntax_kind_ext::VARIABLE_DECLARATION => {
+                            let Some(var_decl) = arena.get_variable_declaration(node) else {
+                                return false;
+                            };
+                            let Some(init_node) = arena.get(var_decl.initializer) else {
+                                return false;
+                            };
+                            init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                                || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        }
+                        _ => false,
+                    }
+                };
+
+            let declaration_arenas_for_declaration = |sym_id: SymbolId, decl_idx: NodeIndex| {
+                let mut arenas = Vec::new();
+
+                if self.ctx.arena.get(decl_idx).is_some() {
+                    arenas.push(self.ctx.arena);
+                }
+
+                if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
+                    let symbol_arena_ref = symbol_arena.as_ref();
+                    if !std::ptr::eq(symbol_arena_ref, self.ctx.arena) {
+                        arenas.push(symbol_arena_ref);
+                    }
+                }
+
+                if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+                    && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
+                {
+                    if let Some(symbol_arena) = binder.symbol_arenas.get(&sym_id) {
+                        let symbol_arena_ref = symbol_arena.as_ref();
+                        if !arenas.iter().any(|a| std::ptr::eq(*a, symbol_arena_ref)) {
+                            arenas.push(symbol_arena_ref);
+                        }
+                    }
+
+                    if let Some(arenas_for_decl) =
+                        binder.declaration_arenas.get(&(sym_id, decl_idx))
+                    {
+                        for arena in arenas_for_decl.iter() {
+                            let arena_ref = arena.as_ref();
+                            if !arenas.iter().any(|a| std::ptr::eq(*a, arena_ref)) {
+                                arenas.push(arena_ref);
+                            }
+                        }
+                    }
+                }
+
+                if let Some(arenas_for_decl) =
+                    self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+                {
+                    for arena in arenas_for_decl.iter() {
+                        let arena_ref = arena.as_ref();
+                        if !arenas.iter().any(|a| std::ptr::eq(*a, arena_ref)) {
+                            arenas.push(arena_ref);
+                        }
+                    }
+                }
+
+                arenas
+            };
+
+            let declaration_is_function_value = |decl_idx: NodeIndex| -> bool {
+                let mut observed = false;
+                for arena in declaration_arenas_for_declaration(sym_id, decl_idx) {
+                    if arena.get(decl_idx).is_none() {
+                        continue;
+                    }
+                    observed = true;
+                    if !declaration_is_function_value_in_arena(arena, decl_idx) {
+                        return false;
+                    }
+                }
+                observed
+            };
+
             let is_declared_function_or_class =
-                (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0;
-            let is_callable_variable = (symbol.flags
+                (symbol_flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0;
+            let is_callable_variable = (symbol_flags
                 & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE))
                 != 0
-                && symbol.value_declaration.is_some()
+                && symbol_value_declaration.is_some()
                 && {
-                    let decl_idx = symbol.value_declaration;
+                    let decl_idx = symbol_value_declaration;
                     self.ctx
                         .arena
                         .get(decl_idx)
@@ -595,13 +746,42 @@ impl<'a> CheckerState<'a> {
             if !is_declared_function_or_class && !is_callable_variable {
                 return false;
             }
+
+            let mut declaration_indices = symbol_declarations;
+            if symbol_value_declaration.is_some()
+                && !declaration_indices.contains(&symbol_value_declaration)
+            {
+                declaration_indices.push(symbol_value_declaration);
+            }
+            for (&(entry_sym_id, decl_idx), _) in self.ctx.binder.declaration_arenas.iter() {
+                if entry_sym_id == sym_id && !declaration_indices.contains(&decl_idx) {
+                    declaration_indices.push(decl_idx);
+                }
+            }
+
+            let has_mixed_non_callable_declaration =
+                declaration_indices.iter().copied().any(|decl_idx| {
+                    !self.declaration_is_checked_js_constructor_value_declaration(sym_id, decl_idx)
+                        && !declaration_is_function_value(decl_idx)
+                });
+            let has_expando_declaration_pattern = !self.is_js_file()
+                || !self.ctx.compiler_options.check_js
+                || (!has_mixed_non_callable_declaration
+                    && declaration_indices.iter().copied().all(|decl_idx| {
+                        !self.declaration_is_checked_js_constructor_value_declaration(
+                            sym_id, decl_idx,
+                        )
+                    }));
+            if !has_expando_declaration_pattern {
+                return false;
+            }
             // For class declarations, don't treat as expando if the property
             // exists as an instance member. Accessing instance members on the
             // constructor type (e.g., `Base.instanceProp = 2`) should produce
             // TS2339, not be silently accepted as an expando.
-            if prototype_root_expr.is_none() && (symbol.flags & symbol_flags::CLASS) != 0 {
+            if prototype_root_expr.is_none() && (symbol_flags & symbol_flags::CLASS) != 0 {
                 if let Some(prop_name) = prop_name.as_deref() {
-                    let obj_key = symbol.escaped_name.as_str();
+                    let obj_key = symbol_escaped_name.as_str();
                     if self.class_has_instance_member(obj_key, prop_name) {
                         return false;
                     }
@@ -628,7 +808,8 @@ impl<'a> CheckerState<'a> {
             None
         }
 
-        if let Some(root_name) = root_identifier(self.ctx.arena, object_expr_idx)
+        if object_type_is_function
+            && let Some(root_name) = root_identifier(self.ctx.arena, object_expr_idx)
             && let Some(root_sym) = self.ctx.binder.file_locals.get(&root_name)
             && let Some(root_symbol) = self.ctx.binder.get_symbol(root_sym)
             && (root_symbol.flags & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE))
@@ -750,6 +931,171 @@ impl<'a> CheckerState<'a> {
         // `newProp` is a genuine expando (should succeed).
         if self.class_has_instance_member(&obj_key, property_name) {
             return false;
+        }
+
+        if let Some(sym_id) = self.root_symbol_for_expando_read(object_expr_idx)
+            && (self.is_js_file() && self.ctx.compiler_options.check_js)
+            && let Some(symbol) = self
+                .get_cross_file_symbol(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(sym_id))
+        {
+            let mut declaration_indices = symbol.declarations.to_vec();
+            if symbol.value_declaration.is_some()
+                && !declaration_indices.contains(&symbol.value_declaration)
+            {
+                declaration_indices.push(symbol.value_declaration);
+            }
+            for (&(entry_sym_id, decl_idx), _) in self.ctx.binder.declaration_arenas.iter() {
+                if entry_sym_id == sym_id && !declaration_indices.contains(&decl_idx) {
+                    declaration_indices.push(decl_idx);
+                }
+            }
+
+            let is_callable_variable = (symbol.flags
+                & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE))
+                != 0
+                && symbol.value_declaration.is_some()
+                && {
+                    let decl_idx = symbol.value_declaration;
+                    self.ctx
+                        .arena
+                        .get(decl_idx)
+                        .and_then(|decl_node| self.ctx.arena.get_variable_declaration(decl_node))
+                        .and_then(|decl| self.ctx.arena.get(decl.initializer))
+                        .is_some_and(|init_node| {
+                            init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                                || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        })
+                };
+            let is_declared_function_or_class =
+                (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0;
+
+            let declaration_is_function_value_in_arena =
+                |arena: &tsz_parser::parser::node::NodeArena, decl_idx: NodeIndex| -> bool {
+                    if decl_idx.is_none() {
+                        return false;
+                    }
+                    let Some(node) = arena.get(decl_idx) else {
+                        return false;
+                    };
+                    match node.kind {
+                        syntax_kind_ext::FUNCTION_DECLARATION => true,
+                        syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                            let Some(ext) = arena.get_extended(decl_idx) else {
+                                return false;
+                            };
+                            if ext.parent.is_none() {
+                                return false;
+                            };
+                            let parent_idx = ext.parent;
+                            let Some(parent_node) = arena.get(parent_idx) else {
+                                return false;
+                            };
+                            let Some(binary) = arena.get_binary_expr(parent_node) else {
+                                return false;
+                            };
+                            if binary.left != decl_idx
+                                || !self.is_assignment_operator(binary.operator_token)
+                            {
+                                return false;
+                            }
+                            arena.get(binary.right).is_some_and(|rhs| {
+                                rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                                    || rhs.kind == syntax_kind_ext::ARROW_FUNCTION
+                            })
+                        }
+                        syntax_kind_ext::BINARY_EXPRESSION => {
+                            let Some(binary_node) = arena.get(decl_idx) else {
+                                return false;
+                            };
+                            let Some(binary) = arena.get_binary_expr(binary_node) else {
+                                return false;
+                            };
+                            if !self.is_assignment_operator(binary.operator_token) {
+                                return false;
+                            }
+                            arena.get(binary.right).is_some_and(|rhs| {
+                                rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                                    || rhs.kind == syntax_kind_ext::ARROW_FUNCTION
+                            })
+                        }
+                        syntax_kind_ext::VARIABLE_DECLARATION => {
+                            let Some(var_decl) = arena.get_variable_declaration(node) else {
+                                return false;
+                            };
+                            let Some(init_node) = arena.get(var_decl.initializer) else {
+                                return false;
+                            };
+                            init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                                || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        }
+                        _ => false,
+                    }
+                };
+
+            let declaration_arenas_for_declaration = |sym_id: SymbolId, decl_idx: NodeIndex| {
+                let mut arenas = Vec::new();
+
+                if self.ctx.arena.get(decl_idx).is_some() {
+                    arenas.push(self.ctx.arena);
+                }
+
+                if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
+                    let symbol_arena_ref = symbol_arena.as_ref();
+                    if !std::ptr::eq(symbol_arena_ref, self.ctx.arena) {
+                        arenas.push(symbol_arena_ref);
+                    }
+                }
+
+                if let Some(arenas_for_decl) =
+                    self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+                {
+                    for arena in arenas_for_decl.iter() {
+                        let arena_ref = arena.as_ref();
+                        if !arenas.iter().any(|a| std::ptr::eq(*a, arena_ref)) {
+                            arenas.push(arena_ref);
+                        }
+                    }
+                }
+
+                arenas
+            };
+
+            let declaration_is_function_value = |decl_idx: NodeIndex| -> bool {
+                let mut observed = false;
+                for arena in declaration_arenas_for_declaration(sym_id, decl_idx) {
+                    if arena.get(decl_idx).is_none() {
+                        continue;
+                    }
+                    observed = true;
+                    if !declaration_is_function_value_in_arena(arena, decl_idx) {
+                        return false;
+                    }
+                }
+                observed
+            };
+
+            let has_mixed_non_callable_declaration =
+                declaration_indices.iter().copied().any(|decl_idx| {
+                    !self.declaration_is_checked_js_constructor_value_declaration(sym_id, decl_idx)
+                        && !declaration_is_function_value(decl_idx)
+                });
+            let has_callable_decl = declaration_indices
+                .iter()
+                .copied()
+                .any(declaration_is_function_value)
+                || is_declared_function_or_class
+                || is_callable_variable;
+            let has_expando_declaration_pattern =
+                declaration_indices.iter().copied().all(|decl_idx| {
+                    !self.declaration_is_checked_js_constructor_value_declaration(sym_id, decl_idx)
+                        || declaration_is_function_value(decl_idx)
+                });
+            if has_callable_decl
+                && (has_mixed_non_callable_declaration || !has_expando_declaration_pattern)
+            {
+                return false;
+            }
         }
 
         // Object-literal variables can legitimately assign back to properties they

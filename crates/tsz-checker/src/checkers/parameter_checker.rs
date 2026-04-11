@@ -1056,6 +1056,16 @@ impl<'a> CheckerState<'a> {
                 t
             };
 
+            if let Some(name_node) = self.ctx.arena.get(param.name)
+                && name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            {
+                let is_iterable =
+                    self.check_destructuring_iterability(param.name, param_type, param.initializer);
+                if !is_iterable {
+                    continue;
+                }
+            }
+
             // Delegate to check_binding_pattern which handles element type resolution,
             // contextual type for function-like initializers, and assignability checks.
             let request = TypingRequest::with_contextual_type(param_type);

@@ -1067,8 +1067,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Match tsc's signaturesRelatedTo behavior for callable-to-function:
-        // any compatible source signature suffices.
+        // Check source call signatures against the target function.
+        // A single compatible source signature is enough to establish the relation.
         for s_sig in &s_callable.call_signatures {
             if self
                 .check_call_signature_subtype_to_fn(s_sig, &t_fn)
@@ -1088,7 +1088,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // tsc N×M path: when a callable has multiple signatures and the direct
-        // comparison above fails, try erasing type parameters to `any`.
+        // comparison above fails, try erasing type parameters to `any`
+        // comparison above fails, try erasing type parameters to `any`
+        // (matching tsc's `getErasedSignature` / `createTypeEraser`). In tsc's
+        // `signaturesRelatedTo`, the N×M case (source.length > 1 || target.length > 1)
+        // always uses `erase = true`, which maps type params to `any`. This allows
+        // overloaded callables with constrained generics (e.g., `{ <T extends A>(x: T): T;
+        // <T extends B>(x: T): T }`) to be assignable to unconstrained generic functions
+        // (e.g., `<T>(x: T) => T`), because after erasure both become `(x: any) => any`.
         if s_callable.call_signatures.len() > 1 {
             for s_sig in &s_callable.call_signatures {
                 if self

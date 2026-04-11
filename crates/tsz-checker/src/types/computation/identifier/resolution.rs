@@ -76,6 +76,11 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        let value_type = self.type_of_value_symbol_by_name(name);
+        if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+            return value_type;
+        }
+
         let lib_binders = self.get_lib_binders();
         if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
             return self.get_type_of_symbol(sym_id);
@@ -564,14 +569,28 @@ impl<'a> CheckerState<'a> {
         name: &str,
         include_js: bool,
     ) -> Option<TypeId> {
-        let entries = self
+        let all_arenas = self.ctx.all_arenas.clone()?;
+        let all_binders = self.ctx.all_binders.clone()?;
+        let entries = if let Some(entries) = self
             .ctx
             .global_file_locals_index
             .as_ref()
             .and_then(|idx| idx.get(name))
-            .cloned()?;
-        let all_arenas = self.ctx.all_arenas.clone()?;
-        let all_binders = self.ctx.all_binders.clone()?;
+            .cloned()
+        {
+            entries
+        } else {
+            all_binders
+                .iter()
+                .enumerate()
+                .filter_map(|(file_idx, binder)| {
+                    binder
+                        .file_locals
+                        .get(name)
+                        .map(|sym_id| (file_idx, sym_id))
+                })
+                .collect()
+        };
 
         for (file_idx, sym_id) in entries {
             if file_idx == self.ctx.current_file_idx {
@@ -676,7 +695,7 @@ impl<'a> CheckerState<'a> {
         local_sym_id: SymbolId,
     ) -> Option<TypeId> {
         if self.ctx.binder.file_locals.get(name) != Some(local_sym_id) {
-            return None;
+            return self.non_js_cross_file_global_value_type_by_name(name);
         }
 
         if let Some(symbol) = self.ctx.binder.get_symbol(local_sym_id) {
@@ -1085,18 +1104,58 @@ impl<'a> CheckerState<'a> {
         let Some(node) = arena.get(decl_idx) else {
             return false;
         };
-        if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
-            return false;
-        }
+        let is_function_assignment = || -> bool {
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let Some(ext) = arena.get_extended(decl_idx) else {
+                    return false;
+                };
+                if ext.parent.is_none() {
+                    return false;
+                };
+                let parent_idx = ext.parent;
+                let Some(parent_node) = arena.get(parent_idx) else {
+                    return false;
+                };
+                let Some(binary) = arena.get_binary_expr(parent_node) else {
+                    return false;
+                };
+                if binary.left != decl_idx || !self.is_assignment_operator(binary.operator_token) {
+                    return false;
+                }
+                return arena
+                    .get(binary.right)
+                    .is_some_and(|rhs| rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION);
+            }
 
-        let Some(var_decl) = arena.get_variable_declaration(node) else {
-            return false;
-        };
-        let Some(init_node) = arena.get(var_decl.initializer) else {
-            return false;
+            if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                let Some(binary_node) = arena.get(decl_idx) else {
+                    return false;
+                };
+                let Some(binary) = arena.get_binary_expr(binary_node) else {
+                    return false;
+                };
+                if !self.is_assignment_operator(binary.operator_token) {
+                    return false;
+                }
+                return arena
+                    .get(binary.right)
+                    .is_some_and(|rhs| rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION);
+            }
+
+            if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                let Some(var_decl) = arena.get_variable_declaration(node) else {
+                    return false;
+                };
+                let Some(init_node) = arena.get(var_decl.initializer) else {
+                    return false;
+                };
+                return init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION;
+            }
+
+            false
         };
 
-        init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+        is_function_assignment()
     }
 
     /// Extract the module specifier string from an import declaration.

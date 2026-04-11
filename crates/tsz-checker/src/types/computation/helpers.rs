@@ -1258,19 +1258,265 @@ impl<'a> CheckerState<'a> {
         // properties. Return `any` to match this behavior.
         // Note: class declarations are NOT included here — class static property
         // assignments DO check assignability in tsc.
+        fn property_access_chain(
+            arena: &tsz_parser::parser::node::NodeArena,
+            idx: NodeIndex,
+        ) -> Option<String> {
+            let node = arena.get(idx)?;
+            if node.kind == SyntaxKind::Identifier as u16 {
+                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
+            }
+            if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                return None;
+            }
+            let access = arena.get_access_expr(node)?;
+            let left = property_access_chain(arena, access.expression)?;
+            let right = arena
+                .get_identifier_at(access.name_or_argument)?
+                .escaped_text
+                .clone();
+            Some(format!("{left}.{right}"))
+        }
+
+        if let Some(node) = self.ctx.arena.get(idx)
+            && node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(node)
+            && self.is_js_file()
+            && self.ctx.compiler_options.check_js
+            && let Some(member_name) = self
+                .ctx
+                .arena
+                .get_identifier_at(access.name_or_argument)
+                .map(|ident| ident.escaped_text.clone())
+        {
+            let has_expando_property = {
+                let object_key = property_access_chain(self.ctx.arena, access.expression);
+                object_key.is_some_and(|object_key| {
+                    let has_expando_property = self
+                        .collect_expando_properties_for_root(&object_key)
+                        .contains(&member_name);
+                    let has_last_segment_property =
+                        object_key
+                            .rsplit_once('.')
+                            .is_some_and(|(_, last_segment)| {
+                                self.collect_expando_properties_for_root(last_segment)
+                                    .contains(&member_name)
+                            });
+                    has_expando_property || has_last_segment_property
+                })
+            };
+
+            if has_expando_property {
+                let access_expression_type = self.get_type_of_node(access.expression);
+                if self.is_expando_function_assignment(
+                    idx,
+                    access.expression,
+                    access_expression_type,
+                ) {
+                    let _ = self
+                        .get_type_of_node_with_request(idx, &TypingRequest::for_write_context());
+                    return TypeId::ANY;
+                }
+            }
+        }
+
         if let Some(node) = self.ctx.arena.get(idx)
             && node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access) = self.ctx.arena.get_access_expr(node)
             && let Some(obj_sym) =
                 self.resolve_identifier_symbol_without_tracking(access.expression)
-            && let Some(symbol) = self.ctx.binder.get_symbol(obj_sym)
+            && let Some(symbol) = self
+                .get_cross_file_symbol(obj_sym)
+                .or_else(|| self.ctx.binder.get_symbol(obj_sym))
             && (symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0
             && (symbol.flags & tsz_binder::symbol_flags::CLASS) == 0
         {
-            // Still evaluate the node so side effects (diagnostics on the object) fire,
-            // but return `any` for the LHS type so assignability is not checked.
-            let _ = self.get_type_of_node_with_request(idx, &TypingRequest::for_write_context());
-            return TypeId::ANY;
+            let symbol_declarations = symbol.declarations.clone();
+            let declaration_is_function_value = |decl_idx: NodeIndex| -> bool {
+                if decl_idx.is_none() {
+                    return false;
+                }
+                let Some(node) = self.ctx.arena.get(decl_idx) else {
+                    return false;
+                };
+                match node.kind {
+                    syntax_kind_ext::FUNCTION_DECLARATION => true,
+                    syntax_kind_ext::BINARY_EXPRESSION => {
+                        let Some(binary_node) = self.ctx.arena.get(decl_idx) else {
+                            return false;
+                        };
+                        let Some(binary) = self.ctx.arena.get_binary_expr(binary_node) else {
+                            return false;
+                        };
+                        if !self.is_assignment_operator(binary.operator_token) {
+                            return false;
+                        }
+                        self.ctx.arena.get(binary.right).is_some_and(|rhs| {
+                            rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                                || rhs.kind == syntax_kind_ext::ARROW_FUNCTION
+                        })
+                    }
+                    syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                        let Some(ext) = self.ctx.arena.get_extended(decl_idx) else {
+                            return false;
+                        };
+                        if ext.parent.is_none() {
+                            return false;
+                        }
+                        let parent_idx = ext.parent;
+                        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                            return false;
+                        };
+                        let Some(binary) = self.ctx.arena.get_binary_expr(parent_node) else {
+                            return false;
+                        };
+                        if binary.left != decl_idx
+                            || !self.is_assignment_operator(binary.operator_token)
+                        {
+                            return false;
+                        }
+                        self.ctx.arena.get(binary.right).is_some_and(|rhs| {
+                            rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                                || rhs.kind == syntax_kind_ext::ARROW_FUNCTION
+                        })
+                    }
+                    syntax_kind_ext::VARIABLE_DECLARATION => {
+                        let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) else {
+                            return false;
+                        };
+                        let Some(init_node) = self.ctx.arena.get(var_decl.initializer) else {
+                            return false;
+                        };
+                        init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                            || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    }
+                    _ => false,
+                }
+            };
+
+            let declaration_arenas_for_declaration = |decl_idx: NodeIndex| {
+                let mut arenas = Vec::new();
+
+                if self.ctx.arena.get(decl_idx).is_some() {
+                    arenas.push(self.ctx.arena);
+                }
+
+                if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&obj_sym) {
+                    let symbol_arena_ref = symbol_arena.as_ref();
+                    if !std::ptr::eq(symbol_arena_ref, self.ctx.arena) {
+                        arenas.push(symbol_arena_ref);
+                    }
+                }
+
+                if let Some(file_idx) = self.ctx.resolve_symbol_file_index(obj_sym)
+                    && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
+                {
+                    if let Some(symbol_arena) = binder.symbol_arenas.get(&obj_sym) {
+                        let symbol_arena_ref = symbol_arena.as_ref();
+                        if !arenas.iter().any(|a| std::ptr::eq(*a, symbol_arena_ref)) {
+                            arenas.push(symbol_arena_ref);
+                        }
+                    }
+
+                    if let Some(arenas_for_decl) =
+                        binder.declaration_arenas.get(&(obj_sym, decl_idx))
+                    {
+                        for arena in arenas_for_decl.iter() {
+                            let arena_ref = arena.as_ref();
+                            if !arenas.iter().any(|a| std::ptr::eq(*a, arena_ref)) {
+                                arenas.push(arena_ref);
+                            }
+                        }
+                    }
+                }
+
+                if let Some(arenas_for_decl) =
+                    self.ctx.binder.declaration_arenas.get(&(obj_sym, decl_idx))
+                {
+                    for arena in arenas_for_decl.iter() {
+                        let arena_ref = arena.as_ref();
+                        if !arenas.iter().any(|a| std::ptr::eq(*a, arena_ref)) {
+                            arenas.push(arena_ref);
+                        }
+                    }
+                }
+
+                arenas
+            };
+
+            let declaration_is_function_value_in_any_arena = |decl_idx: NodeIndex| -> bool {
+                let mut observed = false;
+                for arena in declaration_arenas_for_declaration(decl_idx) {
+                    if arena.get(decl_idx).is_none() {
+                        continue;
+                    }
+                    observed = true;
+                    if !declaration_is_function_value(decl_idx) {
+                        return false;
+                    }
+                }
+                observed
+            };
+
+            let has_mixed_non_callable_declaration =
+                symbol_declarations.iter().copied().any(|decl_idx| {
+                    !self.declaration_is_checked_js_constructor_value_declaration(obj_sym, decl_idx)
+                        && !declaration_is_function_value_in_any_arena(decl_idx)
+                });
+
+            let apply_expando_pattern = !self.is_js_file()
+                || !self.ctx.compiler_options.check_js
+                || (!has_mixed_non_callable_declaration
+                    && symbol_declarations.iter().copied().all(|decl_idx| {
+                        !self.declaration_is_checked_js_constructor_value_declaration(
+                            obj_sym, decl_idx,
+                        )
+                    }));
+
+            let has_concrete_non_expando_override = if self.is_js_file()
+                && self.ctx.compiler_options.check_js
+            {
+                let preferred_cross_file_override = if let Some(root_ident) =
+                    self.ctx.arena.get(access.expression)
+                    && root_ident.kind == SyntaxKind::Identifier as u16
+                    && let Some(ident) = self.ctx.arena.get_identifier(root_ident)
+                    && let Some(preferred_cross_file_type) =
+                        self.cross_file_global_value_type_by_name(&ident.escaped_text, false)
+                {
+                    preferred_cross_file_type != TypeId::ANY
+                        && preferred_cross_file_type != TypeId::UNKNOWN
+                        && !tsz_solver::visitor::is_function_type(
+                            self.ctx.types,
+                            preferred_cross_file_type,
+                        )
+                } else {
+                    false
+                };
+
+                let merged_value_override = if let Some(merged_value_type) =
+                    self.merged_value_type_for_symbol_if_available(obj_sym)
+                {
+                    merged_value_type != TypeId::ANY
+                        && merged_value_type != TypeId::UNKNOWN
+                        && !tsz_solver::visitor::is_function_type(self.ctx.types, merged_value_type)
+                } else {
+                    false
+                };
+
+                preferred_cross_file_override || merged_value_override
+            } else {
+                false
+            };
+
+            if apply_expando_pattern && !has_concrete_non_expando_override {
+                // Checked-JS function symbols use expando writes regardless of any
+                // transient/polluted symbol type observed while checking the assignment.
+                // Still evaluate the node so side effects (diagnostics on the object) fire,
+                // but return `any` for the LHS type so assignability is not checked.
+                let _ =
+                    self.get_type_of_node_with_request(idx, &TypingRequest::for_write_context());
+                return TypeId::ANY;
+            }
         }
 
         if self.is_valid_assignment_target(idx) {

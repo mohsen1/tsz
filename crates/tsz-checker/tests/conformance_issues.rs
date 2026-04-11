@@ -24682,6 +24682,42 @@ take("a");
     );
 }
 
+/// Narrowing by a const identifier with null type.
+/// When `x === myNull` where `const myNull: null = null`,
+/// the true branch should narrow `x` to `null`.
+/// Repro: TypeScript/tests/cases/compiler/controlFlowNullTypeAndLiteral.ts
+#[test]
+fn test_narrowing_by_const_null_identifier() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+const myNull: null = null;
+function f(x: number | null) {
+    if (x === myNull) {
+        const s: string = x;
+    }
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Should emit TS2322 inside if body. Got: {diagnostics:?}"
+    );
+    let msg = diagnostic_message(&diagnostics, 2322).unwrap();
+    assert!(
+        msg.contains("'null'"),
+        "TS2322 should say 'null' not 'number', got: {msg}"
+    );
+    assert!(
+        !msg.contains("'number'"),
+        "TS2322 should NOT say 'number' (wrong narrowing), got: {msg}"
+    );
+}
+
 /// Types NOT inside a namespace should remain unqualified in diagnostics.
 #[test]
 fn test_global_type_display_remains_unqualified() {

@@ -521,6 +521,145 @@ impl<'a> CheckerState<'a> {
         // For symbols merged as interface+function, prefer the interface path below
         // when computing the symbol's semantic type (type-position behavior).
         if flags & symbol_flags::FUNCTION != 0 && flags & symbol_flags::INTERFACE == 0 {
+            let declaration_is_function_value_in_arena =
+                |arena: &tsz_parser::parser::node::NodeArena, decl_idx: NodeIndex| -> bool {
+                    if decl_idx.is_none() {
+                        return false;
+                    }
+                    let Some(node) = arena.get(decl_idx) else {
+                        return false;
+                    };
+                    match node.kind {
+                        syntax_kind_ext::FUNCTION_DECLARATION => true,
+                        syntax_kind_ext::BINARY_EXPRESSION => {
+                            let Some(binary_node) = arena.get(decl_idx) else {
+                                return false;
+                            };
+                            let Some(binary) = arena.get_binary_expr(binary_node) else {
+                                return false;
+                            };
+                            if !self.is_assignment_operator(binary.operator_token) {
+                                return false;
+                            }
+                            arena.get(binary.right).is_some_and(|rhs| {
+                                rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                                    || rhs.kind == syntax_kind_ext::ARROW_FUNCTION
+                            })
+                        }
+                        syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                            let Some(ext) = arena.get_extended(decl_idx) else {
+                                return false;
+                            };
+                            if ext.parent.is_none() {
+                                return false;
+                            }
+                            let parent_idx = ext.parent;
+                            let Some(parent_node) = arena.get(parent_idx) else {
+                                return false;
+                            };
+                            let Some(binary) = arena.get_binary_expr(parent_node) else {
+                                return false;
+                            };
+                            if binary.left != decl_idx
+                                || !self.is_assignment_operator(binary.operator_token)
+                            {
+                                return false;
+                            }
+                            arena.get(binary.right).is_some_and(|rhs| {
+                                rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                                    || rhs.kind == syntax_kind_ext::ARROW_FUNCTION
+                            })
+                        }
+                        syntax_kind_ext::VARIABLE_DECLARATION => {
+                            let Some(var_decl) = arena.get_variable_declaration(node) else {
+                                return false;
+                            };
+                            let Some(init_node) = arena.get(var_decl.initializer) else {
+                                return false;
+                            };
+                            init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                                || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        }
+                        _ => false,
+                    }
+                };
+
+            let declaration_arenas_for_declaration = |sym_id: SymbolId, decl_idx: NodeIndex| {
+                let mut arenas = Vec::new();
+
+                if self.ctx.arena.get(decl_idx).is_some() {
+                    arenas.push(self.ctx.arena);
+                }
+
+                if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
+                    let symbol_arena_ref = symbol_arena.as_ref();
+                    if !std::ptr::eq(symbol_arena_ref, self.ctx.arena) {
+                        arenas.push(symbol_arena_ref);
+                    }
+                }
+
+                if let Some(arenas_for_decl) =
+                    self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+                {
+                    for arena in arenas_for_decl.iter() {
+                        let arena_ref = arena.as_ref();
+                        if !arenas.iter().any(|a| std::ptr::eq(*a, arena_ref)) {
+                            arenas.push(arena_ref);
+                        }
+                    }
+                }
+
+                arenas
+            };
+
+            let declaration_is_function_value = |decl_idx: NodeIndex| -> bool {
+                let mut observed = false;
+                for arena in declaration_arenas_for_declaration(sym_id, decl_idx) {
+                    if arena.get(decl_idx).is_none() {
+                        continue;
+                    }
+                    observed = true;
+                    if !declaration_is_function_value_in_arena(arena, decl_idx) {
+                        return false;
+                    }
+                }
+                observed
+            };
+
+            let mut declaration_indices = declarations.to_vec();
+            if value_decl.is_some() && !declaration_indices.contains(&value_decl) {
+                declaration_indices.push(value_decl);
+            }
+            for (&(entry_sym_id, decl_idx), _) in self.ctx.binder.declaration_arenas.iter() {
+                if entry_sym_id == sym_id && !declaration_indices.contains(&decl_idx) {
+                    declaration_indices.push(decl_idx);
+                }
+            }
+
+            let has_mixed_non_callable_declaration = if self.is_js_file()
+                && self.ctx.compiler_options.check_js
+            {
+                declaration_indices.iter().copied().any(|decl_idx| {
+                    !self.declaration_is_checked_js_constructor_value_declaration(sym_id, decl_idx)
+                        && !declaration_is_function_value(decl_idx)
+                })
+            } else {
+                false
+            };
+
+            if has_mixed_non_callable_declaration {
+                return self.compute_type_of_symbol_type_alias_variable_alias(
+                    sym_id,
+                    flags,
+                    value_decl,
+                    &declarations,
+                    &import_module,
+                    &import_name,
+                    &escaped_name,
+                    &factory,
+                );
+            }
+
             use tsz_solver::CallableShape;
 
             let mut overloads = Vec::new();

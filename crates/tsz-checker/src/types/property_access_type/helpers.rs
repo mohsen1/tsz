@@ -377,30 +377,84 @@ impl<'a> CheckerState<'a> {
         expr_idx: NodeIndex,
         property_name: &str,
     ) -> Option<TypeId> {
-        let ident = self.ctx.arena.get_identifier_at(expr_idx)?;
-        let sym_id = self.resolve_identifier_symbol_without_tracking(expr_idx)?;
-        let symbol = self
+        let value_type = if let Some(ident) = self.ctx.arena.get_identifier_at(expr_idx) {
+            let sym_id = self.resolve_identifier_symbol_without_tracking(expr_idx)?;
+            let symbol = self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .or_else(|| self.get_cross_file_symbol(sym_id))?;
+
+            let is_namespace = (symbol.flags & symbol_flags::NAMESPACE_MODULE) != 0;
+            let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
+            let has_other_value = (symbol.flags & value_flags_except_module) != 0;
+            if !is_namespace || has_other_value {
+                return None;
+            }
+
+            let is_instantiated = symbol
+                .declarations
+                .iter()
+                .any(|&decl_idx| self.is_namespace_declaration_instantiated(decl_idx));
+            if is_instantiated {
+                return None;
+            }
+
+            self.type_of_value_symbol_by_name(&ident.escaped_text)
+        } else if self
             .ctx
-            .binder
-            .get_symbol(sym_id)
-            .or_else(|| self.get_cross_file_symbol(sym_id))?;
+            .arena
+            .get(expr_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION)
+        {
+            let access = self
+                .ctx
+                .arena
+                .get_access_expr(self.ctx.arena.get(expr_idx)?)?;
+            let ns_member_sym_id = self.resolve_qualified_symbol(expr_idx)?;
+            let ns_member_symbol = self
+                .ctx
+                .binder
+                .get_symbol(ns_member_sym_id)
+                .or_else(|| self.get_cross_file_symbol(ns_member_sym_id))?;
+            if (ns_member_symbol.flags & symbol_flags::ENUM) == 0
+                || (ns_member_symbol.flags & symbol_flags::ENUM_MEMBER) != 0
+            {
+                return None;
+            }
 
-        let is_namespace = (symbol.flags & symbol_flags::NAMESPACE_MODULE) != 0;
-        let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
-        let has_other_value = (symbol.flags & value_flags_except_module) != 0;
-        if !is_namespace || has_other_value {
+            let parent_symbol = self
+                .ctx
+                .binder
+                .get_symbol(ns_member_symbol.parent)
+                .or_else(|| self.get_cross_file_symbol(ns_member_symbol.parent))?;
+            if (parent_symbol.flags & symbol_flags::NAMESPACE_MODULE) == 0 {
+                return None;
+            }
+
+            let root_name = self.property_access_chain_key(access.expression)?;
+            let value_type = self.type_of_value_symbol_by_name(&root_name);
+            if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
+                return None;
+            }
+            let member_name = self
+                .ctx
+                .arena
+                .get_identifier_at(access.name_or_argument)?
+                .escaped_text
+                .as_str();
+            match self.resolve_property_access_with_env(value_type, member_name) {
+                PropertyAccessResult::Success { type_id, .. }
+                | PropertyAccessResult::PossiblyNullOrUndefined {
+                    property_type: Some(type_id),
+                    ..
+                } => type_id,
+                _ => return None,
+            }
+        } else {
             return None;
-        }
+        };
 
-        let is_instantiated = symbol
-            .declarations
-            .iter()
-            .any(|&decl_idx| self.is_namespace_declaration_instantiated(decl_idx));
-        if is_instantiated {
-            return None;
-        }
-
-        let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
         if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
             return None;
         }
@@ -413,6 +467,24 @@ impl<'a> CheckerState<'a> {
             } => Some(type_id),
             _ => None,
         }
+    }
+
+    fn property_access_chain_key(&self, expr_idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .map(|ident| ident.escaped_text.to_string());
+        }
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.ctx.arena.get_access_expr(node)?;
+        let left = self.property_access_chain_key(access.expression)?;
+        let right = self.ctx.arena.get_identifier_at(access.name_or_argument)?;
+        Some(format!("{left}.{}", right.escaped_text))
     }
 
     /// Get type of property access expression.

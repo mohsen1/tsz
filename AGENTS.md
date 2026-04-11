@@ -16,3 +16,5 @@ You are working on **tsz**, a TypeScript compiler written in Rust. The absolute 
 3. **Implement** — Solver owns WHAT, Checker owns WHERE. Multi-crate changes are normal.
 4. **Verify** — `scripts/session/verify-all.sh` (unit + conformance + emit + LSP). Zero regressions.
 5. **Push** — Only after verify-all.sh passes: `git push origin main`
+
+If your execution environment does not permit direct `git` CLI usage, keep verifying and preparing the change set, but do not claim a push was performed. The repository gate is still the same: no push until full verification is green.

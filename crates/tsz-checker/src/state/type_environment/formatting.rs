@@ -98,6 +98,13 @@ impl<'a> CheckerState<'a> {
     /// Enables display properties to preserve original literal types from the
     /// freshness model (e.g., `"frizzlebizzle"` not `string`) matching tsc.
     pub fn format_type_diagnostic(&self, type_id: TypeId) -> String {
+        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) != 0
+            && let Some(parent) = self.ctx.binder.get_symbol(symbol.parent)
+        {
+            return format!("{}.{}", parent.escaped_name, symbol.escaped_name);
+        }
         let mut formatter = self
             .ctx
             .create_diagnostic_type_formatter()

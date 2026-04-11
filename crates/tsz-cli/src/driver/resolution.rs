@@ -1498,7 +1498,7 @@ pub(crate) fn normalize_path(path: &Path) -> PathBuf {
 }
 
 pub(crate) fn normalize_resolved_path(path: &Path, options: &ResolvedCompilerOptions) -> PathBuf {
-    if options.preserve_symlinks || path_has_symlink_ancestor(path) {
+    if options.preserve_symlinks || path_has_symlinked_package_ancestor(path) {
         if options.preserve_symlinks {
             normalize_path(path)
         } else {
@@ -1536,18 +1536,47 @@ fn find_node_modules_package_root(path: &Path) -> Option<PathBuf> {
     None
 }
 
-fn path_has_symlink_ancestor(path: &Path) -> bool {
+fn path_has_symlinked_package_ancestor(path: &Path) -> bool {
     let mut current = path.parent();
     while let Some(dir) = current {
         if std::fs::symlink_metadata(dir)
             .map(|metadata| metadata.file_type().is_symlink())
             .unwrap_or(false)
         {
-            return true;
+            if is_root_alias_symlink(dir) {
+                current = dir.parent();
+                continue;
+            }
+
+            let canonical = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+            return canonical.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
+                )
+            });
         }
         current = dir.parent();
     }
     false
+}
+
+fn is_root_alias_symlink(dir: &Path) -> bool {
+    if !dir.is_absolute() {
+        return false;
+    }
+
+    let Ok(relative_to_root) = dir.strip_prefix(Path::new("/")) else {
+        return false;
+    };
+    let Ok(canonical) = std::fs::canonicalize(dir) else {
+        return false;
+    };
+    let Ok(canonical_relative_to_root) = canonical.strip_prefix(Path::new("/")) else {
+        return false;
+    };
+
+    canonical_relative_to_root.ends_with(relative_to_root)
 }
 
 /// Build a redirect map for duplicate packages (same name+version at different
@@ -2095,7 +2124,13 @@ fn resolve_package_root(
     // explicit entry point (exports/main/types). But for symlinked roots without
     // package.json, allow index fallback (matches tsc's module resolution behavior
     // used by declaration-emit symlink conformance cases).
-    if let Some(resolved) = resolve_package_entry(package_root, "index", options, package_type) {
+    let is_symlinked_package_root = std::fs::symlink_metadata(package_root)
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false);
+    let has_package_json = package_json.is_some();
+    if (!is_symlinked_package_root || !has_package_json)
+        && let Some(resolved) = resolve_package_entry(package_root, "index", options, package_type)
+    {
         return Some(resolved);
     }
 

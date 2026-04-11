@@ -9,7 +9,9 @@
 use crate::query_boundaries::flow_analysis as query;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::{FlowNodeId, SymbolId, flow_flags, symbol_flags};
+use tsz_common::comments::{get_jsdoc_content, get_leading_comments_from_cache, is_jsdoc_comment};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::{NodeAccess, SourceFileData};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -741,8 +743,9 @@ impl<'a> FlowAnalyzer<'a> {
             let Some(decl) = self.arena.get_variable_declaration(node_data) else {
                 return false;
             };
-            // If there's a type annotation, don't widen - the user specified the type
-            if decl.type_annotation.is_some() {
+            // If there's a type annotation (explicit or JSDoc), don't widen - the user
+            // specified the declared type.
+            if decl.type_annotation.is_some() || self.var_decl_has_jsdoc_type_annotation(node) {
                 return false;
             }
             // Check if the parent declaration list is let/var (not const)
@@ -766,6 +769,7 @@ impl<'a> FlowAnalyzer<'a> {
                     };
                     if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
                         && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                        && !self.var_decl_has_jsdoc_type_annotation(decl_idx)
                         && decl.type_annotation.is_none()
                     {
                         return true;
@@ -791,7 +795,10 @@ impl<'a> FlowAnalyzer<'a> {
         if node_data.kind == syntax_kind_ext::VARIABLE_DECLARATION
             && let Some(decl) = self.arena.get_variable_declaration(node_data)
         {
-            return decl.type_annotation.is_some();
+            if decl.type_annotation.is_some() {
+                return true;
+            }
+            return self.var_decl_has_jsdoc_type_annotation(node);
         }
 
         // Handle VARIABLE_DECLARATION_LIST or VARIABLE_STATEMENT
@@ -805,7 +812,8 @@ impl<'a> FlowAnalyzer<'a> {
                 };
                 if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
                     && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-                    && decl.type_annotation.is_some()
+                    && (decl.type_annotation.is_some()
+                        || self.var_decl_has_jsdoc_type_annotation(decl_idx))
                 {
                     return true;
                 }
@@ -932,11 +940,107 @@ impl<'a> FlowAnalyzer<'a> {
             return None;
         }
         let var_decl = self.arena.get_variable_declaration(decl_data)?;
-        if var_decl.type_annotation.is_none() {
-            return None;
-        }
         let node_types = self.node_types?;
-        node_types.get(&var_decl.type_annotation.0).copied()
+        if var_decl.type_annotation.is_none() {
+            if !self.var_decl_has_jsdoc_type_annotation(assignment_node) {
+                if let Some(nullish_type) = self.nullish_literal_type(var_decl.initializer) {
+                    if let Some(declared_type) = node_types
+                        .get(&assignment_node.0)
+                        .copied()
+                        .or_else(|| node_types.get(&var_decl.name.0).copied())
+                    {
+                        if declared_type != TypeId::ANY
+                            && declared_type != nullish_type
+                            && declared_type != TypeId::ERROR
+                        {
+                            return Some(declared_type);
+                        }
+                    }
+                }
+                return None;
+            }
+        }
+        if var_decl.type_annotation.is_some() {
+            node_types.get(&var_decl.type_annotation.0).copied()
+        } else {
+            node_types
+                .get(&assignment_node.0)
+                .copied()
+                .or_else(|| node_types.get(&var_decl.name.0).copied())
+        }
+    }
+
+    pub(crate) fn annotation_type_from_assignment_node(
+        &self,
+        assignment_node: NodeIndex,
+        target: NodeIndex,
+    ) -> Option<TypeId> {
+        let Some(node_data) = self.arena.get(assignment_node) else {
+            return None;
+        };
+        if node_data.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            return self.annotation_type_from_var_decl_node(assignment_node);
+        }
+
+        if (node_data.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            || node_data.kind == syntax_kind_ext::VARIABLE_STATEMENT)
+            && let Some(list) = self.arena.get_variable(node_data)
+        {
+            for &decl_idx in &list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+                    continue;
+                }
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                if self.is_matching_reference(decl.name, target) {
+                    return self.annotation_type_from_var_decl_node(decl_idx);
+                }
+            }
+        }
+
+        None
+    }
+
+    fn var_decl_has_jsdoc_type_annotation(&self, node: NodeIndex) -> bool {
+        let Some(node_data) = self.arena.get(node) else {
+            return false;
+        };
+        if let Some(source_file) = self.source_file_for_node(node) {
+            let source_text = source_file.text.as_ref();
+            return get_leading_comments_from_cache(
+                &source_file.comments,
+                node_data.pos,
+                source_text,
+            )
+            .into_iter()
+            .any(|comment| {
+                is_jsdoc_comment(&comment, source_text)
+                    && get_jsdoc_content(&comment, source_text).contains("@type")
+            });
+        }
+        false
+    }
+
+    fn source_file_for_node(&self, node: NodeIndex) -> Option<&SourceFileData> {
+        let mut current = node;
+        while current.is_some() {
+            let node = self.arena.get(current)?;
+            if node.kind == syntax_kind_ext::SOURCE_FILE {
+                return self.arena.get_source_file(node);
+            }
+            let Some(info) = self.arena.node_info(current) else {
+                return None;
+            };
+            if info.parent.is_none() {
+                return None;
+            }
+            current = info.parent;
+        }
+        None
     }
 
     /// Check if an assignment node represents a destructuring assignment.

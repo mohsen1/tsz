@@ -427,6 +427,16 @@ impl<'a> CheckerState<'a> {
                 (flags, value_decl, symbol_declarations, is_umd_export)
             };
 
+            if !self.is_identifier_in_type_position(idx)
+                && (flags & symbol_flags::VALUE) == 0
+                && self.is_known_global_value_name(name)
+            {
+                let value_type = self.type_of_value_symbol_by_name(name);
+                if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                    return self.instantiate_callable_result_from_request(idx, value_type, request);
+                }
+            }
+
             // TS2686: UMD global used as a value in a module file.
             // `export as namespace Foo` makes `Foo` globally visible, but in a module
             // file it must be imported — bare value references are an error.
@@ -1098,20 +1108,17 @@ impl<'a> CheckerState<'a> {
             // variables that don't have an explicit JSDoc @type annotation.
             // When a JSDoc @type annotation is present, it takes precedence
             // (the user's explicit intent) and we must not override it.
-            let has_jsdoc_type_annotation = self.ctx.is_js_file()
+            let can_prefer_non_js_cross_file_value = self.ctx.is_js_file()
                 && self.ctx.should_resolve_jsdoc()
-                && (flags
-                    & (symbol_flags::FUNCTION_SCOPED_VARIABLE
-                        | symbol_flags::BLOCK_SCOPED_VARIABLE))
-                    != 0
-                && value_decl.is_some()
+                && (has_value
+                    || (flags
+                        & (symbol_flags::FUNCTION_SCOPED_VARIABLE
+                            | symbol_flags::BLOCK_SCOPED_VARIABLE))
+                        != 0)
+                && value_decl.is_some();
+            let has_jsdoc_type_annotation = can_prefer_non_js_cross_file_value
                 && self.jsdoc_type_annotation_for_node(value_decl).is_some();
-            let preferred_cross_file_type = if self.ctx.is_js_file()
-                && self.ctx.should_resolve_jsdoc()
-                && (flags
-                    & (symbol_flags::FUNCTION_SCOPED_VARIABLE
-                        | symbol_flags::BLOCK_SCOPED_VARIABLE))
-                    != 0
+            let preferred_cross_file_type = if can_prefer_non_js_cross_file_value
                 && !has_jsdoc_type_annotation
                 && !self.is_require_call_bound_identifier(idx)
             {

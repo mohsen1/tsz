@@ -19,7 +19,7 @@ use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult}
 use crate::relations::subtype::is_subtype_of;
 use crate::type_queries::{
     LiteralValueKind, UnionMembersKind, classify_for_literal_value, classify_for_union_members,
-    get_tuple_elements,
+    construct_return_type_for_type, get_tuple_elements,
 };
 use crate::types::{PropertyLookup, TypeId};
 use crate::visitor::{
@@ -377,6 +377,7 @@ impl<'a> NarrowingContext<'a> {
         literal_value: TypeId,
         keep_matching: bool,
     ) -> Option<TypeId> {
+        let is_constructor_property = property == self.db.intern_string("constructor");
         // PERF: Use discriminant index for O(1) lookup for the POSITIVE (keep_matching) case.
         // The index is only beneficial when it can be reused across multiple narrows of the
         // same union (e.g., switch cases narrowing the same discriminated union). For the
@@ -407,7 +408,11 @@ impl<'a> NarrowingContext<'a> {
                 if member.is_any_or_unknown() {
                     continue;
                 }
-                let prop_type = self.get_top_level_property_type_fast(member, property)?;
+                let raw_prop_type = self.get_top_level_property_type_fast(member, property)?;
+                let prop_type = is_constructor_property
+                    .then_some(raw_prop_type)
+                    .and_then(|prop_type| construct_return_type_for_type(self.db, prop_type))
+                    .unwrap_or(raw_prop_type);
                 let is_excluded = if prop_type == literal_value {
                     true
                 } else {
@@ -441,7 +446,11 @@ impl<'a> NarrowingContext<'a> {
                 continue;
             }
 
-            let prop_type = self.get_top_level_property_type_fast(member, property)?;
+            let raw_prop_type = self.get_top_level_property_type_fast(member, property)?;
+            let prop_type = is_constructor_property
+                .then_some(raw_prop_type)
+                .and_then(|prop_type| construct_return_type_for_type(self.db, prop_type))
+                .unwrap_or(raw_prop_type);
             let should_keep = if prop_type == literal_value {
                 keep_matching
             } else if keep_matching {
@@ -481,6 +490,7 @@ impl<'a> NarrowingContext<'a> {
         literal_value: TypeId,
     ) -> Option<TypeId> {
         let cache_key = (original_union_type, property);
+        let is_constructor_property = property == self.db.intern_string("constructor");
 
         // Check if index is already built
         let existing = self
@@ -505,6 +515,10 @@ impl<'a> NarrowingContext<'a> {
                 }
                 match self.get_top_level_property_type_fast(member, property) {
                     Some(prop_type) => {
+                        let prop_type = is_constructor_property
+                            .then_some(prop_type)
+                            .and_then(|ty| construct_return_type_for_type(self.db, ty))
+                            .unwrap_or(prop_type);
                         index_map.entry(prop_type).or_default().push(member);
                     }
                     None => {
@@ -722,7 +736,6 @@ impl<'a> NarrowingContext<'a> {
                 };
 
                 let resolved_prop_type = self.resolve_type(prop_type);
-
                 // If it's the true branch, check if the property can be truthy
                 // If it's the false branch, check if the property can be falsy
                 if sense {
@@ -773,6 +786,15 @@ impl<'a> NarrowingContext<'a> {
             literal_value = literal_value.0
         )
         .entered();
+        let is_constructor_path = !property_path.is_empty()
+            && property_path.last() == Some(&self.db.intern_string("constructor"));
+        let normalize_constructor_property_type = |prop_type: TypeId| {
+            if is_constructor_path {
+                construct_return_type_for_type(self.db, prop_type).unwrap_or(prop_type)
+            } else {
+                prop_type
+            }
+        };
 
         // PERF: For single-property discriminant paths, try the fast path first
         // using the type list directly from the union, avoiding a Vec allocation
@@ -895,10 +917,14 @@ impl<'a> NarrowingContext<'a> {
                 } else {
                     any_member_has_property = true;
                     if prop_types.len() == 1 {
-                        is_subtype_of(self.db, literal_value, prop_types[0])
+                        let normalized_prop_type =
+                            normalize_constructor_property_type(prop_types[0]);
+                        is_subtype_of(self.db, literal_value, normalized_prop_type)
                     } else {
                         let effective_type = self.db.intersection(prop_types);
-                        is_subtype_of(self.db, literal_value, effective_type)
+                        let normalized_effective_type =
+                            normalize_constructor_property_type(effective_type);
+                        is_subtype_of(self.db, literal_value, normalized_effective_type)
                     }
                 }
             } else {
@@ -978,6 +1004,15 @@ impl<'a> NarrowingContext<'a> {
             excluded_value = excluded_value.0
         )
         .entered();
+        let is_constructor_path = !property_path.is_empty()
+            && property_path.last() == Some(&self.db.intern_string("constructor"));
+        let normalize_constructor_property_type = |prop_type: TypeId| {
+            if is_constructor_path {
+                construct_return_type_for_type(self.db, prop_type).unwrap_or(prop_type)
+            } else {
+                prop_type
+            }
+        };
 
         // PERF: For single-property discriminant paths, try the fast path first
         // using the type list directly from the union, avoiding a Vec allocation.
@@ -1089,10 +1124,13 @@ impl<'a> NarrowingContext<'a> {
                 if prop_types.is_empty() {
                     true // no member has the property, keep
                 } else if prop_types.len() == 1 {
-                    !is_subtype_of(self.db, prop_types[0], excluded_value)
+                    let normalized_prop_type = normalize_constructor_property_type(prop_types[0]);
+                    !is_subtype_of(self.db, normalized_prop_type, excluded_value)
                 } else {
                     let effective_type = self.db.intersection(prop_types);
-                    !is_subtype_of(self.db, effective_type, excluded_value)
+                    let normalized_effective_type =
+                        normalize_constructor_property_type(effective_type);
+                    !is_subtype_of(self.db, normalized_effective_type, excluded_value)
                 }
             } else {
                 // For non-Intersection: check the single member
@@ -1131,6 +1169,15 @@ impl<'a> NarrowingContext<'a> {
 
         let (_resolved, members, property_evaluator) =
             self.resolve_members_and_evaluator(union_type);
+        let is_constructor_path = !property_path.is_empty()
+            && property_path.last() == Some(&self.db.intern_string("constructor"));
+        let normalize_constructor_property_type = |prop_type: TypeId| {
+            if is_constructor_path {
+                construct_return_type_for_type(self.db, prop_type).unwrap_or(prop_type)
+            } else {
+                prop_type
+            }
+        };
 
         // Put excluded values into a HashSet for O(1) lookup
         let excluded_set: FxHashSet<TypeId> = excluded_values.iter().copied().collect();
@@ -1159,6 +1206,7 @@ impl<'a> NarrowingContext<'a> {
                 };
 
                 let resolved_prop_type = self.resolve_type(prop_type);
+                let resolved_prop_type = normalize_constructor_property_type(resolved_prop_type);
 
                 // Optimization: if property type is directly in excluded set (literal match)
                 if excluded_set.contains(&resolved_prop_type) {

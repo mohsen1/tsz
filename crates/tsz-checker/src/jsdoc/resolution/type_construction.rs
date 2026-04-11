@@ -126,6 +126,59 @@ impl<'a> CheckerState<'a> {
         name: &str,
         allow_prototype_only_fallback: bool,
     ) -> Option<TypeId> {
+        if let Some(ty) =
+            self.resolve_jsdoc_assigned_value_type_in_arena(name, allow_prototype_only_fallback)
+        {
+            return Some(ty);
+        }
+
+        let Some(all_arenas) = self.ctx.all_arenas.clone() else {
+            return allow_prototype_only_fallback
+                .then_some(())
+                .and_then(|_| self.resolve_jsdoc_prototype_assignment_type(name));
+        };
+        let Some(all_binders) = self.ctx.all_binders.clone() else {
+            return allow_prototype_only_fallback
+                .then_some(())
+                .and_then(|_| self.resolve_jsdoc_prototype_assignment_type(name));
+        };
+
+        for (file_idx, (arena, binder)) in all_arenas.iter().zip(all_binders.iter()).enumerate() {
+            if file_idx == self.ctx.current_file_idx {
+                continue;
+            }
+
+            for source_file in &arena.source_files {
+                let mut checker = Box::new(CheckerState::with_parent_cache(
+                    arena.as_ref(),
+                    binder.as_ref(),
+                    self.ctx.types,
+                    source_file.file_name.clone(),
+                    self.ctx.compiler_options.clone(),
+                    self,
+                ));
+                checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+                checker.ctx.copy_cross_file_state_from(&self.ctx);
+                checker.ctx.current_file_idx = file_idx;
+                self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+
+                if let Some(ty) = checker
+                    .resolve_jsdoc_assigned_value_type_in_arena(name, allow_prototype_only_fallback)
+                {
+                    self.ctx.merge_symbol_file_targets_from(&checker.ctx);
+                    return Some(ty);
+                }
+            }
+        }
+
+        None
+    }
+
+    fn resolve_jsdoc_assigned_value_type_in_arena(
+        &mut self,
+        name: &str,
+        allow_prototype_only_fallback: bool,
+    ) -> Option<TypeId> {
         let prototype_type = self.resolve_jsdoc_prototype_assignment_type(name);
 
         for raw_idx in 0..self.ctx.arena.len() {
@@ -145,10 +198,29 @@ impl<'a> CheckerState<'a> {
             if self.expression_text(binary.left).as_deref() != Some(name) {
                 continue;
             }
+
+            let right_type = {
+                let rhs = self.ctx.arena.skip_parenthesized(binary.right);
+                if self.js_assignment_rhs_is_void_zero(rhs) {
+                    None
+                } else {
+                    self.ctx
+                        .arena
+                        .get(rhs)
+                        .map(|_| self.get_type_of_node(rhs))
+                        .and_then(|ty| {
+                            (ty != TypeId::ERROR
+                                && ty != TypeId::UNKNOWN
+                                && ty != TypeId::UNDEFINED)
+                                .then_some(ty)
+                        })
+                }
+            };
+
             if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(idx) {
-                return Some(
-                    self.combine_jsdoc_instance_and_prototype_type(jsdoc_type, prototype_type),
-                );
+                let combined =
+                    self.combine_jsdoc_instance_and_prototype_type(jsdoc_type, prototype_type);
+                return Some(self.relabel_jsdoc_assigned_value_type(name, combined));
             }
             if let Some(stmt_idx) = self.enclosing_expression_statement(idx)
                 && let Some(jsdoc_type) = self.js_statement_declared_type(stmt_idx).or_else(|| {
@@ -160,17 +232,22 @@ impl<'a> CheckerState<'a> {
                     self.resolve_jsdoc_type_from_comment(&jsdoc, self.ctx.arena.get(stmt_idx)?.pos)
                 })
             {
-                return Some(
-                    self.combine_jsdoc_instance_and_prototype_type(jsdoc_type, prototype_type),
-                );
+                let combined =
+                    self.combine_jsdoc_instance_and_prototype_type(jsdoc_type, prototype_type);
+                return Some(self.relabel_jsdoc_assigned_value_type(name, combined));
             }
             let left_root = self.expression_root(binary.left);
             if left_root != binary.left
                 && let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(left_root)
             {
-                return Some(
-                    self.combine_jsdoc_instance_and_prototype_type(jsdoc_type, prototype_type),
-                );
+                let combined =
+                    self.combine_jsdoc_instance_and_prototype_type(jsdoc_type, prototype_type);
+                return Some(self.relabel_jsdoc_assigned_value_type(name, combined));
+            }
+            if let Some(instance_type) = right_type {
+                let combined =
+                    self.combine_jsdoc_instance_and_prototype_type(instance_type, prototype_type);
+                return Some(self.relabel_jsdoc_assigned_value_type(name, combined));
             }
         }
 
@@ -196,7 +273,53 @@ impl<'a> CheckerState<'a> {
         }
 
         allow_prototype_only_fallback.then_some(())?;
-        prototype_type
+        Some(self.relabel_jsdoc_assigned_value_type(name, prototype_type?))
+    }
+
+    fn relabel_jsdoc_assigned_value_type(&mut self, name: &str, ty: TypeId) -> TypeId {
+        if ty == TypeId::ANY || ty == TypeId::ERROR || ty == TypeId::UNKNOWN {
+            return ty;
+        }
+
+        let display_name = name.rsplit('.').next();
+        if display_name.is_none() {
+            return ty;
+        }
+        let display_name = display_name.expect("split guaranteed by next() check");
+        if display_name.is_empty() {
+            return ty;
+        }
+
+        let def_id = self.ensure_jsdoc_assigned_value_def(display_name, ty);
+        self.ctx.definition_store.register_type_to_def(ty, def_id);
+        self.ctx
+            .types
+            .store_display_alias(ty, self.ctx.types.factory().lazy(def_id));
+        ty
+    }
+
+    fn ensure_jsdoc_assigned_value_def(
+        &mut self,
+        name: &str,
+        body_type: TypeId,
+    ) -> tsz_solver::def::DefId {
+        use tsz_solver::def::{DefKind, DefinitionInfo};
+
+        let atom_name = self.ctx.types.intern_string(name);
+        if let Some(candidates) = self.ctx.definition_store.find_defs_by_name(atom_name) {
+            for def_id in candidates {
+                if let Some(def) = self.ctx.definition_store.get(def_id)
+                    && matches!(def.kind, DefKind::TypeAlias)
+                    && def.body == Some(body_type)
+                    && def.type_params.is_empty()
+                {
+                    return def_id;
+                }
+            }
+        }
+
+        let info = DefinitionInfo::type_alias(atom_name, Vec::new(), body_type);
+        self.ctx.definition_store.register(info)
     }
 
     pub(crate) fn resolve_jsdoc_assigned_value_type(&mut self, name: &str) -> Option<TypeId> {

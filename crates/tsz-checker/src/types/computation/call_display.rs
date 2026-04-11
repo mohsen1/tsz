@@ -275,7 +275,11 @@ impl<'a> CheckerState<'a> {
                 let request = TypingRequest::with_contextual_type(ctx_type);
                 let mut recompute = |checker: &mut CheckerState<'a>| {
                     checker.invalidate_expression_for_contextual_retry(arg_idx);
-                    checker.get_type_of_node_with_request(arg_idx, &request)
+                    let prev_preserve_literals = checker.ctx.preserve_literal_types;
+                    checker.ctx.preserve_literal_types = true;
+                    let ty = checker.get_type_of_node_with_request(arg_idx, &request);
+                    checker.ctx.preserve_literal_types = prev_preserve_literals;
+                    ty
                 };
                 replace_arg_span_diagnostics(self, arg_idx, &mut recompute)
             }

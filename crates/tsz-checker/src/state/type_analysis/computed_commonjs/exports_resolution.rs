@@ -7,6 +7,48 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{ObjectShape, PropertyInfo, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    fn infer_descriptor_parameter_type_in_current_checker(
+        &mut self,
+        owner_idx: NodeIndex,
+        param_idx: NodeIndex,
+    ) -> TypeId {
+        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+            return TypeId::ANY;
+        };
+        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+            return TypeId::ANY;
+        };
+
+        if param.type_annotation.is_some() {
+            return self.get_type_from_type_node(param.type_annotation);
+        }
+
+        if let Some(jsdoc_type) = self
+            .jsdoc_type_annotation_for_node(param_idx)
+            .or_else(|| self.jsdoc_type_annotation_for_node_inference(param_idx))
+        {
+            return jsdoc_type;
+        }
+
+        if self.is_js_file()
+            && let Some(jsdoc) = self.get_jsdoc_for_function(owner_idx)
+        {
+            let param_name = self.parameter_name_for_error(param.name);
+            let comment_start = self.get_jsdoc_comment_pos_for_function(owner_idx);
+            if let Some(jsdoc_type) =
+                self.resolve_jsdoc_param_type_with_pos(&jsdoc, &param_name, comment_start)
+            {
+                return jsdoc_type;
+            }
+        }
+
+        if let Some(&param_sym) = self.ctx.binder.node_symbols.get(&param_idx.0) {
+            return self.get_type_of_symbol(param_sym);
+        }
+
+        TypeId::ANY
+    }
+
     fn infer_symbol_type_for_file(
         &mut self,
         target_file_idx: usize,
@@ -46,6 +88,50 @@ impl<'a> CheckerState<'a> {
         self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
 
         let ty = checker.get_type_of_symbol(sym_id);
+        self.ctx.merge_symbol_file_targets_from(&checker.ctx);
+        ty
+    }
+
+    fn infer_descriptor_parameter_type_for_file(
+        &mut self,
+        target_file_idx: usize,
+        owner_idx: NodeIndex,
+        param_idx: NodeIndex,
+    ) -> TypeId {
+        if target_file_idx == self.ctx.current_file_idx {
+            return self.infer_descriptor_parameter_type_in_current_checker(owner_idx, param_idx);
+        }
+
+        let Some(all_arenas) = self.ctx.all_arenas.clone() else {
+            return TypeId::ANY;
+        };
+        let Some(all_binders) = self.ctx.all_binders.clone() else {
+            return TypeId::ANY;
+        };
+        let Some(arena) = all_arenas.get(target_file_idx) else {
+            return TypeId::ANY;
+        };
+        let Some(binder) = all_binders.get(target_file_idx) else {
+            return TypeId::ANY;
+        };
+        let Some(source_file) = arena.source_files.first() else {
+            return TypeId::ANY;
+        };
+
+        let mut checker = Box::new(CheckerState::with_parent_cache(
+            arena.as_ref(),
+            binder.as_ref(),
+            self.ctx.types,
+            source_file.file_name.clone(),
+            self.ctx.compiler_options.clone(),
+            self,
+        ));
+        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+        checker.ctx.copy_cross_file_state_from(&self.ctx);
+        checker.ctx.current_file_idx = target_file_idx;
+        self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+
+        let ty = checker.infer_descriptor_parameter_type_in_current_checker(owner_idx, param_idx);
         self.ctx.merge_symbol_file_targets_from(&checker.ctx);
         ty
     }
@@ -201,12 +287,12 @@ impl<'a> CheckerState<'a> {
                             if let Some(init_node) = arena.get(prop.initializer)
                                 && let Some(func) = arena.get_function(init_node)
                                 && let Some(&first_param) = func.parameters.nodes.first()
-                                && let Some(binder) = self.ctx.get_binder_for_file(target_file_idx)
-                                && let Some(&param_sym) = binder.node_symbols.get(&first_param.0)
                             {
-                                setter_type = Some(
-                                    self.infer_symbol_type_for_file(target_file_idx, param_sym),
-                                );
+                                setter_type = Some(self.infer_descriptor_parameter_type_for_file(
+                                    target_file_idx,
+                                    prop.initializer,
+                                    first_param,
+                                ));
                             } else {
                                 setter_type.get_or_insert(TypeId::ANY);
                             }
@@ -251,10 +337,19 @@ impl<'a> CheckerState<'a> {
                         }
                         "set" => {
                             has_setter = true;
-                            setter_type = shape
-                                .params
+                            setter_type = method
+                                .parameters
+                                .nodes
                                 .first()
-                                .map(|param| param.type_id)
+                                .copied()
+                                .map(|param_idx| {
+                                    self.infer_descriptor_parameter_type_for_file(
+                                        target_file_idx,
+                                        element_idx,
+                                        param_idx,
+                                    )
+                                })
+                                .or_else(|| shape.params.first().map(|param| param.type_id))
                                 .or(getter_type)
                                 .or(Some(TypeId::ANY));
                         }
@@ -283,15 +378,11 @@ impl<'a> CheckerState<'a> {
                         setter_type.get_or_insert(TypeId::ANY);
                         continue;
                     };
-                    let Some(binder) = self.ctx.get_binder_for_file(target_file_idx) else {
-                        setter_type.get_or_insert(TypeId::ANY);
-                        continue;
-                    };
-                    let Some(&param_sym) = binder.node_symbols.get(&first_param.0) else {
-                        setter_type.get_or_insert(TypeId::ANY);
-                        continue;
-                    };
-                    setter_type = Some(self.infer_symbol_type_for_file(target_file_idx, param_sym));
+                    setter_type = Some(self.infer_descriptor_parameter_type_for_file(
+                        target_file_idx,
+                        element_idx,
+                        first_param,
+                    ));
                 }
                 _ => {}
             }
@@ -922,9 +1013,10 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .find_map(|(_, &sym_id)| self.ctx.resolve_symbol_file_index(sym_id));
 
-            let mut export_equals_type = exports_table
-                .get("export=")
-                .map(|export_equals_sym| self.get_type_of_symbol(export_equals_sym));
+            let mut export_equals_type = exports_table.get("export=").map(|export_equals_sym| {
+                let export_equals_type = self.get_type_of_symbol(export_equals_sym);
+                self.widen_type_for_display(export_equals_type)
+            });
             let augment_target = source_file_idx
                 .and_then(|src_idx| {
                     self.ctx

@@ -1197,6 +1197,15 @@ impl<'a> CheckerContext<'a> {
             }) {
                 return;
             }
+            if self.diagnostics.iter().any(|existing| {
+                existing.code == 2322 && existing.message_text == diag.message_text && {
+                    let existing_end = existing.start.saturating_add(existing.length);
+                    (existing.start <= diag.start && existing_end >= diag_end)
+                        || (diag.start <= existing.start && diag_end >= existing_end)
+                }
+            }) {
+                return;
+            }
         }
 
         let key = self.diagnostic_dedup_key(&diag);
