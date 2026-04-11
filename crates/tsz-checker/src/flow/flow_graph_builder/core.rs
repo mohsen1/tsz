@@ -620,12 +620,11 @@ impl<'a> FlowGraphBuilder<'a> {
         // Handle incrementor
         if loop_data.incrementor.is_some() {
             self.current_flow = continue_label;
-            let flow = self.create_flow_node(
-                flow_flags::ASSIGNMENT,
-                self.current_flow,
-                loop_data.incrementor,
-            );
-            self.current_flow = flow;
+            // Keep `for` incrementors on the same assignment-flow path as ordinary
+            // expression statements so nested reads resolve against the
+            // post-body continue merge instead of the loop header.
+            self.handle_expression_for_assignments(loop_data.incrementor);
+            self.record_node_flow(loop_data.incrementor);
             self.add_antecedent(loop_label, self.current_flow);
         } else if continue_label != loop_label {
             self.add_antecedent(loop_label, continue_label);

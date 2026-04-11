@@ -1470,9 +1470,7 @@ impl<'a> DeclarationEmitter<'a> {
                         // package root is a symlink (e.g. workspace deps hoisted
                         // by a package manager), because without an "exports"
                         // restriction Node.js will resolve any subpath.
-                        if pkg_json.get("exports").is_none() {
-                            return None;
-                        }
+                        pkg_json.get("exports")?;
 
                         // Before flagging as non-portable, check whether the
                         // symbol is re-exported from a module that IS accessible

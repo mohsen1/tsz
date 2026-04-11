@@ -10209,9 +10209,14 @@ foo[0];
 
 #[test]
 fn test_control_flow_unannotated_loop_incrementor_reads_assignment_union() {
-    let diagnostics = compile_and_get_diagnostics(
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
-function f() {
+{
     let iNext;
     for (let i = 0; i < 10; i = iNext) {
         if (i == 5) {
@@ -10222,6 +10227,7 @@ function f() {
     }
 }
         "#,
+        opts,
     );
 
     let ts2322: Vec<_> = diagnostics
@@ -10233,10 +10239,8 @@ function f() {
         1,
         "Expected exactly one TS2322 for the incrementor read, got: {diagnostics:#?}"
     );
-    // The TS2322 message should contain either the evolved flow type
-    // or the numeric assignment mismatch (both are valid TS2322 behavior)
     assert!(
-        ts2322[0].1.contains("string | number") || ts2322[0].1.contains("number"),
+        ts2322[0].1.contains("string | number"),
         "Expected TS2322 about the incrementor type, got: {ts2322:#?}"
     );
 }
