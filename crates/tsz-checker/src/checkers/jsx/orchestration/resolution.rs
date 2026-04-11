@@ -487,6 +487,7 @@ impl<'a> CheckerState<'a> {
                     jsx_opening.attributes,
                     component_metadata_type,
                     Some(idx),
+                    request,
                 )
             };
             let uses_jsx_overload_resolution = recovered_props.is_none()
@@ -574,6 +575,7 @@ impl<'a> CheckerState<'a> {
                     self.infer_jsx_generic_component_props_type(
                         jsx_opening.attributes,
                         resolved_component_type,
+                        request,
                     )
                     .or_else(|| {
                         self.get_default_instantiated_generic_sfc_props_type(
@@ -731,6 +733,15 @@ impl<'a> CheckerState<'a> {
                                                     .is_some_and(|sigs| !sigs.is_empty())
                                             });
                                         if !has_function_context {
+                                            // Preserve transport for generic callback attrs
+                                            // even when we cannot recover a concrete function
+                                            // context yet.
+                                            let callback_request =
+                                                request.read().contextual(TypeId::ANY);
+                                            self.compute_type_of_node_with_request(
+                                                attr_value_idx,
+                                                &callback_request,
+                                            );
                                             continue;
                                         }
                                     }
@@ -1307,8 +1318,13 @@ impl<'a> CheckerState<'a> {
                 && props != TypeId::ERROR
             {
                 props
-            } else if let Some((props, _raw_has_type_params)) =
-                self.recover_jsx_component_props_type(jsx_opening.attributes, component_type, None)
+            } else if let Some((props, _raw_has_type_params)) = self
+                .recover_jsx_component_props_type(
+                    jsx_opening.attributes,
+                    component_type,
+                    None,
+                    &TypingRequest::NONE,
+                )
             {
                 self.narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props)
             } else if self.is_generic_jsx_component(resolved_component_type) {
