@@ -1201,6 +1201,18 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 }
+                // For circular classes (TS2506), use the dedicated recovery that
+                // defaults type parameters to `unknown` (e.g. `S18<unknown, unknown, unknown>`),
+                // matching tsc behavior. Without this, `instance_type_from_constructor_type`
+                // returns the raw instance type whose formatter fallback shows param names
+                // (e.g. `S18<B, A, C>`).
+                if self.is_circular_class_new(new_expr.expression) {
+                    if let Some(fixed) =
+                        self.class_instance_type_for_circular_new(new_expr.expression)
+                    {
+                        return fixed;
+                    }
+                }
                 // Recover with the constructor instance type so downstream checks
                 // (e.g. property access TS2339) still run after arity diagnostics.
                 self.instance_type_from_constructor_type(constructor_type)
