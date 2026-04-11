@@ -1826,6 +1826,29 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             self.normalize_inferred_placeholder_type(raw_return_type, &final_arg_subst);
         let return_type =
             self.hoist_resolved_type_params_into_return_type(func, &final_subst, return_type);
+        // For generic constructor calls (e.g. `new D()` where `class D<T>`),
+        // store a display_alias so the formatter shows `D<unknown>` instead of
+        // just `D` or the expanded structural type.
+        // Guards: skip when func.return_type is Lazy (formatter handles via DefId)
+        // or Application (would create nested Application causing double type args
+        // like `Map<K,V><string, number>` for built-in generic types).
+        if func.is_constructor
+            && return_type != func.return_type
+            && !func.type_params.is_empty()
+            && self.interner.get_display_alias(return_type).is_none()
+            && !matches!(
+                self.interner.lookup(func.return_type),
+                Some(TypeData::Lazy(_) | TypeData::Application(_))
+            )
+        {
+            let resolved_args: Vec<TypeId> = func
+                .type_params
+                .iter()
+                .map(|tp| final_subst.get(tp.name).unwrap_or(TypeId::UNKNOWN))
+                .collect();
+            let app = self.interner.application(func.return_type, resolved_args);
+            self.interner.store_display_alias(return_type, app);
+        }
         let tracked_final_type_params: FxHashSet<_> =
             func.type_params.iter().map(|tp| tp.name).collect();
         let instantiated_params: Vec<ParamInfo> = if final_arg_subst.is_empty() {

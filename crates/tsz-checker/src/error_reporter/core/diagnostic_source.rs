@@ -1233,6 +1233,15 @@ impl<'a> CheckerState<'a> {
                 ctor_display.push('<');
                 ctor_display.push_str(&rendered_args.join(", "));
                 ctor_display.push('>');
+                return Some(ctor_display);
+            }
+            // For generic constructor calls without explicit type args (e.g.
+            // `new D()` where `class D<T>`), use the type formatter which
+            // respects display_alias to show inferred type params like
+            // `D<unknown>`. Without this, the expression text "D" would be
+            // returned, losing the inferred type arguments.
+            if self.ctx.types.get_display_alias(display_type).is_some() {
+                return Some(self.format_type_diagnostic_structural(display_type));
             }
             return Some(ctor_display);
         }
