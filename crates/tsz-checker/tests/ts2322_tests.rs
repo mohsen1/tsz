@@ -2620,14 +2620,14 @@ fn test_ts2322_assignment_destructuring_defaults_report_undefined_mismatches() {
         .map(|(_, message)| message.as_str())
         .collect();
 
-    // TSC emits TWO TS2322 errors per shorthand default (combined type + default alone)
-    // and ONE per non-shorthand default (default alone). With 1 shorthand and 2 non-shorthand
-    // assignments, we expect 2 + 1 + 1 = 4 errors. Both the "Type 'undefined'" and
-    // "Type 'number | undefined'" messages are correct per tsc behavior.
+    // TSC emits TWO TS2322 errors for shorthand defaults (combined type + default alone)
+    // and ONE per non-shorthand default (default alone only — tsc does NOT check the full
+    // source property type for non-shorthand). With 1 shorthand and 2 non-shorthand
+    // assignments, we expect 2 + 1 + 1 = 4 errors.
     assert_eq!(
         ts2322_messages.len(),
-        6,
-        "Expected TS2322 for each undefined default in assignment destructuring (both combined and default-alone), got: {diagnostics:?}"
+        4,
+        "Expected TS2322 for each undefined default in assignment destructuring (shorthand gets both combined and default-alone; non-shorthand gets default-alone only), got: {diagnostics:?}"
     );
     assert!(
         ts2322_messages
