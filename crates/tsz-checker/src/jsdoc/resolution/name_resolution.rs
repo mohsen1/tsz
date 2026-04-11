@@ -180,8 +180,10 @@ impl<'a> CheckerState<'a> {
         ];
 
         for candidate in candidates {
+            let candidate = self.resolve_lazy_type(candidate);
             let candidate = self.evaluate_application_type(candidate);
             if tsz_solver::type_queries::get_function_shape(self.ctx.types, candidate).is_some()
+                || tsz_solver::type_queries::get_callable_shape(self.ctx.types, candidate).is_some()
                 || tsz_solver::type_queries::get_call_signatures(self.ctx.types, candidate)
                     .is_some_and(|sigs| !sigs.is_empty())
             {
@@ -394,6 +396,28 @@ impl<'a> CheckerState<'a> {
                 }
                 if let Some(resolved) = self.resolve_jsdoc_import_type_reference(type_expr) {
                     return Some(resolved);
+                }
+                if let Some(rest) = type_expr.strip_prefix("typeof") {
+                    let rest = rest.trim();
+                    if !rest.is_empty() {
+                        if let Some((module_specifier, segments)) =
+                            Self::parse_jsdoc_typeof_import_query(type_expr)
+                        {
+                            return Some(
+                                self.resolve_jsdoc_typeof_import_reference_parts(
+                                    &module_specifier,
+                                    &segments,
+                                )
+                                .unwrap_or(TypeId::ERROR),
+                            );
+                        }
+                        if let Some(sym_id) = self.resolve_jsdoc_entity_name_symbol(rest) {
+                            let resolved = self.resolve_jsdoc_symbol_type(sym_id);
+                            if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
+                                return Some(resolved);
+                            }
+                        }
+                    }
                 }
                 let obj_map_inner = type_expr
                     .strip_prefix("Object.<")

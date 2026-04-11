@@ -3420,6 +3420,45 @@ const x = (a) => a + 1;
 }
 
 #[test]
+fn test_jsdoc_generic_typedef_type_tag_no_erasure_reports_ts2345() {
+    let source = r#"
+/**
+ * @template T
+ * @typedef {<T1 extends T>(data: T1) => T1} Test
+ */
+
+/** @type {Test<number>} */
+const test = dibbity => dibbity
+
+test(1) // ok, T=1
+test('hi') // error, T=number
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_named(
+        "typeTagNoErasure.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            emit_declarations: true,
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2345),
+        "Expected TS2345 for generic JSDoc typedef call. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 7006),
+        "Did not expect TS7006 for generic JSDoc typedef call. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_enum_assignment_preserves_numeric_literal_source_display() {
     let source = r#"
 enum E {

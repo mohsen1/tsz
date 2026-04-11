@@ -60,6 +60,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         let arg_ty = arg_types[0];
+        let constraint = tp.constraint.map(|constraint| {
+            crate::type_queries::get_base_constraint_of_type(
+                self.interner.as_type_database(),
+                constraint,
+            )
+        });
         let inferred_ty = if tp.is_const {
             arg_ty
         } else {
@@ -69,9 +75,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // isLiteralType(constraint) and skips getWidenedLiteralType.
             // Example: `<T extends string>(x: T): T` called with `"hello"`
             // should infer T = "hello", not T = string.
-            let constraint_is_primitive = tp
-                .constraint
-                .is_some_and(|c| constraint_is_primitive_type(self.interner, c));
+            let constraint_is_primitive =
+                constraint.is_some_and(|c| constraint_is_primitive_type(self.interner, c));
             if constraint_is_primitive {
                 arg_ty
             } else {
@@ -85,7 +90,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // (not `string`), because widening to `string` would violate the
                 // constraint. Similarly for tuple constraints like
                 // `<T extends [string, string, 'a' | 'b']>(x: T)`.
-                if let Some(constraint) = tp.constraint {
+                if let Some(constraint) = constraint {
                     if !self.checker.is_assignable_to(widened, constraint)
                         && self.checker.is_assignable_to(arg_ty, constraint)
                     {
@@ -112,9 +117,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
             }
         };
-        if let Some(constraint) = tp.constraint
-            && !self.checker.is_assignable_to(inferred_ty, constraint)
-            && !self.is_function_union_compat(inferred_ty, constraint)
+        let effective_arg_ty = if inferred_ty == TypeId::ANY || inferred_ty == TypeId::UNKNOWN {
+            arg_ty
+        } else {
+            inferred_ty
+        };
+        if let Some(constraint) = constraint
+            && !self.checker.is_assignable_to(effective_arg_ty, constraint)
+            && !self.is_function_union_compat(effective_arg_ty, constraint)
         {
             // In the trivial single-type-param fast path, the parameter IS the
             // type parameter itself, so a constraint violation means the argument
@@ -124,12 +134,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return Some(CallResult::ArgumentTypeMismatch {
                 index: 0,
                 expected: constraint,
-                actual: inferred_ty,
-                fallback_return: inferred_ty,
+                actual: effective_arg_ty,
+                fallback_return: effective_arg_ty,
             });
         }
 
-        Some(CallResult::Success(inferred_ty))
+        Some(CallResult::Success(effective_arg_ty))
     }
 
     /// Collapse transient inference placeholders (like `__infer_src_*`) to stable types.

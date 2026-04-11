@@ -213,6 +213,36 @@ impl<'a> CheckerState<'a> {
             })?;
         let mut properties = rustc_hash::FxHashMap::default();
         self.collect_js_constructor_this_properties(body_idx, &mut properties, None, false);
+        if let Some(func_node) = self.ctx.arena.get(func_idx)
+            && let Some(func) = self.ctx.arena.get_function(func_node)
+            && let Some(func_name) = func.name.into_option().and_then(|name_idx| {
+                self.ctx
+                    .arena
+                    .get(name_idx)
+                    .and_then(|n| self.ctx.arena.get_identifier(n))
+                    .map(|ident| ident.escaped_text.clone())
+            })
+            && let Some(sym_id) = self.ctx.binder.get_node_symbol(func_idx)
+        {
+            let (method_bindings, this_props, _) =
+                self.collect_prototype_members_and_this_properties(func_idx, &func_name, sym_id);
+            for (name, prop) in method_bindings {
+                properties.entry(name).or_insert(prop);
+            }
+            for (name, mut prop) in this_props {
+                let factory = self.ctx.types.factory();
+                let widened_prop_type = factory.union2(prop.type_id, TypeId::UNDEFINED);
+                if let Some(existing) = properties.get_mut(&name) {
+                    if existing.write_type == TypeId::ANY {
+                        existing.type_id = factory.union2(existing.type_id, widened_prop_type);
+                    }
+                } else {
+                    prop.type_id = widened_prop_type;
+                    prop.write_type = prop.type_id;
+                    properties.insert(name, prop);
+                }
+            }
+        }
 
         if properties.is_empty() {
             None

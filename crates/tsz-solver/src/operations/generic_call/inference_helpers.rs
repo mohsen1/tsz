@@ -932,64 +932,92 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 Some(TypeData::TypeParameter(_))
             )
         });
-        if source_type_params_fully_determined_by_params && any_target_param_is_type_param {
-            let source_type_params_are_naked = source_fn.type_params.iter().all(|tp| {
-                source_fn.params.iter().any(|param| {
-                    matches!(
-                        self.interner.lookup(param.type_id),
-                        Some(TypeData::TypeParameter(info)) if info.name == tp.name
-                    )
-                })
+        let source_type_params_are_naked = source_fn.type_params.iter().all(|tp| {
+            source_fn.params.iter().any(|param| {
+                matches!(
+                    self.interner.lookup(param.type_id),
+                    Some(TypeData::TypeParameter(info)) if info.name == tp.name
+                )
+            })
+        });
+        if source_type_params_fully_determined_by_params
+            && any_target_param_is_type_param
+            && !source_type_params_are_naked
+        {
+            let has_generic_contextual_type = self.contextual_type.is_some_and(|ctx| {
+                crate::type_queries::get_function_shape(self.interner.as_type_database(), ctx)
+                    .is_some_and(|shape| {
+                        !shape.type_params.is_empty()
+                            && shape.params.iter().any(|param| {
+                                crate::type_queries::get_function_shape(
+                                    self.interner.as_type_database(),
+                                    param.type_id,
+                                )
+                                .is_some_and(|inner| !inner.type_params.is_empty())
+                                    || crate::type_queries::get_call_signatures(
+                                        self.interner.as_type_database(),
+                                        param.type_id,
+                                    )
+                                    .is_some_and(|sigs| {
+                                        sigs.iter().any(|sig| !sig.type_params.is_empty())
+                                    })
+                            })
+                    })
             });
-            if !source_type_params_are_naked {
-                let has_generic_contextual_type = self.contextual_type.is_some_and(|ctx| {
-                    crate::type_queries::get_function_shape(self.interner.as_type_database(), ctx)
-                        .is_some_and(|shape| !shape.type_params.is_empty())
-                });
-                if has_generic_contextual_type {
-                    // Case 2: let constrain_types handle it with fresh variables
-                    return source_ty;
-                }
-                // Case 3: erase to constraints/unknown
-                let mut erasure_sub = TypeSubstitution::new();
-                for tp in &source_fn.type_params {
-                    erasure_sub.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
-                }
-                let erased = FunctionShape {
-                    params: source_fn
-                        .params
-                        .iter()
-                        .map(|p| ParamInfo {
-                            name: p.name,
-                            type_id: instantiate_type(self.interner, p.type_id, &erasure_sub),
-                            optional: p.optional,
-                            rest: p.rest,
-                        })
-                        .collect(),
-                    return_type: instantiate_type(
-                        self.interner,
-                        source_fn.return_type,
-                        &erasure_sub,
-                    ),
-                    this_type: source_fn
-                        .this_type
-                        .map(|t| instantiate_type(self.interner, t, &erasure_sub)),
-                    type_params: vec![],
-                    type_predicate: source_fn.type_predicate.as_ref().map(|pred| TypePredicate {
-                        asserts: pred.asserts,
-                        target: pred.target,
-                        type_id: pred
-                            .type_id
-                            .map(|tid| instantiate_type(self.interner, tid, &erasure_sub)),
-                        parameter_index: pred.parameter_index,
-                    }),
-                    is_constructor: source_fn.is_constructor,
-                    is_method: source_fn.is_method,
-                };
-                return self.interner.function(erased);
+            if has_generic_contextual_type {
+                // Case 2: let constrain_types handle it with fresh variables
+                return source_ty;
             }
-            // Case 1: naked type params — fall through to instantiation
+            let preserve_callable_alias = source_fn.type_params.len() == 1
+                && source_fn.params.len() == 1
+                && matches!(
+                    self.interner.lookup(source_fn.params[0].type_id),
+                    Some(TypeData::TypeParameter(param_tp))
+                        if param_tp.name == source_fn.type_params[0].name
+                )
+                && matches!(
+                    self.interner.lookup(source_fn.return_type),
+                    Some(TypeData::TypeParameter(ret_tp))
+                        if ret_tp.name == source_fn.type_params[0].name
+                );
+            if preserve_callable_alias {
+                return source_ty;
+            }
+            // Case 3: erase to constraints/unknown
+            let mut erasure_sub = TypeSubstitution::new();
+            for tp in &source_fn.type_params {
+                erasure_sub.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
+            }
+            let erased = FunctionShape {
+                params: source_fn
+                    .params
+                    .iter()
+                    .map(|p| ParamInfo {
+                        name: p.name,
+                        type_id: instantiate_type(self.interner, p.type_id, &erasure_sub),
+                        optional: p.optional,
+                        rest: p.rest,
+                    })
+                    .collect(),
+                return_type: instantiate_type(self.interner, source_fn.return_type, &erasure_sub),
+                this_type: source_fn
+                    .this_type
+                    .map(|t| instantiate_type(self.interner, t, &erasure_sub)),
+                type_params: vec![],
+                type_predicate: source_fn.type_predicate.as_ref().map(|pred| TypePredicate {
+                    asserts: pred.asserts,
+                    target: pred.target,
+                    type_id: pred
+                        .type_id
+                        .map(|tid| instantiate_type(self.interner, tid, &erasure_sub)),
+                    parameter_index: pred.parameter_index,
+                }),
+                is_constructor: source_fn.is_constructor,
+                is_method: source_fn.is_method,
+            };
+            return self.interner.function(erased);
         }
+        // Case 1: naked type params — fall through to instantiation
 
         let prev_contextual_type = self.contextual_type;
         // Suppress contextual type when source type params are fully determined by params.

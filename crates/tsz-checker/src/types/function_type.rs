@@ -280,7 +280,21 @@ impl<'a> CheckerState<'a> {
                     self.ctx.compiler_options.no_implicit_any,
                 ))
             } else {
-                None
+                if is_closure {
+                    self.jsdoc_callable_type_annotation_for_node(idx)
+                        .map(|evaluated_type| {
+                            contextual_signature_type_params =
+                                self.contextual_type_params_from_expected(evaluated_type);
+                            has_jsdoc_type_function = true;
+                            ContextualTypeContext::with_expected_and_options(
+                                self.ctx.types,
+                                evaluated_type,
+                                self.ctx.compiler_options.no_implicit_any,
+                            )
+                        })
+                } else {
+                    None
+                }
             }
         } else {
             None
@@ -668,6 +682,28 @@ impl<'a> CheckerState<'a> {
                     .as_ref()
                     .and_then(tsz_solver::ContextualTypeContext::expected)
                     .is_some_and(|t| t == TypeId::NEVER);
+                let jsdoc_initializer_callable_context = is_js_file
+                    && is_closure
+                    && param.type_annotation.is_none()
+                    && func_jsdoc.as_ref().is_some_and(|jsdoc| {
+                        Self::extract_jsdoc_type_expression(jsdoc)
+                            .and_then(|type_expr| self.jsdoc_type_from_expression(type_expr))
+                            .map(|type_id| {
+                                let type_id = self.resolve_lazy_type(type_id);
+                                let type_id = self.evaluate_application_type(type_id);
+                                tsz_solver::type_queries::get_function_shape(
+                                    self.ctx.types,
+                                    type_id,
+                                )
+                                .is_some()
+                                    || tsz_solver::type_queries::get_call_signatures(
+                                        self.ctx.types,
+                                        type_id,
+                                    )
+                                    .is_some_and(|sigs| !sigs.is_empty())
+                            })
+                            .unwrap_or(false)
+                    });
                 // TS7006: In TS files, contextual `unknown` is still a concrete contextual
                 // type and should suppress implicit-any reporting for callback parameters.
                 // Keep the old JS behavior where weak contextual `unknown` is treated as no context.
@@ -677,7 +713,8 @@ impl<'a> CheckerState<'a> {
                 let has_contextual_type = contextual_type
                     .is_some_and(|t| t != TypeId::UNKNOWN || !is_js_file)
                     || (has_unknown_expected_context && !is_js_file)
-                    || (param.dot_dot_dot_token && ctx_helper.is_some());
+                    || (param.dot_dot_dot_token && ctx_helper.is_some())
+                    || jsdoc_initializer_callable_context;
                 let suppresses_implicit_any_context =
                     has_contextual_type && !has_never_expected_context;
                 if is_closure && suppresses_implicit_any_context {

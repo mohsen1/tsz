@@ -174,6 +174,27 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        for raw_idx in 0..self.ctx.arena.len() {
+            let idx = NodeIndex(raw_idx as u32);
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if node.kind != tsz_parser::parser::syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(expr_stmt) = self.ctx.arena.get_expression_statement(node) else {
+                continue;
+            };
+            if self.expression_text(expr_stmt.expression).as_deref() != Some(name) {
+                continue;
+            }
+            if let Some(jsdoc_type) = self.js_statement_declared_type(idx) {
+                return Some(
+                    self.combine_jsdoc_instance_and_prototype_type(jsdoc_type, prototype_type),
+                );
+            }
+        }
+
         allow_prototype_only_fallback.then_some(())?;
         prototype_type
     }
@@ -301,6 +322,9 @@ impl<'a> CheckerState<'a> {
             && matches!(def.kind, DefKind::TypeAlias)
             && def.name == atom_name
         {
+            self.ctx
+                .definition_store
+                .register_type_to_def(type_id, def_id);
             return def_id;
         }
 
@@ -1282,4 +1306,48 @@ impl<'a> CheckerState<'a> {
     }
     // NOTE: jsdoc_has_readonly_tag, jsdoc_access_level, find_orphaned_extends_tags_for_statements,
     // is_in_different_function_scope, find_function_body_end are in lookup.rs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_solver::TypeInterner;
+
+    #[test]
+    fn resolve_jsdoc_assigned_value_type_sees_prototype_property_statement() {
+        let source = r#"
+function C() { this.x = false; };
+/** @type {number} */
+C.prototype.x;
+new C().x;
+"#;
+        let options = crate::context::CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            ..crate::context::CheckerOptions::default()
+        };
+        let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.js".to_string(),
+            options,
+        );
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker.check_source_file(root);
+        assert_eq!(
+            checker
+                .resolve_jsdoc_assigned_value_type("C.prototype.x")
+                .map(|ty| checker.format_type(ty)),
+            Some("number".to_string())
+        );
+    }
 }
