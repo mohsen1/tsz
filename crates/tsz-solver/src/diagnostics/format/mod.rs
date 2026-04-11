@@ -384,12 +384,13 @@ impl<'a> TypeFormatter<'a> {
         // Guard against cycles: if we're already inside a display_alias Application's
         // args, skip further display_alias redirects to prevent `Wrap<Wrap<...>>`.
         //
-        // Skip for simple types (literals, arrays, tuples): tsc shows the resolved
-        // form directly (e.g., `"b"` not `KeysExtendedBy<M, number>`), so we should
-        // not redirect these back to the Application form.
+        // Skip for simple/resolved types: tsc shows the resolved form directly
+        // (e.g., `"b"` not `KeysExtendedBy<M, number>`, or `"a" | "b"` not
+        // `ValueOf<Obj>`), so we should not redirect these back to the
+        // Application form.
         let is_simple_type = matches!(
             &key,
-            TypeData::Literal(_) | TypeData::Array(_) | TypeData::Tuple(_)
+            TypeData::Literal(_) | TypeData::Array(_) | TypeData::Tuple(_) | TypeData::Union(_)
         );
         if !is_simple_type
             && let Some(alias_origin) = self.interner.get_display_alias(type_id)
