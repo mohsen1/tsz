@@ -439,14 +439,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // 1. Check READ type (covariant): source.read <: target.read
         let source_read =
             self.bind_property_receiver_this(source_receiver, self.optional_property_type(source));
-        let target_raw_read = self.optional_property_type(target);
-        let preserve_target_polymorphic_this = source_receiver != target_receiver
-            && crate::contains_this_type(self.interner, target_raw_read);
-        let target_read = if preserve_target_polymorphic_this {
-            target_raw_read
-        } else {
-            self.bind_property_receiver_this(target_receiver, target_raw_read)
-        };
+        let target_read =
+            self.bind_property_receiver_this(target_receiver, self.optional_property_type(target));
         let allow_bivariant = source.is_method || target.is_method;
 
         // Mark that we're inside a property comparison so nested weak type checks
@@ -523,14 +517,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 source_receiver,
                 self.optional_property_write_type(source),
             );
-            let target_raw_write = self.optional_property_write_type(target);
-            let target_write = if source_receiver != target_receiver
-                && crate::contains_this_type(self.interner, target_raw_write)
-            {
-                target_raw_write
-            } else {
-                self.bind_property_receiver_this(target_receiver, target_raw_write)
-            };
+            let target_write = self.bind_property_receiver_this(
+                target_receiver,
+                self.optional_property_write_type(target),
+            );
 
             // Contravariant writes: target.write must be subtype of source.write
             // This ensures that anything we can write to target is also safe to write to source
