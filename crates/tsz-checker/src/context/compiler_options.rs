@@ -91,6 +91,14 @@ impl<'a> CheckerContext<'a> {
         is_js_file_name(&self.file_name)
     }
 
+    /// Check if the current file is an .mts or .cts file (but not .d.mts/.d.cts).
+    /// These files have reserved syntax restrictions (TS7059, TS7060).
+    pub fn is_mts_or_cts_file(&self) -> bool {
+        (self.file_name.ends_with(".mts") || self.file_name.ends_with(".cts"))
+            && !self.file_name.ends_with(".d.mts")
+            && !self.file_name.ends_with(".d.cts")
+    }
+
     /// Check whether JS strict-mode diagnostics should be enforced for the current file.
     ///
     /// In the conformance harness, `@strict: false` suppresses `alwaysStrict`-driven JS

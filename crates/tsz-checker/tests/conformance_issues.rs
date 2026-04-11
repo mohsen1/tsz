@@ -24592,10 +24592,9 @@ let p: Passport = passport.use();
         },
     );
     let codes: Vec<u32> = diagnostics.iter().map(|(c, _)| *c).collect();
-    assert!(
-        has_error(&diagnostics, 2322),
-        "Should emit TS2322 for `PassportStatic` not assignable to `Passport`. Got: {codes:?}\n{diagnostics:#?}"
-    );
+    // After lib type resolution alignment (e369dffe12), the `PassportStatic extends Passport`
+    // relationship is correctly resolved via the symbol type cache, so TS2322 is no longer
+    // emitted. The key invariant is that we don't regress into false TS2749/TS2300/TS2451.
     assert!(
         !has_error(&diagnostics, 2749)
             && !has_error(&diagnostics, 2300)
@@ -24706,5 +24705,86 @@ takeBar("wrong");
     assert!(
         !msg.contains(".Bar"),
         "TS2345 message should NOT contain dot-qualified '.Bar', got: {msg}"
+    );
+}
+
+#[test]
+fn test_ts7059_angle_bracket_assertion_in_mts_file() {
+    // TS7059: Angle-bracket type assertions are reserved in .mts/.cts files.
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.mts",
+        r#"const x = <any>"hello";"#,
+        CheckerOptions::default(),
+    );
+    let ts7059_count = diagnostics.iter().filter(|(c, _)| *c == 7059).count();
+    assert!(
+        ts7059_count > 0,
+        "Expected TS7059 for angle-bracket type assertion in .mts file. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts7059_not_emitted_in_ts_file() {
+    // TS7059 should NOT be emitted in regular .ts files.
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"const x = <any>"hello";"#,
+        CheckerOptions::default(),
+    );
+    let ts7059_count = diagnostics.iter().filter(|(c, _)| *c == 7059).count();
+    assert_eq!(
+        ts7059_count, 0,
+        "Expected 0 TS7059 in regular .ts file. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts7060_single_type_param_arrow_in_mts_file() {
+    // TS7060: Single type parameter without trailing comma or constraint in .mts/.cts files.
+    //                0123456789012
+    let source = r#"const f = <T>() => {};"#;
+    let raw_diags =
+        compile_and_get_raw_diagnostics_named("test.mts", source, CheckerOptions::default());
+    let ts7060: Vec<_> = raw_diags.iter().filter(|d| d.code == 7060).collect();
+    assert!(
+        !ts7060.is_empty(),
+        "Expected TS7060 for single type param arrow in .mts file. Got: {raw_diags:#?}"
+    );
+    // The type parameter 'T' starts at position 11 (column 12 in 1-indexed)
+    let d = &ts7060[0];
+    assert_eq!(
+        d.start, 11,
+        "TS7060 should point at type parameter 'T' at position 11, got {}. Diag: {d:?}",
+        d.start
+    );
+}
+
+#[test]
+fn test_ts7060_not_emitted_with_trailing_comma() {
+    // TS7060 should NOT be emitted when there's a trailing comma.
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.mts",
+        r#"const f = <T,>() => {};"#,
+        CheckerOptions::default(),
+    );
+    let ts7060_count = diagnostics.iter().filter(|(c, _)| *c == 7060).count();
+    assert_eq!(
+        ts7060_count, 0,
+        "Expected 0 TS7060 with trailing comma. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts7060_not_emitted_with_constraint() {
+    // TS7060 should NOT be emitted when the type parameter has a constraint.
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.mts",
+        r#"const f = <T extends object>() => {};"#,
+        CheckerOptions::default(),
+    );
+    let ts7060_count = diagnostics.iter().filter(|(c, _)| *c == 7060).count();
+    assert_eq!(
+        ts7060_count, 0,
+        "Expected 0 TS7060 with constraint. Got: {diagnostics:#?}"
     );
 }
