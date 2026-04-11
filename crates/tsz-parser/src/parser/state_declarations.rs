@@ -1760,6 +1760,11 @@ impl ParserState {
                         diagnostic_codes::NAMESPACE_NAME_CANNOT_BE,
                     );
                     self.next_token();
+                    // tsc also emits TS1005 ("';' expected") at the token after
+                    // the reserved word when followed by '{'.
+                    if self.is_token(SyntaxKind::OpenBraceToken) {
+                        self.parse_expected(SyntaxKind::SemicolonToken);
+                    }
                     // Create a missing identifier for recovery
                     self.arena.add_identifier(
                         SyntaxKind::Identifier as u16,
@@ -1922,6 +1927,11 @@ impl ParserState {
                         diagnostic_codes::NAMESPACE_NAME_CANNOT_BE,
                     );
                     self.next_token();
+                    // tsc also emits TS1005 ("';' expected") at the token after
+                    // the reserved word when followed by '{'.
+                    if self.is_token(SyntaxKind::OpenBraceToken) {
+                        self.parse_expected(SyntaxKind::SemicolonToken);
+                    }
                     // Create a missing identifier for recovery
                     self.arena.add_identifier(
                         SyntaxKind::Identifier as u16,
