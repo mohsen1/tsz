@@ -322,6 +322,15 @@ impl<'a> TypeFormatter<'a> {
                 | TypeData::Mapped(_)
         ) && let Some(def_store) = self.def_store
         {
+            // DEBUG: temporarily log when composite types have no def mapping
+            if def_store.find_def_for_type(type_id).is_none()
+                && matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+            {
+                eprintln!(
+                    "[DEBUG format] TypeId({}) is Object/ObjectWithIndex with no def_for_type",
+                    type_id.0,
+                );
+            }
             if let Some(def_id) = def_store.find_def_for_type(type_id)
                 && let Some(def) = def_store.get(def_id)
             {

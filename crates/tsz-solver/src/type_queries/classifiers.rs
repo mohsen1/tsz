@@ -155,6 +155,22 @@ pub fn get_lazy_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::
     }
 }
 
+/// Get the `DefId` from a generic Application type whose base is `Lazy(def_id)`.
+///
+/// Returns `None` if the type is not an Application or if the base is not Lazy.
+pub fn get_application_lazy_def_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<crate::def::DefId> {
+    if let Some(TypeData::Application(app_id)) = db.lookup(type_id) {
+        let app = db.type_application(app_id);
+        if let Some(TypeData::Lazy(def_id)) = db.lookup(app.base) {
+            return Some(def_id);
+        }
+    }
+    None
+}
+
 /// Get the `SymbolRef` from a `TypeQuery` type (`typeof X`).
 pub fn get_type_query_symbol_ref(
     db: &dyn TypeDatabase,

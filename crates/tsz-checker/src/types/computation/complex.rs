@@ -1090,6 +1090,34 @@ impl<'a> CheckerState<'a> {
                 {
                     return fixed;
                 }
+                // When explicit type arguments were provided (e.g., `new D<string>()`),
+                // the checker pre-applied them to the construct signature, making
+                // `type_params` empty. The solver's non-generic path then skips
+                // display_alias creation. Store it here so the formatter shows
+                // `D<string>` instead of just `D`.
+                if let Some(ref type_args_list) = new_expr.type_arguments
+                    && !type_args_list.nodes.is_empty()
+                    && self.ctx.types.get_display_alias(return_type).is_none()
+                {
+                    let return_type_data = self.ctx.types.lookup(return_type);
+                    eprintln!(
+                        "[DEBUG] new expr with type args: return_type={:?} data={:?} has_display_alias={}",
+                        return_type,
+                        return_type_data,
+                        self.ctx.types.get_display_alias(return_type).is_some()
+                    );
+                    if !matches!(return_type_data, Some(tsz_solver::TypeData::Lazy(_))) {
+                        eprintln!("[DEBUG] NOT Lazy, skipping display_alias store");
+                    }
+                    let resolved_args: Vec<TypeId> = type_args_list
+                        .nodes
+                        .iter()
+                        .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                        .collect();
+                    let factory = self.ctx.types.factory();
+                    let app = factory.application(return_type, resolved_args);
+                    self.ctx.types.store_display_alias(return_type, app);
+                }
                 return_type
             }
             CallResult::VoidFunctionCalledWithNew | CallResult::NonVoidFunctionCalledWithNew => {

@@ -1288,6 +1288,33 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // For generic Application types whose type alias body is an IndexedAccess
+        // or Conditional type, use the evaluated form. tsc doesn't preserve the
+        // alias name through these computed type forms:
+        // - `type Cb<T> = {noAlias: () => T}["noAlias"]` → show `() => number`, not `Cb<number>`
+        // - `type IsArray<T> = T extends unknown[] ? true : false` → show `boolean`, not `IsArray<T>`
+        if tsz_solver::is_generic_application(self.ctx.types, ty) {
+            if let Some(def_id) =
+                tsz_solver::type_queries::get_application_lazy_def_id(self.ctx.types, ty)
+            {
+                if let Some(def) = self.ctx.definition_store.get(def_id) {
+                    if def.kind == tsz_solver::def::DefKind::TypeAlias {
+                        if let Some(body) = def.body {
+                            if matches!(
+                                self.ctx.types.lookup(body),
+                                Some(
+                                    tsz_solver::types::TypeData::IndexAccess(_, _)
+                                        | tsz_solver::types::TypeData::Conditional(_)
+                                )
+                            ) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         matches!(
             evaluated,
             TypeId::STRING
