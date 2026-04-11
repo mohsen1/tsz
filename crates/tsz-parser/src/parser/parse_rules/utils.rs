@@ -94,9 +94,8 @@ pub fn look_ahead_is_module_declaration(
         matches!(
             token,
             SyntaxKind::StringLiteral | SyntaxKind::OpenBraceToken | SyntaxKind::NumericLiteral
-        ) || (token == SyntaxKind::Identifier
-            || (tsz_scanner::token_is_keyword(token)
-                && !tsz_scanner::token_is_reserved_word(token)))
+        ) || token == SyntaxKind::Identifier
+            || tsz_scanner::token_is_keyword(token)
     })
 }
 
@@ -127,6 +126,11 @@ pub fn look_ahead_is_import_equals(
     let snapshot = scanner.save_state();
 
     let next1 = scanner.scan();
+    if tsz_scanner::token_is_reserved_word(next1) {
+        let next2 = scanner.scan();
+        scanner.restore_state(snapshot);
+        return next2 == SyntaxKind::EqualsToken;
+    }
     if !is_identifier_fn(next1) {
         scanner.restore_state(snapshot);
         return false;

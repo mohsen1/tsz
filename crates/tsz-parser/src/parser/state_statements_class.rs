@@ -216,6 +216,9 @@ impl ParserState {
             }
 
             if !has_comma {
+                if self.is_token(SyntaxKind::ColonToken) {
+                    continue;
+                }
                 // Recovery: in malformed parameter initializers like
                 // `function* f(a = yield => yield) {}` or
                 // `async function f(a = await => await) {}`
@@ -499,11 +502,21 @@ impl ParserState {
             );
         }
 
+        let parameter_name_is_reserved_word =
+            self.is_reserved_word() && !self.is_token(SyntaxKind::DefaultKeyword);
+        let is_this_parameter = self.is_token(SyntaxKind::ThisKeyword);
+
         // Parse parameter name - can be an identifier, keyword, or binding pattern
         let name = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_object_binding_pattern()
         } else if self.is_token(SyntaxKind::OpenBracketToken) {
             self.parse_array_binding_pattern()
+        } else if self.is_token(SyntaxKind::ThisKeyword) {
+            let start_pos = self.token_pos();
+            let end_pos = self.token_end();
+            self.next_token();
+            self.arena
+                .add_token(SyntaxKind::ThisKeyword as u16, start_pos, end_pos)
         } else if matches!(
             self.token(),
             SyntaxKind::EnumKeyword
@@ -527,7 +540,24 @@ impl ParserState {
                 },
             )
         } else if self.is_identifier_or_keyword() {
-            self.parse_identifier_name()
+            if self.is_reserved_word() {
+                let reserved_start = self.token_pos();
+                let reserved_end = self.token_end();
+                self.error_reserved_word_identifier();
+                self.arena.add_identifier(
+                    SyntaxKind::Identifier as u16,
+                    reserved_start,
+                    reserved_end,
+                    IdentifierData {
+                        atom: Atom::NONE,
+                        escaped_text: String::new(),
+                        original_text: None,
+                        type_arguments: None,
+                    },
+                )
+            } else {
+                self.parse_identifier_name()
+            }
         } else {
             self.parse_identifier()
         };
@@ -536,7 +566,9 @@ impl ParserState {
         let question_pos = self.token_pos();
         let question_token = self.parse_optional(SyntaxKind::QuestionToken);
 
-        let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
+        let type_annotation = if parameter_name_is_reserved_word && !is_this_parameter {
+            NodeIndex::NONE
+        } else if self.parse_optional(SyntaxKind::ColonToken) {
             // Parameter type annotations do NOT allow type predicates (matching tsc).
             // In tsc, parseParameterType() calls parseType(), not parseTypeOrTypePredicate().
             // Type predicates are only valid in return type positions.

@@ -256,6 +256,8 @@ impl ParserState {
         self.parse_expected(SyntaxKind::OpenBracketToken);
 
         let mut elements = Vec::new();
+        let mut last_comma_pos = None;
+        let mut reserved_word_element_needs_close_error = false;
 
         while !self.is_token(SyntaxKind::CloseBracketToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
@@ -266,6 +268,28 @@ impl ParserState {
             if self.is_token(SyntaxKind::CommaToken) {
                 // Omitted element - push NONE as placeholder
                 elements.push(NodeIndex::NONE);
+                last_comma_pos = Some(self.token_pos());
+                self.next_token();
+                continue;
+            }
+
+            // Reserved words in the first array-binding position should recover as
+            // an invalid destructuring pattern rather than a generic identifier error.
+            if elements.is_empty() && self.is_reserved_word() {
+                self.error_array_element_destructuring_pattern_expected();
+                self.next_token();
+                continue;
+            }
+
+            // Later reserved words in an array binding should stay on the
+            // structural recovery path instead of surfacing a reserved-word
+            // identifier diagnostic that tsc does not emit here.
+            if !elements.is_empty() && self.is_reserved_word() {
+                if let Some(comma_pos) = last_comma_pos {
+                    self.parse_error_at(comma_pos, 1, "';' expected.", diagnostic_codes::EXPECTED);
+                }
+                self.pending_array_binding_tail_recovery = true;
+                reserved_word_element_needs_close_error = true;
                 self.next_token();
                 continue;
             }
@@ -339,10 +363,22 @@ impl ParserState {
             if !has_comma {
                 break;
             }
+            last_comma_pos = Some(self.token_pos().saturating_sub(1));
+        }
+
+        if reserved_word_element_needs_close_error {
+            self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
         }
 
         let end_pos = self.token_end();
         self.parse_expected(SyntaxKind::CloseBracketToken);
+
+        if reserved_word_element_needs_close_error && self.is_token(SyntaxKind::EqualsToken) {
+            self.parse_error_at_current_token(
+                "Declaration or statement expected.",
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            );
+        }
 
         self.arena.add_binding_pattern(
             syntax_kind_ext::ARRAY_BINDING_PATTERN,
