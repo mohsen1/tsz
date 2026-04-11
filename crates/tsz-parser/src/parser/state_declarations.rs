@@ -2482,18 +2482,6 @@ impl ParserState {
         // Namespace import names must still reject reserved words like `while`,
         // but allow contextual keywords such as `type`.
         let name = self.parse_identifier();
-        if self.is_token(SyntaxKind::FromKeyword) {
-            let snapshot = self.scanner.save_state();
-            let current = self.current_token;
-            use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
-            self.next_token();
-            if self.is_token(SyntaxKind::StringLiteral) {
-                self.parse_error_at_current_token("')' expected.", diagnostic_codes::EXPECTED);
-            }
-            self.scanner.restore_state(snapshot);
-            self.current_token = current;
-        }
         let end_pos = self.token_end();
 
         self.arena.add_named_imports(
@@ -2763,15 +2751,34 @@ impl ParserState {
         }
 
         // TS1003: For import specifiers, the binding name must be an identifier,
-        // not a reserved keyword. Matches tsc's check at the end of parseImportOrExportSpecifier.
-        if kind == syntax_kind_ext::IMPORT_SPECIFIER && check_identifier_is_keyword {
+        // not a reserved keyword or string literal.
+        // Matches tsc's check at the end of parseImportOrExportSpecifier.
+        if kind == syntax_kind_ext::IMPORT_SPECIFIER {
             use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at(
-                check_identifier_start,
-                check_identifier_end.saturating_sub(check_identifier_start),
-                "Identifier expected.",
-                diagnostic_codes::IDENTIFIER_EXPECTED,
-            );
+            if check_identifier_is_keyword {
+                self.parse_error_at(
+                    check_identifier_start,
+                    check_identifier_end.saturating_sub(check_identifier_start),
+                    "Identifier expected.",
+                    diagnostic_codes::IDENTIFIER_EXPECTED,
+                );
+            }
+            // String literals cannot be used as local binding names in imports.
+            // `import { "str" as local }` is valid (string is export name, local is binding).
+            // `import { foo as "str" }` is invalid (string can't be a binding).
+            // `import { "str" }` is invalid (string without alias can't be a binding).
+            if let Some(name_node) = self.arena.get(name)
+                && name_node.kind == SyntaxKind::StringLiteral as u16
+            {
+                let name_start = name_node.pos;
+                let name_len = name_node.end.saturating_sub(name_node.pos);
+                self.parse_error_at(
+                    name_start,
+                    name_len,
+                    "Identifier expected.",
+                    diagnostic_codes::IDENTIFIER_EXPECTED,
+                );
+            }
         }
 
         let end_pos = self.token_end();
