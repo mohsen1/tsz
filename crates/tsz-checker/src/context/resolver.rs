@@ -35,6 +35,9 @@ impl<'a> CheckerContext<'a> {
             }
             let name_atom = self.definition_store.get_name(def_id)?;
             let name = self.types.resolve_atom(name_atom);
+            if name == "Atomics" {
+                return None;
+            }
             let cached_ty = self
                 .lib_type_resolution_cache
                 .get(name.as_str())?
@@ -45,6 +48,9 @@ impl<'a> CheckerContext<'a> {
         // Fallback: no DefId yet — use the primary binder (O(1), no lib scan).
         let symbol = self.binder.symbols.get(sym_id)?;
         if (symbol.flags & tsz_binder::symbol_flags::INTERFACE) == 0 {
+            return None;
+        }
+        if symbol.escaped_name == "Atomics" {
             return None;
         }
         let cached_ty = self
@@ -114,6 +120,37 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                 || self.binder.symbols.get(candidate).is_some();
             found.then_some(candidate)
         });
+        let is_atomics = self
+            .definition_store
+            .get_name(def_id)
+            .is_some_and(|name| self.types.resolve_atom(name) == "Atomics")
+            || sym_id.as_ref().is_some_and(|sym_id| {
+                self.get_existing_def_id(*sym_id)
+                    .and_then(|def_id| self.definition_store.get_name(def_id))
+                    .is_some_and(|name| self.types.resolve_atom(name) == "Atomics")
+                    || self
+                        .binder
+                        .symbols
+                        .get(*sym_id)
+                        .is_some_and(|sym| sym.escaped_name == "Atomics")
+            });
+        let definition_file_idx = self
+            .definition_store
+            .get(def_id)
+            .and_then(|info| info.file_id)
+            .map(|idx| idx as usize)
+            .or_else(|| {
+                sym_id.and_then(|sym_id| {
+                    self.get_existing_def_id(sym_id)
+                        .and_then(|real_id| self.definition_store.get(real_id))
+                        .and_then(|info| info.file_id)
+                        .map(|idx| idx as usize)
+                })
+            });
+        let has_local_symbol_collision = sym_id.is_some_and(|sym_id| {
+            definition_file_idx.is_some_and(|file_idx| file_idx != self.current_file_idx)
+                && self.binder.symbols.get(sym_id).is_some()
+        });
         if let Some(sym_id) = sym_id {
             // If this is a fallback from a raw SymbolId-based DefId, check if there's
             // a proper DefId registered for this symbol and redirect through it.
@@ -135,7 +172,9 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                     .and_then(|real_id| self.definition_store.get_kind(real_id))
             });
 
-            if let Some(instance_type) = self.symbol_instance_types.get(&sym_id) {
+            if !has_local_symbol_collision
+                && let Some(instance_type) = self.symbol_instance_types.get(&sym_id)
+            {
                 if let Some(kind) = def_kind {
                     if matches!(
                         kind,
@@ -186,7 +225,10 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
             // type environment. Returning the self-lazy wrapper here loses generic
             // application instantiation (`Foo<T>` collapses to bare `Foo`), so give
             // the type environment a chance to provide the real body first.
-            if let Some(&ty) = self.symbol_types.get(&sym_id) {
+            if !is_atomics
+                && !has_local_symbol_collision
+                && let Some(&ty) = self.symbol_types.get(&sym_id)
+            {
                 if ty == tsz_solver::TypeId::ERROR {
                     // Skip poisoned ERROR entries (e.g., from stack overflow protection
                     // tripping during deep recursive type resolution). Fall through to
@@ -221,7 +263,8 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
 
         // Fall back to type_env for types registered via insert_def_with_params
         // (generic lib interfaces like PromiseLike<T>, Map<K,V>, Set<T>, etc.)
-        if let Ok(env) = self.type_env.try_borrow()
+        if !is_atomics
+            && let Ok(env) = self.type_env.try_borrow()
             && let Some(body) = env.get_def(def_id)
         {
             // For lib interfaces, check if the heritage-merged version is available.
@@ -242,8 +285,13 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         }
 
         if let Some(sym_id) = self.def_to_symbol_id_with_fallback(def_id)
+            && !has_local_symbol_collision
             && let Some(&ty) = self.symbol_types.get(&sym_id)
             && tsz_solver::visitor::lazy_def_id(self.types, ty) == Some(def_id)
+            && self
+                .definition_store
+                .get_name(def_id)
+                .is_none_or(|name| self.types.resolve_atom(name) != "Atomics")
         {
             tracing::trace!(
                 def_id = def_id.0,

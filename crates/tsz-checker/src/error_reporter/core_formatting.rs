@@ -125,7 +125,6 @@ impl<'a> CheckerState<'a> {
         } else {
             self.format_type_diagnostic(display_ty)
         };
-
         // Preserve generic instantiations for nominal class instance names when possible.
         // First check if the solver has a display_alias (Application type) for the
         // original type or the display type. If so, format that directly instead
@@ -297,6 +296,124 @@ impl<'a> CheckerState<'a> {
             formatted = format!("{}; }}", &formatted[..formatted.len() - 2]);
         }
         formatted
+    }
+
+    pub(crate) fn authoritative_assignability_def_name(&mut self, ty: TypeId) -> Option<String> {
+        let direct_def_name = |state: &Self, candidate: TypeId| {
+            let def_id = tsz_solver::type_queries::get_lazy_def_id(
+                state.ctx.types.as_type_database(),
+                candidate,
+            )
+            .or_else(|| state.ctx.definition_store.find_def_for_type(candidate))?;
+            let def = state.ctx.definition_store.get(def_id)?;
+            Some(state.ctx.types.resolve_atom_ref(def.name).to_string())
+        };
+
+        let symbol_backed_name = |state: &Self, candidate: TypeId| {
+            let symbol_name =
+                tsz_solver::type_queries::get_object_shape(state.ctx.types, candidate)
+                    .and_then(|shape| shape.symbol)
+                    .or_else(|| {
+                        tsz_solver::type_queries::get_callable_shape(state.ctx.types, candidate)
+                            .and_then(|shape| shape.symbol)
+                    })
+                    .and_then(|sym_id| state.ctx.binder.get_symbol(sym_id))
+                    .map(|symbol| symbol.escaped_name.clone())?;
+            Some(symbol_name)
+        };
+
+        if let Some(members) =
+            tsz_solver::type_queries::get_intersection_members(self.ctx.types, ty)
+        {
+            let mut named_members = Vec::new();
+            let mut saw_namespace_member = false;
+
+            for member in members {
+                if tsz_solver::is_module_namespace_type(self.ctx.types, member)
+                    || tsz_solver::type_queries::is_type_query_type(self.ctx.types, member)
+                    || self.ctx.namespace_module_names.contains_key(&member)
+                {
+                    saw_namespace_member = true;
+                    continue;
+                }
+
+                if let Some(name) =
+                    direct_def_name(self, member).or_else(|| symbol_backed_name(self, member))
+                {
+                    named_members.push(name);
+                }
+            }
+
+            named_members.sort();
+            named_members.dedup();
+            if saw_namespace_member && named_members.len() == 1 {
+                return named_members.into_iter().next();
+            }
+        }
+
+        let export_equals_default_name = |state: &mut Self, candidate: TypeId| {
+            let default_name = state.ctx.types.intern_string("default");
+            let Some(shape) =
+                tsz_solver::type_queries::get_object_shape(state.ctx.types, candidate)
+            else {
+                return None;
+            };
+            let default_prop = shape
+                .properties
+                .iter()
+                .find(|prop| prop.name == default_name)?;
+            let default_ty = default_prop.type_id;
+
+            let wrapper_method_mentions_default = shape.properties.iter().any(|prop| {
+                let Some(return_ty) =
+                    tsz_solver::type_queries::get_return_type(state.ctx.types, prop.type_id)
+                else {
+                    return false;
+                };
+                let Some(return_members) =
+                    tsz_solver::type_queries::get_intersection_members(state.ctx.types, return_ty)
+                else {
+                    return false;
+                };
+                let has_default_member = return_members.iter().copied().any(|member| {
+                    member == default_ty
+                        || direct_def_name(state, member) == direct_def_name(state, default_ty)
+                        || symbol_backed_name(state, member)
+                            == symbol_backed_name(state, default_ty)
+                });
+                let has_namespace_member = return_members.iter().copied().any(|member| {
+                    tsz_solver::is_module_namespace_type(state.ctx.types, member)
+                        || tsz_solver::type_queries::is_type_query_type(state.ctx.types, member)
+                        || state.ctx.namespace_module_names.contains_key(&member)
+                });
+                has_default_member && has_namespace_member
+            });
+
+            if !wrapper_method_mentions_default {
+                return None;
+            }
+
+            direct_def_name(state, default_ty).or_else(|| symbol_backed_name(state, default_ty))
+        };
+
+        if let Some(name) = export_equals_default_name(self, ty) {
+            return Some(name);
+        }
+
+        let display_ty = self.normalize_assignability_display_type(ty);
+        if let Some(name) = export_equals_default_name(self, display_ty) {
+            return Some(name);
+        }
+        let def_id =
+            tsz_solver::type_queries::get_lazy_def_id(self.ctx.types.as_type_database(), ty)
+                .or_else(|| self.ctx.definition_store.find_def_for_type(ty))
+                .or_else(|| self.ctx.definition_store.find_def_for_type(display_ty))
+                .or_else(|| {
+                    let evaluated = self.evaluate_type_for_assignability(ty);
+                    self.ctx.definition_store.find_def_for_type(evaluated)
+                })?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        Some(self.ctx.types.resolve_atom_ref(def.name).to_string())
     }
 
     pub(crate) fn format_assignability_type_for_message(

@@ -24549,6 +24549,59 @@ let p: Passport = passport.use();
         "Should NOT emit TS2749 for 'Passport' — it is an interface imported \
          from an ambient module via export=. Got: {codes:?}\n{diagnostics:#?}"
     );
+    assert!(
+        !has_error(&diagnostics, 2300) && !has_error(&diagnostics, 2451),
+        "Should NOT emit TS2300/TS2451 for 'Passport' imported from an ambient module via export=. Got: {codes:?}\n{diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_cross_binder_symbol_id_collision_emits_ts2322_for_this_return() {
+    let passport_dts = r#"
+declare module 'passport' {
+    namespace passport {
+        interface Passport {
+            use(): this;
+        }
+
+        interface PassportStatic extends Passport {
+            Passport: {new(): Passport};
+        }
+    }
+
+    const passport: passport.PassportStatic;
+    export = passport;
+}
+"#;
+
+    let test_ts = r#"
+import * as passport from "passport";
+import { Passport } from "passport";
+
+let p: Passport = passport.use();
+"#;
+
+    let files: &[(&str, &str)] = &[("passport.d.ts", passport_dts), ("test.ts", test_ts)];
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        files,
+        "test.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|(c, _)| *c).collect();
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Should emit TS2322 for `PassportStatic` not assignable to `Passport`. Got: {codes:?}\n{diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2749)
+            && !has_error(&diagnostics, 2300)
+            && !has_error(&diagnostics, 2451),
+        "Should not regress into TS2749/TS2300/TS2451 for `Passport` imported from an ambient module via export=. Got: {codes:?}\n{diagnostics:#?}"
+    );
 }
 
 /// Simpler variant: named interface import from an ambient module without

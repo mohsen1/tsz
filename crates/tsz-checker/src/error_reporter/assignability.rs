@@ -825,12 +825,29 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> (String, String) {
         let source_str = self.format_assignability_type_for_message(source, target);
-        let source_str = self.rewrite_source_display_for_non_literal_target_assignability(
+        let mut source_str = self.rewrite_source_display_for_non_literal_target_assignability(
             source, target, source_str,
         );
         let target_str = self.format_assignability_type_for_message(target, source);
-        let target_str =
+        let mut target_str =
             self.rewrite_target_display_for_non_literal_assignability(target, target_str);
+
+        let should_prefer_authoritative_name = |display: &str| {
+            display.starts_with("{ ")
+                || display.starts_with("typeof import(")
+                || display.contains("& typeof import(")
+        };
+
+        if should_prefer_authoritative_name(&source_str)
+            && let Some(authoritative) = self.authoritative_assignability_def_name(source)
+        {
+            source_str = authoritative;
+        }
+        if should_prefer_authoritative_name(&target_str)
+            && let Some(authoritative) = self.authoritative_assignability_def_name(target)
+        {
+            target_str = authoritative;
+        }
         (source_str, target_str)
     }
 
@@ -1185,7 +1202,14 @@ impl<'a> CheckerState<'a> {
 
             // TS2719: when both types display identically but are different,
             // emit "Two different types with this name exist" instead of TS2322.
-            let (message, code) = if src_str == tgt_str {
+            let authoritative_src = self.authoritative_assignability_def_name(source);
+            let authoritative_tgt = self.authoritative_assignability_def_name(target);
+            let authoritative_names_differ = authoritative_src
+                .as_ref()
+                .zip(authoritative_tgt.as_ref())
+                .is_some_and(|(src, tgt)| src != tgt);
+
+            let (message, code) = if src_str == tgt_str && !authoritative_names_differ {
                 (
                     format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
@@ -1194,10 +1218,12 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
                 )
             } else {
+                let source_name = authoritative_src.as_deref().unwrap_or(&src_str);
+                let target_name = authoritative_tgt.as_deref().unwrap_or(&tgt_str);
                 (
                     format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        &[&src_str, &tgt_str],
+                        &[source_name, target_name],
                     ),
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 )

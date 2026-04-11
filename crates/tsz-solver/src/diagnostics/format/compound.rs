@@ -1407,16 +1407,27 @@ impl<'a> TypeFormatter<'a> {
         // Try to build a qualified name by walking the symbol parent chain.
         // tsc qualifies type names with their containing enum (e.g., `Choice.Yes`)
         // but uses SHORT names for types inside namespaces (e.g., `Line` not `A.Line`).
+        let def_name = self.atom(def.name).to_string();
         if let Some(sym_raw) = def.symbol_id
             && let Some(arena) = self.symbol_arena
             && let Some(symbol) = arena.get(SymbolId(sym_raw))
         {
             use tsz_binder::symbol_flags;
+            let foreign_symbol_name_collision = symbol.escaped_name != def_name
+                && self
+                    .current_file_id
+                    .zip(def.file_id)
+                    .is_some_and(|(current_file_id, def_file_id)| current_file_id != def_file_id);
+
+            if foreign_symbol_name_collision {
+                return def_name;
+            }
+
             // For anonymous class expressions assigned to variables, the binder
             // creates a symbol named "(Anonymous class)" but tsc displays the
             // variable name instead. Prefer the definition's name in this case.
             let base_name = if symbol.escaped_name == "(Anonymous class)" {
-                self.atom(def.name).to_string()
+                def_name
             } else {
                 symbol.escaped_name.to_string()
             };
@@ -1448,6 +1459,6 @@ impl<'a> TypeFormatter<'a> {
         }
 
         // Fallback: use the short (unqualified) definition name.
-        self.atom(def.name).to_string()
+        def_name
     }
 }

@@ -286,7 +286,15 @@ impl<'a> CheckerState<'a> {
                     export_name,
                     Some(source_file_idx),
                 ) {
-                    return self.resolve_alias_symbol(target_sym_id, visited_aliases);
+                    if let Some(target_file_idx) = self.ctx.resolve_symbol_file_index(target_sym_id)
+                    {
+                        // Keep the alias itself pinned to the owning file so later
+                        // type computation doesn't re-read a colliding local symbol
+                        // with the same raw SymbolId.
+                        self.ctx
+                            .register_symbol_file_target(sym_id, target_file_idx);
+                    }
+                    return Some(target_sym_id);
                 }
                 if let Some(exports) = self.ctx.binder.module_exports.get(module_name)
                     && let Some(target_sym_id) = exports.get(export_name)
@@ -377,10 +385,20 @@ impl<'a> CheckerState<'a> {
                         || (symbol.import_name.is_none() && symbol.escaped_name != "default");
                     if is_namespace_import {
                         if let Some(exports) = target_binder.module_exports.get(file_name) {
+                            if let Some(export_equals_sym_id) = exports.get("export=") {
+                                self.ctx
+                                    .register_symbol_file_target(export_equals_sym_id, target_idx);
+                                return Some(export_equals_sym_id);
+                            }
                             for (_, &sid) in exports.iter() {
                                 self.ctx.register_symbol_file_target(sid, target_idx);
                             }
                         }
+                        // Keep the namespace import alias owned by the current file.
+                        // Only the exported target symbols belong to the imported module.
+                        // Rebinding the alias itself to the target file causes raw
+                        // SymbolId collisions to overwrite local import aliases with
+                        // unrelated module-local symbols from the target binder.
                         // Return the alias symbol itself — the caller
                         // resolves members through resolve_symbol_export
                         // which follows import_module re-exports.
