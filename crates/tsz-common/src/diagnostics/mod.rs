@@ -129,9 +129,62 @@ pub fn get_message_template(code: u32) -> Option<&'static str> {
 }
 
 pub fn format_message(message: &str, args: &[&str]) -> String {
+    fn normalize_template_placeholder_spacing(arg: &str) -> String {
+        if !arg.contains("${") {
+            return arg.to_string();
+        }
+
+        let chars: Vec<char> = arg.chars().collect();
+        let mut out = String::with_capacity(arg.len());
+        let mut i = 0usize;
+
+        while i < chars.len() {
+            if chars[i] == '$' && i + 1 < chars.len() && chars[i + 1] == '{' {
+                out.push('$');
+                out.push('{');
+                i += 2;
+
+                while i < chars.len() && chars[i].is_whitespace() {
+                    i += 1;
+                }
+
+                let mut depth = 1usize;
+                let mut inner = String::new();
+                while i < chars.len() {
+                    let ch = chars[i];
+                    i += 1;
+                    if ch == '{' {
+                        depth += 1;
+                        inner.push(ch);
+                        continue;
+                    }
+                    if ch == '}' {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                        inner.push(ch);
+                        continue;
+                    }
+                    inner.push(ch);
+                }
+
+                out.push_str(inner.trim_end());
+                out.push('}');
+                continue;
+            }
+
+            out.push(chars[i]);
+            i += 1;
+        }
+
+        out
+    }
+
     let mut result = message.to_string();
     for (i, arg) in args.iter().enumerate() {
-        result = result.replace(&format!("{{{i}}}"), arg);
+        let normalized = normalize_template_placeholder_spacing(arg);
+        result = result.replace(&format!("{{{i}}}"), &normalized);
     }
     result
 }

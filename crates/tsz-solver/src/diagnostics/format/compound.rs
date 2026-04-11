@@ -1378,7 +1378,7 @@ impl<'a> TypeFormatter<'a> {
             }
         }
 
-        Some(qualified_name)
+        Some(self.qualify_namespace_name_if_needed(sym_id, &sym.escaped_name, qualified_name))
     }
 
     /// Resolve a `SymbolRef` (from `TypeQuery` / `ModuleNamespace`) to a display name.
@@ -1450,10 +1450,69 @@ impl<'a> TypeFormatter<'a> {
                 }
             }
 
-            return qualified_name;
+            return self.qualify_namespace_name_if_needed(
+                SymbolId(sym_raw),
+                &symbol.escaped_name,
+                qualified_name,
+            );
         }
 
         // Fallback: use the short (unqualified) definition name.
         def_name
+    }
+
+    fn qualify_namespace_name_if_needed(
+        &self,
+        sym_id: SymbolId,
+        original_name: &str,
+        current_name: String,
+    ) -> String {
+        let Some(arena) = self.symbol_arena else {
+            return current_name;
+        };
+
+        let has_name_collision = arena
+            .find_all_by_name(original_name)
+            .iter()
+            .copied()
+            .any(|other| other != sym_id);
+        if !has_name_collision {
+            return current_name;
+        }
+
+        let Some(symbol) = arena.get(sym_id) else {
+            return current_name;
+        };
+        let mut parts = vec![current_name];
+        let mut current_parent = symbol.parent;
+        use tsz_binder::symbol_flags;
+
+        while current_parent != SymbolId::NONE {
+            if let Some(parent_sym) = arena.get(current_parent) {
+                let is_qualifying_parent =
+                    parent_sym.has_any_flags(symbol_flags::MODULE | symbol_flags::ENUM);
+                let name = &parent_sym.escaped_name;
+                let is_file_module = name.starts_with('"')
+                    || name.starts_with("__")
+                    || name.contains('/')
+                    || name.contains('\\')
+                    || name.is_empty();
+                if is_qualifying_parent && !is_file_module {
+                    parts.push(parent_sym.escaped_name.clone());
+                    current_parent = parent_sym.parent;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        if parts.len() == 1 {
+            return parts.pop().expect("parts has one element");
+        }
+
+        parts.reverse();
+        parts.join(".")
     }
 }

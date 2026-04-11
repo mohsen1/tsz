@@ -935,12 +935,6 @@ impl<'a> CheckerState<'a> {
         if let Some(pattern_node) = self.ctx.arena.get(pattern_idx) {
             is_assignment_array_target =
                 pattern_node.kind == tsz_parser::parser::syntax_kind_ext::ARRAY_LITERAL_EXPRESSION;
-            if let Some(binding_pattern) = self.ctx.arena.get_binding_pattern(pattern_node)
-                && binding_pattern.elements.nodes.is_empty()
-                && resolved_type != TypeId::UNKNOWN
-            {
-                return true;
-            }
         }
 
         if resolved_type == TypeId::UNKNOWN {
@@ -1313,6 +1307,21 @@ impl<'a> CheckerState<'a> {
     ) {
         if let Some((start, end)) = self.get_node_span(error_node) {
             let evaluated_type = self.evaluate_type_for_assignability(type_id);
+            let has_rest_element = self
+                .ctx
+                .arena
+                .get(error_node)
+                .and_then(|node| self.ctx.arena.get_literal_expr(node))
+                .is_some_and(|array_lit| {
+                    array_lit.elements.nodes.iter().any(|&element_idx| {
+                        self.ctx.arena.get(element_idx).is_some_and(|element_node| {
+                            element_node.kind == tsz_parser::parser::syntax_kind_ext::SPREAD_ELEMENT
+                        })
+                    })
+                });
+            let preserve_boolean_literals = preserve_boolean_literals
+                && has_rest_element
+                && crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, type_id);
             let display_type = if preserve_boolean_literals {
                 self.widen_type_for_display(evaluated_type)
             } else {

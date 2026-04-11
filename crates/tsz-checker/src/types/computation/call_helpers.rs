@@ -7,7 +7,7 @@ use crate::query_boundaries::checkers::call::{
 use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
-use tsz_binder::SymbolId;
+use tsz_binder::{Symbol, SymbolId};
 use tsz_parser::parser::NodeArena;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -16,6 +16,40 @@ use tsz_solver::TypeId;
 use super::call_inference::should_preserve_contextual_application_shape;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn is_fast_path_function_decl(
+        &self,
+        sym_id: SymbolId,
+        symbol: &Symbol,
+        decl_idx: Option<NodeIndex>,
+        direct_symbol: Option<SymbolId>,
+        identifier_text: &str,
+    ) -> bool {
+        let Some(decl_idx) = decl_idx else {
+            return false;
+        };
+        let Some(decl) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        if decl.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+            return false;
+        }
+        self.ctx.arena.get_function(decl).is_some_and(|func| {
+            let is_unannotated_impl = func.type_annotation.is_none();
+            let is_local_ambient_signature = func.body.is_none()
+                && direct_symbol == Some(sym_id)
+                && (symbol.decl_file_idx == self.ctx.current_file_idx as u32
+                    || symbol.decl_file_idx == u32::MAX);
+
+            symbol.escaped_name == identifier_text
+                && (is_unannotated_impl || is_local_ambient_signature)
+                && (symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0
+                && (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0
+                && (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0
+                && (symbol.decl_file_idx == u32::MAX
+                    || symbol.decl_file_idx == self.ctx.current_file_idx as u32)
+        })
+    }
+
     /// Check for TDZ violations: variable used before its declaration in a
     /// static block, computed property, or heritage clause; or class/enum
     /// used before its declaration anywhere in the same scope.
@@ -452,11 +486,16 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(decl_idx) else {
             return TypeId::ERROR;
         };
-
         if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
             if var_decl.type_annotation.is_some() {
                 let annotated = self.get_type_from_type_node(var_decl.type_annotation);
                 return self.resolve_ref_type(annotated);
+            }
+            if self.ctx.is_js_file()
+                && self.ctx.should_resolve_jsdoc()
+                && let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(decl_idx)
+            {
+                return jsdoc_type;
             }
             let root_name = self
                 .ctx
@@ -775,12 +814,52 @@ impl<'a> CheckerState<'a> {
         if has_type { merged } else { TypeId::ERROR }
     }
 
+    fn prefer_known_global_constructor_companion(
+        &mut self,
+        name: &str,
+        value_type: TypeId,
+    ) -> TypeId {
+        if !self.is_known_global_value_name(name)
+            || value_type == TypeId::UNKNOWN
+            || value_type == TypeId::ERROR
+        {
+            return value_type;
+        }
+
+        let constructor_name = format!("{name}Constructor");
+        if let Some(constructor_sym_id) = self.find_value_symbol_in_libs(&constructor_name) {
+            let constructor_type = self.get_type_of_symbol(constructor_sym_id);
+            if constructor_type != TypeId::UNKNOWN && constructor_type != TypeId::ERROR {
+                return constructor_type;
+            }
+        }
+
+        if let Some(constructor_type) = self.resolve_lib_type_by_name(&constructor_name)
+            && constructor_type != TypeId::UNKNOWN
+            && constructor_type != TypeId::ERROR
+        {
+            return constructor_type;
+        }
+
+        value_type
+    }
+
     /// Resolve a value-side type by global name, preferring value declarations.
     ///
     /// This avoids incorrect type resolution when symbol IDs collide across
     /// binders (current file vs. lib files).
     pub(crate) fn type_of_value_symbol_by_name(&mut self, name: &str) -> TypeId {
         let lib_binders = self.get_lib_binders();
+
+        if self.is_known_global_value_name(name) {
+            let constructor_name = format!("{name}Constructor");
+            if let Some(constructor_type) = self.resolve_lib_type_by_name(&constructor_name)
+                && constructor_type != TypeId::UNKNOWN
+                && constructor_type != TypeId::ERROR
+            {
+                return constructor_type;
+            }
+        }
 
         if let Some(value_sym_id) = self.ctx.binder.file_locals.get(name)
             && let Some(symbol) = self
@@ -802,13 +881,13 @@ impl<'a> CheckerState<'a> {
                     let value_type =
                         self.type_of_value_declaration_for_symbol(value_sym_id, decl_idx);
                     if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
-                        return value_type;
+                        return self.prefer_known_global_constructor_companion(name, value_type);
                     }
                 }
 
                 let value_type = self.get_type_of_symbol(value_sym_id);
                 if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
-                    return value_type;
+                    return self.prefer_known_global_constructor_companion(name, value_type);
                 }
             }
         }
@@ -816,7 +895,7 @@ impl<'a> CheckerState<'a> {
         if let Some((sym_id, value_decl)) = self.find_value_declaration_in_libs(name) {
             let value_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
             if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
-                return value_type;
+                return self.prefer_known_global_constructor_companion(name, value_type);
             }
         }
 
@@ -841,7 +920,8 @@ impl<'a> CheckerState<'a> {
                         let value_type =
                             self.type_of_value_declaration_for_symbol(value_sym_id, decl_idx);
                         if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
-                            return value_type;
+                            return self
+                                .prefer_known_global_constructor_companion(name, value_type);
                         }
                     }
                 }
@@ -849,7 +929,7 @@ impl<'a> CheckerState<'a> {
 
             let value_type = self.get_type_of_symbol(value_sym_id);
             if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
-                return value_type;
+                return self.prefer_known_global_constructor_companion(name, value_type);
             }
         }
 

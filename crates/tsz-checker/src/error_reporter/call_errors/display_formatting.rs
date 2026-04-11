@@ -1033,7 +1033,7 @@ impl<'a> CheckerState<'a> {
                 direct_arg_type
             }
         } else {
-            crate::query_boundaries::common::widen_type(self.ctx.types, arg_type)
+            crate::query_boundaries::common::widen_type_for_display(self.ctx.types, arg_type)
         };
 
         if crate::query_boundaries::common::is_mapped_type(self.ctx.types, display_type) {
@@ -1044,7 +1044,11 @@ impl<'a> CheckerState<'a> {
                 display_type = evaluated_display;
             }
         }
-        self.format_type_for_assignability_message(display_type)
+
+        let display = self.format_type_for_assignability_message(display_type);
+        self.rewrite_source_display_for_non_literal_target_assignability(
+            arg_type, param_type, display,
+        )
     }
 
     fn contextual_function_argument_display(

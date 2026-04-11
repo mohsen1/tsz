@@ -27,13 +27,17 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .arena
                 .get(contextual_init)
-                .is_some_and(|init_node| {
-                    matches!(
-                        init_node.kind,
-                        syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                            | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                    )
-                });
+                .is_some_and(
+                    |init_node| match self.ctx.arena.get(pattern_idx).map(|n| n.kind) {
+                        Some(kind) if kind == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
+                            init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                        }
+                        Some(kind) if kind == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
+                            init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        }
+                        _ => false,
+                    },
+                );
 
         if !supports_pattern_context {
             return TypingRequest::NONE;
@@ -596,7 +600,9 @@ impl<'a> CheckerState<'a> {
                 TypeId::ANY
             };
             if !has_type_annotation
-                && let Some(jsdoc_type) = checker.jsdoc_type_annotation_for_node(decl_idx)
+                && let Some(jsdoc_type) = checker
+                    .jsdoc_type_annotation_for_node(decl_idx)
+                    .or_else(|| checker.jsdoc_type_annotation_for_node_inference(decl_idx))
             {
                 // TS1196: Catch clause variable type annotation must be 'any' or 'unknown'
                 // This also applies to JSDoc @type annotations on catch variables in JS files.
@@ -768,6 +774,7 @@ impl<'a> CheckerState<'a> {
                     checker.maybe_clear_checked_initializer_type_cache(var_decl.initializer);
                     let init_type =
                         checker.get_type_of_node_with_request(var_decl.initializer, &request);
+                    #[cfg(debug_assertions)]
                     // Ensure the contextually-typed init type is stored in node_types
                     // for the initializer expression. Error elaboration may re-check
                     // the initializer without contextual type, which widens literal
@@ -865,12 +872,25 @@ impl<'a> CheckerState<'a> {
                                 declared_type,
                                 var_decl.initializer,
                             ) {
-                                let _ = checker.check_assignable_or_report_generic_at(
-                                    checked_init_type,
-                                    declared_type,
-                                    var_decl.initializer,
-                                    decl_idx,
-                                );
+                                let skip_generic_outer_error = checker
+                                    .ctx
+                                    .arena
+                                    .get(var_decl.name)
+                                    .and_then(|pattern_node| {
+                                        checker.ctx.arena.get_binding_pattern(pattern_node)
+                                    })
+                                    .is_some_and(|pattern| {
+                                        pattern.elements.nodes.is_empty()
+                                            && var_decl.type_annotation.is_some()
+                                    });
+                                if !skip_generic_outer_error {
+                                    let _ = checker.check_assignable_or_report_generic_at(
+                                        checked_init_type,
+                                        declared_type,
+                                        var_decl.initializer,
+                                        decl_idx,
+                                    );
+                                }
                             }
                         } else {
                             let handled_discriminated = checker
@@ -1222,6 +1242,12 @@ impl<'a> CheckerState<'a> {
             // This matches tsc behavior where `var p: Point; var p: typeof p;` is valid and
             // where `function f(x: A) { var x: typeof x; }` uses the parameter surface.
             let is_redeclaration = self.has_prior_value_declaration_for_symbol(decl_idx);
+            let is_js_require_binding = self.ctx.is_js_file()
+                && self.ctx.compiler_options.check_js
+                && var_decl.initializer.is_some()
+                && self
+                    .get_require_module_specifier(var_decl.initializer)
+                    .is_some();
             if var_decl.type_annotation.is_some() && !is_redeclaration {
                 let accessor_circular =
                     self.type_literal_has_circular_accessor_reference(var_decl.type_annotation);
@@ -1293,7 +1319,7 @@ impl<'a> CheckerState<'a> {
                 // subsequent declaration's inferred type can corrupt recursive
                 // type resolution chains (e.g., `typeof k` indexers resolve to
                 // `any` after the symbol type is overwritten by a redeclaration).
-                if !is_merged_interface && !is_redeclaration {
+                if !is_merged_interface && (!is_redeclaration || is_js_require_binding) {
                     // Augment callable types with expando properties before caching.
                     if let Some(ref name) = var_name {
                         final_type =
@@ -1861,6 +1887,7 @@ impl<'a> CheckerState<'a> {
                                             // never trigger TS2403 against lib types.
                                             // Module-scoped variables don't merge with globals.
                                             if !is_in_function_scope
+                                                && !is_js_require_binding
                                                 && !is_bare_declaration
                                                 && !is_non_checked_js
                                                 && !self.are_var_decl_types_compatible(
@@ -2041,6 +2068,7 @@ impl<'a> CheckerState<'a> {
                     // files. If the same name appears in another file with a different type,
                     // emit TS2403.
                     if prior_type_found.is_none()
+                        && !is_js_require_binding
                         && !is_bare_declaration
                         && !is_in_namespace
                         && !is_in_function_scope
@@ -2282,34 +2310,47 @@ impl<'a> CheckerState<'a> {
             }
 
             // TS2488: Check array destructuring for iterability before assigning types
-            let mut effective_pattern_type = pattern_type;
             if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
                 let is_iterable = self.check_destructuring_iterability(
                     var_decl.name,
                     pattern_type,
                     var_decl.initializer,
                 );
-                // When not iterable (e.g., `unknown` in catch clause), use ERROR
-                // to suppress cascading diagnostics in nested patterns.
-                if !is_iterable {
-                    effective_pattern_type = TypeId::ERROR;
-                }
-                self.report_empty_array_destructuring_bounds(var_decl.name, var_decl.initializer);
-            }
+                if is_iterable {
+                    self.report_empty_array_destructuring_bounds(
+                        var_decl.name,
+                        var_decl.initializer,
+                    );
 
-            // Ensure binding element identifiers get the correct inferred types.
-            let binding_request = typing_request.read().contextual_opt(None);
-            self.assign_binding_pattern_symbol_types_with_request(
-                var_decl.name,
-                effective_pattern_type,
-                &binding_request,
-            );
-            self.check_binding_pattern_with_request(
-                var_decl.name,
-                effective_pattern_type,
-                var_decl.type_annotation.is_some(),
-                &binding_request,
-            );
+                    // Ensure binding element identifiers get the correct inferred types.
+                    let binding_request = typing_request.read().contextual_opt(None);
+                    self.assign_binding_pattern_symbol_types_with_request(
+                        var_decl.name,
+                        pattern_type,
+                        &binding_request,
+                    );
+                    self.check_binding_pattern_with_request(
+                        var_decl.name,
+                        pattern_type,
+                        var_decl.type_annotation.is_some(),
+                        &binding_request,
+                    );
+                }
+            } else {
+                // Ensure binding element identifiers get the correct inferred types.
+                let binding_request = typing_request.read().contextual_opt(None);
+                self.assign_binding_pattern_symbol_types_with_request(
+                    var_decl.name,
+                    pattern_type,
+                    &binding_request,
+                );
+                self.check_binding_pattern_with_request(
+                    var_decl.name,
+                    pattern_type,
+                    var_decl.type_annotation.is_some(),
+                    &binding_request,
+                );
+            }
 
             // Record source expression for flow-based property narrowing.
             // When `const { bar } = aFoo` and `aFoo.bar` was narrowed by a condition,

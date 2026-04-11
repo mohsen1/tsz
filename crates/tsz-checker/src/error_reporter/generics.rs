@@ -192,7 +192,7 @@ impl<'a> CheckerState<'a> {
         let shape_id = tsz_solver::callable_shape_id(self.ctx.types, type_id)?;
         let shape = self.ctx.types.callable_shape(shape_id);
         if shape.call_signatures.len() != 1
-            || !shape.construct_signatures.is_empty()
+            || shape.construct_signatures.len() > 1
             || shape.string_index.is_some()
             || shape.number_index.is_some()
         {

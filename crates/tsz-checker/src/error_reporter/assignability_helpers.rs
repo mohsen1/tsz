@@ -14,6 +14,73 @@ use tsz_solver::TypeId;
 use crate::query_boundaries::type_checking_utilities as query_utils;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn recover_unknown_array_source_type_for_display(
+        &mut self,
+        source: TypeId,
+        idx: NodeIndex,
+        depth: u32,
+    ) -> TypeId {
+        if depth != 0
+            || tsz_solver::type_queries::get_array_element_type(self.ctx.types, source).is_none()
+        {
+            return source;
+        }
+
+        let Some(expr_idx) = self.assignment_source_expression(idx) else {
+            return source;
+        };
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return source;
+        };
+
+        if node.kind == tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION
+            || node.kind == tsz_parser::parser::syntax_kind_ext::NEW_EXPRESSION
+        {
+            let Some(call) = self.ctx.arena.get_call_expr(node) else {
+                return source;
+            };
+            let Some(args) = call.arguments.as_ref() else {
+                return source;
+            };
+            let Some(&first_arg) = args.nodes.first() else {
+                return source;
+            };
+
+            let first_arg_type = self.get_type_of_node(first_arg);
+            if matches!(first_arg_type, TypeId::ERROR | TypeId::UNKNOWN) {
+                return source;
+            }
+
+            let element_type =
+                tsz_solver::type_queries::get_array_element_type(self.ctx.types, first_arg_type)
+                    .or_else(|| {
+                        tsz_solver::operations::get_iterator_info(
+                            self.ctx.types,
+                            first_arg_type,
+                            false,
+                        )
+                        .map(|info| info.yield_type)
+                    });
+            let Some(element_type) = element_type else {
+                return source;
+            };
+            if matches!(element_type, TypeId::ERROR | TypeId::UNKNOWN) {
+                return source;
+            }
+
+            let recovered = self
+                .ctx
+                .types
+                .array(self.widen_type_for_display(element_type));
+            if recovered != source {
+                return recovered;
+            }
+        }
+
+        source
+    }
+
     /// Report a type not assignable error with detailed elaboration.
     ///
     /// This method uses the solver's "explain" API to determine WHY the types

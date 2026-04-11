@@ -300,6 +300,15 @@ impl<'a> CheckerState<'a> {
         component_type: TypeId,
         tag_name_idx: NodeIndex,
     ) {
+        let tag_text = self.get_jsx_tag_name_text(tag_name_idx);
+        let is_this_tag = tag_text == "this";
+        if tag_text
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_lowercase())
+        {
+            return;
+        }
         // Skip for types that are inherently allowed in JSX position
         if component_type == TypeId::ANY
             || component_type == TypeId::ERROR
@@ -329,7 +338,16 @@ impl<'a> CheckerState<'a> {
         if self.ctx.has_parse_errors {
             return;
         }
-
+        // If props extraction succeeds, the type is already recognized as a
+        // valid JSX component shape (callable/constructable in JSX context).
+        // Keep `this` tags strict: `<this/>` should still report TS2604.
+        if !is_this_tag
+            && self
+                .get_jsx_props_type_for_component_member(component_type, Some(tag_name_idx))
+                .is_some()
+        {
+            return;
+        }
         // Check if the type (or any union member) has call/construct signatures
         let (types_to_check, is_union) = if let Some(members) =
             crate::query_boundaries::common::union_members(self.ctx.types, component_type)
@@ -348,6 +366,9 @@ impl<'a> CheckerState<'a> {
                 || tsz_solver::contains_type_parameters(self.ctx.types, ty)
                 || self.is_generic_jsx_component(ty)
             {
+                if is_this_tag || tsz_solver::type_queries::is_this_type(self.ctx.types, ty) {
+                    return false;
+                }
                 return true;
             }
             // In unions like `React.ReactType` (`string | ComponentClass | SFC`),
@@ -361,19 +382,36 @@ impl<'a> CheckerState<'a> {
             // Callable types with call/construct signatures.  Treat them as potentially
             // having signatures to avoid false TS2604.  The actual signature checking
             // happens during props extraction where these types are fully evaluated.
-            if tsz_solver::type_queries::needs_evaluation_for_merge(self.ctx.types, ty) {
+            if !is_this_tag
+                && tsz_solver::type_queries::needs_evaluation_for_merge(self.ctx.types, ty)
+            {
                 return true;
             }
-            tsz_solver::type_queries::get_call_signatures(self.ctx.types, ty)
-                .is_some_and(|sigs| !sigs.is_empty())
-                || tsz_solver::type_queries::get_construct_signatures(self.ctx.types, ty)
+            let direct_has_signatures =
+                tsz_solver::type_queries::get_call_signatures(self.ctx.types, ty)
                     .is_some_and(|sigs| !sigs.is_empty())
-                || tsz_solver::type_queries::get_function_shape(self.ctx.types, ty).is_some()
+                    || tsz_solver::type_queries::get_construct_signatures(self.ctx.types, ty)
+                        .is_some_and(|sigs| !sigs.is_empty())
+                    || tsz_solver::type_queries::get_function_shape(self.ctx.types, ty).is_some()
+                    || tsz_solver::type_queries::get_callable_shape(self.ctx.types, ty).is_some();
+            if direct_has_signatures {
+                return true;
+            }
+
+            let evaluated = self.evaluate_type_with_env(ty);
+            if evaluated == ty {
+                return false;
+            }
+            tsz_solver::type_queries::get_call_signatures(self.ctx.types, evaluated)
+                .is_some_and(|sigs| !sigs.is_empty())
+                || tsz_solver::type_queries::get_construct_signatures(self.ctx.types, evaluated)
+                    .is_some_and(|sigs| !sigs.is_empty())
+                || tsz_solver::type_queries::get_function_shape(self.ctx.types, evaluated).is_some()
+                || tsz_solver::type_queries::get_callable_shape(self.ctx.types, evaluated).is_some()
         });
 
         if !has_signatures {
             // TSC uses the JSX tag text, not the resolved type.
-            let tag_text = self.get_jsx_tag_name_text(tag_name_idx);
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node_msg(
                 tag_name_idx,

@@ -295,8 +295,8 @@ pub fn extract_iterator_result_value_types(
             let mut return_types = Vec::new();
 
             for &member_id in members.iter() {
-                if let Some(TypeData::Object(shape_id)) = db.lookup(member_id) {
-                    let shape = db.object_shape(shape_id);
+                let member_id = db.evaluate_type(member_id);
+                if let Some(shape) = crate::type_queries::get_object_shape(db, member_id) {
                     let value_type = shape
                         .properties
                         .iter()

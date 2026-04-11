@@ -165,6 +165,7 @@ fn post_process_checker_diagnostics(
             2345, // TS2345: Argument not assignable
             2339, // TS2339: Property does not exist
             2343, // TS2343: Access modifier error
+            2882, // TS2882: Cannot find module/type declarations for side-effect import
             2304, // TS2304: Cannot find name
             2307, // TS2307: Cannot find module
             7006, // TS7006: Parameter implicitly has 'any' type

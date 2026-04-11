@@ -630,6 +630,12 @@ impl<'a> FlowAnalyzer<'a> {
                     // that common mismatch case and go straight to `narrow_by_binary_expr`.
                     let maybe_direct_guard_target = self.is_matching_reference(bin.left, target)
                         || self.is_matching_reference(bin.right, target)
+                        || self
+                            .get_constructor_property_base(bin.left)
+                            .is_some_and(|base| self.is_matching_reference(base, target))
+                        || self
+                            .get_constructor_property_base(bin.right)
+                            .is_some_and(|base| self.is_matching_reference(base, target))
                         || self.is_typeof_target(bin.left, target)
                         || self.is_typeof_target(bin.right, target)
                         || self.is_optional_chain_containing_target(bin.left, target)
@@ -655,11 +661,12 @@ impl<'a> FlowAnalyzer<'a> {
                                 is_true_branch
                             };
                             // Delegate to Solver for the calculation (Solver responsibility: RESULT)
-                            return narrowing.narrow_type(
+                            let result = narrowing.narrow_type(
                                 type_id,
                                 &guard,
                                 GuardSense::from(effective_sense),
                             );
+                            return result;
                         }
 
                         // Optional chain intermediate narrowing for binary expressions:
@@ -832,6 +839,31 @@ impl<'a> FlowAnalyzer<'a> {
         };
         node_data.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             || node_data.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+    }
+
+    /// If `node` is a direct `*.constructor` access, return the object expression
+    /// on the left side of the access chain.
+    fn get_constructor_property_base(&self, node: NodeIndex) -> Option<NodeIndex> {
+        let node = self.arena.skip_parenthesized_and_assertions(node);
+        let Some(node_data) = self.arena.get(node) else {
+            return None;
+        };
+        if node_data.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(node_data)?;
+            let is_constructor_prop = self
+                .arena
+                .get_identifier_at(access.name_or_argument)
+                .is_some_and(|name| name.escaped_text.as_str() == "constructor");
+            if is_constructor_prop {
+                return Some(access.expression);
+            }
+        } else if node_data.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(node_data)?;
+            if self.literal_string_from_node(access.name_or_argument) == Some("constructor") {
+                return Some(access.expression);
+            }
+        }
+        None
     }
 
     /// Check if `target` is an intermediate segment in an optional chain `chain_node`.

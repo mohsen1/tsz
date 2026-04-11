@@ -253,6 +253,48 @@ impl<'a> CheckerState<'a> {
                 self.get_type_of_write_target_base_expression(access.expression);
             let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);
             let resolved_no_flow = self.resolve_type_for_property_access(evaluated_no_flow);
+            let preserve_js_expando_write_base = self.is_js_file()
+                && self.ctx.compiler_options.check_js
+                && self
+                    .ctx
+                    .arena
+                    .get_identifier_at(access.name_or_argument)
+                    .is_some_and(|member_ident| {
+                        fn property_access_chain(
+                            arena: &tsz_parser::parser::node::NodeArena,
+                            idx: NodeIndex,
+                        ) -> Option<String> {
+                            let node = arena.get(idx)?;
+                            if node.kind == SyntaxKind::Identifier as u16 {
+                                return arena
+                                    .get_identifier(node)
+                                    .map(|id| id.escaped_text.clone());
+                            }
+                            if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                                return None;
+                            }
+                            let access = arena.get_access_expr(node)?;
+                            let left = property_access_chain(arena, access.expression)?;
+                            let right = arena
+                                .get_identifier_at(access.name_or_argument)?
+                                .escaped_text
+                                .clone();
+                            Some(format!("{left}.{right}"))
+                        }
+
+                        property_access_chain(self.ctx.arena, access.expression).is_some_and(
+                            |object_key| {
+                                self.collect_expando_properties_for_root(&object_key)
+                                    .contains(&member_ident.escaped_text)
+                                    || object_key.rsplit_once('.').is_some_and(
+                                        |(_, last_segment)| {
+                                            self.collect_expando_properties_for_root(last_segment)
+                                                .contains(&member_ident.escaped_text)
+                                        },
+                                    )
+                            },
+                        )
+                    });
             let can_use_no_flow = if let Some(name) = literal_string.as_deref() {
                 !matches!(
                     self.resolve_property_access_with_env(resolved_no_flow, name),
@@ -264,7 +306,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 false
             };
-            let chosen = if can_use_no_flow {
+            let chosen = if can_use_no_flow || preserve_js_expando_write_base {
                 let read_object_type =
                     self.get_type_of_node_with_request(access.expression, &read_request);
                 if let Some(name) = literal_string.as_deref() {
@@ -703,6 +745,65 @@ impl<'a> CheckerState<'a> {
                 {
                     result_type = Some(member_type);
                     use_index_signature_check = false;
+                }
+            }
+
+            if result_type.is_none()
+                && self.namespace_has_type_only_member(object_type_for_access, name)
+            {
+                if self.is_js_file()
+                    && self.ctx.compiler_options.check_js
+                    && let Some(ns_name) = self.entity_name_text(access.expression)
+                    && let Some(member_sym_id) =
+                        self.resolve_namespace_member_from_all_binders(&ns_name, name)
+                {
+                    let recovered_type = if !self
+                        .symbol_member_is_type_only(member_sym_id, Some(name))
+                    {
+                        let value_type = self.get_type_of_symbol(member_sym_id);
+                        (value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR)
+                            .then_some(value_type)
+                    } else {
+                        let checked_js_decl = self
+                            .ctx
+                            .binder
+                            .get_symbol(member_sym_id)
+                            .or_else(|| self.get_cross_file_symbol(member_sym_id))
+                            .map(|member_symbol| {
+                                (
+                                    member_symbol.value_declaration,
+                                    member_symbol.declarations.clone(),
+                                )
+                            })
+                            .and_then(|(value_declaration, declarations)| {
+                                if value_declaration.is_some() {
+                                    self.checked_js_constructor_value_declaration(
+                                        member_sym_id,
+                                        value_declaration,
+                                        &declarations,
+                                    )
+                                } else {
+                                    declarations.into_iter().find(|&decl_idx| {
+                                        self.declaration_is_checked_js_constructor_value_declaration(
+                                            member_sym_id,
+                                            decl_idx,
+                                        )
+                                    })
+                                }
+                            });
+                        checked_js_decl.and_then(|checked_js_decl| {
+                            let value_type = self.type_of_value_declaration_for_symbol(
+                                member_sym_id,
+                                checked_js_decl,
+                            );
+                            (value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR)
+                                .then_some(value_type)
+                        })
+                    };
+                    if let Some(recovered_type) = recovered_type {
+                        result_type = Some(recovered_type);
+                        use_index_signature_check = false;
+                    }
                 }
             }
 

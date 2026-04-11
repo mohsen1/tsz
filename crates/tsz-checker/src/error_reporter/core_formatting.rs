@@ -11,6 +11,58 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn normalize_template_placeholder_spacing_for_display(&self, text: &str) -> String {
+        if !text.contains("${") {
+            return text.to_string();
+        }
+
+        let chars: Vec<char> = text.chars().collect();
+        let mut out = String::with_capacity(text.len());
+        let mut i = 0usize;
+
+        while i < chars.len() {
+            if chars[i] == '$' && i + 1 < chars.len() && chars[i + 1] == '{' {
+                out.push('$');
+                out.push('{');
+                i += 2;
+
+                while i < chars.len() && chars[i].is_whitespace() {
+                    i += 1;
+                }
+
+                let mut depth = 1usize;
+                let mut inner = String::new();
+                while i < chars.len() {
+                    let ch = chars[i];
+                    i += 1;
+                    if ch == '{' {
+                        depth += 1;
+                        inner.push(ch);
+                        continue;
+                    }
+                    if ch == '}' {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                        inner.push(ch);
+                        continue;
+                    }
+                    inner.push(ch);
+                }
+
+                out.push_str(inner.trim_end());
+                out.push('}');
+                continue;
+            }
+
+            out.push(chars[i]);
+            i += 1;
+        }
+
+        out
+    }
+
     pub(crate) fn format_type_for_assignability_message(&mut self, ty: TypeId) -> String {
         // If the type is a TypeParameter or Infer, format it directly as
         // its name.  This must happen before any evaluation/resolution that
@@ -295,7 +347,7 @@ impl<'a> CheckerState<'a> {
         {
             formatted = format!("{}; }}", &formatted[..formatted.len() - 2]);
         }
-        formatted
+        self.normalize_template_placeholder_spacing_for_display(&formatted)
     }
 
     pub(crate) fn authoritative_assignability_def_name(&mut self, ty: TypeId) -> Option<String> {
@@ -443,6 +495,9 @@ impl<'a> CheckerState<'a> {
         ty: TypeId,
         other: TypeId,
     ) -> String {
+        if self.target_preserves_literal_surface(other) {
+            return self.format_type_diagnostic(ty);
+        }
         if tsz_solver::literal_value(self.ctx.types, ty).is_some()
             && tsz_solver::string_intrinsic_components(self.ctx.types, other)
                 .is_some_and(|(_, type_arg)| type_arg == TypeId::STRING)
@@ -473,7 +528,7 @@ impl<'a> CheckerState<'a> {
     /// counterpart in the assignability check) is non-nullable, strip the
     /// top-level null/undefined members from `ty`.  This matches tsc which
     /// shows only the non-nullable part of the target to reduce noise.
-    fn strip_nullish_for_assignability_display(
+    pub(crate) fn strip_nullish_for_assignability_display(
         &mut self,
         ty: TypeId,
         other: TypeId,
@@ -509,6 +564,12 @@ impl<'a> CheckerState<'a> {
             return Some(filtered[0]);
         }
         Some(self.ctx.types.factory().union(filtered))
+    }
+
+    pub(crate) fn should_strip_nullish_for_property_display(&self, target: TypeId) -> bool {
+        crate::query_boundaries::common::union_members(self.ctx.types, target).is_some()
+            || crate::query_boundaries::common::intersection_members(self.ctx.types, target)
+                .is_some()
     }
 
     fn format_union_with_collapsed_enum_display(&mut self, ty: TypeId) -> Option<String> {
@@ -547,6 +608,10 @@ impl<'a> CheckerState<'a> {
         let def_id = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, ty)?;
         let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) != 0 {
+            let parent = self.ctx.binder.get_symbol(symbol.parent)?;
+            return Some(format!("{}.{}", parent.escaped_name, symbol.escaped_name));
+        }
         let mut parts = vec![symbol.escaped_name.clone()];
         let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration

@@ -1,8 +1,7 @@
 //! Rendering of `SubtypeFailureReason` into diagnostics.
 //!
-//! This module contains the `render_failure_reason` method which converts
-//! solver-produced failure reasons into user-facing diagnostic messages.
-//! Split from `assignability.rs` for maintainability.
+//! Converts solver-produced failure reasons into user-facing diagnostic
+//! messages. Split from `assignability.rs` for maintainability.
 
 use crate::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
@@ -20,59 +19,6 @@ use super::assignability::{
 use crate::query_boundaries::type_checking_utilities as query_utils;
 
 impl<'a> CheckerState<'a> {
-    fn recover_unknown_array_source_type_for_display(
-        &mut self,
-        source: TypeId,
-        idx: NodeIndex,
-        depth: u32,
-    ) -> TypeId {
-        if depth != 0
-            || tsz_solver::type_queries::get_array_element_type(self.ctx.types, source)
-                != Some(TypeId::UNKNOWN)
-        {
-            return source;
-        }
-
-        let Some(expr_idx) = self.assignment_source_expression(idx) else {
-            return source;
-        };
-        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
-        let Some(node) = self.ctx.arena.get(expr_idx) else {
-            return source;
-        };
-        let Some(call) = self.ctx.arena.get_call_expr(node) else {
-            return source;
-        };
-        let Some(args) = call.arguments.as_ref() else {
-            return source;
-        };
-        let Some(&first_arg) = args.nodes.first() else {
-            return source;
-        };
-
-        let first_arg_type = self.get_type_of_node(first_arg);
-        if matches!(first_arg_type, TypeId::ERROR | TypeId::UNKNOWN) {
-            return source;
-        }
-
-        let element_type =
-            tsz_solver::type_queries::get_array_element_type(self.ctx.types, first_arg_type)
-                .or_else(|| {
-                    tsz_solver::operations::get_iterator_info(self.ctx.types, first_arg_type, false)
-                        .map(|info| info.yield_type)
-                });
-        let Some(element_type) = element_type else {
-            return source;
-        };
-        if matches!(element_type, TypeId::ERROR | TypeId::UNKNOWN) {
-            return source;
-        }
-
-        self.ctx
-            .types
-            .array(self.widen_type_for_display(element_type))
-    }
-
     /// Recursively render a `SubtypeFailureReason` into a Diagnostic.
     pub(crate) fn render_failure_reason(
         &mut self,
@@ -89,7 +35,7 @@ impl<'a> CheckerState<'a> {
             .resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact)
             .map(|anchor| (anchor.start, anchor.length))
             .unwrap_or_else(|| {
-                // get_node_span returns (pos, end), convert to (start, length)
+                // get_node_span returns (pos, end); convert to (start, length)
                 // and apply the same span normalization as the primary path.
                 let (pos, end) = self.get_node_span(idx).unwrap_or((0, 0));
                 self.normalized_anchor_span(idx, pos, end.saturating_sub(pos))
@@ -493,7 +439,20 @@ impl<'a> CheckerState<'a> {
                 // Use unwidened type for TS2559/TS2560 — tsc preserves literal types
                 // (e.g., "12" not "number", "'false'" not "boolean") in
                 // "has no properties in common" messages.
-                let mut source_str = self.format_type_diagnostic(source);
+                let mut source_str =
+                    if (tsz_solver::type_queries::has_call_signatures(self.ctx.types, source)
+                        || tsz_solver::type_queries::has_construct_signatures(
+                            self.ctx.types,
+                            source,
+                        ))
+                        && depth == 0
+                    {
+                        let widened_source = self.widen_type_for_display(source);
+                        let widened_source = self.widen_function_like_display_type(widened_source);
+                        self.format_type_for_assignability_message(widened_source)
+                    } else {
+                        self.format_type_diagnostic(source)
+                    };
                 let target_str = self.format_type_for_assignability_message(target);
 
                 // If the source is callable/constructable and calling it would fix
@@ -1136,10 +1095,8 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.format_assignment_source_type_for_diagnostic(source, target, idx)
             };
-            (
-                src,
-                self.format_assignability_type_for_message(target, source),
-            )
+            let widened_target = self.widen_fresh_object_literal_properties_for_display(target);
+            (src, self.format_type(widened_target))
         } else if source_type == TypeId::OBJECT {
             ("{}".to_string(), tgt_str)
         } else {
@@ -1612,6 +1569,13 @@ impl<'a> CheckerState<'a> {
         target_property_type: TypeId,
         nested_reason: Option<&tsz_solver::SubtypeFailureReason>,
     ) -> Diagnostic {
+        let target_property_type = if self.should_strip_nullish_for_property_display(target) {
+            self.strip_nullish_for_assignability_display(target_property_type, source_property_type)
+                .unwrap_or(target_property_type)
+        } else {
+            target_property_type
+        };
+
         if depth == 0
             && let Some(tsz_solver::SubtypeFailureReason::LiteralTypeMismatch { .. }) =
                 nested_reason
@@ -1949,7 +1913,13 @@ impl<'a> CheckerState<'a> {
         let mut target_str = if depth == 0 {
             self.format_assignment_target_type_for_diagnostic(target, source, idx)
         } else {
-            self.format_type_for_assignability_message(target)
+            if self.should_strip_nullish_for_property_display(target)
+                && let Some(stripped) = self.strip_nullish_for_assignability_display(target, source)
+            {
+                self.format_type_for_assignability_message(stripped)
+            } else {
+                self.format_assignability_type_for_message(target, source)
+            }
         };
         if depth == 0 {
             source_str = self.rewrite_source_display_for_non_literal_target_assignability(
@@ -1964,6 +1934,8 @@ impl<'a> CheckerState<'a> {
                     self.rewrite_target_display_for_non_literal_assignability(target, target_str);
             }
         }
+        source_str = self.normalize_template_placeholder_spacing_for_display(&source_str);
+        target_str = self.normalize_template_placeholder_spacing_for_display(&target_str);
         if depth == 0 && target_str == "Object" {
             let evaluated = self.evaluate_type_for_assignability(source);
             let widened = crate::query_boundaries::common::widen_type(self.ctx.types, evaluated);

@@ -64,6 +64,16 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        if self.is_js_file() && self.ctx.compiler_options.check_js {
+            if self.property_access_is_direct_write_target(idx) {
+                let write_base_type =
+                    self.get_type_of_write_target_base_expression(access.expression);
+                if self.is_expando_function_assignment(idx, access.expression, write_base_type) {
+                    return TypeId::ANY;
+                }
+            }
+        }
+
         if let Some(missing_global) =
             self.missing_typescript_lib_dom_global_alias(access.expression)
         {
@@ -347,6 +357,30 @@ impl<'a> CheckerState<'a> {
             let object_type_no_flow =
                 self.get_type_of_write_target_base_expression(access.expression);
 
+            let preserve_non_js_write_base = self.is_js_file()
+                && self.ctx.compiler_options.check_js
+                && self
+                    .ctx
+                    .arena
+                    .get(access.expression)
+                    .is_some_and(|expr_node| expr_node.kind == SyntaxKind::Identifier as u16)
+                && self
+                    .ctx
+                    .arena
+                    .get_identifier_at(access.expression)
+                    .is_some_and(|ident| {
+                        self.cross_file_global_value_type_by_name(&ident.escaped_text, false)
+                            .is_some_and(|preferred_type| {
+                                preferred_type != TypeId::ANY
+                                    && preferred_type != TypeId::UNKNOWN
+                                    && preferred_type != TypeId::ERROR
+                                    && !tsz_solver::visitor::is_function_type(
+                                        self.ctx.types,
+                                        preferred_type,
+                                    )
+                            })
+                    });
+
             let property_name_for_probe = self
                 .ctx
                 .arena
@@ -363,7 +397,7 @@ impl<'a> CheckerState<'a> {
                 false
             };
 
-            if can_use_no_flow {
+            if can_use_no_flow || preserve_non_js_write_base {
                 let read_object_type =
                     self.get_type_of_node_with_request(access.expression, &TypingRequest::NONE);
                 if let Some(property_name) = property_name_for_probe.as_deref() {
@@ -454,6 +488,26 @@ impl<'a> CheckerState<'a> {
         } else {
             self.evaluate_application_type(original_object_type)
         };
+
+        if let Some(ident) = self.ctx.arena.get_identifier_at(access.expression)
+            && self.is_known_global_value_name(&ident.escaped_text)
+        {
+            let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
+            if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                object_type = value_type;
+            }
+        }
+
+        if self.ctx.is_js_file()
+            && self.ctx.should_resolve_jsdoc()
+            && let Some(ident) = self.ctx.arena.get_identifier_at(access.expression)
+            && let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(access.expression)
+            && !self.is_require_call_bound_identifier(access.expression)
+            && let Some(preferred_type) =
+                self.preferred_non_js_cross_file_global_value_type(&ident.escaped_text, sym_id)
+        {
+            object_type = preferred_type;
+        }
 
         // When the object type is `unknown` but the expression is an identifier or
         // property access whose type was not fully resolved (lazy type alias evaluation),
@@ -778,10 +832,20 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(original_object_type)
         };
 
+        if let Some(ident) = self.ctx.arena.get_identifier_at(access.expression)
+            && self.is_known_global_value_name(&ident.escaped_text)
+        {
+            let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
+            if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                display_object_type = value_type;
+            }
+        }
+
         if self.ctx.is_js_file()
             && self.ctx.should_resolve_jsdoc()
             && let Some(ident) = self.ctx.arena.get_identifier_at(access.expression)
             && let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(access.expression)
+            && !self.is_require_call_bound_identifier(access.expression)
             && let Some(preferred_type) =
                 self.preferred_non_js_cross_file_global_value_type(&ident.escaped_text, sym_id)
         {
@@ -1339,6 +1403,54 @@ impl<'a> CheckerState<'a> {
             }
 
             if self.namespace_has_type_only_member(object_type, property_name) {
+                if self.is_js_file()
+                    && self.ctx.compiler_options.check_js
+                    && let Some(ns_name) = self.entity_name_text(access.expression)
+                    && let Some(member_sym_id) =
+                        self.resolve_namespace_member_from_all_binders(&ns_name, property_name)
+                {
+                    if !self.symbol_member_is_type_only(member_sym_id, Some(property_name)) {
+                        let value_type = self.get_type_of_symbol(member_sym_id);
+                        if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                            return value_type;
+                        }
+                    }
+
+                    if let Some(member_symbol) = self
+                        .ctx
+                        .binder
+                        .get_symbol(member_sym_id)
+                        .or_else(|| self.get_cross_file_symbol(member_sym_id))
+                    {
+                        let checked_js_decl = if member_symbol.value_declaration.is_some() {
+                            self.checked_js_constructor_value_declaration(
+                                member_sym_id,
+                                member_symbol.value_declaration,
+                                &member_symbol.declarations,
+                            )
+                        } else {
+                            member_symbol
+                                .declarations
+                                .iter()
+                                .copied()
+                                .find(|&decl_idx| {
+                                    self.declaration_is_checked_js_constructor_value_declaration(
+                                        member_sym_id,
+                                        decl_idx,
+                                    )
+                                })
+                        };
+                        if let Some(checked_js_decl) = checked_js_decl {
+                            let value_type = self.type_of_value_declaration_for_symbol(
+                                member_sym_id,
+                                checked_js_decl,
+                            );
+                            if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                                return value_type;
+                            }
+                        }
+                    }
+                }
                 // Suppress TS2339/TS2693 when base expression is a property access on an unresolved import
                 // TS2307 was already emitted for the missing module, so we shouldn't
                 // emit additional errors about properties not existing on the import.
@@ -1893,8 +2005,39 @@ impl<'a> CheckerState<'a> {
                     {
                         return jsdoc_type;
                     }
+                    let skip_js_write_assigned_value_fallback = skip_flow_narrowing
+                        && self.property_access_is_direct_write_target(idx)
+                        && self.is_js_file()
+                        && self.ctx.compiler_options.check_js
+                        && self
+                            .ctx
+                            .arena
+                            .get(access.expression)
+                            .is_some_and(|expr_node| {
+                                expr_node.kind == SyntaxKind::Identifier as u16
+                            })
+                        && self
+                            .ctx
+                            .arena
+                            .get_identifier_at(access.expression)
+                            .is_some_and(|ident| {
+                                self.cross_file_global_value_type_by_name(
+                                    &ident.escaped_text,
+                                    false,
+                                )
+                                .is_some_and(|preferred_type| {
+                                    preferred_type != TypeId::ANY
+                                        && preferred_type != TypeId::UNKNOWN
+                                        && preferred_type != TypeId::ERROR
+                                        && !tsz_solver::visitor::is_function_type(
+                                            self.ctx.types,
+                                            preferred_type,
+                                        )
+                                })
+                            });
                     if self.is_js_file()
                         && self.ctx.compiler_options.check_js
+                        && !skip_js_write_assigned_value_fallback
                         && let Some(expr_text) = self.expression_text(idx)
                         && let Some(jsdoc_type) = if skip_flow_narrowing
                             && self.property_access_is_direct_write_target(idx)

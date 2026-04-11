@@ -180,13 +180,83 @@ impl<'a> CheckerState<'a> {
         let type_id = self.resolve_type_for_property_access(type_id);
         let type_id = self.resolve_lazy_type(type_id);
         let type_id = self.evaluate_application_type(type_id);
-        let widened = crate::query_boundaries::common::widen_type(self.ctx.types, type_id);
+        let mut widened = crate::query_boundaries::common::widen_type(self.ctx.types, type_id);
+        if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, widened) {
+            let widened_return =
+                self.widen_fresh_object_literal_properties_for_display(shape.return_type);
+            if widened_return != shape.return_type {
+                widened = self
+                    .ctx
+                    .types
+                    .factory()
+                    .function(tsz_solver::FunctionShape {
+                        type_params: shape.type_params.clone(),
+                        params: shape.params.clone(),
+                        this_type: shape.this_type,
+                        return_type: widened_return,
+                        type_predicate: shape.type_predicate,
+                        is_constructor: shape.is_constructor,
+                        is_method: shape.is_method,
+                    });
+            }
+        } else if let Some(shape) =
+            tsz_solver::type_queries::get_callable_shape(self.ctx.types, widened)
+        {
+            let mut widened_shape = shape.as_ref().clone();
+            let mut changed = false;
+
+            for sig in &mut widened_shape.call_signatures {
+                let widened_return =
+                    self.widen_fresh_object_literal_properties_for_display(sig.return_type);
+                if widened_return != sig.return_type {
+                    changed = true;
+                    sig.return_type = widened_return;
+                }
+            }
+            for sig in &mut widened_shape.construct_signatures {
+                let widened_return =
+                    self.widen_fresh_object_literal_properties_for_display(sig.return_type);
+                if widened_return != sig.return_type {
+                    changed = true;
+                    sig.return_type = widened_return;
+                }
+            }
+
+            if changed {
+                widened = self.ctx.types.factory().callable(widened_shape);
+            }
+        }
         if let Some(def_id) = constructor_display_def {
             self.ctx
                 .definition_store
                 .register_type_to_def(widened, def_id);
         }
         widened
+    }
+
+    pub(crate) fn widen_fresh_object_literal_properties_for_display(&self, ty: TypeId) -> TypeId {
+        let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, ty) else {
+            return ty;
+        };
+        let mut widened_shape = shape.as_ref().clone();
+        let mut changed = false;
+        for prop in &mut widened_shape.properties {
+            let widened_read =
+                crate::query_boundaries::common::widen_literal_type(self.ctx.types, prop.type_id);
+            let widened_write = crate::query_boundaries::common::widen_literal_type(
+                self.ctx.types,
+                prop.write_type,
+            );
+            if widened_read != prop.type_id || widened_write != prop.write_type {
+                changed = true;
+            }
+            prop.type_id = widened_read;
+            prop.write_type = widened_write;
+        }
+        if !changed {
+            return ty;
+        }
+        self.ctx.types.factory().object_with_index(widened_shape)
     }
 
     fn terminal_assignment_source_expression(&self, expr_idx: NodeIndex) -> NodeIndex {
@@ -411,6 +481,10 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.ctx.types.factory().union_preserve_members(normalized)
                 }
+            } else if query::function_shape(self.ctx.types, ty).is_some_and(|shape| {
+                tsz_solver::is_conditional_type(self.ctx.types, shape.return_type)
+            }) {
+                ty
             } else {
                 let evaluated =
                     if tsz_solver::type_queries::is_index_access_type(self.ctx.types, ty)
@@ -462,20 +536,30 @@ impl<'a> CheckerState<'a> {
                     // Skip normalizing TypeQuery return types to preserve the typeof
                     // syntax. Resolving TypeQuery to the full function type causes double
                     // arrows like `() => () => typeof fn` instead of `() => typeof fn`.
-                    let return_type = if tsz_solver::type_queries::is_type_query_type(
-                        self.ctx.types,
-                        shape.return_type,
-                    ) {
-                        shape.return_type
-                    } else {
-                        self.normalize_assignability_display_type_inner(
-                            shape.return_type,
-                            visiting,
-                            depth + 1,
-                        )
-                    };
                     let return_type =
-                        crate::query_boundaries::common::widen_type(self.ctx.types, return_type);
+                        if tsz_solver::type_queries::is_type_query_type(
+                            self.ctx.types,
+                            shape.return_type,
+                        ) || tsz_solver::is_conditional_type(self.ctx.types, shape.return_type)
+                        {
+                            shape.return_type
+                        } else {
+                            self.normalize_assignability_display_type_inner(
+                                shape.return_type,
+                                visiting,
+                                depth + 1,
+                            )
+                        };
+                    let return_type =
+                        if tsz_solver::is_conditional_type(self.ctx.types, shape.return_type) {
+                            return_type
+                        } else {
+                            let widened = crate::query_boundaries::common::widen_type(
+                                self.ctx.types,
+                                return_type,
+                            );
+                            self.widen_fresh_object_literal_properties_for_display(widened)
+                        };
                     if params.iter().zip(shape.params.iter()).all(|(a, b)| a == b)
                         && return_type == shape.return_type
                     {
@@ -682,20 +766,30 @@ impl<'a> CheckerState<'a> {
                 // Skip normalizing TypeQuery return types to preserve the typeof
                 // syntax. Resolving TypeQuery to the full function type causes double
                 // arrows like `() => () => typeof fn` instead of `() => typeof fn`.
-                let return_type = if tsz_solver::type_queries::is_type_query_type(
-                    self.ctx.types,
-                    shape.return_type,
-                ) {
-                    shape.return_type
-                } else {
-                    self.normalize_assignability_display_type_inner(
-                        shape.return_type,
-                        visiting,
-                        depth + 1,
-                    )
-                };
                 let return_type =
-                    crate::query_boundaries::common::widen_type(self.ctx.types, return_type);
+                    if tsz_solver::type_queries::is_type_query_type(
+                        self.ctx.types,
+                        shape.return_type,
+                    ) || tsz_solver::is_conditional_type(self.ctx.types, shape.return_type)
+                    {
+                        shape.return_type
+                    } else {
+                        self.normalize_assignability_display_type_inner(
+                            shape.return_type,
+                            visiting,
+                            depth + 1,
+                        )
+                    };
+                let return_type =
+                    if tsz_solver::is_conditional_type(self.ctx.types, shape.return_type) {
+                        return_type
+                    } else {
+                        let widened = crate::query_boundaries::common::widen_type(
+                            self.ctx.types,
+                            return_type,
+                        );
+                        self.widen_fresh_object_literal_properties_for_display(widened)
+                    };
                 if params.iter().zip(shape.params.iter()).all(|(a, b)| a == b)
                     && return_type == shape.return_type
                 {

@@ -127,7 +127,7 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
                         component,
                         std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
                     )
-                }) || path_has_symlink_ancestor(path, &options.base_dir)
+                }) || path_has_symlinked_package_ancestor(path, &options.base_dir)
                 {
                     path.to_path_buf()
                 } else {
@@ -150,7 +150,7 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
     Ok(list)
 }
 
-fn path_has_symlink_ancestor(path: &Path, base_dir: &Path) -> bool {
+fn path_has_symlinked_package_ancestor(path: &Path, base_dir: &Path) -> bool {
     let mut current = path.parent();
     while let Some(dir) = current {
         if dir == base_dir {
@@ -160,7 +160,13 @@ fn path_has_symlink_ancestor(path: &Path, base_dir: &Path) -> bool {
             .map(|metadata| metadata.file_type().is_symlink())
             .unwrap_or(false)
         {
-            return true;
+            let canonical = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+            return canonical.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
+                )
+            });
         }
         current = dir.parent();
     }
