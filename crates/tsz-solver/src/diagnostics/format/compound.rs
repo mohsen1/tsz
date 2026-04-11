@@ -1164,7 +1164,13 @@ impl<'a> TypeFormatter<'a> {
             match span {
                 TemplateSpan::Text(text) => {
                     let text = self.atom(*text);
-                    result.push_str(text.as_ref());
+                    // Escape special characters consistently with string literals
+                    let escaped = text
+                        .replace('\\', "\\\\")
+                        .replace('\n', "\\n")
+                        .replace('\r', "\\r")
+                        .replace('\t', "\\t");
+                    result.push_str(&escaped);
                 }
                 TemplateSpan::Type(type_id) => {
                     result.push_str("${");
