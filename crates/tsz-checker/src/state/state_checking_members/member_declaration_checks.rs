@@ -443,6 +443,19 @@ impl<'a> CheckerState<'a> {
                     && (self.ctx.symbol_resolution_set.contains(&sym_id)
                         || self.type_alias_reaches_resolving_alias(sym_id))
                 {
+                    // For circular references, still check type arguments for missing
+                    // names. The main resolution is skipped to avoid infinite recursion,
+                    // but type arguments may contain unresolvable names that need TS2304.
+                    let arg_indices: Vec<NodeIndex> = self
+                        .ctx
+                        .arena
+                        .get_type_ref(node)
+                        .and_then(|tr| tr.type_arguments.as_ref())
+                        .map(|args| args.nodes.clone())
+                        .unwrap_or_default();
+                    for arg_idx in arg_indices {
+                        self.check_type_for_missing_names(arg_idx);
+                    }
                     return;
                 }
                 let _ = self.get_type_from_type_reference(type_idx);
@@ -470,6 +483,19 @@ impl<'a> CheckerState<'a> {
                     let typeof_param_names =
                         self.push_typeof_params_from_ast_nodes(&func_type.parameters.nodes);
                     if func_type.type_annotation.is_some() {
+                        // Check for TS2577: circular return type annotation.
+                        // If we're currently resolving type aliases and the return type
+                        // references one of them, emit the circularity diagnostic.
+                        if !self.ctx.symbol_resolution_set.is_empty()
+                            && self.type_node_contains_circular_reference(func_type.type_annotation)
+                        {
+                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                            self.error_at_node(
+                                func_type.type_annotation,
+                                diagnostic_messages::RETURN_TYPE_ANNOTATION_CIRCULARLY_REFERENCES_ITSELF,
+                                diagnostic_codes::RETURN_TYPE_ANNOTATION_CIRCULARLY_REFERENCES_ITSELF,
+                            );
+                        }
                         self.check_type_for_missing_names(func_type.type_annotation);
                     }
                     self.pop_typeof_params_from_ast(typeof_param_names);
@@ -1842,5 +1868,75 @@ impl<'a> CheckerState<'a> {
             }
         }
         true
+    }
+
+    /// Check if a type node subtree contains a circular reference to any type
+    /// currently being resolved (i.e., present in `symbol_resolution_set`).
+    /// Used to detect TS2577 "Return type annotation circularly references itself".
+    fn type_node_contains_circular_reference(&self, type_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(type_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
+                    if let Some(sym_id) = self
+                        .resolve_type_symbol_for_lowering(type_ref.type_name)
+                        .map(tsz_binder::SymbolId)
+                    {
+                        if self.ctx.symbol_resolution_set.contains(&sym_id)
+                            || self.type_alias_reaches_resolving_alias(sym_id)
+                        {
+                            return true;
+                        }
+                    }
+                    // Also check type arguments
+                    if let Some(args) = type_ref.type_arguments.as_ref() {
+                        for &arg_idx in &args.nodes {
+                            if self.type_node_contains_circular_reference(arg_idx) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                false
+            }
+            k if k == syntax_kind_ext::TUPLE_TYPE => {
+                if let Some(tuple) = self.ctx.arena.get_tuple_type(node) {
+                    for &elem_idx in &tuple.elements.nodes {
+                        if self.type_node_contains_circular_reference(elem_idx) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+            k if k == syntax_kind_ext::ARRAY_TYPE => {
+                if let Some(arr) = self.ctx.arena.get_array_type(node) {
+                    return self.type_node_contains_circular_reference(arr.element_type);
+                }
+                false
+            }
+            k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
+                if let Some(composite) = self.ctx.arena.get_composite_type(node) {
+                    for &member_idx in &composite.types.nodes {
+                        if self.type_node_contains_circular_reference(member_idx) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+            k if k == syntax_kind_ext::REST_TYPE
+                || k == syntax_kind_ext::OPTIONAL_TYPE
+                || k == syntax_kind_ext::PARENTHESIZED_TYPE =>
+            {
+                if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
+                    return self.type_node_contains_circular_reference(wrapped.type_node);
+                }
+                false
+            }
+            _ => false,
+        }
     }
 }
