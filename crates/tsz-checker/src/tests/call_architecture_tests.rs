@@ -722,6 +722,53 @@ logger?.log("hello");
     );
 }
 
+/// Method with explicit `this` parameter should not count `this` toward argument count.
+#[test]
+fn this_param_not_counted_in_arg_count() {
+    // Non-generic case: `this` param should not be counted
+    let diags = check_source_diagnostics(
+        r#"
+interface Y {
+    foo(this: Y, arg: number): void;
+}
+declare const value: Y;
+value.foo(42);
+"#,
+    );
+
+    let ts2554: Vec<_> = diags.iter().filter(|d| d.code == 2554).collect();
+    assert_eq!(
+        ts2554.len(),
+        0,
+        "Expected no TS2554 for non-generic method with this param, got: {:?}",
+        ts2554.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+
+    // Generic case: `this: T` should not be counted
+    let diags2 = check_source_diagnostics(
+        r#"
+interface Y {
+    foo<T>(this: T, arg: keyof T): void;
+    a: number;
+    b: string;
+}
+declare const value: Y;
+value.foo("a");
+"#,
+    );
+
+    let ts2554_generic: Vec<_> = diags2.iter().filter(|d| d.code == 2554).collect();
+    assert_eq!(
+        ts2554_generic.len(),
+        0,
+        "Expected no TS2554 for generic method with this param, got: {:?}",
+        ts2554_generic
+            .iter()
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Optional chain call with non-nullish callee is still valid.
 #[test]
 fn optional_chain_call_non_nullish() {
