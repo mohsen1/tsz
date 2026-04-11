@@ -1403,13 +1403,11 @@ fn compile_inner(
             });
         } else {
             // TS5107 takes priority (fatal) - suppress most file-level diagnostics.
-            // Preserve:
-            // - Global-level TS2318 ("Cannot find global type") identified by empty file name and position 0
-            // - Module resolution errors that the checker emitted (classic/side-effect imports)
+            // Preserve only global-level TS2318 ("Cannot find global type") and
+            // TS2792 ("Did you mean to set moduleResolution?"). tsc suppresses
+            // TS2882 (side-effect import) when TS5107 is present.
             diagnostics.retain(|d| {
-                (d.code == 2318 && d.file.is_empty() && d.start == 0)
-                    || d.code == 2792
-                    || d.code == 2882
+                (d.code == 2318 && d.file.is_empty() && d.start == 0) || d.code == 2792
             });
         }
     }
