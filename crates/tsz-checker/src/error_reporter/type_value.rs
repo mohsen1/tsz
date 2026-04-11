@@ -24,8 +24,12 @@ impl<'a> CheckerState<'a> {
         if prev_type == TypeId::ERROR || current_type == TypeId::ERROR {
             return;
         }
-        let prev_type_str = self.format_type_diagnostic(prev_type);
-        let current_type_str = self.format_type_diagnostic(current_type);
+        // Widen literal types (including inside function return types) for display.
+        // tsc shows `(x: number) => string` not `(x: number) => ""` in TS2403 messages.
+        let prev_display = tsz_solver::widen_type_deep(self.ctx.types, prev_type);
+        let current_display = tsz_solver::widen_type_deep(self.ctx.types, current_type);
+        let prev_type_str = self.format_type_diagnostic(prev_display);
+        let current_type_str = self.format_type_diagnostic(current_display);
         // Suppress when both types format to the same name. This handles cross-binder
         // scenarios where a lib_checker resolves a type annotation (e.g., `Document`)
         // to a separate DefId from the main checker's version. Interface declaration
