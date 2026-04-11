@@ -1019,6 +1019,10 @@ impl<'a> CheckerState<'a> {
             if let Some(defs) = self.ctx.definition_store.find_defs_by_name(name_atom) {
                 if let Some(&def_id) = defs.first() {
                     self.ctx.definition_store.register_type_to_def(ty, def_id);
+                    eprintln!(
+                        "[DEBUG lib_res] pre-aug register_type_to_def({}, {:?}) for '{}'",
+                        ty.0, def_id, name
+                    );
                 }
             }
         }
@@ -1109,6 +1113,24 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     }
+                }
+            }
+        }
+
+        // Re-register type_to_def after augmentation heritage merge.
+        // merge_interface_types may have created a new TypeId, so the
+        // registration at line ~1021 (pre-merge) points to a stale TypeId.
+        // Without this, find_def_for_type returns None for the post-merge
+        // TypeId and the formatter expands "Date" into its full member list.
+        if let Some(ty) = lib_type_id {
+            let name_atom = self.ctx.types.intern_string(name);
+            if let Some(defs) = self.ctx.definition_store.find_defs_by_name(name_atom) {
+                if let Some(&def_id) = defs.first() {
+                    self.ctx.definition_store.register_type_to_def(ty, def_id);
+                    eprintln!(
+                        "[DEBUG lib_res] post-aug register_type_to_def({}, {:?}) for '{}'",
+                        ty.0, def_id, name
+                    );
                 }
             }
         }
