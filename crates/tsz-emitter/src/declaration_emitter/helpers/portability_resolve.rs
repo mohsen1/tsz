@@ -829,12 +829,16 @@ impl<'a> DeclarationEmitter<'a> {
         };
         let mut visited_types = rustc_hash::FxHashSet::default();
         let mut visited_symbols = rustc_hash::FxHashSet::default();
+        let mut visited_declaration_symbols = rustc_hash::FxHashSet::default();
+        let mut visited_nodes = rustc_hash::FxHashSet::default();
         let Some((from_path, type_name)) = self.check_symbol_portability(
             sym_id,
             binder,
             current_file_path,
             &mut visited_types,
             &mut visited_symbols,
+            &mut visited_declaration_symbols,
+            &mut visited_nodes,
         ) else {
             return false;
         };
@@ -1121,10 +1125,14 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<(String, String)> {
         let mut visited_types = rustc_hash::FxHashSet::default();
         let mut visited_symbols = rustc_hash::FxHashSet::default();
+        let mut visited_declaration_symbols = rustc_hash::FxHashSet::default();
+        let mut visited_nodes = rustc_hash::FxHashSet::default();
         self.find_non_portable_type_reference_inner(
             type_id,
             &mut visited_types,
             &mut visited_symbols,
+            &mut visited_declaration_symbols,
+            &mut visited_nodes,
         )
     }
 
@@ -1133,6 +1141,8 @@ impl<'a> DeclarationEmitter<'a> {
         type_id: tsz_solver::types::TypeId,
         visited_types: &mut rustc_hash::FxHashSet<tsz_solver::types::TypeId>,
         visited_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
+        visited_declaration_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
+        visited_nodes: &mut rustc_hash::FxHashSet<(usize, u32)>,
     ) -> Option<(String, String)> {
         let interner = self.type_interner?;
         let binder = self.binder?;
@@ -1158,6 +1168,8 @@ impl<'a> DeclarationEmitter<'a> {
                     current_file_path,
                     visited_types,
                     visited_symbols,
+                    visited_declaration_symbols,
+                    visited_nodes,
                 )
             {
                 return Some(result);
@@ -1175,6 +1187,8 @@ impl<'a> DeclarationEmitter<'a> {
                     current_file_path,
                     visited_types,
                     visited_symbols,
+                    visited_declaration_symbols,
+                    visited_nodes,
                 )
             {
                 return Some(result);
@@ -1190,11 +1204,19 @@ impl<'a> DeclarationEmitter<'a> {
                     current_file_path,
                     visited_types,
                     visited_symbols,
+                    visited_declaration_symbols,
+                    visited_nodes,
                 ) {
                     return Some(result);
                 }
                 if let Some(result) = self
-                    .collect_non_portable_references_in_symbol_declaration(sym_id)
+                    .collect_non_portable_references_in_symbol_declaration_with_state(
+                        sym_id,
+                        visited_types,
+                        visited_symbols,
+                        visited_declaration_symbols,
+                        visited_nodes,
+                    )
                     .into_iter()
                     .next()
                 {
@@ -1213,6 +1235,8 @@ impl<'a> DeclarationEmitter<'a> {
                         current_file_path,
                         visited_types,
                         visited_symbols,
+                        visited_declaration_symbols,
+                        visited_nodes,
                     )
                 {
                     return Some(result);
@@ -1236,6 +1260,8 @@ impl<'a> DeclarationEmitter<'a> {
         current_file_path: &str,
         visited_types: &mut rustc_hash::FxHashSet<tsz_solver::types::TypeId>,
         visited_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
+        visited_declaration_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
+        visited_nodes: &mut rustc_hash::FxHashSet<(usize, u32)>,
     ) -> Option<(String, String)> {
         use std::path::{Component, Path};
 
@@ -1290,7 +1316,13 @@ impl<'a> DeclarationEmitter<'a> {
             .package_root_export_reference_path(sym_id, &type_name, binder, current_file_path)
             .is_some()
             && self
-                .collect_non_portable_references_in_symbol_declaration(sym_id)
+                .collect_non_portable_references_in_symbol_declaration_with_state(
+                    sym_id,
+                    visited_types,
+                    visited_symbols,
+                    visited_declaration_symbols,
+                    visited_nodes,
+                )
                 .is_empty()
         {
             return None;
@@ -1461,7 +1493,7 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     let pkg_json_path = package_root.join("package.json");
                     if let Ok(pkg_content) = std::fs::read_to_string(&pkg_json_path)
-                        && let Ok(pkg_json) =
+                        && let Ok(_pkg_json) =
                             serde_json::from_str::<serde_json::Value>(&pkg_content)
                     {
                         // If the package has no "exports" field, all subpaths
@@ -1470,8 +1502,6 @@ impl<'a> DeclarationEmitter<'a> {
                         // package root is a symlink (e.g. workspace deps hoisted
                         // by a package manager), because without an "exports"
                         // restriction Node.js will resolve any subpath.
-                        pkg_json.get("exports")?;
-
                         // Before flagging as non-portable, check whether the
                         // symbol is re-exported from a module that IS accessible
                         // through the package's exports map.  If so, the type
@@ -1539,6 +1569,8 @@ impl<'a> DeclarationEmitter<'a> {
                 symbol_type_id,
                 visited_types,
                 visited_symbols,
+                visited_declaration_symbols,
+                visited_nodes,
             )
         {
             return Some(result);
