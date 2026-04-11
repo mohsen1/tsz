@@ -1510,7 +1510,12 @@ pub(super) fn collect_diagnostics(
             let file = &program.files[file_idx];
             let file_path = PathBuf::from(&file.file_name);
 
-            let mut binder = create_binder_from_bound_file(file, program, file_idx);
+            let mut binder = create_binder_from_bound_file_with_augmentations(
+                file,
+                program,
+                file_idx,
+                &merged_augmentations,
+            );
 
             // Use cached specifiers from build_resolved_module_maps.
             let module_specifiers = &cached_module_specifiers[file_idx];

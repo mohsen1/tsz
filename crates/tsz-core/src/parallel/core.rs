@@ -290,9 +290,9 @@ fn synthesize_json_bind_result(file_name: String, source_text: String) -> BindRe
         declared_modules: binder.declared_modules,
         module_exports: binder.module_exports,
         node_symbols: binder.node_symbols,
-        module_declaration_exports_publicly: binder.module_declaration_exports_publicly,
         symbol_arenas: binder.symbol_arenas,
         declaration_arenas: binder.declaration_arenas,
+        module_declaration_exports_publicly: binder.module_declaration_exports_publicly,
         scopes: binder.scopes,
         node_scope_ids: binder.node_scope_ids,
         parse_diagnostics,
@@ -834,9 +834,9 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         declared_modules: binder.declared_modules,
         module_exports: binder.module_exports,
         node_symbols: binder.node_symbols,
-        module_declaration_exports_publicly: binder.module_declaration_exports_publicly,
         symbol_arenas: binder.symbol_arenas,
         declaration_arenas: binder.declaration_arenas,
+        module_declaration_exports_publicly: binder.module_declaration_exports_publicly,
         scopes: binder.scopes,
         node_scope_ids: binder.node_scope_ids,
         parse_diagnostics,
@@ -1353,6 +1353,10 @@ pub struct BoundFile {
     pub arena: Arc<NodeArena>,
     /// Node-to-symbol mapping (symbol IDs are global after merge)
     pub node_symbols: FxHashMap<u32, SymbolId>,
+    /// Per-file symbol-to-arena mapping captured during binding.
+    pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
+    /// Per-file declaration-to-arena mapping captured during binding.
+    pub declaration_arenas: DeclarationArenaMap,
     /// Export visibility of namespace/module declaration nodes after binder rules.
     pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
     /// Persistent scopes (symbol IDs are global after merge)
@@ -1410,6 +1414,14 @@ impl BoundFile {
         // node_symbols
         size += self.node_symbols.capacity()
             * (std::mem::size_of::<u32>() + std::mem::size_of::<SymbolId>() + 8);
+
+        // symbol_arenas
+        size += self.symbol_arenas.capacity()
+            * (std::mem::size_of::<SymbolId>() + std::mem::size_of::<Arc<NodeArena>>() + 8);
+
+        // declaration_arenas
+        size += self.declaration_arenas.capacity()
+            * (std::mem::size_of::<(SymbolId, NodeIndex)>() + std::mem::size_of::<Vec<Arc<NodeArena>>>() + 8);
 
         // module_declaration_exports_publicly
         size += self.module_declaration_exports_publicly.capacity()
@@ -3072,6 +3084,35 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
         file_locals_list.push(remapped_file_locals);
 
+        let mut remapped_declaration_arenas: DeclarationArenaMap = FxHashMap::default();
+        for (&(old_sym_id, decl_idx), arenas) in &result.declaration_arenas {
+            if result.lib_symbol_ids.contains(&old_sym_id) {
+                continue;
+            }
+            let has_non_local_arena = arenas.iter().any(|arena| !Arc::ptr_eq(arena, &result.arena));
+            if !has_non_local_arena {
+                continue;
+            }
+            if let Some(&new_sym_id) = id_remap.get(&old_sym_id) {
+                remapped_declaration_arenas.insert((new_sym_id, decl_idx), arenas.clone());
+            }
+        }
+
+        let symbols_with_non_local_declarations: FxHashSet<SymbolId> = remapped_declaration_arenas
+            .keys()
+            .map(|&(sym_id, _)| sym_id)
+            .collect();
+
+        let mut remapped_symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>> = FxHashMap::default();
+        for (&old_sym_id, arena) in &result.symbol_arenas {
+            if let Some(&new_sym_id) = id_remap.get(&old_sym_id) {
+                let has_non_local_decl = symbols_with_non_local_declarations.contains(&new_sym_id);
+                if has_non_local_decl || !Arc::ptr_eq(arena, &result.arena) {
+                    remapped_symbol_arenas.insert(new_sym_id, Arc::clone(arena));
+                }
+            }
+        }
+
         // Populate arena context for module augmentations
         let module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>> =
             result
@@ -3099,6 +3140,8 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             source_file: result.source_file,
             arena: Arc::clone(&result.arena),
             node_symbols: remapped_node_symbols,
+            symbol_arenas: remapped_symbol_arenas,
+            declaration_arenas: remapped_declaration_arenas,
             module_declaration_exports_publicly: result.module_declaration_exports_publicly.clone(),
             scopes: remapped_scopes,
             node_scope_ids: result.node_scope_ids.clone(),
@@ -3849,29 +3892,8 @@ pub fn create_binder_from_bound_file(
     program: &MergedProgram,
     file_idx: usize,
 ) -> BinderState {
-    let declaration_arenas: DeclarationArenaMap = program
-        .declaration_arenas
-        .iter()
-        .filter_map(|(&(sym_id, decl_idx), arenas)| {
-            let has_non_local_arena = arenas.iter().any(|arena| !Arc::ptr_eq(arena, &file.arena));
-            has_non_local_arena.then(|| ((sym_id, decl_idx), arenas.clone()))
-        })
-        .collect();
-
-    let symbols_with_non_local_declarations: FxHashSet<SymbolId> = declaration_arenas
-        .keys()
-        .map(|&(sym_id, _)| sym_id)
-        .collect();
-
-    let symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>> = program
-        .symbol_arenas
-        .iter()
-        .filter_map(|(&sym_id, arena)| {
-            let has_non_local_decl = symbols_with_non_local_declarations.contains(&sym_id);
-            (has_non_local_decl || !Arc::ptr_eq(arena, &file.arena))
-                .then(|| (sym_id, Arc::clone(arena)))
-        })
-        .collect();
+    let declaration_arenas = file.declaration_arenas.clone();
+    let symbol_arenas = file.symbol_arenas.clone();
 
     // Get file locals for this specific file
     let mut file_locals = SymbolTable::new();
@@ -3966,29 +3988,8 @@ pub fn create_binder_from_bound_file_with_shared(
     file_idx: usize,
     _shared: &SharedBinderData,
 ) -> BinderState {
-    let declaration_arenas: DeclarationArenaMap = program
-        .declaration_arenas
-        .iter()
-        .filter_map(|(&(sym_id, decl_idx), arenas)| {
-            let has_non_local_arena = arenas.iter().any(|arena| !Arc::ptr_eq(arena, &file.arena));
-            has_non_local_arena.then(|| ((sym_id, decl_idx), arenas.clone()))
-        })
-        .collect();
-
-    let symbols_with_non_local_declarations: FxHashSet<SymbolId> = declaration_arenas
-        .keys()
-        .map(|&(sym_id, _)| sym_id)
-        .collect();
-
-    let symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>> = program
-        .symbol_arenas
-        .iter()
-        .filter_map(|(&sym_id, arena)| {
-            let has_non_local_decl = symbols_with_non_local_declarations.contains(&sym_id);
-            (has_non_local_decl || !Arc::ptr_eq(arena, &file.arena))
-                .then(|| (sym_id, Arc::clone(arena)))
-        })
-        .collect();
+    let declaration_arenas = file.declaration_arenas.clone();
+    let symbol_arenas = file.symbol_arenas.clone();
 
     let mut file_locals = SymbolTable::new();
     if file_idx < program.file_locals.len() {
