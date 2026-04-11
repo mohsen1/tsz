@@ -377,7 +377,7 @@ pub fn is_only_false_or_never(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     }
 }
 
-/// Check if a type is a deferred type operation (IndexAccess or Conditional).
+/// Check if a type is a deferred type operation (`IndexAccess` or Conditional).
 ///
 /// Used by the checker to determine if a type alias body represents a
 /// deferred computation that should not be eagerly displayed by its alias

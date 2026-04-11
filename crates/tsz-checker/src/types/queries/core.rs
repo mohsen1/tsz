@@ -96,6 +96,11 @@ impl<'a> CheckerState<'a> {
         self.ctx.is_js_file()
     }
 
+    /// Check if the current file is an .mts or .cts file (TS7059/TS7060).
+    pub(crate) fn is_mts_or_cts_file(&self) -> bool {
+        self.ctx.is_mts_or_cts_file()
+    }
+
     /// Check if a node has the `declare` modifier.
     pub(crate) fn has_declare_modifier(
         &self,

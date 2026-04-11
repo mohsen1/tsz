@@ -963,6 +963,7 @@ impl ParserState {
     pub(crate) fn parse_type_parameters(&mut self) -> NodeList {
         let mut params = Vec::new();
         let less_than_pos = self.token_pos();
+        let mut has_trailing_comma = false;
 
         self.parse_expected(SyntaxKind::LessThanToken);
 
@@ -984,11 +985,17 @@ impl ParserState {
             if !self.parse_optional(SyntaxKind::CommaToken) {
                 break;
             }
+            // If the next token is `>`, the comma we just consumed was trailing.
+            if self.is_greater_than_or_compound() {
+                has_trailing_comma = true;
+            }
         }
 
         self.parse_expected_greater_than();
 
-        self.make_node_list(params)
+        let mut list = self.make_node_list(params);
+        list.has_trailing_comma = has_trailing_comma;
+        list
     }
 
     // Parse a single type parameter: T or T extends U or T = Default or T extends U = Default

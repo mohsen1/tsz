@@ -281,13 +281,17 @@ impl<'a> CheckerState<'a> {
 
         // TS1203: Check for export assignment when targeting ES modules
         // This must be checked first before TS2300/TS2309
-        // Declaration files (.d.ts, .d.mts, .d.cts) are exempt: they describe
+        // Declaration files (.d.ts, .d.cts) are exempt: they describe
         // the shape of CJS modules and `export = X` is valid in declarations.
+        // However, .d.mts files are ESM declarations — `export =` is NOT valid there.
         // Ambient module declarations (`declare module "M" { export = X; }`) are
         // also exempt — they describe external module shapes.
         // JS files (.js, .jsx, .mjs, .cjs) are exempt — they get TS8003 instead.
         // CJS-extension files (.cts) are explicitly CommonJS — export= is valid.
         let is_cjs_extension = self.ctx.file_name.ends_with(".cts");
+        // .d.mts files are ESM, so they should NOT be exempt from TS1203.
+        let is_exempt_declaration_file =
+            is_declaration_file && !self.ctx.file_name.ends_with(".d.mts");
 
         let is_system_module = matches!(
             self.ctx.compiler_options.module,
@@ -301,21 +305,27 @@ impl<'a> CheckerState<'a> {
             tsz_common::common::ModuleKind::Preserve
         );
         // For node module modes (node16/node18/node20/nodenext), the module format
-        // is per-file: .mts → ESM, .cts → CJS, .ts → depends on nearest package.json
-        // "type" field. Use `file_is_esm` from the driver to determine this.
-        let is_node_esm_file =
-            self.ctx.compiler_options.module.is_node_module() && self.ctx.file_is_esm == Some(true);
+        // is per-file: .mts/.d.mts → ESM, .cts → CJS, .ts → depends on nearest
+        // package.json "type" field. .mts/.d.mts are always ESM regardless of
+        // file_is_esm flag (which may not be set for declaration files).
+        let is_mts_file = self.ctx.file_name.ends_with(".mts");
+        let is_node_esm_file = self.ctx.compiler_options.module.is_node_module()
+            && (self.ctx.file_is_esm == Some(true) || is_mts_file);
 
         let mut emitted_ts1203 = false;
         if (is_es_module || is_system_module || is_node_esm_file)
             && !is_preserve
-            && !is_declaration_file
+            && !is_exempt_declaration_file
             && !self.is_js_file()
             && !is_cjs_extension
             && !self.ctx.has_syntax_parse_errors
         {
+            // In .d.mts files, all declarations are ambient, but export= is still
+            // invalid because .d.mts is an ESM declaration file. So we skip the
+            // ambient check for .d.mts files.
+            let is_d_mts = self.ctx.file_name.ends_with(".d.mts");
             for &export_idx in &export_assignment_indices {
-                if !self.is_ambient_declaration(export_idx) {
+                if is_d_mts || !self.is_ambient_declaration(export_idx) {
                     emitted_ts1203 = true;
                     if is_system_module {
                         self.error_at_node(

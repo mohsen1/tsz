@@ -448,6 +448,48 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 if self.checker.is_js_file() {
                     self.checker.check_js_grammar_function(idx, node);
                 }
+                // TS7060: In .mts/.cts files, single type parameter without
+                // trailing comma or constraint is reserved syntax (ambiguous
+                // with JSX). `<T>() =>` must become `<T,>() =>` or
+                // `<T extends X>() =>`.
+                if self.checker.is_mts_or_cts_file() {
+                    if let Some(func) = self.checker.ctx.arena.get_function(node) {
+                        if let Some(ref tp_list) = func.type_parameters {
+                            if tp_list.nodes.len() == 1 && !tp_list.has_trailing_comma {
+                                // Check if the single type parameter has no constraint
+                                let tp_idx = tp_list.nodes[0];
+                                let has_constraint = self
+                                    .checker
+                                    .ctx
+                                    .arena
+                                    .get(tp_idx)
+                                    .and_then(|tp_node| {
+                                        self.checker.ctx.arena.get_type_parameter(tp_node)
+                                    })
+                                    .is_some_and(|tp| {
+                                        self.checker.ctx.arena.get(tp.constraint).is_some()
+                                    });
+                                if !has_constraint {
+                                    // Error span covers the type parameter node
+                                    let (start, len) = self
+                                        .checker
+                                        .ctx
+                                        .arena
+                                        .get(tp_idx)
+                                        .map(|n| (n.pos, n.end.saturating_sub(n.pos)))
+                                        .unwrap_or((node.pos, 1));
+                                    self.checker.ctx.error(
+                                        start,
+                                        len,
+                                        tsz_common::diagnostics::diagnostic_messages::THIS_SYNTAX_IS_RESERVED_IN_FILES_WITH_THE_MTS_OR_CTS_EXTENSION_ADD_A_TRAILING_CO
+                                            .to_string(),
+                                        tsz_common::diagnostics::diagnostic_codes::THIS_SYNTAX_IS_RESERVED_IN_FILES_WITH_THE_MTS_OR_CTS_EXTENSION_ADD_A_TRAILING_CO,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
                 self.checker.get_type_of_function_with_request(idx, request)
             }
             // Array literal
@@ -721,6 +763,28 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             tsz_common::diagnostics::diagnostic_messages::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED
                                 .to_string(),
                             tsz_common::diagnostics::diagnostic_codes::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED,
+                        );
+                    }
+                }
+
+                // TS7059: Angle-bracket type assertions are reserved in .mts/.cts files.
+                // These files are parsed in a JSX-like mode where <Type> is ambiguous.
+                if k == syntax_kind_ext::TYPE_ASSERTION && self.checker.is_mts_or_cts_file() {
+                    if let Some(assertion) = self.checker.ctx.arena.get_type_assertion(node) {
+                        let start = node.pos;
+                        let end = if let Some(expr_node) =
+                            self.checker.ctx.arena.get(assertion.expression)
+                        {
+                            expr_node.pos
+                        } else {
+                            node.end
+                        };
+                        self.checker.ctx.error(
+                            start,
+                            end - start,
+                            tsz_common::diagnostics::diagnostic_messages::THIS_SYNTAX_IS_RESERVED_IN_FILES_WITH_THE_MTS_OR_CTS_EXTENSION_USE_AN_AS_EXPRESS
+                                .to_string(),
+                            tsz_common::diagnostics::diagnostic_codes::THIS_SYNTAX_IS_RESERVED_IN_FILES_WITH_THE_MTS_OR_CTS_EXTENSION_USE_AN_AS_EXPRESS,
                         );
                     }
                 }
