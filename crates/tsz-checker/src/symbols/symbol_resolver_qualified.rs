@@ -503,6 +503,17 @@ impl<'a> CheckerState<'a> {
         namespace_name: &str,
         member_name: &str,
     ) -> Option<SymbolId> {
+        let cache_key = (namespace_name.to_string(), member_name.to_string());
+        if let Some(cached) = self
+            .ctx
+            .namespace_member_resolution_cache
+            .borrow()
+            .get(&cache_key)
+            .copied()
+        {
+            return cached;
+        }
+
         let all_binders = self.ctx.all_binders.as_ref()?;
         let mut fallback: Option<(SymbolId, usize)> = None;
         let mut preferred: Option<(SymbolId, usize)> = None;

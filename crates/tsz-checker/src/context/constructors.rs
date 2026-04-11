@@ -70,6 +70,7 @@ impl<'a> CheckerContext<'a> {
             var_decl_types: FxHashMap::default(),
             lib_type_resolution_cache: FxHashMap::default(),
             lib_delegation_cache: FxHashMap::default(),
+            namespace_member_resolution_cache: RefCell::new(FxHashMap::default()),
             shared_lib_type_cache: None,
             skip_lib_type_resolution: false,
             lib_heritage_in_progress: FxHashSet::default(),
@@ -548,6 +549,8 @@ impl<'a> CheckerContext<'a> {
         ctx.enum_namespace_types = parent.enum_namespace_types.clone();
 
         ctx.lib_delegation_cache = parent.lib_delegation_cache.clone();
+        *ctx.namespace_member_resolution_cache.borrow_mut() =
+            parent.namespace_member_resolution_cache.borrow().clone();
         ctx.skip_lib_type_resolution = parent.skip_lib_type_resolution;
 
         // CRITICAL: Propagate in-progress set from parent to prevent re-entrant

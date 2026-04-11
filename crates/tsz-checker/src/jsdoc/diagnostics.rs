@@ -1367,6 +1367,32 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
+                    if let Some(from_idx) = joined.rfind("from") {
+                        let before_from = joined[..from_idx].trim();
+                        if matches!(
+                            before_from.split_whitespace().next(),
+                            Some("type" | "defer")
+                        ) && before_from.contains(char::is_whitespace)
+                        {
+                            let modifier = before_from.split_whitespace().next().unwrap_or_default();
+                            if let Some(modifier_idx) = rest_full[..next_tag].find(modifier) {
+                                let error_pos = comment.pos
+                                    + after_import as u32
+                                    + modifier_idx as u32
+                                    + modifier.len() as u32
+                                    + 1;
+                                self.error_at_position(
+                                    error_pos,
+                                    1,
+                                    "'from' expected.",
+                                    crate::diagnostics::diagnostic_codes::EXPECTED,
+                                );
+                                search_from = after_import;
+                                continue;
+                            }
+                        }
+                    }
+
                     if joined.is_empty() {
                         self.error_expression_expected_at_position(
                             comment.pos + after_import as u32,
@@ -1676,16 +1702,42 @@ impl<'a> CheckerState<'a> {
             // Check for @type {Name} where Name is a simple identifier
             if let Some(type_expr) = Self::jsdoc_extract_type_tag_expr(&content) {
                 let expr = type_expr.trim();
+                let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
+                self.ctx.jsdoc_typedef_anchor_pos.set(comment.pos);
+                let resolved = self.resolve_jsdoc_type_str(expr);
+                self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
+
+                if resolved.is_none() && let Some(dot_idx) = expr.find('.') {
+                    let root_name = expr[..dot_idx].trim();
+                    if !root_name.is_empty()
+                        && Self::is_simple_type_name(root_name)
+                        && root_name != "globalThis"
+                        && self.resolve_jsdoc_entity_name_symbol(root_name).is_none()
+                    {
+                        let end = (comment.end as usize).min(source_text.len());
+                        let comment_range = &source_text[comment.pos as usize..end];
+                        let (start, length) = if let Some(offset) = comment_range.find(root_name) {
+                            (comment.pos + offset as u32, root_name.len() as u32)
+                        } else {
+                            (comment.pos, root_name.len() as u32)
+                        };
+                        self.ctx.error(
+                            start,
+                            length,
+                            crate::diagnostics::format_message(
+                                crate::diagnostics::diagnostic_messages::CANNOT_FIND_NAMESPACE,
+                                &[root_name],
+                            ),
+                            crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAMESPACE,
+                        );
+                        continue;
+                    }
+                }
                 if !expr.is_empty()
                     && Self::is_simple_type_name(expr)
                     && !expr.contains('<')
                     && !expr.contains('.')
                 {
-                    // Set anchor to the comment position to respect typedef scoping
-                    let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
-                    self.ctx.jsdoc_typedef_anchor_pos.set(comment.pos);
-                    let resolved = self.resolve_jsdoc_type_str(expr);
-                    self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
                     if resolved.is_none() {
                         // Also check if it's a typedef (globally) that's just out of scope.
                         // Use resolve_jsdoc_typedef_info (not resolve_jsdoc_typedef_type)

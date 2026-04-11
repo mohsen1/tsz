@@ -1030,6 +1030,59 @@ b.m("still nope");
     );
 }
 
+#[test]
+fn test_plain_function_prototype_object_literal_methods_do_not_recurse() {
+    let source = r#"
+function A() {
+    this.x = 1;
+}
+A.prototype = {
+    /** @param {number} n */
+    m(n) {
+        return n + this.x;
+    }
+};
+var a = new A();
+a.m(1);
+a.m("nope");
+"#;
+
+    let diagnostics = check_js(source);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2339 | 2345 | 7009))
+        .collect();
+
+    assert_eq!(
+        relevant.iter().filter(|(code, _)| *code == 2345).count(),
+        1,
+        "Expected prototype object literal method JSDoc to stay intact, got: {diagnostics:?}"
+    );
+    assert!(
+        relevant.iter().all(|(code, _)| *code == 2345),
+        "Expected no crash-regression fallback diagnostics from prototype object literal methods, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_plain_function_prototype_object_literal_private_methods_report_without_crashing() {
+    let source = r#"
+function A() {}
+A.prototype = {
+    #x: 1,
+    #m() {},
+    get #p() { return ""; }
+};
+"#;
+
+    let diagnostics = check_js(source);
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected checker-only pass to avoid recursive crashes on illegal private prototype members, got: {diagnostics:?}"
+    );
+}
+
 /// Generic constructor function with @template: instance properties get instantiated types
 #[test]
 fn test_generic_constructor_function_template_instantiation() {

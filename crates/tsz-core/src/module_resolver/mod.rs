@@ -498,13 +498,28 @@ impl ModuleResolver {
         &mut self,
         request: &ModuleLookupRequest<'_>,
         fallback_resolve: impl FnOnce(&str, &Path) -> Option<PathBuf>,
-        is_ambient_module: impl FnOnce(&str) -> bool,
+        is_ambient_module: impl Fn(&str) -> bool,
         _known_files: Option<&rustc_hash::FxHashSet<std::path::PathBuf>>,
     ) -> ModuleLookupResult {
         let specifier = request.specifier;
         let containing_file = request.containing_file;
         let span = request.specifier_span;
         let import_kind = request.import_kind;
+        let is_ordinary_bare = !specifier.starts_with('.')
+            && !specifier.starts_with('/')
+            && (!specifier.contains(':') || specifier.starts_with("node:"));
+        let ambient_match = is_ordinary_bare && is_ambient_module(specifier);
+        let containing_is_declaration = ModuleExtension::from_path(containing_file).is_declaration();
+
+        // Declaration files frequently stitch together sibling `declare module "..."`
+        // blocks with bare imports (for example, react16.d.ts declares both
+        // `"react"` and `"prop-types"` in the same file). If the ambient module is
+        // already known project-wide, prefer that over re-running filesystem-based
+        // bare-specifier resolution for each import inside the declaration layer.
+        if containing_is_declaration && ambient_match {
+            return ModuleLookupResult::ambient();
+        }
+
         let importing_module_kind_for_lookup =
             request
                 .resolution_mode_override
@@ -677,10 +692,7 @@ impl ModuleResolver {
                 };
 
                 // 4. Check ambient module declarations
-                let is_ordinary_bare = !specifier.starts_with('.')
-                    && !specifier.starts_with('/')
-                    && (!specifier.contains(':') || specifier.starts_with("node:"));
-                if is_ordinary_bare && is_ambient_module(specifier) {
+                if ambient_match {
                     return ModuleLookupResult::ambient();
                 }
 

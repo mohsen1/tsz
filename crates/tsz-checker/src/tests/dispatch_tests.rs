@@ -1568,6 +1568,30 @@ class Test9 {
 }
 
 #[test]
+fn regex_named_groups_emit_target_and_missing_backreference_diagnostics() {
+    let diags = check_source(
+        r#"
+const regex = /(?<foo>)\k<Foo>/;
+"#,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let codes: Vec<_> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1503),
+        "Expected TS1503 for named capture groups under ES2015, got {codes:?}"
+    );
+    assert!(
+        codes.contains(&1532),
+        "Expected TS1532 for unknown named backreference, got {codes:?}"
+    );
+}
+
+#[test]
 fn ts2416_interface_class_merge_method_override_incompatible() {
     // When a class and interface share the same name (declaration merging),
     // the derived class override check must see interface members from the base.

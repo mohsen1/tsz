@@ -826,6 +826,13 @@ impl<'a> CheckerState<'a> {
         let mut results = Vec::new();
         if let Some(from_idx) = rest.rfind("from") {
             let before_from = rest[..from_idx].trim();
+            if matches!(
+                before_from.split_whitespace().next(),
+                Some("type" | "defer")
+            ) && before_from.contains(char::is_whitespace)
+            {
+                return results;
+            }
             let after_from = rest[from_idx + 4..].trim();
             let quote = after_from.chars().next().unwrap_or(' ');
             if quote == '"' || quote == '\'' || quote == '`' {

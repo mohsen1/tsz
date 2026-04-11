@@ -4,6 +4,139 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn shallow_object_literal_method_type(&mut self, method_idx: NodeIndex) -> TypeId {
+        use tsz_solver::{CallSignature, CallableShape, ParamInfo};
+
+        let Some(method_node) = self.ctx.arena.get(method_idx) else {
+            return TypeId::ANY;
+        };
+        let Some(method) = self.ctx.arena.get_method_decl(method_node) else {
+            return TypeId::ANY;
+        };
+
+        let mut jsdoc_type_param_updates = Vec::new();
+        let mut func_jsdoc = None;
+        let mut jsdoc_param_names = Vec::new();
+        let mut comment_start = None;
+        let mut type_params = Vec::new();
+
+        if self.is_js_file() {
+            func_jsdoc = self.get_jsdoc_for_function(method_idx);
+            comment_start = self.get_jsdoc_comment_pos_for_function(method_idx);
+            jsdoc_param_names = func_jsdoc
+                .as_ref()
+                .map(|jsdoc| {
+                    Self::extract_jsdoc_param_names(jsdoc)
+                        .into_iter()
+                        .map(|(name, _)| name)
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            if method.type_parameters.is_none() {
+                let factory = self.ctx.types.factory();
+                for (name, is_const) in func_jsdoc
+                    .as_ref()
+                    .map(|jsdoc| Self::jsdoc_template_type_params(jsdoc))
+                    .unwrap_or_default()
+                {
+                    let atom = self.ctx.types.intern_string(&name);
+                    let info = tsz_solver::TypeParamInfo {
+                        name: atom,
+                        constraint: None,
+                        default: None,
+                        is_const,
+                    };
+                    let ty = factory.type_param(info);
+                    let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
+                    jsdoc_type_param_updates.push((name, previous, false));
+                    type_params.push(info);
+                }
+            }
+        }
+
+        let (declared_type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
+        if type_params.is_empty() {
+            type_params = declared_type_params;
+        }
+        let params = method
+            .parameters
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(param_pos, &param_idx)| {
+                let param = self
+                    .ctx
+                    .arena
+                    .get(param_idx)
+                    .and_then(|param_node| self.ctx.arena.get_parameter(param_node))?;
+                let jsdoc_type = if let (Some(jsdoc), Some(comment_start)) =
+                    (func_jsdoc.as_ref(), comment_start)
+                {
+                    let pname =
+                        self.effective_jsdoc_param_name(param.name, &jsdoc_param_names, param_pos);
+                    self.resolve_jsdoc_param_type_with_pos(jsdoc, &pname, Some(comment_start))
+                } else {
+                    None
+                };
+                Some(ParamInfo {
+                    name: self
+                        .ctx
+                        .arena
+                        .get(param.name)
+                        .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                        .map(|ident| self.ctx.types.intern_string(&ident.escaped_text)),
+                    type_id: if param.type_annotation.is_some() {
+                        self.get_type_from_type_node(param.type_annotation)
+                    } else if let Some(jsdoc_type) = jsdoc_type {
+                        jsdoc_type
+                    } else {
+                        TypeId::ANY
+                    },
+                    optional: param.question_token || param.initializer.is_some(),
+                    rest: param.dot_dot_dot_token,
+                })
+            })
+            .collect();
+        let return_type = if method.type_annotation.is_some() {
+            self.get_type_from_type_node(method.type_annotation)
+        } else if let Some(jsdoc) = func_jsdoc.as_ref() {
+            self.resolve_jsdoc_return_type(jsdoc).unwrap_or(TypeId::ANY)
+        } else {
+            TypeId::ANY
+        };
+        self.pop_type_parameters(type_param_updates);
+        for (name, previous, shadowed_class_param) in jsdoc_type_param_updates.into_iter().rev() {
+            if let Some(prev) = previous {
+                self.ctx.type_parameter_scope.insert(name.clone(), prev);
+            } else {
+                self.ctx.type_parameter_scope.remove(&name);
+            }
+            if shadowed_class_param
+                && let Some(ref mut c) = self.ctx.enclosing_class
+            {
+                c.type_param_names.push(name);
+            }
+        }
+
+        self.ctx.types.factory().callable(CallableShape {
+            call_signatures: vec![CallSignature {
+                type_params,
+                params,
+                this_type: None,
+                return_type,
+                type_predicate: None,
+                is_method: true,
+            }],
+            construct_signatures: Vec::new(),
+            properties: Vec::new(),
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        })
+    }
+
     fn assignment_chain_terminal_object_literal(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
@@ -32,6 +165,7 @@ impl<'a> CheckerState<'a> {
         method_bindings: &mut Vec<(tsz_common::interner::Atom, tsz_solver::PropertyInfo)>,
     ) {
         use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
 
         let Some(rhs_node) = self.ctx.arena.get(object_idx) else {
             return;
@@ -58,11 +192,23 @@ impl<'a> CheckerState<'a> {
                 if is_computed_name {
                     continue;
                 }
+                if self
+                    .ctx
+                    .arena
+                    .get(method.name)
+                    .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16)
+                {
+                    continue;
+                }
                 let Some(prop_name_str) = self.get_property_name_resolved(method.name) else {
                     continue;
                 };
                 let prop_name_atom = self.ctx.types.intern_string(&prop_name_str);
-                let rhs_type = self.get_type_of_function(elem_idx);
+                // Avoid re-entering full object-literal method typing here. Prototype
+                // object literal methods are harvested while synthesizing the instance
+                // type for the same constructor, so contextual `this` reconstruction
+                // can recurse back into this collector and overflow the stack.
+                let rhs_type = self.shallow_object_literal_method_type(elem_idx);
                 method_bindings.push((
                     prop_name_atom,
                     tsz_solver::PropertyInfo {
@@ -91,6 +237,14 @@ impl<'a> CheckerState<'a> {
                 .get(prop.name)
                 .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
             if is_computed_name {
+                continue;
+            }
+            if self
+                .ctx
+                .arena
+                .get(prop.name)
+                .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16)
+            {
                 continue;
             }
             let Some(prop_name_str) = self.get_property_name_resolved(prop.name) else {

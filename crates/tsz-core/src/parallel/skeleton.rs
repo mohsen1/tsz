@@ -215,7 +215,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
     }
 
     // Sort symbols by name for deterministic output.
-    symbols.sort_by(|a, b| a.name.cmp(&b.name));
+    symbols.sort_unstable_by(|a, b| a.name.cmp(&b.name));
 
     // Global augmentations
     let mut global_augmentations: Vec<SkeletonAugmentation> = result
@@ -226,7 +226,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
             declaration_count: augs.len() as u32,
         })
         .collect();
-    global_augmentations.sort_by(|a, b| a.target.cmp(&b.target));
+    global_augmentations.sort_unstable_by(|a, b| a.target.cmp(&b.target));
 
     // Module augmentations
     let mut module_augmentations: Vec<SkeletonAugmentation> = result
@@ -237,7 +237,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
             declaration_count: augs.len() as u32,
         })
         .collect();
-    module_augmentations.sort_by(|a, b| a.target.cmp(&b.target));
+    module_augmentations.sort_unstable_by(|a, b| a.target.cmp(&b.target));
 
     // Named re-exports
     let mut reexports = Vec::new();
@@ -253,7 +253,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
             }
         }
     }
-    reexports.sort_by(|a, b| a.exported_name.cmp(&b.exported_name));
+    reexports.sort_unstable_by(|a, b| a.exported_name.cmp(&b.exported_name));
 
     // Wildcard re-exports
     let mut wildcard_reexports = Vec::new();
@@ -269,7 +269,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
             });
         }
     }
-    wildcard_reexports.sort_by(|a, b| a.source_module.cmp(&b.source_module));
+    wildcard_reexports.sort_unstable_by(|a, b| a.source_module.cmp(&b.source_module));
 
     // Declared modules
     let mut declared_modules: Vec<String> = result.declared_modules.iter().cloned().collect();
@@ -294,7 +294,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
             (obj_key.clone(), sorted_props)
         })
         .collect();
-    expando_properties.sort_by(|a, b| a.0.cmp(&b.0));
+    expando_properties.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
     let mut skeleton = FileSkeleton {
         file_name: result.file_name.clone(),
@@ -471,7 +471,7 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
         .collect();
 
     // Sort for deterministic output.
-    merge_candidates.sort_by(|a, b| a.name.cmp(&b.name));
+    merge_candidates.sort_unstable_by(|a, b| a.name.cmp(&b.name));
 
     let mut index = SkeletonIndex {
         file_count: skeletons.len(),
