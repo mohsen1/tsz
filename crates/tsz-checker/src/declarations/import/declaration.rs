@@ -820,6 +820,13 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.report_unresolved_imports {
             return;
         }
+        // Side-effect imports (bare `import "module"`) are silently ignored when
+        // noUncheckedSideEffectImports is disabled (the default). tsc suppresses
+        // ALL resolution failures for these imports regardless of the error code.
+        // Check early to avoid any error emission path below.
+        if is_side_effect_import && !self.ctx.compiler_options.no_unchecked_side_effect_imports {
+            return;
+        }
         // Track whether TS2846/TS5097 extension diagnostics were emitted.
         // When these fire, TS2307 from module resolution should be suppressed
         // (tsc prioritizes extension-specific diagnostics over "cannot find module").
@@ -1069,6 +1076,17 @@ impl<'a> CheckerState<'a> {
             tracing::trace!(%module_name, error_code, "check_import_declaration: resolution error found");
             if error_code == 6504 {
                 self.error_program_level(error_message, error_code);
+                self.ctx.import_resolution_stack.pop();
+                return;
+            }
+            // Side-effect imports: suppress ALL resolution errors when
+            // noUncheckedSideEffectImports is disabled (the default).
+            // The check inside the CANNOT_FIND_MODULE block above handles
+            // TS2307/TS2792, but other error codes (e.g., TS2882 from the
+            // conformance runner) can bypass that path. This catch-all
+            // ensures no resolution error leaks for bare `import "module"`.
+            if is_side_effect_import && !self.ctx.compiler_options.no_unchecked_side_effect_imports
+            {
                 self.ctx.import_resolution_stack.pop();
                 return;
             }
