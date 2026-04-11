@@ -138,8 +138,8 @@ pub mod computation {
     // Instantiation
     pub use crate::instantiation::instantiate::{
         MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, fill_application_defaults,
-        instantiate_generic, instantiate_type, instantiate_type_preserving_meta,
-        instantiate_type_with_depth_status, substitute_this_type,
+        instantiate_function_with_type_args, instantiate_generic, instantiate_type,
+        instantiate_type_preserving_meta, instantiate_type_with_depth_status, substitute_this_type,
     };
 
     // Contextual typing
@@ -217,8 +217,8 @@ pub use evaluation::session::EvaluationSession;
 pub use instantiation::application::*;
 pub use instantiation::instantiate::{
     MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, fill_application_defaults,
-    instantiate_generic, instantiate_type, instantiate_type_preserving_meta,
-    instantiate_type_with_depth_status, substitute_this_type,
+    instantiate_function_with_type_args, instantiate_generic, instantiate_type,
+    instantiate_type_preserving_meta, instantiate_type_with_depth_status, substitute_this_type,
 };
 pub use intern::type_factory::*;
 pub use narrowing::*;
