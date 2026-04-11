@@ -767,6 +767,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         attributes_idx: NodeIndex,
         component_type: TypeId,
+        request: &crate::context::TypingRequest,
     ) -> Option<TypeId> {
         use crate::computation::call_inference::should_preserve_contextual_application_shape;
 
@@ -878,6 +879,7 @@ impl<'a> CheckerState<'a> {
                         attributes_idx,
                         r1_props_type,
                         &children_prop_name,
+                        request,
                         Some(&unresolved_type_params),
                         &mut all_attrs,
                     );
@@ -936,6 +938,7 @@ impl<'a> CheckerState<'a> {
                         attributes_idx,
                         r2_props_type,
                         &children_prop_name,
+                        request,
                         (!unresolved_type_params.is_empty()).then_some(&unresolved_type_params),
                         &mut all_attrs,
                     );
@@ -981,6 +984,7 @@ impl<'a> CheckerState<'a> {
                         attributes_idx,
                         r2_props_type,
                         &children_prop_name,
+                        request,
                         &mut all_attrs,
                     );
                     self.refine_jsx_generic_substitution_from_typed_attrs(
@@ -1115,6 +1119,7 @@ impl<'a> CheckerState<'a> {
         attributes_idx: NodeIndex,
         props_type: TypeId,
         children_prop_name: &str,
+        request: &crate::context::TypingRequest,
         unresolved_type_params: Option<&rustc_hash::FxHashSet<tsz_common::interner::Atom>>,
         out: &mut Vec<(String, TypeId)>,
     ) {
@@ -1196,15 +1201,18 @@ impl<'a> CheckerState<'a> {
                         })
                     });
                 if should_defer {
+                    // Preserve callback transport for diagnostics, but keep this staged
+                    // pass out of inference until the unresolved type params clear.
+                    let _ = self.compute_type_of_node_with_request(
+                        value_idx,
+                        &(*request).contextual(contextual_type),
+                    );
                     continue;
                 }
             }
             let typed = self.compute_type_of_node_with_request(
                 value_idx,
-                &crate::context::TypingRequest::NONE
-                    .read()
-                    .assertion()
-                    .contextual(contextual_type),
+                &(*request).contextual(contextual_type),
             );
             out.push((attr_name, typed));
         }
@@ -1215,6 +1223,7 @@ impl<'a> CheckerState<'a> {
         attributes_idx: NodeIndex,
         props_type: TypeId,
         children_prop_name: &str,
+        request: &crate::context::TypingRequest,
         out: &mut Vec<(String, TypeId)>,
     ) {
         use crate::query_boundaries::common::PropertyAccessResult;
@@ -1225,10 +1234,7 @@ impl<'a> CheckerState<'a> {
                 _ => return,
             };
         let contextual_type = self.refine_jsx_callable_contextual_type(expected_children_type);
-        let child_request = crate::context::TypingRequest::NONE
-            .read()
-            .assertion()
-            .contextual(contextual_type);
+        let child_request = (*request).contextual(contextual_type);
 
         let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
             return;
@@ -1338,6 +1344,7 @@ impl<'a> CheckerState<'a> {
         attributes_idx: NodeIndex,
         component_type: TypeId,
         element_idx: Option<NodeIndex>,
+        request: &crate::context::TypingRequest,
     ) -> Option<(TypeId, bool)> {
         let normalized_component_type =
             self.normalize_jsx_component_type_for_resolution(component_type);
@@ -1349,6 +1356,7 @@ impl<'a> CheckerState<'a> {
                     .infer_jsx_generic_component_props_type(
                         attributes_idx,
                         normalized_component_type,
+                        request,
                     )
                     .or_else(|| {
                         self.get_default_instantiated_generic_class_props_type(
@@ -1394,15 +1402,17 @@ impl<'a> CheckerState<'a> {
                     self.get_default_instantiated_generic_sfc_props_type(normalized_component_type)
                 })
         } else {
-            self.infer_jsx_generic_component_props_type(attributes_idx, normalized_component_type)
-                .or_else(|| {
-                    self.get_default_instantiated_generic_class_props_type(
-                        normalized_component_type,
-                    )
-                })
-                .or_else(|| {
-                    self.get_default_instantiated_generic_sfc_props_type(normalized_component_type)
-                })
+            self.infer_jsx_generic_component_props_type(
+                attributes_idx,
+                normalized_component_type,
+                request,
+            )
+            .or_else(|| {
+                self.get_default_instantiated_generic_class_props_type(normalized_component_type)
+            })
+            .or_else(|| {
+                self.get_default_instantiated_generic_sfc_props_type(normalized_component_type)
+            })
         };
 
         fallback_props.map(|props_type| (props_type, false))
