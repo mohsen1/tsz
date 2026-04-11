@@ -182,6 +182,16 @@ impl<'a> CheckerState<'a> {
                 // appears before the block-scoped declaration, and TS2451 ("Cannot
                 // redeclare block-scoped variable") when the block-scoped declaration
                 // comes first.
+
+                // When the var declaration is in the SAME syntactic scope as the
+                // block-scoped declaration (e.g., `let x; var x;` at the same level),
+                // check_duplicate_identifiers() already handles the conflict with TS2300.
+                // Only emit here when the var is in a NESTED scope that hoists up
+                // (e.g., `let x; { var x; }`).
+                if start_scope_id == found_scope_id {
+                    continue;
+                }
+
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
                 // Check if any block-scoped declaration appears before this var.
