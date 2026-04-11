@@ -271,11 +271,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 // Suppress TS2339 for generic application types (e.g., Options<State, Actions>)
                 // where the type arguments are type parameters. When the object type is generic,
                 // we can't determine if the property exists until the type is instantiated.
+                // Also suppress when the object is a union containing Application members
+                // (e.g., AnyConfig = ExtensionConfig<any> | NodeConfig<any> | MarkConfig<any>)
+                // since the solver may not resolve properties on generic interface instantiations.
                 let is_generic_application =
                     crate::query_boundaries::common::is_generic_application_with_type_params(
                         self.ctx.types,
                         resolved_object,
-                    ) || tsz_solver::is_generic_application(self.ctx.types, object_type);
+                    ) || tsz_solver::is_generic_application(self.ctx.types, object_type)
+                    || self.union_contains_application(resolved_object);
 
                 // Suppress TS2339 when the index type itself contains type parameters.
                 // This handles cases like `Options<State, Actions>[Key]` where Key is a type parameter.
@@ -364,6 +368,20 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             factory.index_access(object_type, index_type)
         } else {
             TypeId::ERROR
+        }
+    }
+
+    /// Check if a type is a union containing Application (generic instantiation) members.
+    /// Used to suppress TS2339 when property existence can't be verified on unresolved
+    /// generic interface instantiations (e.g., `ExtensionConfig<any> | NodeConfig<any>`).
+    fn union_contains_application(&self, type_id: TypeId) -> bool {
+        if let Some(tsz_solver::TypeData::Union(list_id)) = self.ctx.types.lookup(type_id) {
+            let members = self.ctx.types.type_list(list_id);
+            members
+                .iter()
+                .any(|&m| tsz_solver::is_generic_application(self.ctx.types, m))
+        } else {
+            false
         }
     }
 
