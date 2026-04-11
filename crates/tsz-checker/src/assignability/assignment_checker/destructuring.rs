@@ -477,16 +477,32 @@ impl<'a> CheckerState<'a> {
                                             );
                                         }
                                     } else {
-                                        // { name: target = default } — leaf target with default.
-                                        // Check that the source property type is assignable to the
-                                        // target's declared type. Narrow the source property type
-                                        // by stripping `undefined` since the default handles it.
-                                        self.check_destructuring_leaf_assignability_with_default(
-                                            &name,
-                                            source_type,
-                                            bin.left,
-                                            bin.right,
-                                        );
+                                        // { name: target = default } — non-shorthand property
+                                        // with default value.
+                                        // tsc's behavior: if the default value type itself is NOT
+                                        // assignable to the target, only report the default mismatch
+                                        // (handled by the binary expression checker), skip the full
+                                        // property type check. If the default IS assignable but the
+                                        // source property type is NOT, report the property type error.
+                                        let default_type = self.get_type_of_node(bin.right);
+                                        let target_type =
+                                            self.get_type_of_assignment_target(bin.left);
+                                        let default_assignable = target_type == TypeId::ANY
+                                            || target_type == TypeId::ERROR
+                                            || default_type == TypeId::ANY
+                                            || default_type == TypeId::ERROR
+                                            || self.is_assignable_to(default_type, target_type);
+                                        if default_assignable {
+                                            // Default is fine but property type might not be.
+                                            self.check_destructuring_leaf_assignability_with_default(
+                                                &name,
+                                                source_type,
+                                                bin.left,
+                                                bin.right,
+                                            );
+                                        }
+                                        // else: default value already fails — the binary expression
+                                        // checker will report the error, skip redundant property check.
                                     }
                                 }
                             } else {
