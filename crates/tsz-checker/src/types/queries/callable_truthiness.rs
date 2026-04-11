@@ -18,6 +18,34 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::type_queries::{LiteralTypeKind, classify_literal_type, get_enum_member_type};
 
+/// Check if a numeric literal text represents zero in any notation.
+/// Handles decimal (0.0, .0, 0e0), hex (0x0), binary (0b0), octal (0o0),
+/// and numeric separators (0_0).
+fn is_numeric_literal_zero(text: &str) -> bool {
+    // Strip numeric separators
+    let stripped: String;
+    let s = if text.contains('_') {
+        stripped = text.replace('_', "");
+        &stripped
+    } else {
+        text
+    };
+
+    // Check hex/binary/octal prefixes
+    if let Some(rest) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        return !rest.is_empty() && rest.chars().all(|c| c == '0');
+    }
+    if let Some(rest) = s.strip_prefix("0b").or_else(|| s.strip_prefix("0B")) {
+        return !rest.is_empty() && rest.chars().all(|c| c == '0');
+    }
+    if let Some(rest) = s.strip_prefix("0o").or_else(|| s.strip_prefix("0O")) {
+        return !rest.is_empty() && rest.chars().all(|c| c == '0');
+    }
+
+    // Decimal: parse as f64
+    s.parse::<f64>().is_ok_and(|v| v == 0.0)
+}
+
 /// Result of tsc's `getSyntacticTruthySemantics` — purely syntactic truthiness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SyntacticTruthiness {
@@ -418,12 +446,17 @@ impl<'a> CheckerState<'a> {
 
         match node.kind {
             // Numeric literals: 0 and 1 are "sometimes" (allows while(0)/while(1)),
-            // all others are always truthy
+            // all others are always truthy.
+            // Must handle alternate representations of zero (0.0, 0x0, 0b0, 0o0, etc.)
+            // which are all falsy but have text != "0".
             k if k == SyntaxKind::NumericLiteral as u16 => {
-                if let Some(lit) = self.ctx.arena.get_literal(node)
-                    && (lit.text == "0" || lit.text == "1")
-                {
-                    return SyntacticTruthiness::Sometimes;
+                if let Some(lit) = self.ctx.arena.get_literal(node) {
+                    if lit.text == "0" || lit.text == "1" {
+                        return SyntacticTruthiness::Sometimes;
+                    }
+                    if is_numeric_literal_zero(&lit.text) {
+                        return SyntacticTruthiness::Sometimes;
+                    }
                 }
                 SyntacticTruthiness::AlwaysTruthy
             }
