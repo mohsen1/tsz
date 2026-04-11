@@ -568,12 +568,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Handle type parameters with array constraints (e.g., U extends string[])
         // by extracting the element type from the constraint.
         if let Some(info) = crate::visitor::type_param_info(self.interner, type_id)
-            && let Some(constraint) = info.constraint {
-                let elem = self.get_array_element_type(constraint);
-                if elem != constraint {
-                    return elem;
-                }
+            && let Some(constraint) = info.constraint
+        {
+            let elem = self.get_array_element_type(constraint);
+            if elem != constraint {
+                return elem;
             }
+        }
 
         type_id
     }
