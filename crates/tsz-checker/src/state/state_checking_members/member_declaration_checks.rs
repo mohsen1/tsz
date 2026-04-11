@@ -1884,9 +1884,15 @@ impl<'a> CheckerState<'a> {
                         .resolve_type_symbol_for_lowering(type_ref.type_name)
                         .map(tsz_binder::SymbolId)
                     {
-                        if self.ctx.symbol_resolution_set.contains(&sym_id)
-                            || self.type_alias_reaches_resolving_alias(sym_id)
-                        {
+                        // Only flag direct self-references (the type reference
+                        // directly names a type alias currently being resolved).
+                        // Transitive references through other type aliases (e.g.,
+                        // `type Op<I,O> = (x: Thing<I>) => Thing<O>` where Thing
+                        // references Op) are valid mutual recursion and should NOT
+                        // trigger TS2577. tsc only emits TS2577 for the case
+                        // where a function's return type annotation directly names
+                        // the same type being defined (e.g., `type F = () => F`).
+                        if self.ctx.symbol_resolution_set.contains(&sym_id) {
                             return true;
                         }
                     }
