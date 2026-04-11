@@ -278,16 +278,45 @@ impl TypeInterner {
         }
 
         // Distributivity: A & (B | C) → (A & B) | (A & C)
-        // Only distribute when there are non-union members to intersect with each
-        // union alternative. When ALL members are unions (e.g., `(A|B) & (C|D)`),
-        // TSC preserves the intersection form rather than distributing into
-        // `(A&C) | (A&D) | (B&C) | (B&D)`.
+        // When there are non-union members, always distribute (the non-union
+        // member anchors each alternative). When ALL members are unions,
+        // only use distribution if the result genuinely simplifies (no
+        // remaining intersection types in the result). This matches tsc:
+        // `(string|boolean) & (boolean|null)` → `boolean`, but
+        // `(A|B) & (C|D)` with interfaces stays as intersection.
         let has_non_union = flat
             .iter()
             .any(|&id| !matches!(self.lookup(id), Some(TypeData::Union(_))));
-        if has_non_union && let Some(distributed) = self.distribute_intersection_over_unions(&flat)
-        {
-            return distributed;
+        if has_non_union {
+            if let Some(distributed) = self.distribute_intersection_over_unions(&flat) {
+                return distributed;
+            }
+        } else {
+            // All-union: pre-check cross-product size to avoid triggering
+            // set_union_too_complex side-effect for large intersections.
+            let cross_product: usize = flat
+                .iter()
+                .filter_map(|&id| match self.lookup(id) {
+                    Some(TypeData::Union(members)) => Some(self.type_list(members).len()),
+                    _ => None,
+                })
+                .fold(1usize, |acc, n| acc.saturating_mul(n));
+            if cross_product <= 25 {
+                if let Some(distributed) = self.distribute_intersection_over_unions(&flat) {
+                    let is_simpler = match self.lookup(distributed) {
+                        Some(TypeData::Union(members)) => {
+                            let list = self.type_list(members);
+                            !list
+                                .iter()
+                                .any(|&m| matches!(self.lookup(m), Some(TypeData::Intersection(_))))
+                        }
+                        _ => true,
+                    };
+                    if is_simpler {
+                        return distributed;
+                    }
+                }
+            }
         }
 
         if flat.is_empty() {

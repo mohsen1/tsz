@@ -679,45 +679,38 @@ fn test_format_union_of_intersections_parenthesized() {
 }
 
 #[test]
-fn test_format_intersection_of_unions_parenthesized() {
-    // TSC parenthesizes union members inside intersections: `(A | B) & (C | D)`
-    // With our conditional distribution, this is preserved when ALL members are unions
+fn test_all_union_intersection_distributes_when_simpler() {
+    // When ALL members are unions and the distributed result is simpler
+    // (no remaining intersections), distribution should apply.
+    // (string | boolean) & (boolean | null) → boolean (only overlap)
     let interner = TypeInterner::new();
-    let mut formatter = TypeFormatter::new(&interner);
 
-    // Use string | number and boolean | symbol as union members
-    let union1 = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    let union2 = interner.union(vec![TypeId::BOOLEAN, TypeId::SYMBOL]);
+    let union1 = interner.union(vec![TypeId::STRING, TypeId::BOOLEAN]);
+    let union2 = interner.union(vec![TypeId::BOOLEAN, TypeId::NULL]);
+    let result = interner.intersection(vec![union1, union2]);
 
-    // All members are unions → distribution is skipped, intersection preserved
-    let intersection_of_unions = interner.intersection(vec![union1, union2]);
-
-    let formatted = formatter.format(intersection_of_unions);
-    // Union members should be parenthesized when inside an intersection
-    assert!(
-        formatted.contains("(") && formatted.contains(")"),
-        "Union members in intersection should be parenthesized, got: {formatted}"
-    );
-    assert!(
-        formatted.contains(" & "),
-        "Should be formatted as intersection, got: {formatted}"
+    // Distribution produces: (string & boolean)|(string & null)|(boolean & boolean)|(boolean & null)
+    // = never | never | boolean | never = boolean
+    assert_eq!(
+        result,
+        TypeId::BOOLEAN,
+        "All-union intersection with primitive overlap should distribute and simplify to boolean"
     );
 }
 
 #[test]
-fn test_intersection_distribution_skipped_for_all_union_members() {
-    // When ALL intersection members are unions, distribution should be skipped
-    // (A | B) & (C | D) stays as intersection, not distributed to (A&C)|(A&D)|(B&C)|(B&D)
+fn test_all_union_intersection_disjoint_primitives_reduces_to_never() {
+    // (string | number) & (boolean | symbol) — fully disjoint, should reduce to never
     let interner = TypeInterner::new();
 
     let union1 = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let union2 = interner.union(vec![TypeId::BOOLEAN, TypeId::SYMBOL]);
     let result = interner.intersection(vec![union1, union2]);
 
-    // Should stay as Intersection, not be distributed to Union
-    assert!(
-        matches!(interner.lookup(result), Some(TypeData::Intersection(_))),
-        "All-union intersection should preserve intersection form"
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "Disjoint all-union intersection should distribute and reduce to never"
     );
 }
 
