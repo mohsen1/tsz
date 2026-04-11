@@ -622,15 +622,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // TSC computes the intersection of all members' `this` types and checks the
         // calling context against it. A call fails with TS2684 if the `this` context
         // doesn't satisfy ALL members' `this` requirements.
-        if let Some(combined_this) = self.compute_union_this_type(&members) {
-            let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
-            if !self.checker.is_assignable_to(actual_this, combined_this) {
-                return CallResult::ThisTypeMismatch {
-                    expected_this: combined_this,
-                    actual_this,
-                };
-            }
-        }
+        // IMPORTANT: Defer `this` errors to after argument checking — TSC reports
+        // argument errors (TS2345) before `this` context errors (TS2684).
+        let deferred_this_error =
+            if let Some(combined_this) = self.compute_union_this_type(&members) {
+                let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
+                if !self.checker.is_assignable_to(actual_this, combined_this) {
+                    Some(CallResult::ThisTypeMismatch {
+                        expected_this: combined_this,
+                        actual_this,
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
         // Phase 0.5: Check multi-overload union members for compatible signatures.
         // When multiple union members have multiple overloads, first try to find
@@ -797,6 +804,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             match result {
                 CallResult::Success(return_type) => {
                     return_types.push(return_type);
+                }
+                CallResult::ThisTypeMismatch { .. } => {
+                    // Per-member `this` failures mean arguments were validated
+                    // successfully — only the `this` context was wrong. In union
+                    // context, `this` is checked at the union level (Phase 0
+                    // deferred check), so treat this as argument-success and
+                    // extract the member's return type.
+                    if let Some(ret) = crate::type_queries::get_return_type(self.interner, member) {
+                        return_types.push(ret);
+                    } else {
+                        failures.push(result);
+                    }
                 }
                 CallResult::NotCallable { .. } => {
                     return CallResult::NotCallable {
@@ -989,18 +1008,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 UnionCallSignatureCompatibility::Incompatible => unreachable!(),
             }
 
+            // Arguments resolved successfully — now check deferred `this` error.
+            if let Some(this_error) = deferred_this_error {
+                return this_error;
+            }
             if return_types.len() == 1 {
                 return CallResult::Success(return_types[0]);
             }
             let union_result = self.interner.union(return_types);
             CallResult::Success(union_result)
         } else if !failures.is_empty() {
+            // Argument errors take priority over `this` context errors (matches tsc).
             self.build_union_call_result(
                 union_type,
                 &mut failures,
                 return_types,
                 combined.as_ref().map(|c| c.return_type),
             )
+        } else if let Some(this_error) = deferred_this_error {
+            this_error
         } else {
             CallResult::NotCallable {
                 type_id: union_type,
@@ -1063,25 +1089,30 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return self.resolve_generic_call(func, arg_types);
         }
 
-        // Check `this` context if specified by the function shape
-        if let Some(expected_this) = func.this_type {
+        // Check `this` context if specified by the function shape.
+        // IMPORTANT: Defer `this` errors to after argument checking — TSC reports
+        // argument errors (TS2345) before `this` context errors (TS2684).
+        let deferred_this_error = if let Some(expected_this) = func.this_type {
             if let Some(actual_this) = self.actual_this_type {
                 if !self.checker.is_assignable_to(actual_this, expected_this) {
-                    return CallResult::ThisTypeMismatch {
+                    Some(CallResult::ThisTypeMismatch {
                         expected_this,
                         actual_this,
-                    };
+                    })
+                } else {
+                    None
                 }
-            }
-            // Note: if `actual_this_type` is None, we technically should check if `void` is assignable to `expected_this`.
-            // But TSC behavior for missing `this` might require strict checking. Let's do it:
-            else if !self.checker.is_assignable_to(TypeId::VOID, expected_this) {
-                return CallResult::ThisTypeMismatch {
+            } else if !self.checker.is_assignable_to(TypeId::VOID, expected_this) {
+                Some(CallResult::ThisTypeMismatch {
                     expected_this,
                     actual_this: TypeId::VOID,
-                };
+                })
+            } else {
+                None
             }
-        }
+        } else {
+            None
+        };
 
         // Check argument count
         let (min_args, max_args) = self.arg_count_bounds(&func.params);
@@ -1170,6 +1201,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     fallback_return: func.return_type,
                 };
             }
+        }
+
+        // Arguments validated successfully — now check deferred `this` error.
+        if let Some(this_error) = deferred_this_error {
+            return this_error;
         }
 
         CallResult::Success(func.return_type)
