@@ -1563,10 +1563,24 @@ impl<'a> NarrowingContext<'a> {
 
     pub fn narrow_type(&self, source_type: TypeId, guard: &TypeGuard, sense: GuardSense) -> TypeId {
         let sense = matches!(sense, GuardSense::Positive);
+
+        // For generic IndexAccess types (e.g., `Entries[EntryId]` where EntryId is a
+        // type parameter), we must preserve the original deferred form after narrowing.
+        // Without this, eagerly resolving to the constraint breaks assignability with
+        // the original return type (e.g., false TS2322 in quickinfoTypeAtReturn...).
+        let original_generic_index =
+            if let Some(TypeData::IndexAccess(obj, idx)) = self.db.lookup(source_type) {
+                let is_generic = crate::type_queries::contains_type_parameters_db(self.db, obj)
+                    || crate::type_queries::contains_type_parameters_db(self.db, idx);
+                if is_generic { Some(source_type) } else { None }
+            } else {
+                None
+            };
+
         // Resolve IndexAccess types (e.g., `A[K]`) to their concrete form before
         // narrowing, so that opaque generic index access types can be decomposed
         // for guard-based narrowing (e.g., excluding null from `number | null`).
-        let source_type = if matches!(
+        let resolved_source = if matches!(
             self.db.lookup(source_type),
             Some(TypeData::IndexAccess(_, _))
         ) {
@@ -1574,6 +1588,23 @@ impl<'a> NarrowingContext<'a> {
         } else {
             source_type
         };
+
+        let narrowed = self.narrow_type_inner(resolved_source, guard, sense);
+
+        // For generic IndexAccess, wrap the result to preserve assignability.
+        if let Some(original) = original_generic_index {
+            if narrowed == resolved_source || narrowed == original {
+                return original;
+            }
+            if narrowed != TypeId::NEVER {
+                return self.db.intersection2(original, narrowed);
+            }
+        }
+
+        narrowed
+    }
+
+    fn narrow_type_inner(&self, source_type: TypeId, guard: &TypeGuard, sense: bool) -> TypeId {
         match guard {
             TypeGuard::Typeof(typeof_kind) => {
                 let type_name = typeof_kind.as_str();
