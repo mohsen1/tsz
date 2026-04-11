@@ -1335,6 +1335,20 @@ impl<'a> DeclarationEmitter<'a> {
                 1
             };
 
+            // Before reporting as non-portable, check the parent package's
+            // package.json. If it has no "exports" field, all subpaths are
+            // accessible and the reference is portable (common for symlinked
+            // workspace dependencies).
+            let parent_pkg_root: std::path::PathBuf =
+                components[..pkg_start + pkg_len].iter().collect();
+            let parent_pkg_json = parent_pkg_root.join("package.json");
+            if let Ok(pkg_content) = std::fs::read_to_string(&parent_pkg_json)
+                && let Ok(pkg_json) = serde_json::from_str::<serde_json::Value>(&pkg_content)
+                && pkg_json.get("exports").is_none()
+            {
+                return None;
+            }
+
             let parent_package: Vec<String> = components[pkg_start..pkg_start + pkg_len]
                 .iter()
                 .filter_map(|c| match c {
@@ -1359,14 +1373,13 @@ impl<'a> DeclarationEmitter<'a> {
             let first_nm = nm_positions[0];
             let second_nm = nm_positions[1];
 
-            let parent_parts: Vec<String> = components[first_nm + 1..second_nm]
-                .iter()
-                .filter_map(|c| match c {
-                    Component::Normal(part) => part.to_str().map(str::to_string),
-                    _ => None,
-                })
-                .collect();
-
+            // Before flagging as non-portable, check whether the nested
+            // package has no "exports" field.  Without an "exports" map
+            // every subpath is accessible via standard Node.js resolution,
+            // even when the package root is a symlink (workspace deps
+            // hoisted by a package manager).  This matches tsc behaviour
+            // which does not emit TS2883 for workspace symlinks that lack
+            // an exports restriction.
             let nested_start = second_nm + 1;
             let nested_len = if components.get(nested_start).is_some_and(|c| {
                 matches!(c, Component::Normal(p) if p.to_str().is_some_and(|s| s.starts_with('@')))
@@ -1375,6 +1388,24 @@ impl<'a> DeclarationEmitter<'a> {
             } else {
                 1
             };
+
+            let nested_pkg_root: std::path::PathBuf =
+                components[..nested_start + nested_len].iter().collect();
+            let nested_pkg_json = nested_pkg_root.join("package.json");
+            if let Ok(pkg_content) = std::fs::read_to_string(&nested_pkg_json)
+                && let Ok(pkg_json) = serde_json::from_str::<serde_json::Value>(&pkg_content)
+                && pkg_json.get("exports").is_none()
+            {
+                return None;
+            }
+
+            let parent_parts: Vec<String> = components[first_nm + 1..second_nm]
+                .iter()
+                .filter_map(|c| match c {
+                    Component::Normal(part) => part.to_str().map(str::to_string),
+                    _ => None,
+                })
+                .collect();
 
             let nested_parts: Vec<String> = components[nested_start..nested_start + nested_len]
                 .iter()
@@ -1433,12 +1464,13 @@ impl<'a> DeclarationEmitter<'a> {
                         && let Ok(pkg_json) =
                             serde_json::from_str::<serde_json::Value>(&pkg_content)
                     {
-                        // If the package has no "exports" field AND the package
-                        // root is not a symlink, all subpaths are accessible via
-                        // standard Node.js resolution (pre-exports behaviour).
-                        // Symlinked package roots may be transitive dependencies
-                        // hoisted into node_modules and should still be checked.
-                        if pkg_json.get("exports").is_none() && !package_root.is_symlink() {
+                        // If the package has no "exports" field, all subpaths
+                        // are accessible via standard Node.js resolution
+                        // (pre-exports behaviour).  This applies even when the
+                        // package root is a symlink (e.g. workspace deps hoisted
+                        // by a package manager), because without an "exports"
+                        // restriction Node.js will resolve any subpath.
+                        if pkg_json.get("exports").is_none() {
                             return None;
                         }
 
