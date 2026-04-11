@@ -697,15 +697,21 @@ impl<'a> CheckerState<'a> {
                 // assignment reachable in the file. If it is never assigned,
                 // the deferred function can never see a valid value.
                 //
-                // Exception: `var` (function-scoped) declarations are always
+                // Exception 1: `var` (function-scoped) declarations are always
                 // hoisted and initialized to `undefined` at runtime, so tsc
                 // suppresses TS2454 for them in deferred functions regardless
                 // of whether an assignment exists in the file.
+                //
+                // Exception 2: exported variables in external modules are always
+                // suppressed — module consumers or initialization code could
+                // assign them before the deferred function is called.
                 let is_function_scoped_var =
                     symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0;
+                let is_exported = symbol.is_exported;
                 if self.ctx.binder.is_external_module()
                     && !has_initializer
                     && !is_function_scoped_var
+                    && !is_exported
                     && !self.symbol_has_any_assignment_in_file(sym_id)
                 {
                     // Fall through — continue to the flow analysis check below

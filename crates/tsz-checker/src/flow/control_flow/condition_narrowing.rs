@@ -1125,6 +1125,13 @@ impl<'a> FlowAnalyzer<'a> {
         if decl.initializer.is_none() {
             return None;
         }
+        // tsc does not treat const variables with explicit type annotations as
+        // narrowing aliases (e.g., `const isFoo: boolean = obj.kind === 'foo'`).
+        // The type annotation widens the variable's type, breaking the link
+        // between the condition expression and the original discriminant.
+        if decl.type_annotation.is_some() {
+            return None;
+        }
         Some((sym_id, decl.initializer))
     }
 
