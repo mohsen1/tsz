@@ -410,17 +410,34 @@ impl<'a> DeclarationEmitter<'a> {
         let mut visited_declaration_symbols = rustc_hash::FxHashSet::default();
         let mut visited_nodes = rustc_hash::FxHashSet::default();
         let mut visited_types = rustc_hash::FxHashSet::default();
-        let mut seen = rustc_hash::FxHashSet::default();
-        let mut results = Vec::new();
-        self.collect_non_portable_references_in_symbol_declaration_inner(
+        self.collect_non_portable_references_in_symbol_declaration_with_state(
             resolved_sym,
-            false,
-            &mut results,
-            &mut seen,
             &mut visited_types,
             &mut visited_symbols,
             &mut visited_declaration_symbols,
             &mut visited_nodes,
+        )
+    }
+
+    pub(in crate::declaration_emitter) fn collect_non_portable_references_in_symbol_declaration_with_state(
+        &self,
+        sym_id: SymbolId,
+        visited_types: &mut rustc_hash::FxHashSet<tsz_solver::types::TypeId>,
+        visited_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
+        visited_declaration_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
+        visited_nodes: &mut rustc_hash::FxHashSet<(usize, u32)>,
+    ) -> Vec<(String, String)> {
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut results = Vec::new();
+        self.collect_non_portable_references_in_symbol_declaration_inner(
+            sym_id,
+            false,
+            &mut results,
+            &mut seen,
+            visited_types,
+            visited_symbols,
+            visited_declaration_symbols,
+            visited_nodes,
         );
         results
     }
@@ -664,6 +681,8 @@ impl<'a> DeclarationEmitter<'a> {
                 current_file_path,
                 visited_types,
                 visited_symbols,
+                visited_declaration_symbols,
+                visited_nodes,
             )
             && seen.insert(result.clone())
         {
@@ -950,6 +969,8 @@ impl<'a> DeclarationEmitter<'a> {
                     current_file_path,
                     visited_types,
                     visited_symbols,
+                    visited_declaration_symbols,
+                    visited_nodes,
                 )
             {
                 if seen.insert(result.clone()) {
@@ -996,6 +1017,8 @@ impl<'a> DeclarationEmitter<'a> {
                         current_file_path,
                         visited_types,
                         visited_symbols,
+                        visited_declaration_symbols,
+                        visited_nodes,
                     );
                     if let Some(result) = result
                         && seen.insert(result.clone())
@@ -1266,7 +1289,7 @@ impl<'a> DeclarationEmitter<'a> {
             // filters same-file entries, so we check explicitly here.
             && self
                 .package_specifier_for_node_modules_path(file, &source_path)
-                .is_none_or(|spec| spec.contains('/'))
+                .map_or(true, |spec| spec.contains('/'))
         {
             references.push((
                 self.strip_ts_extensions(&self.calculate_relative_path(file, &source_path)),
