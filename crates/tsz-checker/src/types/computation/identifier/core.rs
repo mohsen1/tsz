@@ -1274,6 +1274,11 @@ impl<'a> CheckerState<'a> {
                 };
                 if has_index_sig && (flow_type == declared_type || flow_type == TypeId::ERROR) {
                     declared_type
+                } else if declared_type == TypeId::ANY {
+                    // Unannotated mutable locals like `let x;` can evolve away from
+                    // `any` through control flow. Preserve that evolved type instead of
+                    // collapsing back to the declared `any`.
+                    flow_type
                 } else if flow_type != declared_type && flow_type != TypeId::ERROR {
                     // Flow narrowed the type - but check if this is just the initializer
                     // literal being returned. For mutable variables without annotations,

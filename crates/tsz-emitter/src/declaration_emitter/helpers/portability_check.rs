@@ -1266,7 +1266,7 @@ impl<'a> DeclarationEmitter<'a> {
             // filters same-file entries, so we check explicitly here.
             && self
                 .package_specifier_for_node_modules_path(file, &source_path)
-                .map_or(true, |spec| spec.contains('/'))
+                .is_none_or(|spec| spec.contains('/'))
         {
             references.push((
                 self.strip_ts_extensions(&self.calculate_relative_path(file, &source_path)),

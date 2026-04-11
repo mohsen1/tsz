@@ -1472,6 +1472,47 @@ impl<'a> CheckerState<'a> {
         if matches!(declared_type, TypeId::ERROR | TypeId::UNKNOWN) {
             return None;
         }
+        let prefer_declared_display = if declared_type == TypeId::ANY
+            && expr_display_type != TypeId::ANY
+        {
+            let mut decl_idx = symbol.value_declaration;
+            let mut decl_node = self.ctx.arena.get(decl_idx)?;
+            if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                && let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+                && ext.parent.is_some()
+                && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+                && parent_node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
+            {
+                decl_idx = ext.parent;
+                decl_node = parent_node;
+            }
+            let is_control_flow_typed_any = self
+                .ctx
+                .arena
+                .get_variable_declaration(decl_node)
+                .is_some_and(|decl| {
+                    decl.type_annotation.is_none()
+                        && !self.ctx.arena.is_const_variable_declaration(decl_idx)
+                        && match decl.initializer {
+                            idx if idx.is_none() => true,
+                            idx => {
+                                let inner = self.ctx.arena.skip_parenthesized(idx);
+                                inner.is_some()
+                                    && self.ctx.arena.get(inner).is_some_and(|node| {
+                                        node.kind == tsz_scanner::SyntaxKind::NullKeyword as u16
+                                            || node.kind
+                                                == tsz_scanner::SyntaxKind::UndefinedKeyword as u16
+                                            || self.ctx.arena.get_identifier(node).is_some_and(
+                                                |ident| ident.escaped_text == "undefined",
+                                            )
+                                    })
+                            }
+                        }
+                });
+            !is_control_flow_typed_any
+        } else {
+            true
+        };
 
         if let Some(display) = self.identifier_array_object_literal_source_display(expr_idx, target)
         {
@@ -1489,7 +1530,7 @@ impl<'a> CheckerState<'a> {
             self.format_assignability_type_for_message(declared_display_type, target);
         let expr_display = self.format_assignability_type_for_message(expr_display_type, target);
 
-        (declared_display != expr_display).then_some(declared_display)
+        (prefer_declared_display && declared_display != expr_display).then_some(declared_display)
     }
 
     pub(in crate::error_reporter) fn rebuilt_array_source_display(
