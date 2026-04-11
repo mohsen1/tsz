@@ -365,17 +365,27 @@ impl<'a> TypeFormatter<'a> {
                             self.display_alias_visiting.remove(&alias_origin);
                             return result;
                         }
-                        let params: Vec<String> = def
-                            .type_params
-                            .iter()
-                            .map(|tp| self.atom(tp.name).to_string())
-                            .collect();
-                        return format!("{}<{}>", name, params.join(", ")).into();
+                        // For Mapped types with generic params (e.g., Partial<T>,
+                        // Record<K, V>), fall through to structural formatting.
+                        // tsc shows the expanded mapped type form in error messages
+                        // for these, not the alias name. The display_alias mechanism
+                        // handles concrete instantiations (e.g., Partial<{a: string}>)
+                        // via the check above.
+                        if !matches!(&key, TypeData::Mapped(_)) {
+                            let params: Vec<String> = def
+                                .type_params
+                                .iter()
+                                .map(|tp| self.atom(tp.name).to_string())
+                                .collect();
+                            return format!("{}<{}>", name, params.join(", ")).into();
+                        }
+                        // Mapped type with generic params — fall through to structural display
+                    } else {
+                        // When a type resolves to a named definition (interface,
+                        // class, or type alias), show that name. tsc preserves alias
+                        // symbols: `type Bar = Omit<Foo, "c">` displays as "Bar".
+                        return name.into();
                     }
-                    // When a type resolves to a named definition (interface,
-                    // class, or type alias), show that name. tsc preserves alias
-                    // symbols: `type Bar = Omit<Foo, "c">` displays as "Bar".
-                    return name.into();
                 }
             }
         }
