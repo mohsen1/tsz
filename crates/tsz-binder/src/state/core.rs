@@ -585,22 +585,6 @@ impl BinderState {
             return true;
         }
 
-        // .mts/.cts/.mjs/.cjs files are always modules regardless of content.
-        // In tsc's moduleDetection "auto" mode, these extensions force module
-        // scope even without import/export statements.
-        {
-            let lower = source.file_name.to_lowercase();
-            if lower.ends_with(".mts")
-                || lower.ends_with(".cts")
-                || lower.ends_with(".mjs")
-                || lower.ends_with(".cjs")
-                || lower.ends_with(".d.mts")
-                || lower.ends_with(".d.cts")
-            {
-                return true;
-            }
-        }
-
         // Declaration files that only contain `declare global { ... }` still need
         // to behave as importable modules. Otherwise package entrypoints like
         // `@types/react/index.d.ts` spuriously trigger TS2306 despite explicitly
