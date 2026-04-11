@@ -818,49 +818,53 @@ impl<'a> CheckerState<'a> {
     }
     /// Get the global JSX namespace type (resolves factory-scoped then global `JSX`).
     pub(crate) fn get_jsx_namespace_type(&mut self) -> Option<SymbolId> {
-        if let Some(jsx_sym) = self.resolve_jsx_namespace_from_factory() {
-            return Some(jsx_sym);
+        if let Some(cached) = self.ctx.jsx_namespace_symbol_cache {
+            return cached;
         }
-        if let Some(sym_id) = self.ctx.binder.file_locals.get("JSX") {
+
+        let resolved = if let Some(jsx_sym) = self.resolve_jsx_namespace_from_factory() {
+            Some(jsx_sym)
+        } else if let Some(sym_id) = self.ctx.binder.file_locals.get("JSX") {
             if self.ctx.binder.global_augmentations.contains_key("JSX")
                 || self.ctx.binder.lib_symbol_ids.contains(&sym_id)
             {
-                return Some(sym_id);
+                Some(sym_id)
+            } else if !self.ctx.binder.is_external_module() {
+                // Top-level `declare namespace JSX { ... }` inside an external module is
+                // module-local, not a global JSX namespace. Only script files may use a
+                // plain file-local `JSX` as the global fallback.
+                Some(sym_id)
+            } else {
+                self.get_cross_file_global_augmentation_symbol_id("JSX")
+                    .or_else(|| {
+                        self.get_cross_file_script_global_symbol_id("JSX")
+                            .or_else(|| {
+                                let lib_binders = self.get_lib_binders();
+                                lib_binders
+                                    .iter()
+                                    .find_map(|lib_binder| lib_binder.file_locals.get("JSX"))
+                            })
+                    })
             }
-        }
-        if let Some(sym_id) = self.get_cross_file_global_augmentation_symbol_id("JSX") {
-            return Some(sym_id);
-        }
-        // Top-level `declare namespace JSX { ... }` inside an external module is
-        // module-local, not a global JSX namespace. Only script files may use a
-        // plain file-local `JSX` as the global fallback.
-        if !self.ctx.binder.is_external_module()
-            && let Some(sym_id) = self.ctx.binder.file_locals.get("JSX")
-        {
-            return Some(sym_id);
-        }
-        if self.ctx.binder.is_external_module() {
-            if let Some(sym_id) = self.get_cross_file_script_global_symbol_id("JSX") {
-                return Some(sym_id);
-            }
+        } else if let Some(sym_id) = self.get_cross_file_global_augmentation_symbol_id("JSX") {
+            Some(sym_id)
+        } else if self.ctx.binder.is_external_module() {
+            self.get_cross_file_script_global_symbol_id("JSX")
+                .or_else(|| {
+                    let lib_binders = self.get_lib_binders();
+                    lib_binders
+                        .iter()
+                        .find_map(|lib_binder| lib_binder.file_locals.get("JSX"))
+                })
+        } else {
             let lib_binders = self.get_lib_binders();
-            for lib_binder in lib_binders.iter() {
-                if let Some(sym_id) = lib_binder.file_locals.get("JSX") {
-                    return Some(sym_id);
-                }
-            }
-            return None;
-        }
-        let lib_binders = self.get_lib_binders();
-        if let Some(sym_id) = self
-            .ctx
-            .binder
-            .get_global_type_with_libs("JSX", &lib_binders)
-        {
-            return Some(sym_id);
-        }
+            self.ctx
+                .binder
+                .get_global_type_with_libs("JSX", &lib_binders)
+        };
 
-        None
+        self.ctx.jsx_namespace_symbol_cache = Some(resolved);
+        resolved
     }
 
     pub(in crate::checkers_domain::jsx) fn should_suppress_ts7026_for_import_source(
@@ -1145,13 +1149,26 @@ impl<'a> CheckerState<'a> {
     pub(in crate::checkers_domain::jsx) fn get_intrinsic_elements_symbol_id(
         &mut self,
     ) -> Option<SymbolId> {
-        self.get_jsx_namespace_export_symbol_id("IntrinsicElements")
+        if let Some(cached) = self.ctx.jsx_intrinsic_elements_symbol_cache {
+            return cached;
+        }
+        let resolved = self.get_jsx_namespace_export_symbol_id("IntrinsicElements");
+        self.ctx.jsx_intrinsic_elements_symbol_cache = Some(resolved);
+        resolved
     }
 
     /// Get the JSX.IntrinsicElements interface type (maps tag names to prop types).
     pub(crate) fn get_intrinsic_elements_type(&mut self) -> Option<TypeId> {
-        let intrinsic_elements_sym_id = self.get_intrinsic_elements_symbol_id()?;
-        Some(self.type_reference_symbol_type(intrinsic_elements_sym_id))
+        if let Some(cached) = self.ctx.jsx_intrinsic_elements_type_cache {
+            return cached;
+        }
+        let resolved = self
+            .get_intrinsic_elements_symbol_id()
+            .map(|intrinsic_elements_sym_id| {
+                self.type_reference_symbol_type(intrinsic_elements_sym_id)
+            });
+        self.ctx.jsx_intrinsic_elements_type_cache = Some(resolved);
+        resolved
     }
 
     /// Get the JSX.IntrinsicAttributes type (e.g. `{ key?: string }` in React).

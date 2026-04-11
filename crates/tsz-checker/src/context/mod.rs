@@ -903,6 +903,18 @@ pub struct CheckerContext<'a> {
     /// Avoids re-evaluating `JSX.IntrinsicElements['div']` for every `<div>` element.
     pub jsx_intrinsic_props_cache: FxHashMap<(TypeId, tsz_common::interner::Atom), TypeId>,
 
+    /// Cached `JSX` namespace symbol for the current checker/file.
+    /// Stores both hits and misses to avoid repeated global/lib namespace scans.
+    pub jsx_namespace_symbol_cache: Option<Option<SymbolId>>,
+
+    /// Cached `JSX.IntrinsicElements` symbol for the current checker/file.
+    /// Stores both hits and misses to avoid repeated namespace export walks.
+    pub jsx_intrinsic_elements_symbol_cache: Option<Option<SymbolId>>,
+
+    /// Cached `JSX.IntrinsicElements` type for the current checker/file.
+    /// Stores both hits and misses to avoid repeated type-position resolution.
+    pub jsx_intrinsic_elements_type_cache: Option<Option<TypeId>>,
+
     /// Whether TS2875 (JSX import source not found) has been checked for this file.
     /// Set to true after the first JSX element is checked, to emit at most once per file.
     pub jsx_import_source_checked: bool,
