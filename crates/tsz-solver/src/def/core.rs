@@ -688,21 +688,28 @@ impl Default for DefinitionStore {
 impl DefinitionStore {
     /// Create a new definition store.
     pub fn new() -> Self {
+        Self::with_capacities(0, 0)
+    }
+
+    /// Create a new definition store with estimated capacities for the hot indices.
+    pub fn with_capacities(definition_capacity: usize, file_count: usize) -> Self {
         let instance_id = NEXT_INSTANCE_ID.fetch_add(1, Ordering::SeqCst);
         trace!(instance_id, "DefinitionStore::new - creating new instance");
+        let id_capacity = definition_capacity.max(16);
+        let file_capacity = file_count.max(4);
         Self {
             instance_id,
-            definitions: DashMap::new(),
+            definitions: DashMap::with_capacity(id_capacity),
             next_id: AtomicU32::new(DefId::FIRST_VALID),
             type_to_def: DashMap::new(),
-            symbol_def_index: DashMap::new(),
-            symbol_only_index: DashMap::new(),
+            symbol_def_index: DashMap::with_capacity(id_capacity),
+            symbol_only_index: DashMap::with_capacity(id_capacity),
             body_to_alias: DashMap::new(),
             computed_alias_bodies: DashSet::new(),
             shape_to_def: DashMap::new(),
-            file_to_defs: DashMap::new(),
-            class_to_constructor: DashMap::new(),
-            name_to_defs: DashMap::new(),
+            file_to_defs: DashMap::with_capacity(file_capacity),
+            class_to_constructor: DashMap::with_capacity(id_capacity / 2),
+            name_to_defs: DashMap::with_capacity(id_capacity),
             resolved_symbol_types: DashMap::new(),
             file_delegation_locks: DashMap::new(),
             fully_populated: std::sync::atomic::AtomicBool::new(false),
@@ -1453,7 +1460,15 @@ impl DefinitionStore {
         semantic_defs: &rustc_hash::FxHashMap<tsz_binder::SymbolId, tsz_binder::SemanticDefEntry>,
         intern_string: impl Fn(&str) -> Atom,
     ) -> Self {
-        let store = Self::new();
+        let class_count = semantic_defs
+            .values()
+            .filter(|entry| entry.kind == tsz_binder::SemanticDefKind::Class)
+            .count();
+        let mut file_ids = rustc_hash::FxHashSet::default();
+        for entry in semantic_defs.values() {
+            file_ids.insert(entry.file_id);
+        }
+        let store = Self::with_capacities(semantic_defs.len() + class_count, file_ids.len());
 
         if semantic_defs.is_empty() {
             return store;
@@ -1512,7 +1527,7 @@ impl DefinitionStore {
                 exports: Vec::new(),
                 file_id: Some(entry.file_id),
                 span: Some((entry.span_start, entry.span_start)),
-                symbol_id: Some(sym_id.0),
+                symbol_id: None,
                 heritage_names: entry.heritage_names(),
                 is_abstract: entry.is_abstract,
                 is_const: entry.is_const,
@@ -1539,7 +1554,7 @@ impl DefinitionStore {
                     exports: Vec::new(),
                     file_id: Some(entry.file_id),
                     span: Some((entry.span_start, entry.span_start)),
-                    symbol_id: Some(sym_id.0),
+                    symbol_id: None,
                     heritage_names: Vec::new(),
                     is_abstract: entry.is_abstract,
                     is_const: false,
