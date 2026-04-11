@@ -86,6 +86,11 @@ pub fn look_ahead_is_abstract_declaration(
 
 /// Look ahead to check if `namespace`/`module` is followed by a declaration name on the same line.
 /// ASI prevents treating `namespace\nfoo` as a namespace declaration.
+///
+/// The next token must be a valid namespace name: an identifier, a contextual
+/// keyword (like `type`, `abstract`), a string literal, `{`, or a numeric literal.
+/// Reserved keywords like `in`, `for`, `return` are NOT valid namespace names —
+/// e.g., `module in {}` should parse as an `in` expression, not a namespace decl.
 pub fn look_ahead_is_module_declaration(
     scanner: &mut ScannerState,
     current_token: SyntaxKind,
@@ -95,7 +100,7 @@ pub fn look_ahead_is_module_declaration(
             token,
             SyntaxKind::StringLiteral | SyntaxKind::OpenBraceToken | SyntaxKind::NumericLiteral
         ) || token == SyntaxKind::Identifier
-            || tsz_scanner::token_is_keyword(token)
+            || (tsz_scanner::token_is_keyword(token) && !tsz_scanner::token_is_reserved_word(token))
     })
 }
 
