@@ -1912,7 +1912,8 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     let mut symbol_arenas = FxHashMap::default();
     let mut declaration_arenas: DeclarationArenaMap = FxHashMap::default();
     let mut cross_file_node_symbols: CrossFileNodeSymbols = FxHashMap::default();
-    let mut globals = SymbolTable::new();
+    let estimated_global_count: usize = results.iter().map(|r| r.file_locals.len()).sum();
+    let mut globals = SymbolTable::with_capacity(estimated_global_count);
     let mut files = Vec::with_capacity(results.len());
     let mut file_locals_list = Vec::with_capacity(results.len());
     let mut declared_modules = FxHashSet::default();
@@ -2194,7 +2195,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     && let Some(sym) = global_symbols.get_mut(global_id)
                 {
                     if sym.exports.is_none() {
-                        sym.exports = Some(Box::new(SymbolTable::new()));
+                        sym.exports = Some(Box::new(SymbolTable::with_capacity(new_exports.len())));
                     }
                     if let Some(existing) = sym.exports.as_mut() {
                         for (name, id) in new_exports {
@@ -2269,7 +2270,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     && let Some(sym) = global_symbols.get_mut(global_id)
                 {
                     if sym.members.is_none() {
-                        sym.members = Some(Box::new(SymbolTable::new()));
+                        sym.members = Some(Box::new(SymbolTable::with_capacity(new_members.len())));
                     }
                     if let Some(existing) = sym.members.as_mut() {
                         for (name, id) in new_members {
@@ -2567,7 +2568,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         // We intentionally do *not* depend solely on `sym.is_exported` for determining whether
         // a file is an external module, because default exports may not correspond to a named
         // export in `file_locals`.
-        let mut exports = SymbolTable::new();
+        let mut exports = SymbolTable::with_capacity(result.file_locals.len().saturating_add(1));
         let mut export_equals_old: Option<SymbolId> = None;
 
         // 1) Named exports collected from file_locals.
@@ -2677,7 +2678,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
         let remap_symbol_table =
             |table: &SymbolTable, id_remap: &FxHashMap<SymbolId, SymbolId>| -> SymbolTable {
-                let mut remapped = SymbolTable::new();
+                let mut remapped = SymbolTable::with_capacity(table.len());
                 for (name, old_sym_id) in table.iter() {
                     if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
                         remapped.set(name.clone(), new_sym_id);
@@ -2942,9 +2943,9 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     dst.value_declaration = src_val_decl;
                 }
                 if let Some(src_exp) = src_exports {
-                    let dst_exp = dst
-                        .exports
-                        .get_or_insert_with(|| Box::new(SymbolTable::new()));
+                    let dst_exp = dst.exports.get_or_insert_with(|| {
+                        Box::new(SymbolTable::with_capacity(src_exp.len()))
+                    });
                     for (ename, &esym) in src_exp.iter() {
                         if !dst_exp.has(ename) {
                             dst_exp.set(ename.clone(), esym);
@@ -2960,9 +2961,9 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     }
                 }
                 if let Some(src_mem) = src_members {
-                    let dst_mem = dst
-                        .members
-                        .get_or_insert_with(|| Box::new(SymbolTable::new()));
+                    let dst_mem = dst.members.get_or_insert_with(|| {
+                        Box::new(SymbolTable::with_capacity(src_mem.len()))
+                    });
                     for (mname, &msym) in src_mem.iter() {
                         if !dst_mem.has(mname) {
                             dst_mem.set(mname.clone(), msym);
@@ -2995,7 +2996,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
         // Remap file_locals to use global IDs
         // This handles both user symbols (from id_remap) and lib symbols (from lib_name_to_global)
-        let mut remapped_file_locals = SymbolTable::new();
+        let mut remapped_file_locals = SymbolTable::with_capacity(result.file_locals.len());
         for (name, old_sym_id) in result.file_locals.iter() {
             if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
                 // User symbol - use remapped ID
@@ -3046,7 +3047,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
         let mut remapped_scopes = Vec::with_capacity(result.scopes.len());
         for scope in &result.scopes {
-            let mut table = SymbolTable::new();
+            let mut table = SymbolTable::with_capacity(scope.table.len());
             for (name, old_sym_id) in scope.table.iter() {
                 if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
                     // User symbol - include in scope.

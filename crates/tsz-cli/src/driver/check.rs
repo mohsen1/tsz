@@ -878,6 +878,9 @@ pub(super) fn collect_diagnostics(
         }
     }
 
+    // Pre-compute merged augmentations once for all binder reconstruction paths.
+    let merged_augmentations = MergedAugmentations::from_program(program);
+
     // Pre-create all binders for cross-file resolution
     let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new({
         let _span = tracing::info_span!("build_cross_file_binders").entered();
@@ -886,7 +889,12 @@ pub(super) fn collect_diagnostics(
             .iter()
             .enumerate()
             .map(|(file_idx, file)| {
-                Arc::new(create_cross_file_lookup_binder(file, program, file_idx))
+                Arc::new(create_cross_file_lookup_binder_with_augmentations(
+                    file,
+                    program,
+                    file_idx,
+                    &merged_augmentations,
+                ))
             })
             .collect()
     });
@@ -1300,9 +1308,6 @@ pub(super) fn collect_diagnostics(
         // --- PARALLEL PATH: No cache, check all files concurrently ---
         let _parallel_span =
             tracing::info_span!("parallel_check_files", files = work_queue.len()).entered();
-
-        // Pre-compute merged augmentations once for all files (avoids O(N²) per-file recomputation)
-        let merged_augmentations = MergedAugmentations::from_program(program);
 
         // Pre-compute per-file module bridging (sequential, fast — uses resolved_module_paths)
         let per_file_binders: Vec<BinderState> = {

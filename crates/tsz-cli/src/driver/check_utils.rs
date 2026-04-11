@@ -1613,12 +1613,76 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
 /// full semantic type computation, not just export-table lookups. Reuse the same
 /// binder construction path as a normal file check so delegated child checkers
 /// have access to the owning file's symbols, declaration arenas, and augmentations.
-pub(super) fn create_cross_file_lookup_binder(
+pub(super) fn create_cross_file_lookup_binder_with_augmentations(
     file: &BoundFile,
     program: &MergedProgram,
     file_idx: usize,
+    augmentations: &MergedAugmentations,
 ) -> BinderState {
-    create_binder_from_bound_file(file, program, file_idx)
+    let mut file_locals = SymbolTable::new();
+
+    if file_idx < program.file_locals.len() {
+        for (name, &sym_id) in program.file_locals[file_idx].iter() {
+            file_locals.set(name.clone(), sym_id);
+        }
+    }
+
+    for (name, &sym_id) in program.globals.iter() {
+        if !file_locals.has(name) {
+            file_locals.set(name.clone(), sym_id);
+        }
+    }
+
+    let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
+        BinderOptions::default(),
+        program.symbols.clone(),
+        file_locals,
+        file.node_symbols.clone(),
+        BinderStateScopeInputs {
+            scopes: file.scopes.clone(),
+            node_scope_ids: file.node_scope_ids.clone(),
+            global_augmentations: augmentations.global_augmentations.clone(),
+            module_augmentations: augmentations.module_augmentations.clone(),
+            augmentation_target_modules: augmentations.augmentation_target_modules.clone(),
+            module_exports: program.module_exports.clone(),
+            module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
+            reexports: program.reexports.clone(),
+            wildcard_reexports: program.wildcard_reexports.clone(),
+            wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
+            // Cross-file lookup binders only need local scopes/symbol ownership plus the
+            // merged export/augmentation tables. Cloning the full cross-program arena maps
+            // into every file binder makes all_binders setup scale with total declarations.
+            symbol_arenas: Default::default(),
+            declaration_arenas: Default::default(),
+            cross_file_node_symbols: program.cross_file_node_symbols.clone(),
+            shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
+            modules_with_export_equals: Default::default(),
+            flow_nodes: file.flow_nodes.clone(),
+            node_flow: file.node_flow.clone(),
+            switch_clause_to_switch: file.switch_clause_to_switch.clone(),
+            expando_properties: file.expando_properties.clone(),
+            alias_partners: program.alias_partners.clone(),
+        },
+    );
+
+    binder.declared_modules = program.declared_modules.clone();
+    binder.is_external_module = file.is_external_module;
+    binder.file_features = file.file_features;
+    binder.lib_symbol_reverse_remap = file.lib_symbol_reverse_remap.clone();
+    let mut composed_semantic_defs = program.semantic_defs.clone();
+    for (sym_id, entry) in &file.semantic_defs {
+        composed_semantic_defs.insert(*sym_id, entry.clone());
+    }
+    binder.semantic_defs = composed_semantic_defs;
+    if let Some(root_scope) = binder.scopes.first() {
+        binder.current_scope = root_scope.table.clone();
+        binder.current_scope_id = tsz::binder::ScopeId(0);
+    }
+    binder.set_lib_symbols_merged(true);
+    binder.lib_binders = program.lib_binders.clone();
+    binder.lib_symbol_ids = program.lib_symbol_ids.clone();
+
+    binder
 }
 
 // --- TS directive suppression ---

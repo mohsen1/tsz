@@ -84,10 +84,103 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             k if k == SyntaxKind::Identifier as u16 => self
                 .checker
                 .get_type_of_identifier_with_request(idx, request),
-            k if k == SyntaxKind::RegularExpressionLiteral as u16 => self
-                .checker
-                .resolve_lib_type_by_name("RegExp")
-                .unwrap_or(TypeId::ANY),
+            k if k == SyntaxKind::RegularExpressionLiteral as u16 => {
+                if let Some(literal) = self.checker.ctx.arena.get_literal(node)
+                    && let Some(raw_text) = literal.raw_text.as_deref()
+                {
+                    let bytes = raw_text.as_bytes();
+                    let mut body_end = bytes.len();
+                    let mut in_escape = false;
+                    let mut in_character_class = false;
+
+                    for (i, ch) in bytes.iter().enumerate().skip(1) {
+                        let ch = *ch;
+                        if in_escape {
+                            in_escape = false;
+                            continue;
+                        }
+                        if ch == b'\\' {
+                            in_escape = true;
+                        } else if ch == b'[' && !in_character_class {
+                            in_character_class = true;
+                        } else if ch == b']' && in_character_class {
+                            in_character_class = false;
+                        } else if ch == b'/' && !in_character_class {
+                            body_end = i;
+                            break;
+                        }
+                    }
+
+                    let mut group_names = std::collections::BTreeSet::new();
+                    let mut i = 1usize;
+                    let target_supports_named_groups =
+                        self.checker.ctx.compiler_options.target.supports_es2018();
+
+                    while i < body_end {
+                        if bytes[i] == b'\\' {
+                            if i + 2 < body_end && bytes[i + 1] == b'k' && bytes[i + 2] == b'<' {
+                                let name_start = i + 3;
+                                let mut name_end = name_start;
+                                while name_end < body_end && bytes[name_end] != b'>' {
+                                    name_end += 1;
+                                }
+                                if name_end < body_end {
+                                    let name = &raw_text[name_start..name_end];
+                                    if !group_names.contains(name) {
+                                        let message = tsz_common::diagnostics::format_message(
+                                            tsz_common::diagnostics::diagnostic_messages::THERE_IS_NO_CAPTURING_GROUP_NAMED_IN_THIS_REGULAR_EXPRESSION,
+                                            &[name],
+                                        );
+                                        self.checker.error_at_position(
+                                            node.pos + name_start as u32,
+                                            1,
+                                            &message,
+                                            tsz_common::diagnostics::diagnostic_codes::THERE_IS_NO_CAPTURING_GROUP_NAMED_IN_THIS_REGULAR_EXPRESSION,
+                                        );
+                                    }
+                                    i = name_end + 1;
+                                    continue;
+                                }
+                            }
+                            i += 2;
+                            continue;
+                        }
+
+                        if i + 3 < body_end
+                            && bytes[i] == b'('
+                            && bytes[i + 1] == b'?'
+                            && bytes[i + 2] == b'<'
+                            && !matches!(bytes[i + 3], b'=' | b'!')
+                        {
+                            if !target_supports_named_groups {
+                                self.checker.error_at_position(
+                                    node.pos + (i + 2) as u32,
+                                    1,
+                                    tsz_common::diagnostics::diagnostic_messages::NAMED_CAPTURING_GROUPS_ARE_ONLY_AVAILABLE_WHEN_TARGETING_ES2018_OR_LATER,
+                                    tsz_common::diagnostics::diagnostic_codes::NAMED_CAPTURING_GROUPS_ARE_ONLY_AVAILABLE_WHEN_TARGETING_ES2018_OR_LATER,
+                                );
+                            }
+
+                            let name_start = i + 3;
+                            let mut name_end = name_start;
+                            while name_end < body_end && bytes[name_end] != b'>' {
+                                name_end += 1;
+                            }
+                            if name_end < body_end {
+                                group_names.insert(raw_text[name_start..name_end].to_string());
+                                i = name_end + 1;
+                                continue;
+                            }
+                        }
+
+                        i += 1;
+                    }
+                }
+
+                self.checker
+                    .resolve_lib_type_by_name("RegExp")
+                    .unwrap_or(TypeId::ANY)
+            }
             k if k == SyntaxKind::ThisKeyword as u16 => {
                 {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};

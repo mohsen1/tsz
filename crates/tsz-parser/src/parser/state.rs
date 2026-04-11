@@ -1323,9 +1323,7 @@ impl ParserState {
         byte.is_ascii_hexdigit()
     }
 
-    /// Parse regex unicode escape diagnostics for regex literals in /u or /v mode.
-    /// NOTE: Currently unused - tsc does not emit TS1125 for invalid unicode escapes
-    /// inside regex literals. Kept for potential future use if tsc behavior changes.
+    /// Parse regex escape diagnostics for regex literals.
     #[allow(dead_code)]
     pub(crate) fn report_invalid_regular_expression_escape_errors(&mut self) {
         let token_text = self.scanner.get_token_text_ref().to_string();
@@ -1374,10 +1372,7 @@ impl ParserState {
         } else {
             ""
         };
-        let has_unicode_flag = flags.as_bytes().iter().any(|&b| b == b'u' || b == b'v');
-        if !has_unicode_flag {
-            return;
-        }
+        let _ = flags;
 
         let body_start = self.token_pos() as usize + 1;
         let raw = body.as_bytes();
@@ -1449,49 +1444,11 @@ impl ParserState {
 
         if j + 2 < raw.len() && raw[j + 2] == b'{' {
             let mut close = j + 3;
-            let mut has_digit = false;
-            while close < raw.len() && Self::is_hex_digit(raw[close]) {
-                has_digit = true;
+            while close < raw.len() && raw[close] != b'}' {
                 close += 1;
             }
             if close >= raw.len() {
-                self.parse_error_at(
-                    self.u32_from_usize(body_start + close),
-                    0,
-                    diagnostic_messages::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
-                    diagnostic_codes::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
-                );
                 return None;
-            }
-            if raw[close] == b'}' {
-                if !has_digit {
-                    self.parse_error_at(
-                        self.u32_from_usize(body_start + close),
-                        1,
-                        diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
-                        diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-                    );
-                }
-            } else if !has_digit {
-                self.parse_error_at(
-                    self.u32_from_usize(body_start + j + 3),
-                    1,
-                    diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
-                    diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-                );
-            } else {
-                self.parse_error_at(
-                    self.u32_from_usize(body_start + close),
-                    1,
-                    diagnostic_messages::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
-                    diagnostic_codes::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
-                );
-                self.parse_error_at(
-                    self.u32_from_usize(body_start + close),
-                    1,
-                    diagnostic_messages::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
-                    diagnostic_codes::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
-                );
             }
             Some(close + 1)
         } else {

@@ -684,6 +684,12 @@ pub struct CheckerContext<'a> {
     /// hundreds of DOM types that each trigger delegation).
     pub lib_delegation_cache: FxHashMap<SymbolId, TypeId>,
 
+    /// Per-checker cache for cross-binder namespace member resolution.
+    /// Keyed by (`namespace_name`, `member_name`) and stores both hits and misses.
+    /// This avoids repeatedly rescanning all binders for hot qualified React lookups
+    /// like `React.Component`, `React.ComponentClass`, `React.ReactNode`, etc.
+    pub namespace_member_resolution_cache: RefCell<FxHashMap<(String, String), Option<SymbolId>>>,
+
     /// Shared lib type resolution cache across parallel file checks.
     /// Uses `DashMap` for thread-safe concurrent access.
     pub shared_lib_type_cache: Option<Arc<dashmap::DashMap<String, Option<TypeId>>>>,
@@ -1703,6 +1709,11 @@ impl ProjectEnv {
         if let Some(ref idx) = self.global_arena_index {
             ctx.global_arena_index = Some(Arc::clone(idx));
         }
+        // Install the shared DefinitionStore before gating expensive semantic-def
+        // prepopulation so `is_fully_populated()` reflects project-wide state.
+        if let Some(ref store) = self.shared_definition_store {
+            ctx.definition_store = Arc::clone(store);
+        }
         ctx.set_all_binders(Arc::clone(&self.all_binders));
         // When the shared DefinitionStore was fully populated (via from_semantic_defs
         // during project setup), skip the expensive per-binder iteration. Instead,
@@ -1738,9 +1749,8 @@ impl ProjectEnv {
         ctx.set_resolved_module_request_errors(Arc::clone(&self.resolved_module_request_errors));
         ctx.is_external_module_by_file = Some(Arc::clone(&self.is_external_module_by_file));
         ctx.file_is_esm_map = Some(Arc::clone(&self.file_is_esm_map));
-        // Install shared DefinitionStore for globally unique DefIds in parallel checking.
-        if let Some(ref store) = self.shared_definition_store {
-            ctx.definition_store = Arc::clone(store);
+        // Warm local caches from the already-installed shared DefinitionStore.
+        if self.shared_definition_store.is_some() {
             ctx.warm_local_caches_from_shared_store();
         }
     }

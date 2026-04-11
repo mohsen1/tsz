@@ -354,3 +354,46 @@ d.prop;
     // The property access no longer returns ERROR when TS2454 fires, which
     // correctly allows downstream type checks to proceed.
 }
+
+#[test]
+fn jsdoc_import_defer_namespace_reports_from_expected_and_missing_namespace() {
+    let diagnostics = check_js_file_with_types_diagnostics(
+        "types.ts",
+        r#"
+export type X = 1;
+"#,
+        "foo.js",
+        r#"
+/**
+ * @import defer * as ns from "./types"
+ */
+
+/**
+ * @type { ns.X }
+ */
+let a = 2;
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            emit_declarations: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let rendered: Vec<_> = diagnostics
+        .iter()
+        .map(|d| (d.code, d.start, d.message_text.clone()))
+        .collect();
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&1005),
+        "Expected TS1005 for invalid JSDoc @import defer syntax, got diagnostics: {rendered:?}"
+    );
+    assert!(
+        codes.contains(&2503),
+        "Expected TS2503 because invalid JSDoc @import should not bind namespace 'ns', got diagnostics: {rendered:?}"
+    );
+}

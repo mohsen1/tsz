@@ -320,6 +320,27 @@ fn test_regex_character_class_escape_does_not_report_ts1517() {
 }
 
 #[test]
+fn test_regex_non_bmp_inline_flags_emit_unknown_flag_diagnostics() {
+    let source = r"
+const 𝘳𝘦𝘨𝘦𝘹 = /(?𝘴𝘪-𝘮:^𝘧𝘰𝘰.)/𝘨𝘮𝘶;
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1499_count = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::UNKNOWN_REGULAR_EXPRESSION_FLAG)
+        .count();
+
+    assert_eq!(
+        ts1499_count,
+        6,
+        "Expected six TS1499 diagnostics for unknown inline and trailing non-BMP flags, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_regex_missing_parenthesis_reports_ts1005_at_regex_end() {
     let source = "// @target: es2015\nvar x = /fo(o/;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2677,6 +2698,36 @@ fn test_import_defer_from_as_name_not_deferred() {
     assert!(
         !clause.is_deferred,
         "Expected is_deferred to be false for 'import defer from' (defer is name)"
+    );
+}
+
+#[test]
+fn test_regex_named_capturing_groups_do_not_emit_unexpected_paren() {
+    let source = r#"const re = /(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})/u;"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let diagnostics = parser.get_diagnostics();
+    let ts1508: Vec<_> = diagnostics.iter().filter(|d| d.code == 1508).collect();
+    assert!(
+        ts1508.is_empty(),
+        "Expected valid named capturing groups to avoid TS1508, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_regex_unicode_brace_escape_variants_do_not_emit_ts1125() {
+    let source = r#"
+const a = /\u{-DDDD}/gu;
+const b = /\u{r}\u{n}\u{t}/gu;
+const c = /\u{}/gu;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let diagnostics = parser.get_diagnostics();
+    let ts1125: Vec<_> = diagnostics.iter().filter(|d| d.code == 1125).collect();
+    assert!(
+        ts1125.is_empty(),
+        "Expected brace-form regex unicode escapes to avoid TS1125, got {diagnostics:?}"
     );
 }
 
