@@ -11,6 +11,7 @@ use crate::query_boundaries::type_checking_utilities as type_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::{ContextualTypeContext, TypeId, TypeParamInfo};
 impl<'a> CheckerState<'a> {
     /// Get type of function declaration/expression/arrow.
@@ -558,7 +559,10 @@ impl<'a> CheckerState<'a> {
             {
                 // Get parameter name
                 let name = if let Some(name_node) = self.ctx.arena.get(param.name) {
-                    if let Some(name_data) = self.ctx.arena.get_identifier(name_node) {
+                    if name_node.kind == SyntaxKind::ThisKeyword as u16 {
+                        // ThisKeyword node: the parameter is `this: Type`
+                        Some(this_atom)
+                    } else if let Some(name_data) = self.ctx.arena.get_identifier(name_node) {
                         Some(self.ctx.types.intern_string(&name_data.escaped_text))
                     } else if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                         || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
