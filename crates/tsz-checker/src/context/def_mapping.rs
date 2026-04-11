@@ -913,8 +913,17 @@ impl<'a> CheckerContext<'a> {
             return 0;
         }
 
+        // Sort by span_start so that DefIds are allocated in source declaration
+        // order. FxHashMap iteration order is non-deterministic, which previously
+        // caused type alias DefIds to be allocated out of source order. This broke
+        // union member sorting (which compares Lazy(DefId) bases by DefId value)
+        // and produced wrong display order in diagnostics (e.g., `Z | Y | X`
+        // instead of `X | Y | Z`).
+        let mut sorted_entries: Vec<_> = semantic_defs.iter().collect();
+        sorted_entries.sort_by_key(|(_, entry)| entry.span_start);
+
         let mut count = 0;
-        for (&sym_id, entry) in semantic_defs {
+        for (&sym_id, entry) in sorted_entries {
             // Skip if already mapped (e.g., from a previous lib merge pass
             // or the primary binder's pre-population).
             if self.symbol_to_def.borrow().contains_key(&sym_id) {
