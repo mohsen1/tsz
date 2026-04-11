@@ -340,6 +340,13 @@ impl<'a> CheckerState<'a> {
             // is already shared via copy_cross_file_state_from)
             self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
             checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
+            // The parent cache is cloned into the child for performance, but raw
+            // SymbolIds can still collide across binders in direct multi-file tests.
+            // Clear the delegated symbol's local cache entry so the child resolves it
+            // against the authoritative binder instead of reusing a colliding parent
+            // entry from the caller's file.
+            checker.ctx.symbol_types.remove(&sym_id);
+            checker.ctx.symbol_instance_types.remove(&sym_id);
             // Copy symbol resolution state to detect cross-file cycles, but exclude
             // the current symbol (which the parent added) since this checker will
             // add it again during get_type_of_symbol
@@ -647,6 +654,12 @@ impl<'a> CheckerState<'a> {
         checker.ctx.copy_cross_file_state_from(&self.ctx);
         self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
         checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
+        // Parent caches are cloned into the child for performance, but raw SymbolIds
+        // can collide across binders. Clear the delegated symbol's entries so the
+        // child recomputes the interface in its home binder instead of reusing a
+        // colliding cache entry from the caller's file.
+        checker.ctx.symbol_types.remove(&sym_id);
+        checker.ctx.symbol_instance_types.remove(&sym_id);
         for &id in &self.ctx.symbol_resolution_set {
             if id != sym_id {
                 checker.ctx.symbol_resolution_set.insert(id);

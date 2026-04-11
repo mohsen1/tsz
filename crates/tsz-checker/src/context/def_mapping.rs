@@ -32,27 +32,23 @@ impl<'a> CheckerContext<'a> {
     ///    both the store and the index.
     pub fn get_or_create_def_id(&self, sym_id: SymbolId) -> DefId {
         use tsz_solver::def::DefinitionInfo;
-
-        // ---- Step 1: local cache fast path ----
-        if let Some(def_id) = self.symbol_to_def.borrow().get(&sym_id).copied() {
-            return def_id;
-        }
-
-        // ---- Step 2: authoritative symbol-only index (O(1)) ----
-        // Check the DefinitionStore's symbol_only_index before doing any binder
-        // lookups. This avoids O(N) lib_contexts/all_binders scans for symbols
-        // that already have DefIds from pre-population or previous contexts.
-        if let Some(def_id) = self.definition_store.find_def_by_symbol(sym_id.0) {
-            // Populate local caches for future fast-path hits.
-            self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
-            self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
-            return def_id;
-        }
-
-        // ---- Step 3: look up the symbol to get its file_idx ----
-        // We need the symbol to determine which binder it came from.
-        // This O(N) scan only runs for truly new DefIds (not yet in DefinitionStore).
-        let symbol = self
+        let local_symbol = self.binder.symbols.get(sym_id);
+        let authoritative_file_idx = self.resolve_symbol_file_index(sym_id);
+        let has_cross_file_collision = authoritative_file_idx
+            .is_some_and(|file_idx| file_idx != self.current_file_idx)
+            && local_symbol.is_some()
+            && authoritative_file_idx
+                .and_then(|file_idx| self.get_binder_for_file(file_idx))
+                .and_then(|binder| binder.get_symbol(sym_id))
+                .is_some();
+        let prefer_local_symbol = local_symbol.is_some_and(|symbol| {
+            let authoritative_is_current =
+                authoritative_file_idx.is_none_or(|file_idx| file_idx == self.current_file_idx);
+            authoritative_is_current
+                && symbol.import_module.is_none()
+                && (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0
+        });
+        let symbol_name = self
             .binder
             .symbols
             .get(sym_id)
@@ -65,6 +61,100 @@ impl<'a> CheckerContext<'a> {
                 self.all_binders.as_ref().and_then(|binders| {
                     binders.iter().find_map(|binder| binder.symbols.get(sym_id))
                 })
+            })
+            .map(|symbol| symbol.escaped_name.clone());
+
+        // ---- Step 1: local cache fast path ----
+        if let Some(def_id) = self.symbol_to_def.borrow().get(&sym_id).copied() {
+            let authoritative = authoritative_file_idx.and_then(|file_idx| {
+                self.get_binder_for_file(file_idx).and_then(|binder| {
+                    binder.get_symbol(sym_id).and_then(|_| {
+                        self.definition_store
+                            .lookup_by_symbol(sym_id.0, file_idx as u32)
+                    })
+                })
+            });
+            let cached_file_idx = self
+                .definition_store
+                .get(def_id)
+                .and_then(|info| info.file_id)
+                .map(|file_idx| file_idx as usize);
+            let cached_matches_name = self.definition_store.get(def_id).is_some_and(|info| {
+                symbol_name
+                    .as_ref()
+                    .is_some_and(|name| self.types.resolve_atom(info.name) == *name)
+            });
+            let cached_matches_cross_file =
+                has_cross_file_collision && cached_file_idx == authoritative_file_idx;
+            if cached_matches_cross_file
+                || (cached_matches_name
+                    && !has_cross_file_collision
+                    && authoritative.is_none_or(|auth| auth == def_id))
+            {
+                return def_id;
+            }
+        }
+
+        // ---- Step 2: authoritative symbol-only index (O(1)) ----
+        // Check the DefinitionStore's symbol_only_index before doing any binder
+        // lookups. This avoids O(N) lib_contexts/all_binders scans for symbols
+        // that already have DefIds from pre-population or previous contexts.
+        let symbol = authoritative_file_idx
+            .and_then(|file_idx| self.get_binder_for_file(file_idx))
+            .and_then(|binder| binder.get_symbol(sym_id))
+            .filter(|_| !prefer_local_symbol)
+            .or_else(|| {
+                local_symbol
+                    .or_else(|| {
+                        self.lib_contexts
+                            .iter()
+                            .find_map(|lib_ctx| lib_ctx.binder.symbols.get(sym_id))
+                    })
+                    .or_else(|| {
+                        self.all_binders.as_ref().and_then(|binders| {
+                            binders.iter().find_map(|binder| binder.symbols.get(sym_id))
+                        })
+                    })
+            });
+        if let Some(symbol) = symbol
+            && let Some(def_id) = self.definition_store.lookup_by_symbol(
+                sym_id.0,
+                authoritative_file_idx
+                    .map(|idx| idx as u32)
+                    .unwrap_or(symbol.decl_file_idx),
+            )
+            && self.definition_store.get(def_id).is_some_and(|info| {
+                symbol_name
+                    .as_ref()
+                    .is_some_and(|name| self.types.resolve_atom(info.name) == *name)
+            })
+        {
+            // Populate local caches for future fast-path hits.
+            self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
+            self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+            return def_id;
+        }
+
+        // ---- Step 3: look up the symbol to get its file_idx ----
+        // We need the symbol to determine which binder it came from.
+        // This O(N) scan only runs for truly new DefIds (not yet in DefinitionStore).
+        let symbol = authoritative_file_idx
+            .and_then(|file_idx| self.get_binder_for_file(file_idx))
+            .and_then(|binder| binder.get_symbol(sym_id))
+            .or_else(|| {
+                self.binder
+                    .symbols
+                    .get(sym_id)
+                    .or_else(|| {
+                        self.lib_contexts
+                            .iter()
+                            .find_map(|lib_ctx| lib_ctx.binder.symbols.get(sym_id))
+                    })
+                    .or_else(|| {
+                        self.all_binders.as_ref().and_then(|binders| {
+                            binders.iter().find_map(|binder| binder.symbols.get(sym_id))
+                        })
+                    })
             });
 
         let symbol = match symbol {
@@ -72,8 +162,13 @@ impl<'a> CheckerContext<'a> {
             None => return DefId::INVALID,
         };
 
-        let file_idx = symbol.decl_file_idx;
-
+        let file_idx = if prefer_local_symbol && self.current_file_idx != usize::MAX {
+            self.current_file_idx as u32
+        } else {
+            authoritative_file_idx
+                .map(|idx| idx as u32)
+                .unwrap_or(symbol.decl_file_idx)
+        };
         // ---- Step 3b: composite key lookup ----
         // The composite key (symbol_id, file_idx) uniquely identifies a symbol
         // across all binders, so no name-validation is needed.
@@ -589,13 +684,71 @@ impl<'a> CheckerContext<'a> {
     ///    (e.g., cross-file references, lib types) that aren't yet in the local cache.
     ///    On a hit, the local caches are populated for future fast-path access.
     pub fn get_existing_def_id(&self, sym_id: SymbolId) -> Option<DefId> {
+        let symbol_name = self
+            .resolve_symbol_file_index(sym_id)
+            .and_then(|file_idx| self.get_binder_for_file(file_idx))
+            .and_then(|binder| binder.symbols.get(sym_id))
+            .or_else(|| self.binder.symbols.get(sym_id))
+            .or_else(|| {
+                self.lib_contexts
+                    .iter()
+                    .find_map(|lib_ctx| lib_ctx.binder.symbols.get(sym_id))
+            })
+            .or_else(|| {
+                self.all_binders.as_ref().and_then(|binders| {
+                    binders.iter().find_map(|binder| binder.symbols.get(sym_id))
+                })
+            })
+            .map(|symbol| symbol.escaped_name.clone());
+
         // Fast path: local cache
         if let Some(def_id) = self.symbol_to_def.borrow().get(&sym_id).copied() {
-            return Some(def_id);
+            let authoritative = self.resolve_symbol_file_index(sym_id).and_then(|file_idx| {
+                self.get_binder_for_file(file_idx).and_then(|binder| {
+                    binder.get_symbol(sym_id).and_then(|_| {
+                        self.definition_store
+                            .lookup_by_symbol(sym_id.0, file_idx as u32)
+                    })
+                })
+            });
+            let cached_matches_name = self.definition_store.get(def_id).is_some_and(|info| {
+                symbol_name
+                    .as_ref()
+                    .is_some_and(|name| self.types.resolve_atom(info.name) == *name)
+            });
+            if cached_matches_name && authoritative.is_none_or(|auth| auth == def_id) {
+                return Some(def_id);
+            }
         }
 
         // Fallback: authoritative index (catches cross-context DefIds)
-        if let Some(def_id) = self.definition_store.find_def_by_symbol(sym_id.0) {
+        let symbol = self
+            .binder
+            .symbols
+            .get(sym_id)
+            .or_else(|| {
+                self.lib_contexts
+                    .iter()
+                    .find_map(|lib_ctx| lib_ctx.binder.symbols.get(sym_id))
+            })
+            .or_else(|| {
+                self.all_binders.as_ref().and_then(|binders| {
+                    binders.iter().find_map(|binder| binder.symbols.get(sym_id))
+                })
+            });
+        if let Some(symbol) = symbol
+            && let Some(def_id) = self.definition_store.lookup_by_symbol(
+                sym_id.0,
+                self.resolve_symbol_file_index(sym_id)
+                    .map(|idx| idx as u32)
+                    .unwrap_or(symbol.decl_file_idx),
+            )
+            && self.definition_store.get(def_id).is_some_and(|info| {
+                symbol_name
+                    .as_ref()
+                    .is_some_and(|name| self.types.resolve_atom(info.name) == *name)
+            })
+        {
             // Populate local caches for future fast-path hits
             self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
             self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
@@ -622,6 +775,7 @@ impl<'a> CheckerContext<'a> {
         TypeFormatter::with_symbols(self.types, &self.binder.symbols)
             .with_def_store(&self.definition_store)
             .with_namespace_module_names(&self.namespace_module_names)
+            .with_current_file_id(self.current_file_idx as u32)
     }
 
     /// Create a type formatter configured for diagnostic error messages.

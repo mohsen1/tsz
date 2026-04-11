@@ -893,6 +893,7 @@ impl<'a> CheckerState<'a> {
                                 });
                             }
                         }
+                        let namespace_has_no_runtime_props = props.is_empty();
                         let namespace_type = factory.object(props);
                         // Store display name for error messages: TSC shows namespace
                         // types as `typeof import("module")` in diagnostics.
@@ -904,7 +905,7 @@ impl<'a> CheckerState<'a> {
                             .namespace_module_names
                             .insert(namespace_type, display_module_name);
                         if let Some(export_equals_type) = export_equals_type {
-                            if module_is_non_module_entity {
+                            if module_is_non_module_entity || namespace_has_no_runtime_props {
                                 return (export_equals_type, Vec::new());
                             }
                             return (
@@ -997,7 +998,14 @@ impl<'a> CheckerState<'a> {
             if import_module.is_none()
                 && value_decl.is_some()
                 && let Some(node) = self.ctx.arena.get(value_decl)
-                && node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                && !matches!(
+                    node.kind,
+                    syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                        | syntax_kind_ext::IMPORT_SPECIFIER
+                        | syntax_kind_ext::EXPORT_SPECIFIER
+                        | syntax_kind_ext::IMPORT_CLAUSE
+                        | syntax_kind_ext::NAMESPACE_IMPORT
+                )
             {
                 return (
                     self.type_of_value_declaration_for_symbol(sym_id, value_decl),
@@ -1324,6 +1332,7 @@ impl<'a> CheckerState<'a> {
                             }
                         }
 
+                        let namespace_has_no_runtime_props = props.is_empty();
                         let namespace_type = factory.object(props);
                         // Store display name for error messages: TSC shows namespace
                         // types as `typeof import("module")` in diagnostics.
@@ -1337,7 +1346,7 @@ impl<'a> CheckerState<'a> {
                         }
                         self.ctx.module_namespace_resolution_set.remove(module_name);
                         if let Some(export_equals_type) = export_equals_type {
-                            if module_is_non_module_entity {
+                            if module_is_non_module_entity || namespace_has_no_runtime_props {
                                 // For namespace imports of `export =` non-module values:
                                 // - Callable/constructable types (functions, classes): wrap
                                 //   with `{ default: value }` under allowSyntheticDefaultImports

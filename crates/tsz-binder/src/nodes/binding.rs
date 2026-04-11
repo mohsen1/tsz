@@ -14,6 +14,33 @@ impl BinderState {
         arena.get(declaration).map(|node| (node.pos, node.end))
     }
 
+    fn should_upgrade_merged_value_declaration(
+        &self,
+        existing_id: SymbolId,
+        new_flags: u32,
+        _new_declaration: NodeIndex,
+        _new_arena: &NodeArena,
+    ) -> bool {
+        if (new_flags & symbol_flags::VALUE) == 0 || (new_flags & symbol_flags::MODULE) != 0 {
+            return false;
+        }
+
+        let Some(existing_symbol) = self.symbols.get(existing_id) else {
+            return false;
+        };
+        if existing_symbol.value_declaration.is_none() {
+            return true;
+        }
+
+        let non_module_value_flags = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
+        let existing_has_non_module_value = (existing_symbol.flags & non_module_value_flags) != 0;
+        let new_has_non_module_value = (new_flags & non_module_value_flags) != 0;
+
+        !existing_has_non_module_value
+            && (existing_symbol.flags & symbol_flags::MODULE) != 0
+            && new_has_non_module_value
+    }
+
     pub(crate) fn is_inside_class_member_computed_property_name(
         arena: &NodeArena,
         idx: NodeIndex,
@@ -1399,10 +1426,18 @@ impl BinderState {
             self.debugger
                 .record_merge(name, existing_id, existing_flags, flags, combined_flags);
 
+            let should_upgrade_value_decl = can_merge
+                && self.should_upgrade_merged_value_declaration(
+                    existing_id,
+                    flags,
+                    declaration,
+                    arena,
+                );
+
             if let Some(sym) = self.symbols.get_mut(existing_id) {
                 if can_merge {
                     sym.flags |= flags;
-                    if sym.value_declaration.is_none() && (flags & symbol_flags::VALUE) != 0 {
+                    if should_upgrade_value_decl {
                         sym.set_value_declaration(
                             declaration,
                             Self::declaration_span(arena, declaration),

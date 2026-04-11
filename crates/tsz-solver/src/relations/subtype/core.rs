@@ -1786,6 +1786,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
+        if is_this_type(self.interner, target) {
+            if let Some(concrete_this) = self.resolver.resolve_this_type(self.interner)
+                && concrete_this != target
+            {
+                return self.check_subtype(source, concrete_this);
+            }
+            return SubtypeResult::False;
+        }
+
         if let (Some(s_spans), Some(t_spans)) = (
             template_literal_id(self.interner, source),
             template_literal_id(self.interner, target),

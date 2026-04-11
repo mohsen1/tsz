@@ -2434,8 +2434,6 @@ impl ParserState {
         let is_yield_as_generator_name =
             is_async_generator_declaration && self.is_token(SyntaxKind::YieldKeyword);
         let name = if self.is_reserved_word() && !is_yield_as_generator_name {
-            use tsz_common::diagnostics::diagnostic_codes;
-
             let name_start = self.token_pos();
             let name_end = self.token_end();
             let atom = self.scanner.get_token_atom();
