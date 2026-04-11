@@ -311,7 +311,7 @@ impl<'a> CheckerState<'a> {
             })
             .collect();
 
-        if !nm_positions.is_empty()
+        if nm_positions.len() >= 2
             && symbol.has_any_flags(symbol_flags::ALIAS)
             && let Some(import_module) = &symbol.import_module
             && !import_module.starts_with('.')
