@@ -274,8 +274,15 @@ impl<'a> CheckerState<'a> {
     ///
     /// By constructing a real `Object { prop: type, ... }` type we give the solver
     /// concrete structural types it can compare property-by-property.
-    fn build_namespace_object_type(&mut self, sym_id: SymbolId) -> TypeId {
+    pub(crate) fn build_namespace_object_type(&mut self, sym_id: SymbolId) -> TypeId {
         use tsz_solver::PropertyInfo;
+
+        if let Some(&cached) = self.ctx.symbol_instance_types.get(&sym_id)
+            && cached != TypeId::ERROR
+            && cached != TypeId::UNKNOWN
+        {
+            return cached;
+        }
 
         let depth = self.ctx.symbol_resolution_depth.get();
         if depth >= MAX_MERGE_DEPTH {
@@ -289,6 +296,8 @@ impl<'a> CheckerState<'a> {
             return self.ctx.types.factory().object(vec![]);
         };
 
+        let placeholder = self.ctx.types.factory().object(vec![]);
+        self.ctx.symbol_instance_types.insert(sym_id, placeholder);
         self.ctx.symbol_resolution_depth.set(depth + 1);
         let mut props: Vec<PropertyInfo> = Vec::new();
         for (name, &member_id) in exports.iter() {
@@ -301,7 +310,18 @@ impl<'a> CheckerState<'a> {
             if member_flags & tsz_binder::symbol_flags::VALUE == 0 {
                 continue;
             }
-            let member_type = self.get_type_of_symbol(member_id);
+            let is_pure_namespace = (member_flags
+                & (tsz_binder::symbol_flags::VALUE_MODULE
+                    | tsz_binder::symbol_flags::NAMESPACE_MODULE))
+                != 0
+                && (member_flags
+                    & (tsz_binder::symbol_flags::CLASS | tsz_binder::symbol_flags::FUNCTION))
+                    == 0;
+            let member_type = if is_pure_namespace {
+                self.build_namespace_object_type(member_id)
+            } else {
+                self.get_type_of_symbol(member_id)
+            };
             let name_atom = self.ctx.types.intern_string(name);
             props.push(PropertyInfo {
                 name: name_atom,
@@ -318,7 +338,9 @@ impl<'a> CheckerState<'a> {
             });
         }
         self.ctx.symbol_resolution_depth.set(depth);
-        self.ctx.types.factory().object(props)
+        let namespace_type = self.ctx.types.factory().object(props);
+        self.ctx.symbol_instance_types.insert(sym_id, namespace_type);
+        namespace_type
     }
 
     /// Report TS2300 on the class static member that conflicts with a namespace export.
@@ -737,7 +759,16 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            let mut type_id = self.get_type_of_symbol(*member_id);
+            let is_pure_namespace = (member_symbol.flags
+                & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE))
+                != 0
+                && (member_symbol.flags & (symbol_flags::CLASS | symbol_flags::FUNCTION)) == 0;
+
+            let mut type_id = if is_pure_namespace {
+                self.build_namespace_object_type(*member_id)
+            } else {
+                self.get_type_of_symbol(*member_id)
+            };
             // For enum exports, use the enum namespace type (typeof Color)
             // which represents the enum object value with member properties,
             // not the enum instance type (Color = union of member values).

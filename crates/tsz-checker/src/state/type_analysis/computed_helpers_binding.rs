@@ -621,7 +621,8 @@ impl<'a> CheckerState<'a> {
         // Type-only namespaces (only interfaces/type aliases) must keep Lazy(DefId)
         // so property access goes through namespace export resolution.
         if self.namespace_has_value_exports(sym_id) {
-            let ns_obj = self.merge_namespace_exports_into_object(sym_id, lazy);
+            let ns_obj = self.build_namespace_object_type(sym_id);
+            self.ctx.symbol_instance_types.insert(sym_id, ns_obj);
             (ns_obj, Vec::new())
         } else {
             (lazy, Vec::new())

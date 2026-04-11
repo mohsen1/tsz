@@ -743,6 +743,9 @@ impl<'a> CheckerState<'a> {
                     self.merge_interface_types(merged, interface_type)
                 };
             }
+            if merged != TypeId::ERROR {
+                self.ctx.symbol_instance_types.insert(sym_id, merged);
+            }
             return merged;
         }
 
@@ -788,11 +791,17 @@ impl<'a> CheckerState<'a> {
         .with_lazy_type_params_resolver(&lazy_type_params_resolver);
         let interface_type =
             lowering.lower_interface_declarations_with_symbol(&declarations, sym_id);
+        // Seed a partial structural interface type before heritage merging so
+        // recursive interface/namespace resolution can reuse the current shape
+        // instead of re-entering the full lowering + heritage pipeline.
+        self.ctx.symbol_instance_types.insert(sym_id, interface_type);
 
         self.pop_type_parameters(updates);
         let _ = params; // params are not needed for this path
 
-        self.merge_interface_heritage_types(&declarations, interface_type)
+        let merged = self.merge_interface_heritage_types(&declarations, interface_type);
+        self.ctx.symbol_instance_types.insert(sym_id, merged);
+        merged
     }
 
     pub(crate) fn prewarm_member_type_reference_params(
