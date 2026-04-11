@@ -351,9 +351,9 @@ impl<'a> CheckerState<'a> {
             let component_type = self.compute_type_of_node(tag_name_idx);
 
             // If the JSX element has explicit type arguments (e.g., <Component<T>>),
-            // create an Application type to properly instantiate the generic component.
-            // This ensures that when we check overloaded SFCs, the signatures are
-            // instantiated with the provided type arguments rather than constraints/defaults.
+            // instantiate the component type with the provided arguments.
+            // For function types (SFCs), directly instantiate the function's type params.
+            // For other types (class components, type aliases), create an Application type.
             let component_type = if let Some(ref type_args_nodes) = jsx_opening.type_arguments {
                 let type_args: Vec<TypeId> = type_args_nodes
                     .nodes
@@ -361,7 +361,7 @@ impl<'a> CheckerState<'a> {
                     .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
                     .collect();
                 if !type_args.is_empty() {
-                    self.ctx.types.application(component_type, type_args)
+                    self.instantiate_jsx_component_with_type_args(component_type, &type_args)
                 } else {
                     component_type
                 }
@@ -1405,5 +1405,71 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
+    }
+
+    /// Instantiate a JSX component type with explicit type arguments.
+    ///
+    /// For function types (SFCs like `<SFC<string>>`), directly instantiates the
+    /// function's type parameters to produce a concrete non-generic function.
+    /// For other types (class components, type aliases), creates an Application type
+    /// for normal evaluation.
+    pub(super) fn instantiate_jsx_component_with_type_args(
+        &mut self,
+        component_type: TypeId,
+        type_args: &[TypeId],
+    ) -> TypeId {
+        // Try Function types (single-signature SFCs)
+        if let Some(shape) =
+            tsz_solver::type_queries::get_function_shape(self.ctx.types, component_type)
+            && !shape.type_params.is_empty()
+            && type_args.len() <= shape.type_params.len()
+        {
+            use crate::query_boundaries::common::TypeSubstitution;
+            use tsz_solver::instantiate_type_with_depth_status;
+
+            let subst = TypeSubstitution::from_args(self.ctx.types, &shape.type_params, type_args);
+            let new_params: Vec<_> = shape
+                .params
+                .iter()
+                .map(|p| {
+                    let (new_ty, _) =
+                        instantiate_type_with_depth_status(self.ctx.types, p.type_id, &subst);
+                    tsz_solver::types::ParamInfo {
+                        name: p.name,
+                        type_id: new_ty,
+                        optional: p.optional,
+                        rest: p.rest,
+                    }
+                })
+                .collect();
+            let (new_return, _) =
+                instantiate_type_with_depth_status(self.ctx.types, shape.return_type, &subst);
+            let new_this = shape
+                .this_type
+                .map(|t| instantiate_type_with_depth_status(self.ctx.types, t, &subst).0);
+            let new_predicate = shape
+                .type_predicate
+                .map(|tp| tsz_solver::types::TypePredicate {
+                    type_id: tp
+                        .type_id
+                        .map(|t| instantiate_type_with_depth_status(self.ctx.types, t, &subst).0),
+                    ..tp
+                });
+            return self.ctx.types.function(tsz_solver::types::FunctionShape {
+                type_params: vec![],
+                params: new_params,
+                this_type: new_this,
+                return_type: new_return,
+                type_predicate: new_predicate,
+                is_constructor: shape.is_constructor,
+                is_method: shape.is_method,
+            });
+        }
+
+        // Fallback: create Application for class components, type aliases,
+        // and overloaded SFCs (Callable types)
+        self.ctx
+            .types
+            .application(component_type, type_args.to_vec())
     }
 }
