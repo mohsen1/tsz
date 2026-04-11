@@ -306,7 +306,19 @@ impl<'a> CheckerState<'a> {
             )
             .or_else(|| state.ctx.definition_store.find_def_for_type(candidate))?;
             let def = state.ctx.definition_store.get(def_id)?;
-            Some(state.ctx.types.resolve_atom_ref(def.name).to_string())
+            let name = state.ctx.types.resolve_atom_ref(def.name).to_string();
+            // Class constructor, enum, and namespace defs represent the static/value
+            // side and should display as "typeof Name" to match tsc.
+            if matches!(
+                def.kind,
+                tsz_solver::def::DefKind::ClassConstructor
+                    | tsz_solver::def::DefKind::Enum
+                    | tsz_solver::def::DefKind::Namespace
+            ) {
+                Some(format!("typeof {name}"))
+            } else {
+                Some(name)
+            }
         };
 
         let symbol_backed_name = |state: &Self, candidate: TypeId| {
@@ -413,7 +425,17 @@ impl<'a> CheckerState<'a> {
                     self.ctx.definition_store.find_def_for_type(evaluated)
                 })?;
         let def = self.ctx.definition_store.get(def_id)?;
-        Some(self.ctx.types.resolve_atom_ref(def.name).to_string())
+        let name = self.ctx.types.resolve_atom_ref(def.name).to_string();
+        if matches!(
+            def.kind,
+            tsz_solver::def::DefKind::ClassConstructor
+                | tsz_solver::def::DefKind::Enum
+                | tsz_solver::def::DefKind::Namespace
+        ) {
+            Some(format!("typeof {name}"))
+        } else {
+            Some(name)
+        }
     }
 
     pub(crate) fn format_assignability_type_for_message(

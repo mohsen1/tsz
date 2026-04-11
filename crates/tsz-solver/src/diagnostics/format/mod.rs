@@ -491,6 +491,18 @@ impl<'a> TypeFormatter<'a> {
                 if let Some(sym_id) = shape.symbol
                     && let Some(name) = self.format_symbol_name(sym_id)
                 {
+                    // Class constructor types (callables with construct signatures
+                    // linked to a class symbol) should display as "typeof ClassName"
+                    // to match tsc behavior. The class instance type displays as
+                    // just "ClassName".
+                    if !shape.construct_signatures.is_empty() {
+                        if let Some(arena) = self.symbol_arena
+                            && let Some(sym) = arena.get(sym_id)
+                            && sym.has_flags(tsz_binder::symbol_flags::CLASS)
+                        {
+                            return format!("typeof {name}").into();
+                        }
+                    }
                     return name.into();
                 }
                 self.format_callable(shape.as_ref()).into()
