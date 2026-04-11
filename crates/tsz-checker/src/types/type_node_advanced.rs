@@ -279,7 +279,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         self.ctx.types,
                         resolved_object,
                     ) || tsz_solver::is_generic_application(self.ctx.types, object_type)
-                    || self.union_contains_application(resolved_object);
+                        || self.union_contains_application(resolved_object);
 
                 // Suppress TS2339 when the index type itself contains type parameters.
                 // This handles cases like `Options<State, Actions>[Key]` where Key is a type parameter.
@@ -375,8 +375,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// Used to suppress TS2339 when property existence can't be verified on unresolved
     /// generic interface instantiations (e.g., `ExtensionConfig<any> | NodeConfig<any>`).
     fn union_contains_application(&self, type_id: TypeId) -> bool {
-        if let Some(tsz_solver::TypeData::Union(list_id)) = self.ctx.types.lookup(type_id) {
-            let members = self.ctx.types.type_list(list_id);
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        {
             members
                 .iter()
                 .any(|&m| tsz_solver::is_generic_application(self.ctx.types, m))
