@@ -1078,10 +1078,32 @@ impl<'a> TypeFormatter<'a> {
             Some(MappedModifier::Remove) => "-?",
             None => "",
         };
+        let template_str = self.format(mapped.template);
+        // tsc displays optional mapped types with `| undefined` appended to the
+        // template: `{ [P in keyof T]?: T[P] | undefined; }`. Only add when the
+        // optional modifier is Add and the template doesn't already contain undefined.
+        let needs_undefined = if mapped.optional_modifier == Some(MappedModifier::Add)
+            && mapped.template != TypeId::UNDEFINED
+        {
+            // Check if the template type already contains undefined
+            // (e.g., if it's a union that includes undefined).
+            if let Some(TypeData::Union(members)) = self.interner.lookup(mapped.template) {
+                let list = self.interner.type_list(members);
+                !list.as_ref().contains(&TypeId::UNDEFINED)
+            } else {
+                true
+            }
+        } else {
+            false
+        };
+        let template_display = if needs_undefined {
+            format!("{template_str} | undefined")
+        } else {
+            template_str.into_owned()
+        };
         format!(
-            "{{ {readonly_prefix}[{param_name} in {}]{optional_suffix}: {}; }}",
+            "{{ {readonly_prefix}[{param_name} in {}]{optional_suffix}: {template_display}; }}",
             self.format(mapped.constraint),
-            self.format(mapped.template)
         )
     }
 
