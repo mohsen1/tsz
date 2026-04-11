@@ -301,20 +301,21 @@ impl TypeInterner {
                     _ => None,
                 })
                 .fold(1usize, |acc, n| acc.saturating_mul(n));
-            if cross_product <= 25
-                && let Some(distributed) = self.distribute_intersection_over_unions(&flat)
-            {
-                let is_simpler = match self.lookup(distributed) {
-                    Some(TypeData::Union(members)) => {
-                        let list = self.type_list(members);
-                        !list
-                            .iter()
-                            .any(|&m| matches!(self.lookup(m), Some(TypeData::Intersection(_))))
+            #[allow(clippy::collapsible_if)]
+            if cross_product <= 25 {
+                if let Some(distributed) = self.distribute_intersection_over_unions(&flat) {
+                    let is_simpler = match self.lookup(distributed) {
+                        Some(TypeData::Union(members)) => {
+                            let list = self.type_list(members);
+                            !list
+                                .iter()
+                                .any(|&m| matches!(self.lookup(m), Some(TypeData::Intersection(_))))
+                        }
+                        _ => true,
+                    };
+                    if is_simpler {
+                        return distributed;
                     }
-                    _ => true,
-                };
-                if is_simpler {
-                    return distributed;
                 }
             }
         }

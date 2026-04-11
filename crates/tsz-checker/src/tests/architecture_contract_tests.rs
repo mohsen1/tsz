@@ -1936,14 +1936,45 @@ fn test_solver_imports_go_through_query_boundaries() {
 
         // Find all `use tsz_solver::...;` imports (handles multi-line with braces)
         // We scan for lines starting with `use tsz_solver::` and collect until `;`
+        // Imports inside `mod tests { ... }` blocks are exempt (test-only setup).
         let mut in_use = false;
         let mut use_buf = String::new();
+        // Track whether we are inside an inline test module (`mod tests { ... }`).
+        // We use simple open/close brace counting once we see `mod tests`.
+        let mut in_test_mod_depth: i32 = 0;
 
         for line in src.lines() {
             let trimmed = line.trim();
             // Skip comments
             if trimmed.starts_with("//") || trimmed.starts_with("///") {
                 continue;
+            }
+
+            // Detect entry into a test module and track depth.
+            if in_test_mod_depth == 0
+                && (trimmed.starts_with("mod tests")
+                    || trimmed.starts_with("#[cfg(test)]")
+                    || trimmed == "#[cfg(test)]")
+            {
+                // Count any opening braces on this line to start tracking.
+                for ch in trimmed.chars() {
+                    if ch == '{' {
+                        in_test_mod_depth += 1;
+                    } else if ch == '}' {
+                        in_test_mod_depth -= 1;
+                    }
+                }
+                continue;
+            }
+            if in_test_mod_depth > 0 {
+                for ch in trimmed.chars() {
+                    if ch == '{' {
+                        in_test_mod_depth += 1;
+                    } else if ch == '}' {
+                        in_test_mod_depth -= 1;
+                    }
+                }
+                continue; // skip all content inside test modules
             }
 
             if !in_use {

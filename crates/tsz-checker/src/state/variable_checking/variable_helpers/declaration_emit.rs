@@ -318,7 +318,7 @@ impl<'a> CheckerState<'a> {
         // workspace symlinks where a package manager hoists deps into
         // nested node_modules directories.
         if nm_positions.len() >= 2 {
-            let last_nm = *nm_positions.last().unwrap();
+            let last_nm = *nm_positions.last().expect("nm_positions has len >= 2");
             let inner_pkg_start = last_nm + 1;
             let inner_pkg_len = if components.get(inner_pkg_start).is_some_and(|c| {
                 matches!(c, Component::Normal(p) if p.to_str().is_some_and(|s| s.starts_with('@')))
