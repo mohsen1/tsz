@@ -848,6 +848,31 @@ impl<'a> CheckerState<'a> {
         {
             target_str = authoritative;
         }
+
+        // For non-generic type aliases whose evaluated form has a display_alias
+        // (i.e., the alias wraps a generic Application like `type Foo = Id<{...}>`),
+        // tsc shows the Application form in TS2322 messages. Replace the alias name
+        // with the display_alias-based formatter output.
+        let rewrite_application_alias =
+            |state: &Self, ty: TypeId, display: &str| -> Option<String> {
+                if display.contains('<') || display.contains('{') || display.contains('|') {
+                    return None; // Already expanded
+                }
+                // Only for types that have a display_alias (were produced by Application eval)
+                state.ctx.types.get_display_alias(ty)?;
+                let mut formatter = state
+                    .ctx
+                    .create_diagnostic_type_formatter()
+                    .with_display_properties()
+                    .with_skip_application_alias_names();
+                Some(formatter.format(ty).into_owned())
+            };
+        if let Some(rewritten) = rewrite_application_alias(self, source, &source_str) {
+            source_str = rewritten;
+        }
+        if let Some(rewritten) = rewrite_application_alias(self, target, &target_str) {
+            target_str = rewritten;
+        }
         (source_str, target_str)
     }
 

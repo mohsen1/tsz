@@ -85,6 +85,10 @@ pub struct TypeFormatter<'a> {
     /// When true, preserve `Array<T>` generic syntax instead of `T[]` shorthand.
     /// tsc preserves the declared form in type-parameter constraints.
     pub(crate) preserve_array_generic_form: bool,
+    /// When true, skip using type alias names for aliases whose body is a generic
+    /// Application (e.g., `type Foo = Id<{...}>`). In assignability error messages,
+    /// tsc shows the Application form `Id<{...}>` rather than the outer alias `Foo`.
+    skip_application_alias_names: bool,
 }
 
 impl<'a> TypeFormatter<'a> {
@@ -105,6 +109,7 @@ impl<'a> TypeFormatter<'a> {
             use_display_properties: false,
             display_alias_visiting: FxHashSet::default(),
             preserve_array_generic_form: false,
+            skip_application_alias_names: false,
         }
     }
 
@@ -129,6 +134,7 @@ impl<'a> TypeFormatter<'a> {
             use_display_properties: false,
             display_alias_visiting: FxHashSet::default(),
             preserve_array_generic_form: false,
+            skip_application_alias_names: false,
         }
     }
 
@@ -167,6 +173,13 @@ impl<'a> TypeFormatter<'a> {
     /// Should be set when formatting types for error messages (not hover/quickinfo).
     pub const fn with_diagnostic_mode(mut self) -> Self {
         self.skip_union_optionalize = true;
+        self
+    }
+
+    /// Skip type alias names for aliases whose body is a generic Application.
+    /// Used in assignability messages where tsc shows the Application form.
+    pub const fn with_skip_application_alias_names(mut self) -> Self {
+        self.skip_application_alias_names = true;
         self
     }
 
@@ -331,9 +344,15 @@ impl<'a> TypeFormatter<'a> {
                 // reduction or conditional evaluation. tsc shows the expanded
                 // form for these types, not the alias name.
                 use crate::def::DefKind;
-                if def.kind == DefKind::TypeAlias
-                    && def.body.is_some_and(|b| def_store.is_computed_body(b))
-                {
+                let skip_alias = if def.kind == DefKind::TypeAlias {
+                    def.body.is_some_and(|b| def_store.is_computed_body(b))
+                        || (self.skip_application_alias_names
+                            && def.type_params.is_empty()
+                            && self.interner.get_display_alias(type_id).is_some())
+                } else {
+                    false
+                };
+                if skip_alias {
                     // Fall through to format the structural type
                 } else {
                     let name = self.format_def_name(&def);
