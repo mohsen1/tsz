@@ -1300,12 +1300,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(def) = self.ctx.definition_store.get(def_id) {
                     if def.kind == tsz_solver::def::DefKind::TypeAlias {
                         if let Some(body) = def.body {
-                            if matches!(
-                                self.ctx.types.lookup(body),
-                                Some(
-                                    tsz_solver::types::TypeData::IndexAccess(_, _)
-                                        | tsz_solver::types::TypeData::Conditional(_)
-                                )
+                            if tsz_solver::type_queries::is_deferred_type_operation(
+                                self.ctx.types,
+                                body,
                             ) {
                                 return true;
                             }

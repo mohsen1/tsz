@@ -376,3 +376,15 @@ pub fn is_only_false_or_never(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
         _ => false,
     }
 }
+
+/// Check if a type is a deferred type operation (IndexAccess or Conditional).
+///
+/// Used by the checker to determine if a type alias body represents a
+/// deferred computation that should not be eagerly displayed by its alias
+/// name (tsc shows the expanded form for these).
+pub fn is_deferred_type_operation(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(
+        db.lookup(type_id),
+        Some(TypeData::IndexAccess(_, _) | TypeData::Conditional(_))
+    )
+}
