@@ -1113,16 +1113,44 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Re-register type_to_def after augmentation heritage merge.
-        // merge_interface_types may have created a new TypeId, so the
-        // registration at line ~1021 (pre-merge) points to a stale TypeId.
-        // Without this, find_def_for_type returns None for the post-merge
-        // TypeId and the formatter expands "Date" into its full member list.
+        // Re-register type_to_def AND TypeEnvironment after augmentation heritage merge.
+        // merge_interface_types / merge_lib_interface_heritage may have created a new
+        // TypeId, so the initial registration (pre-merge) points to a stale TypeId.
+        // Without updating type_to_def, the formatter expands "Date" into its full
+        // member list.  Without updating the TypeEnvironment, Lazy(DefId) evaluates to
+        // the pre-heritage body, causing false TS2322/TS2719 when the literal path
+        // (e.g., regex literals resolving via resolve_lib_type_by_name) returns the
+        // post-merge TypeId directly.
         if let Some(ty) = lib_type_id {
             let name_atom = self.ctx.types.intern_string(name);
             if let Some(defs) = self.ctx.definition_store.find_defs_by_name(name_atom) {
                 if let Some(&def_id) = defs.first() {
                     self.ctx.definition_store.register_type_to_def(ty, def_id);
+                    // Update the TypeEnvironment so that Lazy(DefId) resolves to the
+                    // fully-merged type (post-heritage, post-augmentation).  The initial
+                    // register_lib_def_resolved call registered the pre-merge body;
+                    // this overwrites it with the final merged result.
+                    let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+                    self.ctx
+                        .register_def_auto_params_in_envs(def_id, ty, type_params);
+                }
+            }
+            // Update the symbol_types cache for the INTERFACE type position.
+            // compute_type_of_symbol may have cached a DIFFERENT TypeId
+            // when has_local_interface_decl was a false positive (NodeIndex
+            // collision), causing it to bypass resolve_lib_type_by_name and
+            // use incomplete manual lowering.  We only update when:
+            //   1. The symbol exists in file_locals (it's a global type)
+            //   2. The cached type differs from the lib-resolved type
+            //   3. The cached type was NOT produced by resolve_lib_type_by_name
+            //      (first call to this function for this name)
+            // This preserves user-file augmentations while fixing the
+            // mismatch between annotation and literal type resolution paths.
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+                if let Some(&old) = self.ctx.symbol_types.get(&sym_id) {
+                    if old != ty && old != TypeId::ERROR && old != TypeId::ANY {
+                        self.ctx.symbol_types.insert(sym_id, ty);
+                    }
                 }
             }
         }
