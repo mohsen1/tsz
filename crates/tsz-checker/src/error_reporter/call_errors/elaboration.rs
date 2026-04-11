@@ -383,7 +383,41 @@ impl<'a> CheckerState<'a> {
             return elaborated;
         }
 
-        self.try_elaborate_object_literal_arg_error(expr_idx, target_type)
+        // Use the base elaboration (anchor_at_value: false) so recursive
+        // property elaboration keeps property-name anchors.  The call-arg
+        // top-level entry point sets anchor_at_value: true separately.
+        self.try_elaborate_object_literal_arg_error_base(expr_idx, target_type)
+    }
+
+    /// Base elaboration for object/array/function literals without call-arg
+    /// position shifts.  Identical to `try_elaborate_object_literal_arg_error`
+    /// except object-literal properties keep `anchor_at_value: false`.
+    fn try_elaborate_object_literal_arg_error_base(
+        &mut self,
+        arg_idx: NodeIndex,
+        param_type: TypeId,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let arg_node = match self.ctx.arena.get(arg_idx) {
+            Some(node) => node,
+            None => return false,
+        };
+
+        match arg_node.kind {
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                self.try_elaborate_object_literal_properties(arg_idx, param_type)
+            }
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                self.try_elaborate_array_literal_elements(arg_idx, param_type)
+            }
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
+                self.try_elaborate_function_arg_return_error(arg_idx, param_type)
+            }
+            _ => false,
+        }
     }
 
     /// Try to elaborate an argument type mismatch for object/array literal arguments.
@@ -422,10 +456,11 @@ impl<'a> CheckerState<'a> {
 
         match arg_node.kind {
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => self
-                .try_elaborate_object_literal_properties_with_source(
+                .try_elaborate_object_literal_properties_inner(
                     arg_idx,
                     param_type,
                     source_type_override,
+                    true, // call-arg: anchor diagnostics at property value
                 ),
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 self.try_elaborate_array_literal_elements(arg_idx, param_type)
@@ -792,7 +827,7 @@ impl<'a> CheckerState<'a> {
         arg_idx: NodeIndex,
         param_type: TypeId,
     ) -> bool {
-        self.try_elaborate_object_literal_properties_with_source(arg_idx, param_type, None)
+        self.try_elaborate_object_literal_properties_inner(arg_idx, param_type, None, false)
     }
 
     fn try_elaborate_object_literal_properties_with_source(
@@ -800,6 +835,24 @@ impl<'a> CheckerState<'a> {
         arg_idx: NodeIndex,
         param_type: TypeId,
         source_type_override: Option<TypeId>,
+    ) -> bool {
+        self.try_elaborate_object_literal_properties_inner(
+            arg_idx,
+            param_type,
+            source_type_override,
+            false,
+        )
+    }
+
+    /// When `anchor_at_value` is true, property-level diagnostics point at the
+    /// property value expression (e.g., `Bar` in `x: Bar`) instead of the
+    /// property name (`x`).  tsc uses this behavior in call-argument elaboration.
+    fn try_elaborate_object_literal_properties_inner(
+        &mut self,
+        arg_idx: NodeIndex,
+        param_type: TypeId,
+        source_type_override: Option<TypeId>,
+        anchor_at_value: bool,
     ) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
@@ -1342,8 +1395,13 @@ impl<'a> CheckerState<'a> {
                             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
                             &[&src_str, display_target, &suggestion],
                         );
+                        let ts2820_anchor = if anchor_at_value {
+                            prop_value_idx
+                        } else {
+                            prop_name_idx
+                        };
                         let anchor_idx = self.resolve_diagnostic_anchor_node(
-                            prop_name_idx,
+                            ts2820_anchor,
                             DiagnosticAnchorKind::Exact,
                         );
                         if let Some(anchor) =
@@ -1406,17 +1464,26 @@ impl<'a> CheckerState<'a> {
                         .arena
                         .get(prop_value_idx)
                         .is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16);
+                    // In call-argument context, tsc anchors property-level
+                    // diagnostics at the value expression (e.g., `Bar` in
+                    // `x: Bar`), not the property name.  For shorthand
+                    // properties this is the same node.
+                    let diag_anchor = if anchor_at_value {
+                        prop_value_idx
+                    } else {
+                        prop_name_idx
+                    };
                     if target_prop_type != target_prop_type_for_diagnostic {
                         self.error_type_not_assignable_at_with_display_types(
                             source_prop_type_for_diagnostic,
                             target_prop_type_for_diagnostic,
-                            prop_name_idx,
+                            diag_anchor,
                         );
                     } else {
                         self.error_type_not_assignable_at_with_anchor_elaboration_inner(
                             source_prop_type_for_diagnostic,
                             target_prop_type_for_diagnostic,
-                            prop_name_idx,
+                            diag_anchor,
                             value_is_this_keyword,
                         );
                     }
