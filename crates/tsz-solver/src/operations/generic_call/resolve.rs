@@ -1829,16 +1829,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // For generic constructor calls (e.g. `new D()` where `class D<T>`),
         // store a display_alias so the formatter shows `D<unknown>` instead of
         // just `D` or the expanded structural type.
-        // Guards: skip when func.return_type is Lazy (formatter handles via DefId)
-        // or Application (would create nested Application causing double type args
-        // like `Map<K,V><string, number>` for built-in generic types).
+        // Guard: skip Application base types to avoid nested Application causing
+        // double type args like `Map<K,V><string, number>` for built-in generics.
         if func.is_constructor
-            && return_type != func.return_type
             && !func.type_params.is_empty()
             && self.interner.get_display_alias(return_type).is_none()
             && !matches!(
                 self.interner.lookup(func.return_type),
-                Some(TypeData::Lazy(_) | TypeData::Application(_))
+                Some(TypeData::Application(_))
             )
         {
             let resolved_args: Vec<TypeId> = func
