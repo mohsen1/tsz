@@ -1193,9 +1193,12 @@ impl<'a> CheckerState<'a> {
                     Self::is_nullish_coalescing_or_literal(self.ctx.arena, left_idx);
                 if cause.is_none() && !left_is_top_type && left_is_nullish_chain_or_literal {
                     use crate::diagnostics::diagnostic_codes;
-                    // tsc points the error at the left operand (the never-nullish expression)
+                    // tsc points the error at the left operand (the never-nullish expression),
+                    // skipping through any parentheses to reach the inner expression.
+                    // e.g., `(expr) ?? ""` → error anchored at `expr`, not `(expr)`.
+                    let diag_idx = self.ctx.arena.skip_parenthesized(left_idx);
                     self.error_at_node(
-                        left_idx,
+                        diag_idx,
                         "Right operand of ?? is unreachable because the left operand is never nullish.",
                         diagnostic_codes::RIGHT_OPERAND_OF_IS_UNREACHABLE_BECAUSE_THE_LEFT_OPERAND_IS_NEVER_NULLISH,
                     );

@@ -879,7 +879,11 @@ new C().x;
             .expect("missing source file data");
         let raw_leading = checker.try_leading_jsdoc(
             &sf.comments,
-            parser.get_arena().get(stmt_idx).unwrap().pos,
+            parser
+                .get_arena()
+                .get(stmt_idx)
+                .expect("stmt_idx node must exist")
+                .pos,
             &sf.text,
         );
         assert!(
