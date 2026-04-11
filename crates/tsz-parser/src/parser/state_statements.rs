@@ -1442,6 +1442,8 @@ impl ParserState {
         start_pos: u32,
         modifiers: Option<NodeList>,
     ) -> NodeIndex {
+        use tsz_common::diagnostics::diagnostic_codes;
+
         self.parse_expected(SyntaxKind::ImportKeyword);
 
         // Check for type modifier: `import type X = require(...)`
@@ -1453,8 +1455,58 @@ impl ParserState {
         } else {
             false
         };
-        // Parse the name - allows keywords like 'require' and 'exports' as valid names
-        let name = self.parse_identifier_name();
+        let reserved_word_import_equals_name = self.is_reserved_word();
+        // Parse the name - allow keywords like `require` and `exports` as valid names.
+        // The import-equals parser itself is responsible for the recovery shape.
+        let name = if reserved_word_import_equals_name {
+            let name_start = self.token_pos();
+            let name_end = self.token_end();
+            self.error_expression_expected();
+            self.next_token();
+            self.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                name_start,
+                name_end,
+                IdentifierData {
+                    atom: Atom::NONE,
+                    escaped_text: String::new(),
+                    original_text: None,
+                    type_arguments: None,
+                },
+            )
+        } else {
+            self.parse_identifier_name()
+        };
+
+        if reserved_word_import_equals_name {
+            self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
+            if self.is_token(SyntaxKind::EqualsToken) {
+                self.next_token();
+            }
+            while !matches!(
+                self.token(),
+                SyntaxKind::SemicolonToken | SyntaxKind::EndOfFileToken
+            ) {
+                self.next_token();
+            }
+            if self.is_token(SyntaxKind::SemicolonToken) {
+                self.parse_error_at_current_token("')' expected.", diagnostic_codes::EXPECTED);
+            }
+            self.parse_semicolon();
+            let end_pos = self.token_end();
+            return self.arena.add_import_decl(
+                syntax_kind_ext::IMPORT_EQUALS_DECLARATION,
+                start_pos,
+                end_pos,
+                ImportDeclData {
+                    modifiers,
+                    is_type_only,
+                    import_clause: name,
+                    module_specifier: NodeIndex::NONE,
+                    attributes: NodeIndex::NONE,
+                },
+            );
+        }
 
         self.parse_expected(SyntaxKind::EqualsToken);
 
@@ -1855,8 +1907,8 @@ impl ParserState {
                 }
 
                 // When the variable name itself was erroneous (e.g., TS1389 for a
-                // reserved word like `const export`), suppress the follow-up TS1005
-                // comma error to match tsc's recovery behavior.
+                // reserved word like `const export`), stop this declaration list so
+                // the statement loop can reparse the keyword in the tsc-shaped way.
                 if decl_had_error && !self.is_token(SyntaxKind::CloseBracketToken) {
                     break;
                 }
@@ -2257,6 +2309,10 @@ impl ParserState {
     }
 
     fn parse_variable_declaration_initializer(&mut self) -> NodeIndex {
+        if self.pending_array_binding_tail_recovery {
+            return NodeIndex::NONE;
+        }
+
         if !self.parse_optional(SyntaxKind::EqualsToken) {
             return NodeIndex::NONE;
         }
@@ -2300,6 +2356,25 @@ impl ParserState {
                 "Catch clause variable cannot have an initializer.",
                 diagnostic_codes::CATCH_CLAUSE_VARIABLE_CANNOT_HAVE_AN_INITIALIZER,
             );
+        }
+        if self.pending_array_binding_tail_recovery {
+            self.pending_array_binding_tail_recovery = false;
+            if self.is_token(SyntaxKind::EqualsToken) {
+                self.parse_error_at_current_token(
+                    "Declaration or statement expected.",
+                    diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                );
+                self.next_token();
+                while !matches!(
+                    self.token(),
+                    SyntaxKind::SemicolonToken
+                        | SyntaxKind::CloseBraceToken
+                        | SyntaxKind::EndOfFileToken
+                ) {
+                    self.next_token();
+                }
+            }
+            return;
         }
         if !is_catch_clause
             && initializer.is_none()
@@ -2433,18 +2508,13 @@ impl ParserState {
         // (it binds in the outer scope, not the generator body)
         let is_yield_as_generator_name =
             is_async_generator_declaration && self.is_token(SyntaxKind::YieldKeyword);
-        let name = if self.is_reserved_word() && !is_yield_as_generator_name {
+        let reserved_word_function_name = self.is_reserved_word() && !is_yield_as_generator_name;
+        let name = if reserved_word_function_name {
             let name_start = self.token_pos();
             let name_end = self.token_end();
             let atom = self.scanner.get_token_atom();
             let text = self.scanner.get_token_value_ref().to_string();
             self.error_reserved_word_identifier();
-            if self.is_token(SyntaxKind::OpenParenToken) {
-                self.parse_error_at_current_token(
-                    tsz_common::diagnostics::diagnostic_messages::IDENTIFIER_EXPECTED,
-                    diagnostic_codes::IDENTIFIER_EXPECTED,
-                );
-            }
             self.arena.add_identifier(
                 SyntaxKind::Identifier as u16,
                 name_start,
@@ -2483,6 +2553,10 @@ impl ParserState {
             self.parse_expected(SyntaxKind::CloseParenToken);
             params
         };
+
+        if reserved_word_function_name && self.is_token(SyntaxKind::OpenBraceToken) {
+            self.parse_error_at_current_token("'=>' expected.", diagnostic_codes::EXPECTED);
+        }
 
         // Parse optional return type (may be a type predicate: param is T)
         // Note: Type annotations are not in async/generator context

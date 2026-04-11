@@ -161,6 +161,10 @@ pub struct ParserState {
     /// parse the next `import()` options object with generic expression
     /// grammar so its diagnostics degrade like TypeScript's fallback path.
     pub(crate) fallback_import_type_options_once: bool,
+    /// A malformed array-binding tail should keep `=` visible to declaration
+    /// recovery so statement-level TS1128 can land there instead of being
+    /// consumed as a normal initializer.
+    pub(crate) pending_array_binding_tail_recovery: bool,
     /// Parse `import()` options using type-import attribute grammar instead of
     /// generic object-literal expression grammar.
     pub(crate) in_import_type_options_context: bool,
@@ -235,6 +239,7 @@ impl ParserState {
             abort_intersection_continuation: false,
             deferred_type_member_close_braces: 0,
             fallback_import_type_options_once: false,
+            pending_array_binding_tail_recovery: false,
             in_import_type_options_context: false,
             import_attribute_tail_recovered: false,
             suppress_object_literal_comma_once: false,
@@ -268,6 +273,7 @@ impl ParserState {
         self.deferred_type_member_close_braces = 0;
         self.abort_intersection_continuation = false;
         self.fallback_import_type_options_once = false;
+        self.pending_array_binding_tail_recovery = false;
         self.in_import_type_options_context = false;
         self.import_attribute_tail_recovered = false;
         self.suppress_object_literal_comma_once = false;
@@ -1714,43 +1720,16 @@ impl ParserState {
     fn recover_after_reserved_word_in_variable_declaration(&mut self, keyword: SyntaxKind) {
         use tsz_common::diagnostics::diagnostic_codes;
 
-        // Consume the reserved word token to prevent cascading errors.
         self.next_token();
 
         // In tsc, `var class;` causes the variable declaration list to abort, then the
         // statement loop reparses `class` as a class declaration which expects `{` but
         // finds `;`, emitting TS1005 '{' expected.' at the semicolon. We emit this
-        // directly since we consume the token rather than letting it be reparsed.
+        // directly, then consume the reserved word so the declaration parser can move on.
         if keyword == SyntaxKind::ClassKeyword && self.is_token(SyntaxKind::SemicolonToken) {
             self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
-        }
-
-        // After consuming the reserved word, if the next token can't continue the
-        // variable declaration (not `;`, `,`, `=`, `:`, `!`, `}`, or EOF), skip
-        // remaining tokens on this statement to prevent cascading errors.
-        // e.g., `const export as namespace oo4;` — after consuming `export` (TS1389),
-        // skip `as namespace oo4` so only the semicolon remains.
-        if !matches!(
-            self.token(),
-            SyntaxKind::SemicolonToken
-                | SyntaxKind::CommaToken
-                | SyntaxKind::EqualsToken
-                | SyntaxKind::ColonToken
-                | SyntaxKind::ExclamationToken
-                | SyntaxKind::CloseBraceToken
-                | SyntaxKind::EndOfFileToken
-        ) && !self.scanner.has_preceding_line_break()
-        {
-            // Skip tokens until we reach a statement boundary
-            while !matches!(
-                self.token(),
-                SyntaxKind::SemicolonToken
-                    | SyntaxKind::CloseBraceToken
-                    | SyntaxKind::EndOfFileToken
-            ) && !self.scanner.has_preceding_line_break()
-            {
-                self.next_token();
-            }
+        } else if keyword == SyntaxKind::TypeOfKeyword {
+            self.error_expression_expected();
         }
     }
 

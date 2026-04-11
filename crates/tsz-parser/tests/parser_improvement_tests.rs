@@ -151,6 +151,23 @@ namespace N {
 }
 
 #[test]
+fn test_es5_bind_signature_with_this_parameter_parses() {
+    let source = r#"
+interface Test {
+  bind<T, A extends any[], B extends any[], R>(this: (this: T, ...args: [...A, ...B]) => R, thisArg: T, ...args: A): (...args: B) => R;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics.is_empty(),
+        "ES5-style bind signature with a this parameter should parse cleanly: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_parenthesized_object_literal_after_arrow_is_not_treated_as_missing_arrow() {
     let source = r"
 /** @template T @param {T|undefined} value @returns {T} */

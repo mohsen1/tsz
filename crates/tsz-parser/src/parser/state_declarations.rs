@@ -1760,16 +1760,6 @@ impl ParserState {
                         diagnostic_codes::NAMESPACE_NAME_CANNOT_BE,
                     );
                     self.next_token();
-                    // After an invalid namespace name, emit TS1005 for ';' expected
-                    if self.is_token(SyntaxKind::OpenBraceToken) {
-                        let brace_pos = self.token_pos();
-                        self.parse_error_at(
-                            brace_pos,
-                            1,
-                            "';' expected.",
-                            diagnostic_codes::EXPECTED,
-                        );
-                    }
                     // Create a missing identifier for recovery
                     self.arena.add_identifier(
                         SyntaxKind::Identifier as u16,
@@ -1932,16 +1922,6 @@ impl ParserState {
                         diagnostic_codes::NAMESPACE_NAME_CANNOT_BE,
                     );
                     self.next_token();
-                    // After an invalid namespace name, emit TS1005 for ';' expected
-                    if self.is_token(SyntaxKind::OpenBraceToken) {
-                        let brace_pos = self.token_pos();
-                        self.parse_error_at(
-                            brace_pos,
-                            1,
-                            "';' expected.",
-                            diagnostic_codes::EXPECTED,
-                        );
-                    }
                     // Create a missing identifier for recovery
                     self.arena.add_identifier(
                         SyntaxKind::Identifier as u16,
@@ -2502,6 +2482,18 @@ impl ParserState {
         // Namespace import names must still reject reserved words like `while`,
         // but allow contextual keywords such as `type`.
         let name = self.parse_identifier();
+        if self.is_token(SyntaxKind::FromKeyword) {
+            let snapshot = self.scanner.save_state();
+            let current = self.current_token;
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
+            self.next_token();
+            if self.is_token(SyntaxKind::StringLiteral) {
+                self.parse_error_at_current_token("')' expected.", diagnostic_codes::EXPECTED);
+            }
+            self.scanner.restore_state(snapshot);
+            self.current_token = current;
+        }
         let end_pos = self.token_end();
 
         self.arena.add_named_imports(
