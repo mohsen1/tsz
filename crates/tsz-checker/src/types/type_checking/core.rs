@@ -428,10 +428,14 @@ impl<'a> CheckerState<'a> {
         let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
             return;
         };
-        if elem_node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER
-            && let Some(member) = self.ctx.arena.get_named_tuple_member(elem_node)
-        {
-            self.check_type_for_missing_names(member.type_node);
+        if elem_node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER {
+            if let Some(member) = self.ctx.arena.get_named_tuple_member(elem_node) {
+                self.check_type_for_missing_names(member.type_node);
+            }
+        } else {
+            // For regular tuple elements (TYPE_REFERENCE, REST_TYPE, etc.),
+            // check the element node itself for missing names.
+            self.check_type_for_missing_names(elem_idx);
         }
     }
 
