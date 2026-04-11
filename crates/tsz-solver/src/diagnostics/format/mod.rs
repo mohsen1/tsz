@@ -381,6 +381,39 @@ impl<'a> TypeFormatter<'a> {
                         }
                         // Mapped type with generic params — fall through to structural display
                     } else {
+                        // For non-generic type aliases, check if the display_alias
+                        // is a generic Application whose base type has a mapped type
+                        // body. tsc shows `Id<{...}>` for `type Foo1 = Id<{...}>`
+                        // (where Id is a mapped type), but preserves `Bar` for
+                        // `type Bar = Omit<Foo, "c">` (where Omit is a type alias).
+                        if def.kind == DefKind::TypeAlias {
+                            if let Some(alias_origin) = self.interner.get_display_alias(type_id)
+                                && let Some(TypeData::Application(app_id)) =
+                                    self.interner.lookup(alias_origin)
+                            {
+                                let app = self.interner.type_application(app_id);
+                                let base_has_mapped_body = if let Some(TypeData::Lazy(base_def_id)) =
+                                    self.interner.lookup(app.base)
+                                    && let Some(ds) = self.def_store
+                                    && let Some(base_def) = ds.get(base_def_id)
+                                    && let Some(body) = base_def.body
+                                {
+                                    crate::visitors::visitor_predicates::is_mapped_type(
+                                        self.interner,
+                                        body,
+                                    )
+                                } else {
+                                    false
+                                };
+                                if base_has_mapped_body
+                                    && self.display_alias_visiting.insert(alias_origin)
+                                {
+                                    let result = self.format(alias_origin);
+                                    self.display_alias_visiting.remove(&alias_origin);
+                                    return result;
+                                }
+                            }
+                        }
                         // When a type resolves to a named definition (interface,
                         // class, or type alias), show that name. tsc preserves alias
                         // symbols: `type Bar = Omit<Foo, "c">` displays as "Bar".
@@ -519,11 +552,11 @@ impl<'a> TypeFormatter<'a> {
                     // just "ClassName".
                     if !shape.construct_signatures.is_empty()
                         && let Some(arena) = self.symbol_arena
-                            && let Some(sym) = arena.get(sym_id)
-                            && sym.has_flags(tsz_binder::symbol_flags::CLASS)
-                        {
-                            return format!("typeof {name}").into();
-                        }
+                        && let Some(sym) = arena.get(sym_id)
+                        && sym.has_flags(tsz_binder::symbol_flags::CLASS)
+                    {
+                        return format!("typeof {name}").into();
+                    }
                     return name.into();
                 }
                 self.format_callable(shape.as_ref()).into()
