@@ -514,8 +514,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         } else {
             false
         } && self.is_external_module();
-        let should_check_augmentation_body =
-            has_declare && is_string_named && self.is_external_module();
+        let should_check_augmentation_body = has_declare
+            && is_string_named
+            && self.is_external_module()
+            && !self.is_declaration_file();
         if should_check_augmentation_body {
             let module_specifier = self
                 .ctx
