@@ -440,11 +440,15 @@ impl<'a> NarrowingContext<'a> {
                                 resolver.resolve_lazy(def_id, self.db.as_type_database());
                             let type_params = resolver.get_lazy_type_params(def_id);
                             if let (Some(body), Some(params)) = (resolved_body, type_params) {
+                                // Resolve type args so Lazy aliases become their
+                                // structural forms (e.g. Union) for distribution.
+                                let resolved_args: Vec<TypeId> =
+                                    app.args.iter().map(|&arg| self.resolve_type(arg)).collect();
                                 type_id = crate::instantiation::instantiate::instantiate_generic(
                                     self.db.as_type_database(),
                                     body,
                                     &params,
-                                    &app.args,
+                                    &resolved_args,
                                 );
                                 continue;
                             }
