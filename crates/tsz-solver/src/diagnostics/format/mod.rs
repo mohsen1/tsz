@@ -383,7 +383,16 @@ impl<'a> TypeFormatter<'a> {
         // If so, format the original Application type instead of the expanded form.
         // Guard against cycles: if we're already inside a display_alias Application's
         // args, skip further display_alias redirects to prevent `Wrap<Wrap<...>>`.
-        if let Some(alias_origin) = self.interner.get_display_alias(type_id)
+        //
+        // Skip for simple types (literals, arrays, tuples): tsc shows the resolved
+        // form directly (e.g., `"b"` not `KeysExtendedBy<M, number>`), so we should
+        // not redirect these back to the Application form.
+        let is_simple_type = matches!(
+            &key,
+            TypeData::Literal(_) | TypeData::Array(_) | TypeData::Tuple(_)
+        );
+        if !is_simple_type
+            && let Some(alias_origin) = self.interner.get_display_alias(type_id)
             && self.display_alias_visiting.insert(alias_origin)
         {
             let result = self.format(alias_origin);
