@@ -1099,16 +1099,6 @@ impl<'a> CheckerState<'a> {
                     && !type_args_list.nodes.is_empty()
                     && self.ctx.types.get_display_alias(return_type).is_none()
                 {
-                    let return_type_data = self.ctx.types.lookup(return_type);
-                    eprintln!(
-                        "[DEBUG] new expr with type args: return_type={:?} data={:?} has_display_alias={}",
-                        return_type,
-                        return_type_data,
-                        self.ctx.types.get_display_alias(return_type).is_some()
-                    );
-                    if !matches!(return_type_data, Some(tsz_solver::TypeData::Lazy(_))) {
-                        eprintln!("[DEBUG] NOT Lazy, skipping display_alias store");
-                    }
                     let resolved_args: Vec<TypeId> = type_args_list
                         .nodes
                         .iter()
