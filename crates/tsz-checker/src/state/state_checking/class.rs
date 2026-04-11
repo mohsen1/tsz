@@ -123,21 +123,15 @@ impl<'a> CheckerState<'a> {
 
                     // TS1238: Validate class decorator call signature.
                     if self.ctx.compiler_options.experimental_decorators {
-                        // For experimental decorators, the decorator is called as
-                        // decoratorExpr(classConstructor). If no call signature exists
-                        // or call resolution fails, emit TS1238.
-                        // tsc anchors TS1238 at the decorator node (including @), not just the expression.
+                        // Experimental decorators: tsc anchors TS1238 at the expression (after @).
                         self.check_class_decorator_call_signature(
-                            mod_idx,
+                            decorator.expression,
                             decorator_type,
                             stmt_idx,
                             class,
                         );
                     } else {
-                        // For ES decorators, decorators are called as
-                        // decoratorExpr(value, context). If the decorator function
-                        // requires more than 2 parameters, emit TS1238.
-                        // tsc anchors TS1238 at the decorator node (including @), not just the expression.
+                        // ES decorators: tsc anchors TS1238 at the decorator node (including @).
                         self.check_es_class_decorator_arity(mod_idx, decorator_type);
                     }
                 }
