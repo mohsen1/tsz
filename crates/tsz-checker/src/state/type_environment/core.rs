@@ -302,12 +302,12 @@ impl<'a> CheckerState<'a> {
         // result differs from the original Application, record the mapping
         // so the formatter can display `Dictionary<string>` instead of the
         // expanded `{ [index: string]: string; }`.
-        // Only store when the Application's type args are fully concrete
-        // (no type parameters) to avoid conflating generic contexts where
-        // the same evaluated TypeId may arise from both explicit annotations
-        // and Application evaluation (e.g., `{ [key: string]: T }` vs
-        // `Record<string, T>`). Concrete args like `Dictionary<string>` or
-        // `Uint8Array<ArrayBuffer>` are safe to alias.
+        //
+        // For concrete args: always store (safe, no conflation risk).
+        // For generic args: only store when the result is a Conditional or
+        // IndexAccess type. These types are structurally unique per alias
+        // (unlike Mapped/Object types which can collide with built-in aliases
+        // like Record, Partial, Pick, Omit due to interning dedup).
         if result != type_id {
             let has_param_args = if let Some(app) = query::application_info(self.ctx.types, type_id)
             {
@@ -320,7 +320,10 @@ impl<'a> CheckerState<'a> {
             } else {
                 false
             };
-            if !has_param_args {
+            let is_safe_for_generic_alias =
+                tsz_solver::is_conditional_type(self.ctx.types.as_type_database(), result)
+                    || tsz_solver::is_index_access_type(self.ctx.types.as_type_database(), result);
+            if !has_param_args || is_safe_for_generic_alias {
                 self.ctx.types.store_display_alias(result, type_id);
             }
         }
