@@ -360,11 +360,23 @@ impl<'a> CheckerState<'a> {
             result_type
         };
 
+        // For arithmetic/bitwise compound assignments, tsc widens literal types in the
+        // TS2322 diagnostic. For example, `enum E; var x: E; x += ''` reports
+        // "Type 'string' is not assignable to type 'E'", not "Type '\"\"' ...".
+        // This mirrors tsc's semantics: the source of `x op= y` is the binary result
+        // `x op y`, and tsc reports that result with literal widening applied.
+        // Logical compound assignments (&&=, ||=, ??=) preserve the narrow RHS type.
+        let assigned_type_for_diag = if is_logical_assignment {
+            assigned_type
+        } else {
+            crate::query_boundaries::common::widen_literal_type(self.ctx.types, assigned_type)
+        };
+
         if left_type != TypeId::ANY && !emitted_operator_error {
             self.check_assignment_compatibility(
                 left_idx,
                 right_idx,
-                assigned_type,
+                assigned_type_for_diag,
                 left_type,
                 true,
                 false,
