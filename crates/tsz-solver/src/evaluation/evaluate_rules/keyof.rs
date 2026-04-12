@@ -330,6 +330,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // Then compute keyof of the evaluated result
                     self.recurse_keyof(evaluated)
                 }
+                // ThisType: resolve to the concrete class type via the resolver,
+                // then compute keyof on the resolved type.
+                TypeData::ThisType => {
+                    if let Some(concrete_this) = self.resolver().resolve_this_type(self.interner())
+                    {
+                        self.recurse_keyof(concrete_this)
+                    } else {
+                        self.interner().keyof(operand)
+                    }
+                }
                 // Enum types: resolve to the namespace object type for keyof
                 // typeof Enum gives { Up: E.Up, Down: E.Down }, keyof gives "Up" | "Down"
                 TypeData::Enum(def_id, _member_type) => {
