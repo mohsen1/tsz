@@ -509,9 +509,7 @@ impl<'a> CheckerState<'a> {
         // Fallback: if the constructor type is still Lazy after resolve_lazy_type,
         // try resolving by name from lib contexts. This handles lib interfaces like
         // ProxyConstructor whose DefId has no symbol mapping when first accessed.
-        if let Some(tsz_solver::types::TypeData::Lazy(def_id)) =
-            self.ctx.types.lookup(constructor_type)
-        {
+        if let Some(def_id) = tsz_solver::visitor::lazy_def_id(self.ctx.types, constructor_type) {
             if let Some(def_info) = self.ctx.definition_store.get(def_id) {
                 let name = self.ctx.types.resolve_atom(def_info.name);
                 if !name.is_empty() {
