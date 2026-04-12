@@ -592,6 +592,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn format_type_diagnostic_structural(&self, ty: TypeId) -> String {
         let mut formatter =
             tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
+                .with_def_store(&self.ctx.definition_store)
                 .with_diagnostic_mode()
                 .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
                 .with_display_properties();
@@ -1945,6 +1946,7 @@ impl<'a> CheckerState<'a> {
         let declared_display = if declared_is_generic_callable {
             let mut formatter =
                 tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
+                    .with_def_store(&self.ctx.definition_store)
                     .with_diagnostic_mode()
                     .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks);
             formatter.format(declared_display_type).into_owned()
