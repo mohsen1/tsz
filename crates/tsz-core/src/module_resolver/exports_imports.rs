@@ -43,13 +43,25 @@ impl ModuleResolver {
                     // relative path. This supports self-referencing imports like
                     // "#type": "package" where the imports field maps to a package name.
                     if !target.starts_with("./") && !target.starts_with('/') {
-                        return self.resolve_bare_specifier(
-                            &target,
-                            &current,
-                            containing_file,
-                            specifier_span,
-                            importing_module_kind,
-                        );
+                        return self
+                            .resolve_bare_specifier(
+                                &target,
+                                &current,
+                                containing_file,
+                                specifier_span,
+                                importing_module_kind,
+                            )
+                            .map_err(|e| match e {
+                                ResolutionFailure::NotFound { span, .. }
+                                | ResolutionFailure::AmbiguousProjectRoot { span, .. } => {
+                                    ResolutionFailure::NotFound {
+                                        specifier: specifier.to_string(),
+                                        containing_file: containing_file.to_string(),
+                                        span,
+                                    }
+                                }
+                                other => other,
+                            });
                     }
 
                     // Resolve the target as a relative path
