@@ -656,7 +656,17 @@ impl<'a> CheckerState<'a> {
             {
                 return true;
             }
-            if k == syntax_kind_ext::UNION_TYPE {
+            // A generic type reference (e.g. ReadonlyArray<T>, Promise<T>) provides
+            // structural deferral via generic instantiation — the recursive reference
+            // is behind a layer of indirection.
+            if k == syntax_kind_ext::TYPE_REFERENCE {
+                if let Some(tr) = self.ctx.arena.get_type_ref(body_node)
+                    && tr.type_arguments.is_some()
+                {
+                    return true;
+                }
+            }
+            if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE {
                 let children = self.ctx.arena.get_children(ta.type_node);
                 if !children.is_empty()
                     && children.iter().all(|&c| {
@@ -669,6 +679,13 @@ impl<'a> CheckerState<'a> {
                                 || ck == syntax_kind_ext::FUNCTION_TYPE
                                 || ck == syntax_kind_ext::CONSTRUCTOR_TYPE
                                 || ck == syntax_kind_ext::TYPE_OPERATOR
+                                || (ck == syntax_kind_ext::TYPE_REFERENCE
+                                    && self
+                                        .ctx
+                                        .arena
+                                        .get_type_ref(cn)
+                                        .and_then(|tr| tr.type_arguments.as_ref())
+                                        .is_some())
                         })
                     })
                 {
