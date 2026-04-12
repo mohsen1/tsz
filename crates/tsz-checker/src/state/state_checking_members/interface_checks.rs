@@ -1701,14 +1701,23 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 } else {
-                    // Simple identifiers: tsc flags all conflicting declarations.
+                    // Simple identifiers: tsc's rule is order-sensitive.
                     //
-                    // Exception for private names: when an accessor appears BEFORE
-                    // a field (property) with the same private name, tsc flags
-                    // only the field — the accessor is treated as the established
-                    // declaration, and the subsequent field is the "real" conflict.
-                    // For all other orderings (field first, or no field at all),
-                    // both sides are flagged.
+                    // Two exceptions to the default "flag all" rule:
+                    //
+                    // 1. Private names: when an accessor appears BEFORE a field
+                    //    (property) with the same private name, tsc flags only the
+                    //    field — the accessor is treated as the established
+                    //    declaration, and the subsequent field is the "real" conflict.
+                    //
+                    // 2. Public names with a valid get+set pair: when a getter and
+                    //    setter (one of each kind, no same-kind duplicates) are
+                    //    declared BEFORE a conflicting property/method, tsc treats
+                    //    the accessor pair as establishing the member — only the
+                    //    later property/method is flagged.
+                    //
+                    // Otherwise (property came first, or accessors don't form a
+                    // valid pair), flag all conflicting declarations.
                     let is_private = bare_key.starts_with('#');
                     let first_accessor_pos = accessor_indices
                         .first()
@@ -1726,13 +1735,49 @@ impl<'a> CheckerState<'a> {
                         (Some(fp), Some(ap)) if fp > ap
                     );
 
-                    if is_private && field_strictly_after_accessor {
-                        // Only flag the members (the field comes after the
-                        // accessor; the accessor is not flagged).
+                    let static_prefix = key.starts_with("static:");
+                    let plain = key.strip_prefix("static:").unwrap_or(key);
+                    let get_key = if static_prefix {
+                        format!("static:get:{plain}")
+                    } else {
+                        format!("get:{plain}")
+                    };
+                    let set_key = if static_prefix {
+                        format!("static:set:{plain}")
+                    } else {
+                        format!("set:{plain}")
+                    };
+                    let get_info = seen_accessors.get(&get_key);
+                    let set_info = seen_accessors.get(&set_key);
+                    let has_valid_pair = matches!(
+                        (get_info, set_info),
+                        (Some(g), Some(s)) if g.indices.len() == 1 && s.indices.len() == 1
+                    );
+
+                    let first_member_pos = member_info
+                        .indices
+                        .first()
+                        .and_then(|&idx| self.ctx.arena.get(idx))
+                        .map(|n| n.pos)
+                        .unwrap_or(u32::MAX);
+                    let last_accessor_pos = accessor_indices
+                        .iter()
+                        .filter_map(|&idx| self.ctx.arena.get(idx).map(|n| n.pos))
+                        .max()
+                        .unwrap_or(0);
+
+                    let public_pair_before_member =
+                        has_valid_pair && last_accessor_pos < first_member_pos;
+
+                    if (is_private && field_strictly_after_accessor) || public_pair_before_member {
+                        // Accessor(s) established the member first — flag only
+                        // the later property/method declarations.
                         for &idx in &member_info.indices {
                             self.report_duplicate_class_member_ts2300(idx);
                         }
                     } else {
+                        // Property/method came first, or accessors don't form a
+                        // qualifying set: flag all conflicting declarations.
                         for &idx in &member_info.indices {
                             self.report_duplicate_class_member_ts2300(idx);
                         }
