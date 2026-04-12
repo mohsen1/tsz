@@ -1479,6 +1479,64 @@ fn format_callable_single_call_signature() {
 }
 
 #[test]
+fn format_callable_single_construct_signature() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    // Anonymous callable with single construct signature should use arrow notation:
+    // `new <T>(x: T, y: T) => string` instead of `{ new <T>(x: T, y: T): string; }`
+    let type_param = TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = db.type_param(type_param.clone());
+
+    let callable = db.callable(CallableShape {
+        call_signatures: vec![],
+        construct_signatures: vec![CallSignature {
+            type_params: vec![type_param],
+            params: vec![
+                ParamInfo {
+                    name: Some(db.intern_string("x")),
+                    type_id: t_type,
+                    optional: false,
+                    rest: false,
+                },
+                ParamInfo {
+                    name: Some(db.intern_string("y")),
+                    type_id: t_type,
+                    optional: false,
+                    rest: false,
+                },
+            ],
+            this_type: None,
+            return_type: TypeId::STRING,
+            type_predicate: None,
+            is_method: false,
+        }],
+        properties: vec![],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    });
+
+    let result = fmt.format(callable);
+    // Single construct sig with no props/index = arrow-style with 'new' prefix
+    assert!(
+        result.contains("new") && result.contains("<T>") && result.contains("=> string"),
+        "Single construct signature should use arrow notation like 'new <T>(x: T, y: T) => string', got: {result}"
+    );
+    // Should NOT have braces (object literal format)
+    assert!(
+        !result.starts_with('{'),
+        "Single construct signature should NOT use object notation, got: {result}"
+    );
+}
+
+#[test]
 fn format_callable_multiple_call_signatures() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);

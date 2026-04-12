@@ -1521,6 +1521,15 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // When the result type is a union (e.g., `number | Date` from
+        // `new unionOfDifferentReturnType(10)` where unionOfDifferentReturnType
+        // is `{ new (a: number): number } | { new (a: number): Date }`),
+        // TSC shows the actual result type, not the constructor variable name.
+        // Return None to let the fallback formatting handle it.
+        if tsz_solver::type_queries::get_union_members(self.ctx.types, display_type).is_some() {
+            return None;
+        }
+
         if let Some(new_expr) = self.ctx.arena.get_call_expr(node)
             && let Some(mut ctor_display) = self.expression_text(new_expr.expression)
         {
