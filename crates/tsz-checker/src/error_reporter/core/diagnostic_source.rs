@@ -1252,6 +1252,16 @@ impl<'a> CheckerState<'a> {
             {
                 return self.format_annotation_like_type(&display);
             }
+            // When the fallback produces duplicate names in a union or tuple
+            // (e.g., `Yep | Yep` or `[Yep, Yep]`) but the annotation text preserves
+            // namespace-qualified names (e.g., `Foo.Yep | Bar.Yep` or
+            // `[Foo.Yep, Bar.Yep]`), prefer the annotation text. This matches tsc's
+            // behavior of qualifying types when they'd otherwise be ambiguous.
+            if Self::has_duplicate_union_member_names(&fallback)
+                && !Self::has_duplicate_union_member_names(&display)
+            {
+                return self.format_annotation_like_type(&display);
+            }
             return fallback;
         }
 

@@ -991,6 +991,39 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a type display string contains duplicate type names in a
+    /// union (`Yep | Yep`) or tuple (`[Yep, Yep]`) context.
+    pub(super) fn has_duplicate_union_member_names(display: &str) -> bool {
+        // Try union split first
+        if display.contains(" | ") {
+            let members: Vec<&str> = display.split(" | ").collect();
+            if members.len() >= 2 {
+                for i in 0..members.len() {
+                    for j in (i + 1)..members.len() {
+                        if members[i] == members[j] {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        // Try tuple split (e.g., "[Yep, Yep]")
+        let inner = display.strip_prefix('[').and_then(|s| s.strip_suffix(']'));
+        if let Some(inner) = inner {
+            let members: Vec<&str> = inner.split(", ").collect();
+            if members.len() >= 2 {
+                for i in 0..members.len() {
+                    for j in (i + 1)..members.len() {
+                        if members[i] == members[j] {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
     pub(super) fn widen_member_literals_in_display_text(display: &str) -> String {
         let bytes = display.as_bytes();
         let mut out = String::with_capacity(display.len());

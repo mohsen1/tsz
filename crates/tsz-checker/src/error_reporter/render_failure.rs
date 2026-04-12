@@ -1936,6 +1936,24 @@ impl<'a> CheckerState<'a> {
         }
         source_str = self.normalize_template_placeholder_spacing_for_display(&source_str);
         target_str = self.normalize_template_placeholder_spacing_for_display(&target_str);
+        // When source and target have the same unqualified display name (e.g.,
+        // source is "Abcd.E" and target is "E"), disambiguate the target using
+        // the annotation text. tsc shows "Type 'Abcd.E' is not assignable to type
+        // 'First.E'" when both types are named "E" from different namespaces.
+        if depth == 0 {
+            let source_unqualified = source_str.rsplit('.').next().unwrap_or(&source_str);
+            if source_unqualified == target_str || source_str == target_str {
+                if let Some(target_expr) = self.assignment_target_expression(idx)
+                    && let Some(annotation) =
+                        self.declared_type_annotation_text_for_expression(target_expr)
+                {
+                    let trimmed = annotation.trim();
+                    if trimmed.contains('.') && !trimmed.contains(' ') && !trimmed.contains('{') {
+                        target_str = self.format_annotation_like_type(trimmed);
+                    }
+                }
+            }
+        }
         if depth == 0 && target_str == "Object" {
             let evaluated = self.evaluate_type_for_assignability(source);
             let widened = crate::query_boundaries::common::widen_type(self.ctx.types, evaluated);
