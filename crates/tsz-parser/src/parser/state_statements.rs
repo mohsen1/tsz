@@ -2088,7 +2088,6 @@ impl ParserState {
                     }
                     if was_dot && token_is_keyword(self.token()) {
                         use tsz_common::diagnostics::diagnostic_messages;
-                        let keyword = self.token();
                         let word = self.current_keyword_text();
                         let msg =
                             diagnostic_messages::IS_NOT_ALLOWED_AS_A_VARIABLE_DECLARATION_NAME
@@ -2097,7 +2096,39 @@ impl ParserState {
                             &msg,
                             diagnostic_codes::IS_NOT_ALLOWED_AS_A_VARIABLE_DECLARATION_NAME,
                         );
-                        self.recover_reserved_word_variable_declaration_tail(keyword);
+                        // Consume the reserved word and, if followed by a call tail
+                        // like `typeof(this.foo)`, silently skip it. tsc stops after
+                        // the TS1389 diagnostic without cascading TS1109/TS1005 into
+                        // the trailing parentheses. Example:
+                        //   `const x: "".typeof(this.foo);` → TS1005 at `.`, TS1389
+                        //   at `typeof`, and nothing more.
+                        self.next_token();
+                        if self.is_token(SyntaxKind::OpenParenToken)
+                            && !self.scanner.has_preceding_line_break()
+                        {
+                            self.next_token(); // consume `(`
+                            let mut paren_depth = 1u32;
+                            while !matches!(
+                                self.token(),
+                                SyntaxKind::SemicolonToken
+                                    | SyntaxKind::CloseBraceToken
+                                    | SyntaxKind::EndOfFileToken
+                            ) && !self.scanner.has_preceding_line_break()
+                            {
+                                match self.token() {
+                                    SyntaxKind::OpenParenToken => paren_depth += 1,
+                                    SyntaxKind::CloseParenToken => {
+                                        paren_depth -= 1;
+                                        if paren_depth == 0 {
+                                            self.next_token();
+                                            break;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                                self.next_token();
+                            }
+                        }
                     } else if was_dot && self.is_identifier_or_keyword() && !self.is_reserved_word()
                     {
                         // `declare const x: "foo".charCodeAt(0);` is recovered by tsc as if
