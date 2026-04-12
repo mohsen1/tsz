@@ -2053,3 +2053,61 @@ fn non_optional_param_keeps_undefined_in_union() {
         "Non-optional param should keep '| undefined' in union"
     );
 }
+
+#[test]
+fn object_union_optionalization_in_default_mode() {
+    // Without diagnostic mode, object unions should show synthetic `?: undefined`
+    // for properties that exist in some but not all union members.
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    // Create { prop: string; anotherP: string; } | { prop: number; }
+    let obj1 = db.object(vec![
+        PropertyInfo::new(db.intern_string("prop"), TypeId::STRING),
+        PropertyInfo::new(db.intern_string("anotherP"), TypeId::STRING),
+    ]);
+    let obj2 = db.object(vec![PropertyInfo::new(
+        db.intern_string("prop"),
+        TypeId::NUMBER,
+    )]);
+    let union_id = db.union_preserve_members(vec![obj1, obj2]);
+
+    let result = fmt.format(union_id);
+    // In default (hover/quickinfo) mode, we add synthetic `anotherP?: undefined`
+    // to the second member for better discriminated union display.
+    assert!(
+        result.contains("anotherP?:"),
+        "Default mode should add synthetic optional properties, got: {result}"
+    );
+}
+
+#[test]
+fn object_union_no_optionalization_in_diagnostic_mode() {
+    // With diagnostic mode, object unions should NOT add synthetic properties.
+    // tsc only uses optionalization in hover/quickinfo, not in error messages.
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db).with_diagnostic_mode();
+
+    // Create { prop: string; anotherP: string; } | { prop: number; }
+    let obj1 = db.object(vec![
+        PropertyInfo::new(db.intern_string("prop"), TypeId::STRING),
+        PropertyInfo::new(db.intern_string("anotherP"), TypeId::STRING),
+    ]);
+    let obj2 = db.object(vec![PropertyInfo::new(
+        db.intern_string("prop"),
+        TypeId::NUMBER,
+    )]);
+    let union_id = db.union_preserve_members(vec![obj1, obj2]);
+
+    let result = fmt.format(union_id);
+    // In diagnostic mode, we should NOT add synthetic properties.
+    // The result should be: { prop: string; anotherP: string; } | { prop: number; }
+    assert!(
+        !result.contains("anotherP?:"),
+        "Diagnostic mode should NOT add synthetic optional properties, got: {result}"
+    );
+    assert!(
+        result.contains("{ prop: number; }"),
+        "Second member should have original shape without synthetic props, got: {result}"
+    );
+}

@@ -1332,7 +1332,10 @@ impl<'a> CheckerState<'a> {
                 let fallback = if preserve_literal_surface {
                     self.format_type_diagnostic(target)
                 } else {
-                    self.format_type(self.widen_fresh_object_literal_properties_for_display(target))
+                    // Use diagnostic mode to avoid synthetic `?: undefined` in unions
+                    self.format_type_diagnostic_widened(
+                        self.widen_fresh_object_literal_properties_for_display(target),
+                    )
                 };
                 // Generic callable targets preserve type alias names from annotations
                 let target_is_generic_callable =
@@ -1392,7 +1395,10 @@ impl<'a> CheckerState<'a> {
         if self.target_preserves_literal_surface(source) {
             self.format_type_diagnostic(display_target)
         } else {
-            self.format_type(self.widen_fresh_object_literal_properties_for_display(display_target))
+            // Use diagnostic mode to avoid synthetic `?: undefined` in unions
+            self.format_type_diagnostic_widened(
+                self.widen_fresh_object_literal_properties_for_display(display_target),
+            )
         }
     }
 
