@@ -1614,6 +1614,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_literal_sensitive_assignment_target_inner(&self, target: TypeId) -> bool {
+        // NoInfer<T> wraps T without changing its literal nature — unwrap and check inner
+        if let Some(tsz_solver::TypeData::NoInfer(inner)) = self.ctx.types.lookup(target) {
+            return self.is_literal_sensitive_assignment_target_inner(inner);
+        }
         if tsz_solver::literal_value(self.ctx.types, target).is_some() {
             return true;
         }

@@ -817,7 +817,8 @@ impl<'a> TypeFormatter<'a> {
                 }
             }
             TypeData::ReadonlyType(inner) => format!("readonly {}", self.format(*inner)).into(),
-            TypeData::NoInfer(inner) => format!("NoInfer<{}>", self.format(*inner)).into(),
+            // NoInfer<T> is transparent in error messages - tsc displays just T
+            TypeData::NoInfer(inner) => self.format(*inner),
             TypeData::UniqueSymbol(_) => Cow::Borrowed("unique symbol"),
             TypeData::Infer(info) => format!("infer {}", self.atom(info.name)).into(),
             TypeData::ThisType => Cow::Borrowed("this"),
