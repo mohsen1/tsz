@@ -890,8 +890,15 @@ impl<'a> CheckerState<'a> {
                     if !is_type_alias {
                         let deduped = dedup_decl_arenas(&decls_with_arenas);
 
-                        // Use lower_merged_interface_declarations for proper multi-arena support
-                        let (ty, params) = lowering.lower_merged_interface_declarations(&deduped);
+                        // Use lower_merged_interface_declarations for proper multi-arena support.
+                        // Pass sym_id so the resulting Object type gets stamped with the
+                        // interface's symbol — this allows the formatter to display the
+                        // named form (e.g., "Num") instead of the structural expansion.
+                        let (ty, params) = lowering
+                            .lower_merged_interface_declarations_with_symbol(
+                                &deduped,
+                                Some(sym_id),
+                            );
 
                         // If lowering succeeded (not ERROR), use the result
                         if ty != TypeId::ERROR {
