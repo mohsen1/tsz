@@ -302,6 +302,39 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
             return Some(ty);
         }
 
+        // Fallback: check the shared cross-file resolved symbol types cache.
+        // When a symbol from another file (e.g., an interface referenced in a
+        // property type) was resolved by that file's checker, the result is
+        // written to the DefinitionStore's resolved_symbol_types cache. This
+        // enables cross-module Lazy type resolution for types that aren't
+        // directly imported (e.g., `Foo.server?: IServer` where `IServer` is
+        // defined in the same file as `Foo` but not imported by the consumer).
+        //
+        // Restrict this fallback to genuine cross-file scenarios (symbol's
+        // definition file differs from the current file) to avoid interfering
+        // with same-file name resolution, where the formatter relies on the
+        // DefId-based display of types declared in the current scope.
+        if let Some(sym_id) = sym_id
+            && let Some(file_idx) = definition_file_idx
+            && file_idx != self.current_file_idx
+        {
+            if let Some(resolved) = self
+                .definition_store
+                .get_resolved_symbol_type(sym_id.0, file_idx as u32)
+            {
+                if resolved != tsz_solver::TypeId::ERROR {
+                    tracing::trace!(
+                        def_id = def_id.0,
+                        sym_id = sym_id.0,
+                        file_idx = file_idx,
+                        type_id = resolved.0,
+                        "resolve_lazy: found in shared resolved_symbol_types cache"
+                    );
+                    return Some(resolved);
+                }
+            }
+        }
+
         tracing::trace!(def_id = def_id.0, "resolve_lazy: NOT FOUND");
         None
     }
