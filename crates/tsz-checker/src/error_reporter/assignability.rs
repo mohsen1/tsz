@@ -39,6 +39,27 @@ pub(crate) fn is_primitive_type_name(name: &str) -> bool {
     )
 }
 
+/// Returns true if the name is a reserved type name that cannot be used as
+/// an interface or class name (TS2427/TS2414). Matches tsc's
+/// `checkTypeNameIsReserved` which checks the `typeNames` set.
+pub(crate) fn is_reserved_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "any"
+            | "unknown"
+            | "never"
+            | "string"
+            | "number"
+            | "boolean"
+            | "symbol"
+            | "bigint"
+            | "void"
+            | "undefined"
+            | "null"
+            | "object"
+    )
+}
+
 /// Returns true if the display string looks like a function/callable type.
 /// Used as a fallback when TypeId-level detection fails due to TypeQuery/Lazy wrapping.
 /// Function types display as `(params) => ReturnType`.

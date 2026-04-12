@@ -33,11 +33,12 @@ impl<'a> CheckerState<'a> {
         self.check_never_valid_type_parameter_modifiers(iface.type_parameters.as_ref());
 
         // Check for reserved interface names (TS2427)
-        // Interface names cannot be primitive type names (string, number, boolean, etc.)
+        // tsc's checkTypeNameIsReserved uses the same set for both interfaces and
+        // classes. It forbids predefined type names.
         if iface.name.is_some()
             && let Some(name_node) = self.ctx.arena.get(iface.name)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-            && crate::error_reporter::assignability::is_primitive_type_name(
+            && crate::error_reporter::assignability::is_reserved_type_name(
                 ident.escaped_text.as_str(),
             )
         {
