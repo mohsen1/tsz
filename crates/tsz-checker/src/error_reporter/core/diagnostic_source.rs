@@ -1215,6 +1215,13 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         anchor_idx: NodeIndex,
     ) -> String {
+        // When the target is a nullable union (e.g., `T | null | undefined`)
+        // and the source is non-nullable, strip null/undefined from the
+        // top-level display to match tsc's behavior.
+        let display_target = self
+            .strip_nullish_for_assignability_display(target, source)
+            .unwrap_or(target);
+
         let target_expr = self
             .assignment_target_expression(anchor_idx)
             .unwrap_or(anchor_idx);
@@ -1232,43 +1239,47 @@ impl<'a> CheckerState<'a> {
             {
                 // Fall through to use the TypeFormatter, which correctly displays
                 // `TypeData::Enum` as qualified `W.a` style names.
-            } else {
+            } else if display_target == target {
+                // Only use annotation text when we didn't strip nullable members;
+                // otherwise the annotation includes null/undefined that tsc omits.
                 return self.format_annotation_like_type(&display);
             }
         }
 
-        if let Some(display) = self.declared_type_annotation_text_for_expression(target_expr) {
-            let preserve_literal_surface = self.target_preserves_literal_surface(source);
-            let fallback = if preserve_literal_surface {
-                self.format_type_diagnostic(target)
-            } else {
-                self.format_type(self.widen_fresh_object_literal_properties_for_display(target))
-            };
-            if Self::display_has_member_literals_assignability(&display) {
-                return self.format_annotation_like_type(&display);
+        if display_target == target {
+            if let Some(display) = self.declared_type_annotation_text_for_expression(target_expr) {
+                let preserve_literal_surface = self.target_preserves_literal_surface(source);
+                let fallback = if preserve_literal_surface {
+                    self.format_type_diagnostic(target)
+                } else {
+                    self.format_type(self.widen_fresh_object_literal_properties_for_display(target))
+                };
+                if Self::display_has_member_literals_assignability(&display) {
+                    return self.format_annotation_like_type(&display);
+                }
+                if Self::display_has_member_literals_assignability(&fallback)
+                    && !Self::display_has_member_literals_assignability(&display)
+                {
+                    return self.format_annotation_like_type(&display);
+                }
+                // When the fallback produces duplicate names in a union or tuple
+                // (e.g., `Yep | Yep` or `[Yep, Yep]`) but the annotation text preserves
+                // namespace-qualified names (e.g., `Foo.Yep | Bar.Yep` or
+                // `[Foo.Yep, Bar.Yep]`), prefer the annotation text. This matches tsc's
+                // behavior of qualifying types when they'd otherwise be ambiguous.
+                if Self::has_duplicate_union_member_names(&fallback)
+                    && !Self::has_duplicate_union_member_names(&display)
+                {
+                    return self.format_annotation_like_type(&display);
+                }
+                return fallback;
             }
-            if Self::display_has_member_literals_assignability(&fallback)
-                && !Self::display_has_member_literals_assignability(&display)
-            {
-                return self.format_annotation_like_type(&display);
-            }
-            // When the fallback produces duplicate names in a union or tuple
-            // (e.g., `Yep | Yep` or `[Yep, Yep]`) but the annotation text preserves
-            // namespace-qualified names (e.g., `Foo.Yep | Bar.Yep` or
-            // `[Foo.Yep, Bar.Yep]`), prefer the annotation text. This matches tsc's
-            // behavior of qualifying types when they'd otherwise be ambiguous.
-            if Self::has_duplicate_union_member_names(&fallback)
-                && !Self::has_duplicate_union_member_names(&display)
-            {
-                return self.format_annotation_like_type(&display);
-            }
-            return fallback;
         }
 
         if self.target_preserves_literal_surface(source) {
-            self.format_type_diagnostic(target)
+            self.format_type_diagnostic(display_target)
         } else {
-            self.format_type(self.widen_fresh_object_literal_properties_for_display(target))
+            self.format_type(self.widen_fresh_object_literal_properties_for_display(display_target))
         }
     }
 
