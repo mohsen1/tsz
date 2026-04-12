@@ -844,10 +844,10 @@ impl<'a> TypeFormatter<'a> {
                 {
                     return name.into();
                 }
-                // Fallback: try raw def_id as symbol_id (legacy path)
-                if let Some(name) = self.format_raw_def_id_symbol_fallback(*def_id) {
-                    return Cow::Owned(name);
-                }
+                // NOTE: We do NOT use format_raw_def_id_symbol_fallback here.
+                // DefId and SymbolId are independent ID spaces. Using the raw
+                // def_id.0 as a SymbolId would return the name of an unrelated
+                // symbol, causing bugs like "Foo.A" displaying as "timeout.A".
                 self.format_def_id(*def_id, "Enum").into()
             }
             TypeData::ModuleNamespace(sym) => {

@@ -694,8 +694,10 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
     }
 
     fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
-        let resolved = crate::evaluation::evaluate::evaluate_type(self.db, TypeId(def_id));
-        if resolved != TypeId(def_id) {
+        // def_id is a raw DefId value, not a TypeId. Construct Lazy TypeId via db.lazy().
+        let lazy_type_id = self.db.lazy(crate::def::DefId(def_id));
+        let resolved = crate::evaluation::evaluate::evaluate_type(self.db, lazy_type_id);
+        if resolved != lazy_type_id {
             self.visit_type(self.db, resolved)
         } else {
             None
@@ -1261,6 +1263,17 @@ impl<'a> TypeVisitor for ParameterExtractor<'a> {
             })
             .collect();
         collect_from_intersection(self.db, types, |db, tys| db.union(tys))
+    }
+
+    fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
+        // Resolve lazy types (type aliases) to extract parameter types from the underlying callable.
+        let lazy_type_id = self.db.lazy(crate::def::DefId(def_id));
+        let resolved = crate::evaluation::evaluate::evaluate_type(self.db, lazy_type_id);
+        if resolved != lazy_type_id {
+            self.visit_type(self.db, resolved)
+        } else {
+            None
+        }
     }
 
     fn default_output() -> Self::Output {
