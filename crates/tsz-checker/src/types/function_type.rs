@@ -14,6 +14,23 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{ContextualTypeContext, TypeId, TypeParamInfo};
 impl<'a> CheckerState<'a> {
+    fn is_jsx_body_child_closure(&self, func_idx: NodeIndex) -> bool {
+        let mut current = func_idx;
+        while let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent) {
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                break;
+            };
+            match parent_node.kind {
+                k if k == syntax_kind_ext::JSX_ATTRIBUTE => return false,
+                k if k == syntax_kind_ext::JSX_ELEMENT || k == syntax_kind_ext::JSX_FRAGMENT => {
+                    return true;
+                }
+                _ => current = parent,
+            }
+        }
+        false
+    }
+
     /// Get type of function declaration/expression/arrow.
     pub(crate) fn get_type_of_function(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_function_impl(idx, &TypingRequest::NONE)

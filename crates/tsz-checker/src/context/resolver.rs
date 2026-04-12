@@ -343,6 +343,14 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         &self,
         _interner: &dyn tsz_solver::TypeDatabase,
     ) -> Option<tsz_solver::TypeId> {
+        // Prefer the active `this` binding from the checker stack. Class-member
+        // checking pushes the concrete receiver type here, which is more precise
+        // than the enclosing-class fallback for static members and partially
+        // constructed generic instance contexts.
+        if let Some(this_type) = self.this_type_stack.last().copied() {
+            return Some(this_type);
+        }
+
         // Try enclosing class cache first.
         if let Some(class_info) = self.enclosing_class.as_ref() {
             if let Some(cached) = class_info.cached_instance_this_type {
@@ -355,12 +363,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                 }
             }
         }
-        // Final fallback: use the current `this` type from the stack.
-        // `check_class_member_with_request` pushes the concrete class instance type
-        // before checking the method body. This handles cases where `enclosing_class`
-        // has been temporarily cleared (e.g., during class type construction or when
-        // checking method bodies through a different code path).
-        self.this_type_stack.last().copied()
+        None
     }
 
     /// Get type parameters for a symbol reference (deprecated).

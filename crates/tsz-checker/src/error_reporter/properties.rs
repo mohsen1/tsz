@@ -10,6 +10,61 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn element_access_receiver_declared_element_display(
+        &mut self,
+        idx: NodeIndex,
+        type_id: TypeId,
+    ) -> Option<String> {
+        let receiver = self.access_receiver_for_diagnostic_node(idx)?;
+        let receiver_node = self.ctx.arena.get(receiver)?;
+        if receiver_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            return None;
+        }
+
+        let access = self.ctx.arena.get_access_expr(receiver_node)?;
+        let base_expr = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(access.expression);
+        let base_node = self.ctx.arena.get(base_expr)?;
+        if base_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(base_expr)?;
+        let declared_type = self.get_type_of_symbol(sym_id);
+        if matches!(declared_type, TypeId::ERROR | TypeId::UNKNOWN) {
+            return None;
+        }
+
+        let declared_element_type =
+            crate::query_boundaries::common::array_element_type(self.ctx.types, declared_type)
+                .or_else(|| {
+                    crate::query_boundaries::common::tuple_elements(self.ctx.types, declared_type)
+                        .map(|elements| {
+                            let element_types: Vec<TypeId> =
+                                elements.iter().map(|elem| elem.type_id).collect();
+                            match element_types.as_slice() {
+                                [] => TypeId::NEVER,
+                                [element_type] => *element_type,
+                                _ => self.ctx.types.factory().union(element_types),
+                            }
+                        })
+                })?;
+
+        let declared_element_type = self.evaluate_type_with_env(declared_element_type);
+        if matches!(declared_element_type, TypeId::ERROR | TypeId::UNKNOWN) {
+            return None;
+        }
+        if !self.is_assignable_to(type_id, declared_element_type)
+            && !self.is_assignable_to(declared_element_type, type_id)
+        {
+            return None;
+        }
+
+        Some(self.format_type_for_assignability_message(declared_element_type))
+    }
+
     fn fresh_empty_object_member_for_missing_union(
         &mut self,
         object_type: TypeId,
@@ -342,6 +397,22 @@ impl<'a> CheckerState<'a> {
                 });
 
         if is_element_access_receiver {
+            if let Some(display) =
+                self.element_access_receiver_declared_element_display(idx, type_id)
+            {
+                return display;
+            }
+            let has_named_receiver_identity = self.named_type_display_name(type_id).is_some()
+                || self
+                    .ctx
+                    .definition_store
+                    .find_def_for_type(type_id)
+                    .is_some()
+                || tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, type_id).is_some()
+                || self.ctx.types.get_display_alias(type_id).is_some();
+            if has_named_receiver_identity {
+                return self.format_property_receiver_type_for_diagnostic(type_id);
+            }
             if let Some(init_type) = self.object_literal_initializer_display_type_for_receiver(idx)
             {
                 let widened = self.widen_type_for_display(init_type);

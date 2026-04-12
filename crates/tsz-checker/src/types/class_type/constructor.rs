@@ -809,11 +809,14 @@ impl<'a> CheckerState<'a> {
                         );
                         self.ctx.symbol_types.insert(sym_id, partial_ctor);
                     }
-                    let static_this_type = self
-                        .ctx
-                        .binder
-                        .get_node_symbol(class_idx)
-                        .map(|sym_id| self.get_type_of_symbol(sym_id));
+                    let static_this_type = current_sym
+                        .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied())
+                        .or_else(|| {
+                            self.ctx
+                                .binder
+                                .get_node_symbol(class_idx)
+                                .map(|sym_id| self.get_type_of_symbol(sym_id))
+                        });
                     let signature = self.call_signature_from_method_with_this(
                         method,
                         static_this_type,

@@ -130,8 +130,35 @@ impl<'a> CheckerState<'a> {
                 let (pos, end) = self.get_node_span(anchor_idx).unwrap_or((0, 0));
                 self.normalized_anchor_span(anchor_idx, pos, end.saturating_sub(pos))
             });
-        let source_str = self.format_type_diagnostic(source_for_display);
-        let target_str = self.format_type_diagnostic(target_for_display);
+        let source_is_function_like =
+            tsz_solver::type_queries::get_callable_shape(self.ctx.types, source_for_display)
+                .is_some()
+                || tsz_solver::type_queries::get_function_shape(self.ctx.types, source_for_display)
+                    .is_some();
+        let target_is_function_like =
+            tsz_solver::type_queries::get_callable_shape(self.ctx.types, target_for_display)
+                .is_some()
+                || tsz_solver::type_queries::get_function_shape(self.ctx.types, target_for_display)
+                    .is_some();
+        let (source_str, target_str) = if source_is_function_like || target_is_function_like {
+            (
+                self.format_type_diagnostic(source_for_display),
+                self.format_type_diagnostic(target_for_display),
+            )
+        } else {
+            (
+                self.format_assignment_source_type_for_diagnostic(
+                    source_for_display,
+                    target_for_display,
+                    anchor_idx,
+                ),
+                self.format_assignment_target_type_for_diagnostic(
+                    target_for_display,
+                    source_for_display,
+                    anchor_idx,
+                ),
+            )
+        };
         let message = crate::diagnostics::format_message(
             crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             &[&source_str, &target_str],

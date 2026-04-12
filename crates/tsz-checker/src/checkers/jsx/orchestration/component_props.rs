@@ -808,9 +808,33 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Function-valued body children should be checked against the inferred children context,
-        // not feed back into type-parameter inference.
-        let has_function_valued_children = false;
+        // Function-valued children should be checked against the inferred children
+        // context in a staged pass, not treated as concrete attrs during Round 1.
+        let has_function_valued_children = provided_attrs
+            .iter()
+            .any(|(name, ty)| name == &children_prop_name && ty.is_none())
+            || self
+                .get_jsx_body_child_nodes(attributes_idx)
+                .is_some_and(|children| {
+                    children.iter().copied().any(|child_idx| {
+                        self.ctx.arena.get(child_idx).is_some_and(|child| {
+                            child.kind == syntax_kind_ext::JSX_EXPRESSION
+                                && self
+                                    .ctx
+                                    .arena
+                                    .get_jsx_expression(child)
+                                    .and_then(|expr| expr.expression.into_option())
+                                    .and_then(|expr_idx| self.ctx.arena.get(expr_idx))
+                                    .is_some_and(|expr| {
+                                        matches!(
+                                            expr.kind,
+                                            syntax_kind_ext::ARROW_FUNCTION
+                                                | syntax_kind_ext::FUNCTION_EXPRESSION
+                                        )
+                                    })
+                        })
+                    })
+                });
 
         // === Round 1: Infer type params from concrete attrs only ===
         let mut substitution = if concrete_attrs.is_empty() {
@@ -827,15 +851,6 @@ impl<'a> CheckerState<'a> {
                 None,
             )
         };
-
-        // Fill unresolved type params with defaults/constraints.
-        for tp in &function_shape.type_params {
-            if substitution.get(tp.name).is_none()
-                && let Some(replacement) = tp.default.or(tp.constraint)
-            {
-                substitution.insert(tp.name, replacement);
-            }
-        }
 
         // === Round 2: Contextually type function-valued attrs ===
         // Use the Round 1 substitution to provide contextual types for
@@ -908,13 +923,6 @@ impl<'a> CheckerState<'a> {
                 for (&name, &ty) in round2_sub.map() {
                     substitution.insert(name, ty);
                 }
-                for tp in &function_shape.type_params {
-                    if substitution.get(tp.name).is_none()
-                        && let Some(replacement) = tp.default.or(tp.constraint)
-                    {
-                        substitution.insert(tp.name, replacement);
-                    }
-                }
             }
 
             if has_function_valued_attrs {
@@ -969,6 +977,14 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            for tp in &function_shape.type_params {
+                if substitution.get(tp.name).is_none()
+                    && let Some(replacement) = tp.default.or(tp.constraint)
+                {
+                    substitution.insert(tp.name, replacement);
+                }
+            }
+
             if has_function_valued_children {
                 let r2_instantiated = self.instantiate_jsx_function_shape_with_substitution(
                     &function_shape,
@@ -1012,6 +1028,14 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
+            }
+        }
+
+        for tp in &function_shape.type_params {
+            if substitution.get(tp.name).is_none()
+                && let Some(replacement) = tp.default.or(tp.constraint)
+            {
+                substitution.insert(tp.name, replacement);
             }
         }
 

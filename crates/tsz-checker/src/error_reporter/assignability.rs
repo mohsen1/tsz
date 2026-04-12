@@ -1337,7 +1337,6 @@ impl<'a> CheckerState<'a> {
                 self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
             let tgt_str =
                 self.format_assignment_target_type_for_diagnostic(target, source, anchor_idx);
-
             // TS2719: when both types display identically but are different,
             // emit "Two different types with this name exist" instead of TS2322.
             let authoritative_src = self.authoritative_assignability_def_name(source);
@@ -1356,8 +1355,16 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
                 )
             } else {
-                let source_name = authoritative_src.as_deref().unwrap_or(&src_str);
-                let target_name = authoritative_tgt.as_deref().unwrap_or(&tgt_str);
+                let source_name = if src_str.starts_with("typeof ") {
+                    src_str.as_str()
+                } else {
+                    authoritative_src.as_deref().unwrap_or(&src_str)
+                };
+                let target_name = if tgt_str.starts_with("typeof ") {
+                    tgt_str.as_str()
+                } else {
+                    authoritative_tgt.as_deref().unwrap_or(&tgt_str)
+                };
                 (
                     format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,

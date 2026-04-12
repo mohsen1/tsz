@@ -369,6 +369,38 @@ if (x == null) {}
 }
 
 #[test]
+fn test_const_null_alias_equality_narrows_to_null() {
+    let source = r#"
+const myNull: null = null;
+let x: number | null;
+if (x === myNull) {}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let arena = parser.get_arena();
+    let types = TypeInterner::new();
+    let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+
+    let condition_idx = get_if_condition(arena, root, 2);
+    let condition_node = arena.get(condition_idx).expect("condition node");
+    let binary = arena
+        .get_binary_expr(condition_node)
+        .expect("binary condition");
+    let target_idx = binary.left;
+
+    let union = types.union(vec![TypeId::NUMBER, TypeId::NULL]);
+    let narrowed =
+        analyzer.narrow_type_by_condition(union, condition_idx, target_idx, true, FlowNodeId::NONE);
+
+    assert_eq!(narrowed, TypeId::NULL);
+}
+
+#[test]
 fn test_mutable_variable_in_closure_loses_narrowing() {
     // Unsoundness Rule #42: Mutable variables (let/var) should not preserve
     // narrowing from outer scope when accessed in closures

@@ -139,7 +139,7 @@ impl<'a> CheckerState<'a> {
                 return TypeSymbolResolution::NotFound;
             };
 
-            let left_sym = match self.resolve_qualified_symbol_inner_in_type_position(
+            let original_left_sym = match self.resolve_qualified_symbol_inner_in_type_position(
                 access.expression,
                 visited_aliases,
                 depth + 1,
@@ -149,8 +149,8 @@ impl<'a> CheckerState<'a> {
             };
 
             let left_sym = self
-                .resolve_alias_symbol(left_sym, visited_aliases)
-                .unwrap_or(left_sym);
+                .resolve_alias_symbol(original_left_sym, visited_aliases)
+                .unwrap_or(original_left_sym);
 
             let right_name = match self
                 .ctx
@@ -186,7 +186,26 @@ impl<'a> CheckerState<'a> {
                 return TypeSymbolResolution::Type(member_sym);
             }
 
-            if let Some(ref module_specifier) = left_symbol.import_module
+            let unresolved_left_symbol = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(original_left_sym, &lib_binders);
+            let module_specifier = unresolved_left_symbol
+                .and_then(|symbol| symbol.import_module.clone())
+                .or_else(|| left_symbol.import_module.clone())
+                .or_else(|| {
+                    self.ctx
+                        .arena
+                        .get(access.expression)
+                        .and_then(|node| self.ctx.arena.get_identifier(node))
+                        .and_then(|ident| {
+                            self.resolve_namespace_import_module_for_local_name(
+                                ident.escaped_text.as_str(),
+                            )
+                        })
+                });
+
+            if let Some(module_specifier) = module_specifier.as_deref()
                 && !((left_symbol.flags & symbol_flags::ALIAS) != 0
                     && self
                         .ctx
@@ -224,7 +243,7 @@ impl<'a> CheckerState<'a> {
                 return TypeSymbolResolution::Type(reexported_sym);
             }
 
-            if let Some(ref module_specifier) = left_symbol.import_module
+            if let Some(module_specifier) = module_specifier.as_deref()
                 && let Some(augmented_sym) = self.resolve_module_augmentation_member_symbol(
                     module_specifier,
                     right_name,
@@ -262,7 +281,6 @@ impl<'a> CheckerState<'a> {
             TypeSymbolResolution::Type(sym_id) => sym_id,
             other => return other,
         };
-        let original_left_sym = left_sym;
         left_sym = self
             .resolve_alias_symbol(left_sym, visited_aliases)
             .unwrap_or(left_sym);
@@ -317,6 +335,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Look up the symbol across binders (file + libs)
+        let original_left_sym = left_sym;
         let Some(left_symbol) = self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders) else {
             return TypeSymbolResolution::NotFound;
         };
@@ -339,7 +358,26 @@ impl<'a> CheckerState<'a> {
         }
 
         // If not found in direct exports, check for re-exports
-        if let Some(ref module_specifier) = left_symbol.import_module {
+        let unresolved_left_symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(original_left_sym, &lib_binders);
+        let module_specifier = unresolved_left_symbol
+            .and_then(|symbol| symbol.import_module.clone())
+            .or_else(|| left_symbol.import_module.clone())
+            .or_else(|| {
+                self.ctx
+                    .arena
+                    .get(qn.left)
+                    .and_then(|node| self.ctx.arena.get_identifier(node))
+                    .and_then(|ident| {
+                        self.resolve_namespace_import_module_for_local_name(
+                            ident.escaped_text.as_str(),
+                        )
+                    })
+            });
+
+        if let Some(module_specifier) = module_specifier.as_deref() {
             if (left_symbol.flags & symbol_flags::ALIAS) != 0
                 && self
                     .ctx

@@ -78,6 +78,29 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn format_type_for_assignability_message(&mut self, ty: TypeId) -> String {
+        let format_without_def_store = |state: &Self, type_id: TypeId| {
+            let mut formatter =
+                tsz_solver::TypeFormatter::with_symbols(state.ctx.types, &state.ctx.binder.symbols)
+                    .with_diagnostic_mode()
+                    .with_strict_null_checks(state.ctx.compiler_options.strict_null_checks);
+            formatter.format(type_id).into_owned()
+        };
+        let is_generic_callable = |state: &Self, type_id: TypeId| {
+            crate::query_boundaries::common::callable_shape_for_type(state.ctx.types, type_id)
+                .is_some_and(|shape| {
+                    shape
+                        .call_signatures
+                        .iter()
+                        .chain(shape.construct_signatures.iter())
+                        .any(|sig| !sig.type_params.is_empty())
+                })
+                || crate::query_boundaries::common::function_shape_for_type(
+                    state.ctx.types,
+                    type_id,
+                )
+                .is_some_and(|shape| !shape.type_params.is_empty())
+        };
+
         // If the type is a TypeParameter or Infer, format it directly as
         // its name.  This must happen before any evaluation/resolution that
         // could replace the type parameter with its constraint type.
@@ -111,6 +134,9 @@ impl<'a> CheckerState<'a> {
                     // Evaluate and check if the result wraps a generic application.
                     // tsc shows `Id<{...}>` not `Foo` for `type Foo = Id<{...}>`.
                     let evaluated = self.evaluate_type_with_env(ty);
+                    if is_generic_callable(self, evaluated) {
+                        return format_without_def_store(self, evaluated);
+                    }
                     if evaluated != ty && self.ctx.types.get_display_alias(evaluated).is_some() {
                         return self.format_type_for_assignability_message(evaluated);
                     }
@@ -175,6 +201,19 @@ impl<'a> CheckerState<'a> {
         }
 
         let display_ty = self.normalize_assignability_display_type(ty);
+        if let Some(alias_name) = self.lookup_type_alias_name_for_display(display_ty) {
+            return alias_name;
+        }
+        if is_generic_callable(self, display_ty)
+            && self
+                .ctx
+                .definition_store
+                .find_def_for_type(display_ty)
+                .or_else(|| self.ctx.definition_store.find_def_for_type(ty))
+                .is_some()
+        {
+            return format_without_def_store(self, display_ty);
+        }
         // For fresh object literal types, format without display properties so
         // widened types are shown: `{ two: number }` not `{ two: 1 }`.
         // Other types (class expressions, interfaces) keep their display properties
@@ -369,6 +408,21 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn authoritative_assignability_def_name(&mut self, ty: TypeId) -> Option<String> {
+        let has_generic_callable_surface = |state: &Self, candidate: TypeId| {
+            crate::query_boundaries::common::callable_shape_for_type(state.ctx.types, candidate)
+                .is_some_and(|shape| {
+                    shape
+                        .call_signatures
+                        .iter()
+                        .chain(shape.construct_signatures.iter())
+                        .any(|sig| !sig.type_params.is_empty())
+                })
+                || crate::query_boundaries::common::function_shape_for_type(
+                    state.ctx.types,
+                    candidate,
+                )
+                .is_some_and(|shape| !shape.type_params.is_empty())
+        };
         let direct_def_name = |state: &Self, candidate: TypeId| {
             let def_id = tsz_solver::type_queries::get_lazy_def_id(
                 state.ctx.types.as_type_database(),
@@ -493,6 +547,10 @@ impl<'a> CheckerState<'a> {
         }
 
         let display_ty = self.normalize_assignability_display_type(ty);
+        if has_generic_callable_surface(self, ty) || has_generic_callable_surface(self, display_ty)
+        {
+            return None;
+        }
         if let Some(name) = export_equals_default_name(self, display_ty) {
             return Some(name);
         }
@@ -546,6 +604,9 @@ impl<'a> CheckerState<'a> {
         if let Some(enum_name) = self.format_disambiguated_enum_name_for_assignment(ty, other) {
             return enum_name;
         }
+        if let Some(type_name) = self.format_class_constructor_name_for_assignment(ty, other) {
+            return type_name;
+        }
         if let Some(type_name) = self.format_disambiguated_nominal_name_for_assignment(ty, other) {
             return type_name;
         }
@@ -559,6 +620,58 @@ impl<'a> CheckerState<'a> {
         }
 
         self.format_type_for_assignability_message(ty)
+    }
+
+    fn class_constructor_symbol_for_assignment_display(
+        &mut self,
+        ty: TypeId,
+    ) -> Option<tsz_binder::SymbolId> {
+        let display_ty = self.normalize_assignability_display_type(ty);
+        let evaluated = self.evaluate_type_for_assignability(ty);
+        [ty, display_ty, evaluated]
+            .into_iter()
+            .find_map(|candidate| {
+                let sym_id =
+                    tsz_solver::type_queries::get_type_shape_symbol(self.ctx.types, candidate)
+                        .or_else(|| {
+                            tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
+                                .and_then(|shape| shape.symbol)
+                        })
+                        .or_else(|| {
+                            tsz_solver::type_queries::get_callable_shape(self.ctx.types, candidate)
+                                .and_then(|shape| shape.symbol)
+                        })?;
+                let symbol = self.ctx.binder.get_symbol(sym_id)?;
+                let is_class_symbol = (symbol.flags & tsz_binder::symbol_flags::CLASS) != 0;
+                let is_value_type =
+                    tsz_solver::type_queries::get_function_shape(self.ctx.types, candidate)
+                        .is_some()
+                        || tsz_solver::type_queries::get_callable_shape(self.ctx.types, candidate)
+                            .is_some();
+                (is_class_symbol && is_value_type).then_some(sym_id)
+            })
+    }
+
+    fn format_class_constructor_name_for_assignment(
+        &mut self,
+        ty: TypeId,
+        other: TypeId,
+    ) -> Option<String> {
+        let ty_sym = self.class_constructor_symbol_for_assignment_display(ty)?;
+        let other_sym = self.class_constructor_symbol_for_assignment_display(other);
+        let ty_name = self.qualified_symbol_name_for_message(ty_sym)?;
+
+        if let Some(other_sym) = other_sym
+            && other_sym != ty_sym
+            && self.ctx.binder.get_symbol(other_sym)?.escaped_name
+                == self.ctx.binder.get_symbol(ty_sym)?.escaped_name
+            && self.is_exported_external_module_symbol(ty_sym)
+            && let Some(module_name) = self.module_specifier_for_symbol(ty_sym)
+        {
+            return Some(format!("typeof import(\"{module_name}\").{ty_name}"));
+        }
+
+        Some(format!("typeof {ty_name}"))
     }
 
     /// When `ty` is a union containing null/undefined and `other` (the
@@ -1180,7 +1293,9 @@ impl<'a> CheckerState<'a> {
         // If the type has a display alias (produced by evaluating a generic
         // Application like B<string>), let the formatter handle it — using the
         // raw alias name would lose the type arguments.
-        if self.ctx.types.get_display_alias(ty).is_some() {
+        if self.ctx.types.get_display_alias(ty).is_some_and(|alias| {
+            tsz_solver::type_queries::get_type_application(self.ctx.types, alias).is_some()
+        }) {
             return None;
         }
 
@@ -1192,6 +1307,13 @@ impl<'a> CheckerState<'a> {
         // type representation rather than using the alias name. This matches tsc's
         // behavior in assignability messages for complex intersection types.
         if tsz_solver::type_queries::get_intersection_members(self.ctx.types, ty).is_some() {
+            return None;
+        }
+
+        if let Some(def_id) = self.ctx.definition_store.find_def_for_type(ty)
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+            && def.kind != tsz_solver::def::DefKind::TypeAlias
+        {
             return None;
         }
 

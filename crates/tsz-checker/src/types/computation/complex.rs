@@ -1104,9 +1104,11 @@ impl<'a> CheckerState<'a> {
                         .iter()
                         .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
                         .collect();
-                    let factory = self.ctx.types.factory();
-                    let app = factory.application(return_type, resolved_args);
-                    self.ctx.types.store_display_alias(return_type, app);
+                    if query::lazy_def_id(self.ctx.types, return_type).is_none() {
+                        let factory = self.ctx.types.factory();
+                        let app = factory.application(return_type, resolved_args);
+                        self.ctx.types.store_display_alias(return_type, app);
+                    }
                 }
                 return_type
             }

@@ -1498,14 +1498,17 @@ pub(crate) fn normalize_path(path: &Path) -> PathBuf {
 }
 
 pub(crate) fn normalize_resolved_path(path: &Path, options: &ResolvedCompilerOptions) -> PathBuf {
-    if options.preserve_symlinks || path_has_symlinked_package_ancestor(path) {
-        if options.preserve_symlinks {
-            normalize_path(path)
-        } else {
-            path.to_path_buf()
-        }
+    if options.preserve_symlinks {
+        normalize_path(path)
     } else {
-        canonicalize_or_owned(path)
+        let canonical = canonicalize_or_owned(path);
+        let preserve_package_link_identity = path_has_symlinked_package_ancestor(path)
+            || (!has_node_modules_component(path) && has_node_modules_component(&canonical));
+        if preserve_package_link_identity {
+            path.to_path_buf()
+        } else {
+            canonical
+        }
     }
 }
 
@@ -1559,6 +1562,15 @@ fn path_has_symlinked_package_ancestor(path: &Path) -> bool {
         current = dir.parent();
     }
     false
+}
+
+fn has_node_modules_component(path: &Path) -> bool {
+    path.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
+        )
+    })
 }
 
 fn is_root_alias_symlink(dir: &Path) -> bool {

@@ -1164,6 +1164,12 @@ impl<'a> FlowAnalyzer<'a> {
         let idx = self.skip_parenthesized(idx);
         let node = self.arena.get(idx)?;
 
+        if node.kind == SyntaxKind::Identifier as u16
+            && let Some((_sym_id, initializer)) = self.const_condition_initializer(idx)
+        {
+            return self.literal_type_from_node(initializer);
+        }
+
         match node.kind {
             k if k == SyntaxKind::StringLiteral as u16
                 || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
@@ -1463,6 +1469,12 @@ impl<'a> FlowAnalyzer<'a> {
     pub(crate) fn nullish_literal_type(&self, idx: NodeIndex) -> Option<TypeId> {
         let idx = self.skip_parenthesized(idx);
         let node = self.arena.get(idx)?;
+
+        if node.kind == SyntaxKind::Identifier as u16
+            && let Some((_sym_id, initializer)) = self.const_condition_initializer(idx)
+        {
+            return self.nullish_literal_type(initializer);
+        }
 
         if node.kind == SyntaxKind::NullKeyword as u16 {
             return Some(TypeId::NULL);
