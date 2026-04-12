@@ -1491,7 +1491,7 @@ fn format_callable_single_construct_signature() {
         default: None,
         is_const: false,
     };
-    let t_type = db.type_param(type_param.clone());
+    let t_type = db.type_param(type_param);
 
     let callable = db.callable(CallableShape {
         call_signatures: vec![],

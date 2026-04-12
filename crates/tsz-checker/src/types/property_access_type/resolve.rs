@@ -937,21 +937,35 @@ impl<'a> CheckerState<'a> {
             .arena
             .get(access.expression)
             .is_some_and(|node| node.kind == SyntaxKind::ThisKeyword as u16)
-            && let Some(class_this_type) = self
-                .ctx
-                .enclosing_class
-                .as_ref()
-                .and_then(|class_info| class_info.cached_instance_this_type)
-            && crate::query_boundaries::common::object_shape_for_type(
-                self.ctx.types,
-                class_this_type,
-            )
-            .is_some()
+            && let Some(class_info) = self.ctx.enclosing_class.as_ref()
             && crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)
                 .is_none()
         {
-            object_type = class_this_type;
-            display_object_type = class_this_type;
+            // In static context, `this` refers to the constructor type (typeof ClassName).
+            // In instance context, `this` refers to the instance type (ClassName).
+            let is_static_context = self.is_in_static_class_member_context(idx);
+            let class_this_type = if is_static_context {
+                // Get the constructor type for static context
+                let class_idx = class_info.class_idx;
+                self.ctx
+                    .arena
+                    .get(class_idx)
+                    .and_then(|node| self.ctx.arena.get_class(node))
+                    .map(|class| self.get_class_constructor_type(class_idx, class))
+            } else {
+                // Use cached instance type for instance context
+                class_info.cached_instance_this_type
+            };
+            if let Some(class_this_type) = class_this_type
+                && crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    class_this_type,
+                )
+                .is_some()
+            {
+                object_type = class_this_type;
+                display_object_type = class_this_type;
+            }
         }
 
         if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
@@ -2016,7 +2030,7 @@ impl<'a> CheckerState<'a> {
                             .is_some()
                             || self
                                 .find_enclosing_function(access.expression)
-                                .and_then(|func_idx| {
+                                .map(|func_idx| {
                                     let mut member_idx = func_idx;
                                     if let Some(func_node) = self.ctx.arena.get(func_idx)
                                         && (func_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
@@ -2030,7 +2044,7 @@ impl<'a> CheckerState<'a> {
                                     {
                                         member_idx = ext.parent;
                                     }
-                                    Some(self.class_member_is_static(member_idx))
+                                    self.class_member_is_static(member_idx)
                                 })
                                 .unwrap_or(false));
 
