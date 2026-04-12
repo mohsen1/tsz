@@ -399,6 +399,25 @@ impl<'a> TypeFormatter<'a> {
                 ordered.push(m);
             }
         }
+        // Sort non-nullish members by source position to match tsc's display order.
+        // The interner sorts Lazy types by DefId.0 (allocation order), which doesn't
+        // match source declaration order. Display-time sorting fixes this for diagnostics.
+        // Only sort if we can get source positions for ALL members - otherwise preserve
+        // the interner's order to avoid breaking cases where positions can't be determined.
+        if let Some(def_store) = self.def_store {
+            let positions: Vec<_> = ordered
+                .iter()
+                .map(|&m| self.get_source_position_for_type(m, def_store))
+                .collect();
+            // Only sort if no member has tier 2 (unknown position)
+            let all_have_positions = positions.iter().all(|&(tier, _, _)| tier < 2);
+            if all_have_positions {
+                let mut pairs: Vec<_> = ordered.iter().copied().zip(positions).collect();
+                pairs.sort_by_key(|&(_, pos)| pos);
+                ordered = pairs.into_iter().map(|(id, _)| id).collect();
+            }
+        }
+
         if has_null {
             ordered.push(TypeId::NULL);
         }
@@ -1602,5 +1621,97 @@ impl<'a> TypeFormatter<'a> {
 
         parts.reverse();
         parts.join(".")
+    }
+
+    /// Returns a sort key for intrinsic/builtin types to match tsc's display ordering.
+    /// tsc orders builtins as: string(8), number(9), bigint(10), boolean(11), etc.
+    fn builtin_sort_key(id: TypeId) -> Option<u32> {
+        match id {
+            TypeId::NUMBER => Some(9),
+            TypeId::STRING => Some(8),
+            TypeId::BIGINT => Some(10),
+            TypeId::BOOLEAN | TypeId::BOOLEAN_TRUE => Some(11),
+            TypeId::BOOLEAN_FALSE => Some(12),
+            TypeId::VOID => Some(13),
+            TypeId::UNDEFINED => Some(14),
+            TypeId::NULL => Some(15),
+            TypeId::SYMBOL => Some(16),
+            TypeId::OBJECT => Some(17),
+            TypeId::FUNCTION => Some(18),
+            _ if id.is_intrinsic() => Some(id.0),
+            _ => None,
+        }
+    }
+
+    /// Returns (tier, file_id, span_start) for a type, used for source-order sorting.
+    /// - Tier 0: Builtins/intrinsics (always first)
+    /// - Tier 1: User-defined types with source info (sorted by file, then position)
+    /// - Tier 2: Types without source info (preserve original order by returning sentinel)
+    fn get_source_position_for_type(
+        &self,
+        type_id: TypeId,
+        def_store: &crate::def::DefinitionStore,
+    ) -> (u32, u32, u32) {
+        // Tier 0: Intrinsics have fixed position
+        if let Some(key) = Self::builtin_sort_key(type_id) {
+            return (0, 0, key);
+        }
+
+        let data = self.interner.lookup(type_id);
+
+        // Try Lazy(DefId) - type aliases, interfaces, classes
+        if let Some(TypeData::Lazy(def_id)) = &data {
+            if let Some(def) = def_store.get(*def_id) {
+                if let (Some(file_id), Some((span_start, _))) = (def.file_id, def.span) {
+                    return (1, file_id, span_start);
+                }
+            }
+        }
+
+        // Try Application - generic instantiation, get base type's position
+        if let Some(TypeData::Application(app_id)) = &data {
+            let app = self.interner.type_application(*app_id);
+            return self.get_source_position_for_type(app.base, def_store);
+        }
+
+        // Try Enum
+        if let Some(TypeData::Enum(def_id, _)) = &data {
+            if let Some(def) = def_store.get(*def_id) {
+                if let (Some(file_id), Some((span_start, _))) = (def.file_id, def.span) {
+                    return (1, file_id, span_start);
+                }
+            }
+        }
+
+        // Try Object/ObjectWithIndex with symbol
+        if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) = &data {
+            let shape = self.interner.object_shape(*shape_id);
+            if let Some(sym_id) = shape.symbol {
+                if let Some(def_id) = def_store.find_def_by_symbol(sym_id.0) {
+                    if let Some(def) = def_store.get(def_id) {
+                        if let (Some(file_id), Some((span_start, _))) = (def.file_id, def.span) {
+                            return (1, file_id, span_start);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Try Callable with symbol
+        if let Some(TypeData::Callable(shape_id)) = &data {
+            let shape = self.interner.callable_shape(*shape_id);
+            if let Some(sym_id) = shape.symbol {
+                if let Some(def_id) = def_store.find_def_by_symbol(sym_id.0) {
+                    if let Some(def) = def_store.get(def_id) {
+                        if let (Some(file_id), Some((span_start, _))) = (def.file_id, def.span) {
+                            return (1, file_id, span_start);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Tier 2: Fallback - sort last
+        (2, u32::MAX, u32::MAX)
     }
 }
