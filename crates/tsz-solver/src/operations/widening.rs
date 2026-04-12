@@ -166,6 +166,12 @@ fn widen_type_cached(
         return cached;
     }
 
+    // Insert a sentinel before recursing to break cycles on recursive types
+    // like `D<T> { recurse: D<T>; wrapped: D<D<T>>; }`. If we encounter
+    // this type_id again during recursive widening, we return the original
+    // type_id (no widening) instead of diverging.
+    cache.insert(type_id, type_id);
+
     let result = match db.lookup(type_id) {
         // String/Number/Boolean/BigInt literals widen to their primitives
         Some(TypeData::Literal(ref value)) => value.primitive_type_id(),
