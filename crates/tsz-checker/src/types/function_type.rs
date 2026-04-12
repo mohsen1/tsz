@@ -181,7 +181,9 @@ impl<'a> CheckerState<'a> {
         // Push enclosing type parameters so nested functions can reference outer generic scopes.
         let enclosing_type_param_updates = self.push_enclosing_type_parameters(idx);
 
+        self.exclude_params_for_type_param_constraints(parameters);
         let (mut type_params, type_param_updates) = self.push_type_parameters(type_parameters);
+        self.clear_excluded_params_for_type_param_constraints();
 
         if !is_function_declaration && !is_method_or_constructor {
             self.check_duplicate_type_parameters(type_parameters);

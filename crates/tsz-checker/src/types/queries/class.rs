@@ -54,6 +54,50 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Populate `type_param_constraint_excluded_params` with the names of all
+    /// value parameters in the given parameter list. This prevents `typeof paramName`
+    /// from resolving those parameters while processing type parameter constraints.
+    pub(crate) fn exclude_params_for_type_param_constraints(
+        &mut self,
+        params: &tsz_parser::parser::base::NodeList,
+    ) {
+        for &param_idx in &params.nodes {
+            if let Some(param_node) = self.ctx.arena.get(param_idx)
+                && let Some(param) = self.ctx.arena.get_parameter(param_node)
+            {
+                self.collect_param_names_into_exclusion(param.name);
+            }
+        }
+    }
+
+    /// Recursively collect binding names from a parameter name (handles identifiers,
+    /// object binding patterns, and array binding patterns).
+    fn collect_param_names_into_exclusion(&mut self, name_idx: tsz_parser::parser::NodeIndex) {
+        let Some(node) = self.ctx.arena.get(name_idx) else {
+            return;
+        };
+        if let Some(ident) = self.ctx.arena.get_identifier(node) {
+            self.ctx
+                .type_param_constraint_excluded_params
+                .insert(ident.escaped_text.clone());
+            return;
+        }
+        if let Some(pattern) = self.ctx.arena.get_binding_pattern(node) {
+            for &elem_idx in &pattern.elements.nodes {
+                if let Some(elem_node) = self.ctx.arena.get(elem_idx)
+                    && let Some(elem) = self.ctx.arena.get_binding_element(elem_node)
+                {
+                    self.collect_param_names_into_exclusion(elem.name);
+                }
+            }
+        }
+    }
+
+    /// Clear excluded parameter names after type parameter constraints have been processed.
+    pub(crate) fn clear_excluded_params_for_type_param_constraints(&mut self) {
+        self.ctx.type_param_constraint_excluded_params.clear();
+    }
+
     /// Check for unused type parameters in a declaration and emit TS6133.
     ///
     /// This scans all identifiers within the declaration body for type parameter
