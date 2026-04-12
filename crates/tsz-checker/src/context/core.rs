@@ -1197,12 +1197,15 @@ impl<'a> CheckerContext<'a> {
             }) {
                 return;
             }
+            // Only suppress on *exact* span match with same message. The previous
+            // symmetric-containment check over-suppressed per-element TS2322s when
+            // an outer literal assignment emitted the same boilerplate message —
+            // tsc reports those cascade errors separately.
             if self.diagnostics.iter().any(|existing| {
-                existing.code == 2322 && existing.message_text == diag.message_text && {
-                    let existing_end = existing.start.saturating_add(existing.length);
-                    (existing.start <= diag.start && existing_end >= diag_end)
-                        || (diag.start <= existing.start && diag_end >= existing_end)
-                }
+                existing.code == 2322
+                    && existing.message_text == diag.message_text
+                    && existing.start == diag.start
+                    && existing.length == diag.length
             }) {
                 return;
             }
