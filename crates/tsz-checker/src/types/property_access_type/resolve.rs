@@ -932,11 +932,24 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // When `this` has been deliberately typed as `any` (e.g. TS2683 was
+        // emitted because the `this` expression is in a nested regular
+        // function without its own `this` binding), don't override back to
+        // the enclosing class type — property access on `any` must succeed
+        // without a TS2339 cascade.
+        let this_has_own_fresh_binding = self
+            .ctx
+            .arena
+            .get(access.expression)
+            .is_some_and(|node| node.kind == SyntaxKind::ThisKeyword as u16)
+            && self.is_this_in_nested_function_without_own_this_binding(access.expression);
         if self
             .ctx
             .arena
             .get(access.expression)
             .is_some_and(|node| node.kind == SyntaxKind::ThisKeyword as u16)
+            && !this_has_own_fresh_binding
+            && object_type != TypeId::ANY
             && let Some(class_info) = self.ctx.enclosing_class.as_ref()
             && crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)
                 .is_none()
