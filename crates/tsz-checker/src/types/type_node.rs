@@ -1324,8 +1324,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// handles specially.
     pub(crate) fn resolve_type_symbol(&self, node_idx: NodeIndex) -> Option<u32> {
         use tsz_binder::symbol_flags;
-        use tsz_solver::is_compiler_managed_type;
         use tsz_parser::parser::syntax_kind_ext;
+        use tsz_solver::is_compiler_managed_type;
 
         let ident = self.ctx.arena.get_identifier_at(node_idx)?;
         let name = ident.escaped_text.as_str();
