@@ -377,10 +377,9 @@ impl<'a> CheckerState<'a> {
             .or_else(|| state.ctx.definition_store.find_def_for_type(candidate))?;
             let def = state.ctx.definition_store.get(def_id)?;
             if def.kind == tsz_solver::def::DefKind::TypeAlias
-                && (def
-                    .body
-                    .is_some_and(|body| state.assignability_display_has_own_signature_type_params(body))
-                    || state.assignability_display_has_own_signature_type_params(candidate))
+                && (def.body.is_some_and(|body| {
+                    state.assignability_display_has_own_signature_type_params(body)
+                }) || state.assignability_display_has_own_signature_type_params(candidate))
             {
                 return None;
             }
@@ -768,8 +767,8 @@ impl<'a> CheckerState<'a> {
             let parent = self.ctx.binder.get_symbol(current)?;
             if (parent.flags
                 & (tsz_binder::symbol_flags::NAMESPACE_MODULE
-                        | tsz_binder::symbol_flags::VALUE_MODULE
-                        | tsz_binder::symbol_flags::ENUM))
+                    | tsz_binder::symbol_flags::VALUE_MODULE
+                    | tsz_binder::symbol_flags::ENUM))
                 == 0
             {
                 break;

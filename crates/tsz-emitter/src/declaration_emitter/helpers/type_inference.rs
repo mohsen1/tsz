@@ -792,9 +792,7 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     self.type_interner
                         .map(|interner| {
-                            tsz_solver::operations::widening::widen_literal_type(
-                                interner, type_id,
-                            )
+                            tsz_solver::operations::widening::widen_literal_type(interner, type_id)
                         })
                         .unwrap_or(type_id)
                 };
