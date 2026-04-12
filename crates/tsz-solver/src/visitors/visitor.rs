@@ -593,6 +593,37 @@ pub fn collect_lazy_def_ids(types: &dyn TypeDatabase, root: TypeId) -> Vec<DefId
     out
 }
 
+/// Check if `root` contains an Application whose base is `Lazy(target_def_id)`
+/// and whose arguments are all concrete (no type parameters or infer types).
+/// A concrete self-referential Application that survives evaluation indicates
+/// infinite recursion (TS2589).
+pub fn contains_concrete_application_with_def(
+    types: &dyn TypeDatabase,
+    root: TypeId,
+    target_def_id: DefId,
+) -> bool {
+    let mut found = false;
+    walk_referenced_types(types, root, |type_id| {
+        if found {
+            return;
+        }
+        if let Some(TypeData::Application(app_id)) = types.lookup(type_id) {
+            let app = types.type_application(app_id);
+            if let Some(TypeData::Lazy(def_id)) = types.lookup(app.base) {
+                if def_id == target_def_id {
+                    let args_are_concrete = !app.args.iter().any(|&arg| {
+                        super::visitor_predicates::contains_type_parameters(types, arg)
+                    });
+                    if args_are_concrete {
+                        found = true;
+                    }
+                }
+            }
+        }
+    });
+    found
+}
+
 /// Collect all unique enum `DefIds` reachable from `root`.
 pub fn collect_enum_def_ids(types: &dyn TypeDatabase, root: TypeId) -> Vec<DefId> {
     let mut out = Vec::new();

@@ -588,6 +588,48 @@ impl<'a> CheckerState<'a> {
         self.evaluate_type_with_env_impl(type_id, false)
     }
 
+    /// Evaluate a type for TS2589 detection at type alias definition sites.
+    ///
+    /// Like `evaluate_type_with_env_uncached` but uses an evaluator that flags
+    /// `depth_exceeded` when cycle detection fires on an Application type.
+    /// This catches self-referential conditional types that produce the same
+    /// Application TypeId on each expansion.
+    ///
+    /// Returns true if depth was exceeded (TS2589 should be emitted).
+    pub(crate) fn evaluate_type_for_ts2589_check(
+        &mut self,
+        type_id: TypeId,
+        alias_def_id: tsz_solver::def::DefId,
+    ) -> bool {
+        let env = self.ctx.type_env.borrow();
+        // First try: evaluate with flag that detects Application cycles
+        let eval_result =
+            crate::query_boundaries::state::type_environment::evaluate_type_for_ts2589(
+                self.ctx.types,
+                &*env,
+                type_id,
+            );
+        if eval_result.depth_exceeded {
+            return true;
+        }
+
+        // Second check: the Application may be cached from the first evaluation,
+        // causing the cycle to fire on a Conditional instead of the Application.
+        // Check if the evaluated result contains a CONCRETE Application referencing
+        // the alias (i.e., Application(Lazy(def_id), args) where args have no type
+        // params). A concrete self-reference that survives evaluation means the
+        // expansion didn't converge — infinite recursion.
+        let result = eval_result.result;
+        if result != type_id && result != TypeId::ERROR {
+            let db = self.ctx.types.as_type_database();
+            if tsz_solver::visitor::contains_concrete_application_with_def(db, result, alias_def_id)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     pub(crate) fn resolve_global_interface_type(&mut self, name: &str) -> Option<TypeId> {
         // First try file_locals (includes user-defined globals and merged lib symbols)
         if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {

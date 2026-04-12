@@ -239,3 +239,35 @@ let p: MyProps;
         "Deeply nested generics took {elapsed:?} — should complete in < 5s (was hanging before fix)"
     );
 }
+
+/// TS2589 at type alias DEFINITION site (no usage needed).
+/// tsc emits TS2589 for `type Foo<T> = T extends unknown ? Foo<T> : unknown`
+/// at the definition because the conditional body is infinitely recursive.
+#[test]
+fn recursive_conditional_type_alias_definition_emits_ts2589() {
+    let source = r#"
+type Foo<T> = T extends unknown
+  ? unknown extends `${infer $Rest}`
+    ? Foo<T>
+    : Foo<unknown>
+  : unknown;
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2589),
+        "Should emit TS2589 for recursive conditional type alias at definition site. Got: {diags:?}"
+    );
+}
+
+/// Valid bounded recursive types should NOT trigger TS2589 at definition.
+#[test]
+fn bounded_recursive_conditional_no_ts2589_at_definition() {
+    let source = r#"
+type TrimLeft<T extends string> = T extends ` ${infer R}` ? TrimLeft<R> : T;
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2589),
+        "Should NOT emit TS2589 for bounded recursive conditional type. Got: {diags:?}"
+    );
+}
