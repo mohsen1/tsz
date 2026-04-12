@@ -1702,11 +1702,43 @@ impl<'a> CheckerState<'a> {
                     }
                 } else {
                     // Simple identifiers: tsc flags all conflicting declarations.
-                    for &idx in &member_info.indices {
-                        self.report_duplicate_class_member_ts2300(idx);
-                    }
-                    for &idx in accessor_indices {
-                        self.report_duplicate_class_member_ts2300(idx);
+                    //
+                    // Exception for private names: when an accessor appears BEFORE
+                    // a field (property) with the same private name, tsc flags
+                    // only the field — the accessor is treated as the established
+                    // declaration, and the subsequent field is the "real" conflict.
+                    // For all other orderings (field first, or no field at all),
+                    // both sides are flagged.
+                    let is_private = bare_key.starts_with('#');
+                    let first_accessor_pos = accessor_indices
+                        .first()
+                        .and_then(|&idx| self.ctx.arena.get(idx))
+                        .map(|n| n.pos);
+                    let first_field_pos = member_info
+                        .indices
+                        .iter()
+                        .zip(member_info.is_property.iter())
+                        .filter(|(_, is_prop)| **is_prop)
+                        .filter_map(|(&idx, _)| self.ctx.arena.get(idx).map(|n| n.pos))
+                        .min();
+                    let field_strictly_after_accessor = matches!(
+                        (first_field_pos, first_accessor_pos),
+                        (Some(fp), Some(ap)) if fp > ap
+                    );
+
+                    if is_private && field_strictly_after_accessor {
+                        // Only flag the members (the field comes after the
+                        // accessor; the accessor is not flagged).
+                        for &idx in &member_info.indices {
+                            self.report_duplicate_class_member_ts2300(idx);
+                        }
+                    } else {
+                        for &idx in &member_info.indices {
+                            self.report_duplicate_class_member_ts2300(idx);
+                        }
+                        for &idx in accessor_indices {
+                            self.report_duplicate_class_member_ts2300(idx);
+                        }
                     }
                 }
             }
