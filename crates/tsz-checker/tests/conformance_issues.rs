@@ -24988,3 +24988,28 @@ function f(x: numerics.DiagnosticCategory, y: strings.DiagnosticCategory) {
         );
     }
 }
+
+/// `new Proxy(t, {})` should not emit TS2351 ("This expression is not constructable").
+///
+/// ProxyConstructor is an interface with a construct signature:
+///   `new <T extends object>(target: T, handler: ProxyHandler<T>): T`
+///
+/// The type of `Proxy` is `ProxyConstructor` (from `declare var Proxy: ProxyConstructor`).
+/// When the ProxyConstructor type stays as a Lazy(DefId) reference (common for lib types
+/// whose DefId→SymbolId mapping isn't established during cross-file resolution), the
+/// solver's resolve_new can't find construct signatures and incorrectly returns NotCallable.
+///
+/// The fix resolves Lazy constructor types through lib type resolution by name before
+/// passing them to the solver.
+#[test]
+fn test_new_proxy_no_ts2351() {
+    let source = r#"
+var t = {};
+var p = new Proxy(t, {});
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_lib(source);
+    assert!(
+        !has_error(&diagnostics, 2351),
+        "new Proxy() should NOT emit TS2351 (not constructable), got: {diagnostics:?}"
+    );
+}
