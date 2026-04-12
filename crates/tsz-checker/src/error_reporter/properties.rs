@@ -1875,18 +1875,14 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a single type has a known DOM type name and is structurally empty.
     fn is_empty_dom_named_type(&self, type_id: TypeId) -> bool {
-        use crate::error_reporter::is_known_dom_global;
-
-        // Get the type's display name to check against known DOM types.
-        let name = self.dom_type_name(type_id);
-        let name = match name {
-            Some(ref n) if is_known_dom_global(n) => n.clone(),
+        // Get the type's display name to check against the DOM-element name
+        // pattern. We mirror tsc's `containerSeemsToBeEmptyDomElement`, which
+        // tests the name against the regex `^(?:EventTarget|Node|(?:HTML[a-zA-Z]*)?Element)$`
+        // regardless of whether the declaration originates from a lib file.
+        let name = match self.dom_type_name(type_id) {
+            Some(n) if is_dom_element_like_name(&n) => n,
             _ => return false,
         };
-
-        if !self.is_lib_origin_dom_named_type(type_id) {
-            return false;
-        }
 
         // Check if the type is structurally empty (no user-defined properties).
         // Interfaces may be lazy or materialized - check both paths.
@@ -1920,25 +1916,6 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
-    }
-
-    fn is_lib_origin_dom_named_type(&self, type_id: TypeId) -> bool {
-        let Some(def_id) = tsz_solver::lazy_def_id(self.ctx.types, type_id)
-            .or_else(|| self.ctx.definition_store.find_def_for_type(type_id))
-            .or_else(|| {
-                self.ctx
-                    .resolve_type_to_symbol_id(type_id)
-                    .and_then(|sym_id| self.ctx.get_existing_def_id(sym_id))
-            })
-        else {
-            return false;
-        };
-
-        let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
-            return false;
-        };
-
-        self.ctx.binder.lib_symbol_ids.contains(&sym_id)
     }
 
     /// Try to get the display name for a type, checking symbol and def store.
@@ -1998,4 +1975,19 @@ impl<'a> CheckerState<'a> {
         }
         true
     }
+}
+
+/// Match tsc's `^(?:EventTarget|Node|(?:HTML[a-zA-Z]*)?Element)$` regex used by
+/// `containerSeemsToBeEmptyDomElement` to detect DOM element-like type names.
+fn is_dom_element_like_name(name: &str) -> bool {
+    if name == "EventTarget" || name == "Node" || name == "Element" {
+        return true;
+    }
+    if let Some(prefix) = name.strip_suffix("Element")
+        && let Some(rest) = prefix.strip_prefix("HTML")
+        && rest.chars().all(|c| c.is_ascii_alphabetic())
+    {
+        return true;
+    }
+    false
 }
