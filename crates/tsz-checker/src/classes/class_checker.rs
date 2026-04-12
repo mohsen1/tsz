@@ -13,6 +13,44 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+/// Format a property name for error messages.
+///
+/// If the property name is not a valid identifier (e.g., `2.0`, `my-prop`),
+/// it gets wrapped in single quotes. TSC does this to match the original
+/// source syntax for string literal property names.
+pub(crate) fn format_property_name_for_diagnostic(name: &str) -> String {
+    if needs_property_name_quotes(name) {
+        format!("'{name}'")
+    } else {
+        name.to_string()
+    }
+}
+
+/// Returns `true` if a property name needs to be quoted in diagnostics
+/// (i.e., it is not a valid JS identifier or pure numeric literal).
+fn needs_property_name_quotes(name: &str) -> bool {
+    if name.is_empty() {
+        return true;
+    }
+    // Computed property names wrapped in brackets (e.g., [Symbol.asyncIterator])
+    // are displayed as-is without quotes.
+    if name.starts_with('[') && name.ends_with(']') {
+        return false;
+    }
+    // Pure numeric property names (e.g., "0", "42") don't need quotes
+    if name.chars().all(|ch| ch.is_ascii_digit()) {
+        return false;
+    }
+    // Check if it's a valid identifier
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) if first.is_ascii_alphabetic() || first == '_' || first == '$' => {
+            !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+        }
+        _ => true,
+    }
+}
+
 /// Extracted info about a single class member (property, method, or accessor).
 #[derive(Clone)]
 pub(crate) struct ClassMemberInfo {
@@ -362,11 +400,12 @@ impl<'a> CheckerState<'a> {
                             let member_type_str = self.format_type(member_type);
                             let base_type_str = self.format_type(base_type);
 
+                            let display_name = format_property_name_for_diagnostic(&info.name);
                             self.error_at_node(
                                     info.name_idx,
                                     &format!(
-                                        "Property '{}' in type '{}' is not assignable to the same property in base type '{}'.",
-                                        info.name, derived_class_name, base_class_name
+                                        "Property '{display_name}' in type '{}' is not assignable to the same property in base type '{}'.",
+                                        derived_class_name, base_class_name
                                     ),
                                     diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                                 );
@@ -1576,10 +1615,11 @@ impl<'a> CheckerState<'a> {
                     {
                         // TS2416: Private member type incompatibility
                         self.pop_type_parameters(base_scope.1);
+                        let display_name = format_property_name_for_diagnostic(&member_name);
                         self.error_at_node(
                             member_name_idx,
                             &format!(
-                                "Property '{member_name}' in type '{derived_class_name}' is not assignable to the same property in base type '{base_class_name}'."
+                                "Property '{display_name}' in type '{derived_class_name}' is not assignable to the same property in base type '{base_class_name}'."
                             ),
                             diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                         );
@@ -1779,10 +1819,11 @@ impl<'a> CheckerState<'a> {
                     );
                 } else {
                     // TS2416: Instance member incompatibility
+                    let display_name = format_property_name_for_diagnostic(&member_name);
                     self.error_at_node(
                         member_name_idx,
                         &format!(
-                            "Property '{member_name}' in type '{derived_class_name}' is not assignable to the same property in base type '{base_class_name}'."
+                            "Property '{display_name}' in type '{derived_class_name}' is not assignable to the same property in base type '{base_class_name}'."
                         ),
                         diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                     );
@@ -2043,11 +2084,12 @@ impl<'a> CheckerState<'a> {
                         info.name_idx,
                     )
                 {
+                    let display_name = format_property_name_for_diagnostic(&info.name);
                     self.error_at_node(
                         info.name_idx,
                         &format!(
-                            "Property '{}' in type '{}' is not assignable to the same property in base type '{}'.",
-                            info.name, derived_class_name, base_class_name
+                            "Property '{display_name}' in type '{}' is not assignable to the same property in base type '{}'.",
+                            derived_class_name, base_class_name
                         ),
                         diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                     );
