@@ -255,5 +255,9 @@ path = "tests/infer_extends_constraint_substitution_tests.rs"
 name = "fresh_intersection_display_tests"
 path = "tests/fresh_intersection_display_tests.rs"
 
+[[test]]
+name = "intersection_signatures"
+path = "tests/intersection_signatures.rs"
+
 [lints]
 workspace = true
