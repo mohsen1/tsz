@@ -1088,6 +1088,12 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // Skip for arrays and tuples - they are built-in iterables with correct protocol.
+        // This avoids false positives from property resolution issues with lib generic types.
+        if self.is_array_or_tuple_or_string(iterable_type) {
+            return true;
+        }
+
         // Step 1: Get [Symbol.iterator] property
         let iterator_fn = self.resolve_property_access_with_env(iterable_type, "[Symbol.iterator]");
         let iterator_fn_type = match &iterator_fn {
