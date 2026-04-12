@@ -11,7 +11,7 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::iterators::get_iterator_info;
 use crate::types::{TupleElement, TupleListId, TypeData, TypeId};
 use crate::utils::{self, TupleRestExpansion};
-use crate::visitor::{array_element_type, is_type_parameter, tuple_list_id};
+use crate::visitor::{array_element_type, is_type_parameter, tuple_list_id, type_param_info};
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 
@@ -343,7 +343,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if let Some(variadic) = expansion.variadic
                     && !self.check_subtype(variadic, t_elem).is_true()
                 {
-                    return SubtypeResult::False;
+                    // When the variadic is a TypeParameter constrained to an
+                    // array type (e.g., U extends string[]), expand_tuple_rest
+                    // returns the type parameter itself as the variadic. For
+                    // [..U, ..U] <: E[], check the constraint's element type.
+                    let ok = type_param_info(self.interner, variadic).is_some_and(|info| {
+                        info.constraint.is_some_and(|c| {
+                            array_element_type(self.interner, c)
+                                .is_some_and(|e| self.check_subtype(e, t_elem).is_true())
+                        })
+                    });
+                    if !ok {
+                        return SubtypeResult::False;
+                    }
                 }
                 // Check tail elements from nested tuple spreads
                 for tail_elem in expansion.tail {
