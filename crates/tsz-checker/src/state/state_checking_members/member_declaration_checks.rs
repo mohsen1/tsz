@@ -484,9 +484,14 @@ impl<'a> CheckerState<'a> {
                         self.push_typeof_params_from_ast_nodes(&func_type.parameters.nodes);
                     if func_type.type_annotation.is_some() {
                         // Check for TS2577: circular return type annotation.
-                        // If we're currently resolving type aliases and the return type
-                        // references one of them, emit the circularity diagnostic.
+                        // Only emit when the function type is inside a conditional
+                        // type's extends clause — that context requires eager
+                        // evaluation of the return type pattern, making the
+                        // circularity observable.  A self-referential return type
+                        // in a plain type alias body (e.g. `type F = () => F`) is
+                        // valid productive recursion and must NOT trigger TS2577.
                         if !self.ctx.symbol_resolution_set.is_empty()
+                            && self.ctx.in_conditional_extends_depth > 0
                             && self.type_node_contains_circular_reference(func_type.type_annotation)
                         {
                             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
