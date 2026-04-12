@@ -1139,6 +1139,20 @@ impl<'a> CheckerContext<'a> {
                 continue;
             }
 
+            // Skip if the current file's binder owns a symbol at this SymbolId.
+            // The shared store's `symbol_only_index` is file-agnostic: the same
+            // raw `SymbolId(u32)` from different files maps to whichever DefId
+            // was registered first.  Installing such a mapping would pollute this
+            // file's local caches with a DefId that belongs to a *different*
+            // file's symbol — for example, File A's `Set` (SymbolId 5) would
+            // shadow File B's `AtTop` (also SymbolId 5) during instanceof
+            // narrowing.  Skipping here is safe: when the local symbol is
+            // actually referenced, `get_or_create_def_id` will resolve it
+            // correctly through the file-aware `symbol_def_index`.
+            if self.binder.get_symbols().get(sym_id).is_some() {
+                continue;
+            }
+
             self.symbol_to_def.borrow_mut().insert(sym_id, *def_id);
             self.def_to_symbol.borrow_mut().insert(*def_id, sym_id);
 
