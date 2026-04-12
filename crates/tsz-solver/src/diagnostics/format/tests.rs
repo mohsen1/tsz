@@ -1812,17 +1812,10 @@ fn application_lazy_shows_type_args() {
         "Application should show formatted type args"
     );
 }
-
-#[test]
-fn lazy_raw_def_id_falls_back_to_symbol_name() {
-    let db = TypeInterner::new();
-    let mut symbols = tsz_binder::SymbolArena::new();
-    let sym_id = symbols.alloc(tsz_binder::symbol_flags::INTERFACE, "Num".to_string());
-    let lazy = db.lazy(crate::def::DefId(sym_id.0));
-
-    let mut fmt = TypeFormatter::with_symbols(&db, &symbols);
-    assert_eq!(fmt.format(lazy), "Num");
-}
+// NOTE: lazy_raw_def_id_falls_back_to_symbol_name was removed.
+// DefId and SymbolId are independent ID spaces. The raw-value fallback
+// was removed in bfd1e1ad05 because it caused incorrect type names
+// (e.g., enum "Foo" displaying as "timeout" when IDs collided).
 
 // =================================================================
 // Optional parameter/property display (no redundant `| undefined`)
