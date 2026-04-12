@@ -8,6 +8,58 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Returns true when `anchor_idx` sits inside an arithmetic/bitwise
+    /// compound assignment (`+=`, `-=`, `*=`, `&=`, etc.) — as the LHS/RHS of
+    /// the compound binary, the binary itself, or the enclosing expression
+    /// statement.
+    ///
+    /// For such contexts tsc widens literal types in the TS2322 message
+    /// because the effective source of `x op= y` is the binary result `x op y`,
+    /// which tsc reports with literal widening applied. Logical compound
+    /// assignments (`&&=`, `||=`, `??=`) preserve the narrow RHS type and are
+    /// deliberately excluded.
+    fn in_arithmetic_compound_assignment_context(&self, anchor_idx: NodeIndex) -> bool {
+        use tsz_scanner::SyntaxKind;
+
+        let is_arith_compound_op = |op: u16| -> bool {
+            tsz_solver::is_compound_assignment_operator(op)
+                && !matches!(
+                    op,
+                    k if k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+                        || k == SyntaxKind::BarBarEqualsToken as u16
+                        || k == SyntaxKind::QuestionQuestionEqualsToken as u16
+                )
+        };
+
+        let node_is_arith_compound_bin = |idx: NodeIndex| -> bool {
+            self.ctx.arena.get(idx).is_some_and(|node| {
+                node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                    && self
+                        .ctx
+                        .arena
+                        .get_binary_expr(node)
+                        .is_some_and(|bin| is_arith_compound_op(bin.operator_token))
+            })
+        };
+
+        if node_is_arith_compound_bin(anchor_idx) {
+            return true;
+        }
+
+        if let Some(node) = self.ctx.arena.get(anchor_idx)
+            && node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+            && let Some(stmt) = self.ctx.arena.get_expression_statement(node)
+            && node_is_arith_compound_bin(stmt.expression)
+        {
+            return true;
+        }
+
+        let Some(ext) = self.ctx.arena.get_extended(anchor_idx) else {
+            return false;
+        };
+        node_is_arith_compound_bin(ext.parent)
+    }
+
     fn is_property_assignment_initializer(&self, anchor_idx: NodeIndex) -> bool {
         let current = self.ctx.arena.skip_parenthesized_and_assertions(anchor_idx);
         let Some(ext) = self.ctx.arena.get_extended(current) else {
@@ -954,19 +1006,24 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
-        if self.is_literal_sensitive_assignment_target(target)
+        let in_arith_compound = self.in_arithmetic_compound_assignment_context(anchor_idx);
+
+        if !in_arith_compound
+            && self.is_literal_sensitive_assignment_target(target)
             && let Some(display) = self.literal_expression_display(anchor_idx)
         {
             return display;
         }
-        if self.is_literal_sensitive_assignment_target(target)
+        if !in_arith_compound
+            && self.is_literal_sensitive_assignment_target(target)
             && tsz_solver::literal_value(self.ctx.types, source).is_some()
         {
             return self.format_assignability_type_for_message(source, target);
         }
 
         if let Some(expr_idx) = self.direct_diagnostic_source_expression(anchor_idx) {
-            if self.is_literal_sensitive_assignment_target(target)
+            if !in_arith_compound
+                && self.is_literal_sensitive_assignment_target(target)
                 && let Some(display) = self.literal_expression_display(expr_idx)
             {
                 return display;
@@ -1063,6 +1120,7 @@ impl<'a> CheckerState<'a> {
                 return self.format_annotation_like_type(&display);
             }
             if let Some(display) = self.literal_expression_display(expr_idx)
+                && !self.in_arithmetic_compound_assignment_context(anchor_idx)
                 && (self.is_literal_sensitive_assignment_target(target)
                     || (self.assignment_source_is_return_expression(anchor_idx)
                         && crate::query_boundaries::common::contains_type_parameters(
