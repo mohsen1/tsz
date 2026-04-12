@@ -1308,6 +1308,14 @@ impl<'a> DeclarationEmitter<'a> {
         let type_name = symbol.escaped_name.clone();
         let source_path = self.get_symbol_source_path(sym_id, binder)?;
 
+        // Symbols declared inside `declare module "..."` are portable through the
+        // ambient module specifier even when the backing `.d.ts` file lives in a
+        // package subpath such as `@types/node/fs.d.ts` or `ext/ts3.1/index.d.ts`.
+        // TS2883 should only fire when the symbol truly lacks a public module path.
+        if self.check_ambient_module(sym_id, binder).is_some() {
+            return None;
+        }
+
         // If the symbol is re-exported from a module accessible via a bare
         // package specifier (no subpath), the type IS portable -- consumers
         // can reference it through the package root.  tsc does not emit
