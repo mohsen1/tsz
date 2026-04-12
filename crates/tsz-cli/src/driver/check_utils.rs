@@ -1511,8 +1511,31 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
     file_idx: usize,
     augmentations: &MergedAugmentations,
 ) -> BinderState {
-    let declaration_arenas = file.declaration_arenas.clone();
-    let symbol_arenas = file.symbol_arenas.clone();
+    let declaration_arenas: tsz::binder::state::DeclarationArenaMap = program
+        .declaration_arenas
+        .iter()
+        .filter_map(|(&(sym_id, decl_idx), arenas)| {
+            let has_non_local_arena = arenas.iter().any(|arena| !Arc::ptr_eq(arena, &file.arena));
+            has_non_local_arena.then(|| ((sym_id, decl_idx), arenas.clone()))
+        })
+        .collect();
+
+    let symbols_with_non_local_declarations: rustc_hash::FxHashSet<tsz::binder::SymbolId> =
+        declaration_arenas
+            .keys()
+            .map(|&(sym_id, _)| sym_id)
+            .collect();
+
+    let symbol_arenas: rustc_hash::FxHashMap<tsz::binder::SymbolId, Arc<tsz_parser::NodeArena>> =
+        program
+            .symbol_arenas
+            .iter()
+            .filter_map(|(&sym_id, arena)| {
+                let has_non_local_decl = symbols_with_non_local_declarations.contains(&sym_id);
+                (has_non_local_decl || !Arc::ptr_eq(arena, &file.arena))
+                    .then(|| (sym_id, Arc::clone(arena)))
+            })
+            .collect();
 
     let mut file_locals = SymbolTable::new();
 
@@ -1565,7 +1588,11 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
     // Compose semantic defs from the merged program, then overlay the file-local
     // entries so reconstructed binders preserve the same stable semantic identity
     // map as the core parallel binder path.
-    binder.semantic_defs = file.semantic_defs.clone();
+    let mut composed_semantic_defs = program.semantic_defs.clone();
+    for (sym_id, entry) in &file.semantic_defs {
+        composed_semantic_defs.insert(*sym_id, entry.clone());
+    }
+    binder.semantic_defs = composed_semantic_defs;
     if let Some(root_scope) = binder.scopes.first() {
         binder.current_scope = root_scope.table.clone();
         binder.current_scope_id = tsz::binder::ScopeId(0);
@@ -1643,7 +1670,14 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
     binder.is_external_module = file.is_external_module;
     binder.file_features = file.file_features;
     binder.lib_symbol_reverse_remap = file.lib_symbol_reverse_remap.clone();
-    binder.semantic_defs = file.semantic_defs.clone();
+    // Compose semantic defs from the merged program, then overlay the file-local
+    // entries so reconstructed binders preserve the same stable semantic identity
+    // map as the core parallel binder path.
+    let mut composed_semantic_defs = program.semantic_defs.clone();
+    for (sym_id, entry) in &file.semantic_defs {
+        composed_semantic_defs.insert(*sym_id, entry.clone());
+    }
+    binder.semantic_defs = composed_semantic_defs;
     if let Some(root_scope) = binder.scopes.first() {
         binder.current_scope = root_scope.table.clone();
         binder.current_scope_id = tsz::binder::ScopeId(0);
