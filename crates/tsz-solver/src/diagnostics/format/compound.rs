@@ -1266,9 +1266,10 @@ impl<'a> TypeFormatter<'a> {
             }
             return name;
         }
-        if let Some(name) = self.format_raw_def_id_symbol_fallback(def_id) {
-            return name;
-        }
+        // NOTE: We do NOT use format_raw_def_id_symbol_fallback here.
+        // DefId and SymbolId are independent ID spaces. A DefId's raw value
+        // should never be interpreted as a SymbolId — doing so would return
+        // the name of an unrelated symbol that happens to share the same u32.
         format!("{}({})", fallback_prefix, def_id.0)
     }
 
@@ -1304,22 +1305,15 @@ impl<'a> TypeFormatter<'a> {
                 .collect();
             return format!("{prefix}{}<{}>", name, params.join(", "));
         }
-        if let Some(name) = self.format_raw_def_id_symbol_fallback(def_id) {
-            return name;
-        }
+        // NOTE: We do NOT use format_raw_def_id_symbol_fallback here.
+        // DefId and SymbolId are independent ID spaces — see comment above.
         format!("{}({})", fallback_prefix, def_id.0)
     }
 
-    /// Some checker paths still materialize fallback `Lazy(DefId(symbol_id))` nodes
-    /// without registering the `DefId` in the definition store. When that happens,
-    /// use the raw id as a `SymbolId` if it resolves in the active symbol arena.
-    pub(super) fn format_raw_def_id_symbol_fallback(
-        &mut self,
-        def_id: crate::def::DefId,
-    ) -> Option<String> {
-        let sym_id = SymbolId(def_id.0);
-        self.format_symbol_name(sym_id)
-    }
+    // NOTE: format_raw_def_id_symbol_fallback was removed.
+    // It incorrectly assumed DefId.0 == SymbolId.0, which caused wrong type
+    // names in diagnostics (e.g., enum "Foo" displaying as "timeout").
+    // DefId and SymbolId are independent ID spaces and must not be conflated.
 
     /// Try to resolve a human-readable name for an object shape via symbol or def store lookup.
     pub(super) fn resolve_object_shape_name(&mut self, shape: &ObjectShape) -> Option<String> {
