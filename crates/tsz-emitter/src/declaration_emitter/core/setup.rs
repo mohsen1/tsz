@@ -36,6 +36,7 @@ impl<'a> DeclarationEmitter<'a> {
             current_arena: None,
             current_file_path: None,
             arena_to_path: FxHashMap::default(),
+            file_idx_to_path: FxHashMap::default(),
             required_imports: FxHashMap::default(),
             reserved_names: FxHashSet::default(),
             import_string_aliases: FxHashMap::default(),
@@ -117,6 +118,7 @@ impl<'a> DeclarationEmitter<'a> {
             current_arena: None,
             current_file_path: None,
             arena_to_path: FxHashMap::default(),
+            file_idx_to_path: FxHashMap::default(),
             required_imports: FxHashMap::default(),
             reserved_names: FxHashSet::default(),
             import_string_aliases: FxHashMap::default(),
@@ -231,6 +233,15 @@ impl<'a> DeclarationEmitter<'a> {
     /// This enables resolving foreign symbols to their source files.
     pub fn set_arena_to_path(&mut self, arena_to_path: FxHashMap<usize, String>) {
         self.arena_to_path = arena_to_path;
+    }
+
+    /// Set the mapping from file index to file path.
+    ///
+    /// This enables resolving symbol source paths via `decl_file_idx` when
+    /// the symbol is not in `symbol_arenas` (e.g., for cross-file interface
+    /// references created during type checking).
+    pub fn set_file_idx_to_path(&mut self, file_idx_to_path: FxHashMap<u32, String>) {
+        self.file_idx_to_path = file_idx_to_path;
     }
 
     pub const fn set_remove_comments(&mut self, remove: bool) {
