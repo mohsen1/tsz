@@ -503,12 +503,32 @@ impl<'a> CheckerState<'a> {
             false
         };
 
+        // Override object_type with the global value type only when the identifier
+        // actually resolves to a global, not when a local variable shadows the global.
+        // E.g., `let location = shape.location; location.x` should use the local's type,
+        // not the DOM `Location` global type.
         if let Some(ident) = self.ctx.arena.get_identifier_at(access.expression)
             && self.is_known_global_value_name(&ident.escaped_text)
         {
-            let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
-            if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
-                object_type = value_type;
+            // Check if there's a local binding shadowing the global
+            let is_local_shadow = self
+                .resolve_identifier_symbol_without_tracking(access.expression)
+                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                .is_some_and(|symbol| {
+                    // Local variables are FUNCTION_SCOPED_VARIABLE or BLOCK_SCOPED_VARIABLE
+                    // Global lib symbols typically have different flags
+                    (symbol.flags
+                        & (symbol_flags::FUNCTION_SCOPED_VARIABLE
+                            | symbol_flags::BLOCK_SCOPED_VARIABLE
+                            | symbol_flags::PROPERTY))
+                        != 0
+                });
+
+            if !is_local_shadow {
+                let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
+                if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                    object_type = value_type;
+                }
             }
         }
 
