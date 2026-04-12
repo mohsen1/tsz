@@ -794,7 +794,9 @@ impl<'a> CheckerState<'a> {
         // Seed a partial structural interface type before heritage merging so
         // recursive interface/namespace resolution can reuse the current shape
         // instead of re-entering the full lowering + heritage pipeline.
-        self.ctx.symbol_instance_types.insert(sym_id, interface_type);
+        self.ctx
+            .symbol_instance_types
+            .insert(sym_id, interface_type);
 
         self.pop_type_parameters(updates);
         let _ = params; // params are not needed for this path
@@ -808,6 +810,15 @@ impl<'a> CheckerState<'a> {
         &mut self,
         declarations: &[NodeIndex],
     ) -> rustc_hash::FxHashMap<tsz_solver::def::DefId, Vec<tsz_solver::TypeParamInfo>> {
+        // PERF: declaration files like react16.d.ts contain extremely large interface
+        // graphs. Walking every descendant of every interface just to prewarm an
+        // optional cache can dominate checker time. The lowering path already falls
+        // back to `ctx.get_def_type_params(def_id)` on demand, so skipping the eager
+        // prewarm here preserves correctness while avoiding repeated full-tree scans.
+        if self.ctx.is_declaration_file() {
+            return rustc_hash::FxHashMap::default();
+        }
+
         let mut stack = Vec::new();
         let mut params_by_def = rustc_hash::FxHashMap::default();
 

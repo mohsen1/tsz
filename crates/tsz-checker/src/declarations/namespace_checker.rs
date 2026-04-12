@@ -192,21 +192,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // For pure namespace sub-members, build a structural object type instead
-            // of using Lazy(DefId). This prevents the solver from seeing two opaque
-            // Lazy types that both resolve to themselves (cycle → false assignable).
-            let is_pure_namespace = member_flags
-                & (tsz_binder::symbol_flags::VALUE_MODULE
-                    | tsz_binder::symbol_flags::NAMESPACE_MODULE)
-                != 0
-                && member_flags
-                    & (tsz_binder::symbol_flags::CLASS | tsz_binder::symbol_flags::FUNCTION)
-                    == 0;
-            let type_id = if is_pure_namespace {
-                self.build_namespace_object_type(*member_id)
-            } else {
-                self.get_type_of_symbol(*member_id)
-            };
+            let type_id = self.namespace_export_member_type(*member_id, member_flags);
             let name_atom = self.ctx.types.intern_string(name);
 
             let is_duplicate =
@@ -262,6 +248,25 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn namespace_export_member_type(&mut self, member_id: SymbolId, member_flags: u32) -> TypeId {
+        let is_pure_namespace = member_flags
+            & (tsz_binder::symbol_flags::VALUE_MODULE | tsz_binder::symbol_flags::NAMESPACE_MODULE)
+            != 0
+            && member_flags
+                & (tsz_binder::symbol_flags::CLASS | tsz_binder::symbol_flags::FUNCTION)
+                == 0;
+
+        if is_pure_namespace || self.ctx.is_declaration_file() {
+            return self
+                .ctx
+                .types
+                .factory()
+                .lazy(self.ctx.get_or_create_def_id(member_id));
+        }
+
+        self.get_type_of_symbol(member_id)
+    }
+
     /// Build a structural object type for a namespace symbol by collecting its value exports.
     ///
     /// This is used instead of `get_type_of_symbol` for pure namespace sub-members when
@@ -310,18 +315,7 @@ impl<'a> CheckerState<'a> {
             if member_flags & tsz_binder::symbol_flags::VALUE == 0 {
                 continue;
             }
-            let is_pure_namespace = (member_flags
-                & (tsz_binder::symbol_flags::VALUE_MODULE
-                    | tsz_binder::symbol_flags::NAMESPACE_MODULE))
-                != 0
-                && (member_flags
-                    & (tsz_binder::symbol_flags::CLASS | tsz_binder::symbol_flags::FUNCTION))
-                    == 0;
-            let member_type = if is_pure_namespace {
-                self.build_namespace_object_type(member_id)
-            } else {
-                self.get_type_of_symbol(member_id)
-            };
+            let member_type = self.namespace_export_member_type(member_id, member_flags);
             let name_atom = self.ctx.types.intern_string(name);
             props.push(PropertyInfo {
                 name: name_atom,
@@ -339,7 +333,9 @@ impl<'a> CheckerState<'a> {
         }
         self.ctx.symbol_resolution_depth.set(depth);
         let namespace_type = self.ctx.types.factory().object(props);
-        self.ctx.symbol_instance_types.insert(sym_id, namespace_type);
+        self.ctx
+            .symbol_instance_types
+            .insert(sym_id, namespace_type);
         namespace_type
     }
 
@@ -765,7 +761,10 @@ impl<'a> CheckerState<'a> {
                 && (member_symbol.flags & (symbol_flags::CLASS | symbol_flags::FUNCTION)) == 0;
 
             let mut type_id = if is_pure_namespace {
-                self.build_namespace_object_type(*member_id)
+                self.ctx
+                    .types
+                    .factory()
+                    .lazy(self.ctx.get_or_create_def_id(*member_id))
             } else {
                 self.get_type_of_symbol(*member_id)
             };

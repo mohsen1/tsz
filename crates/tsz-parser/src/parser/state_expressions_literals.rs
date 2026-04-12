@@ -988,17 +988,15 @@ impl ParserState {
 
             #[derive(Clone, Copy)]
             enum ClassAtomKind {
-                Character {
-                    value: u32,
-                    utf16_len: usize,
-                },
+                Character { value: u32, utf16_len: usize },
                 Class,
                 Unknown,
             }
 
-            let emit = |parser: &mut ParserState, pos: usize, len: u32, message: &str, code: u32| {
-                parser.parse_error_at(start_pos + pos as u32, len, message, code);
-            };
+            let emit =
+                |parser: &mut ParserState, pos: usize, len: u32, message: &str, code: u32| {
+                    parser.parse_error_at(start_pos + pos as u32, len, message, code);
+                };
 
             fn scan_digits(body: &[u8], end: usize, pos: &mut usize) -> usize {
                 let start = *pos;
@@ -1032,7 +1030,10 @@ impl ParserState {
                         '_' | '$' | 'a'..='z' | 'A'..='Z' | '0'..='9'
                     )
                 } else {
-                    ch.is_alphabetic() || ch.to_digit(10).is_some() || ch == '\u{200c}' || ch == '\u{200d}'
+                    ch.is_alphabetic()
+                        || ch.to_digit(10).is_some()
+                        || ch == '\u{200c}'
+                        || ch == '\u{200d}'
                 }
             }
 
@@ -1279,9 +1280,7 @@ impl ParserState {
                             }
                         }
                     }
-                    _ => {
-                        None
-                    }
+                    _ => None,
                 }
             }
 
@@ -1375,7 +1374,16 @@ impl ParserState {
 
                     let mut atoms = Vec::new();
                     let min_start = *pos;
-                    scan_class_atom(parser, emit, body, strict_mode, body_end, start_pos, pos, &mut atoms);
+                    scan_class_atom(
+                        parser,
+                        emit,
+                        body,
+                        strict_mode,
+                        body_end,
+                        start_pos,
+                        pos,
+                        &mut atoms,
+                    );
                     if *pos >= body_end || body[*pos] != b'-' {
                         continue;
                     }
@@ -1388,31 +1396,46 @@ impl ParserState {
 
                     let max_start = *pos;
                     let mut max_atoms = Vec::new();
-                    scan_class_atom(parser, emit, body, strict_mode, body_end, start_pos, pos, &mut max_atoms);
+                    scan_class_atom(
+                        parser,
+                        emit,
+                        body,
+                        strict_mode,
+                        body_end,
+                        start_pos,
+                        pos,
+                        &mut max_atoms,
+                    );
 
                     let min_atom = atoms.first().copied();
                     let max_atom = max_atoms.first().copied();
 
                     if strict_mode {
-                            if matches!(min_atom, Some(ClassAtomKind::Unknown | ClassAtomKind::Class)) {
-                                emit(
+                        if matches!(
+                            min_atom,
+                            Some(ClassAtomKind::Unknown | ClassAtomKind::Class)
+                        ) {
+                            emit(
                                     parser,
                                     min_start,
                                     1,
                                     "A character class range must not be bounded by another character class.",
                                     diagnostic_codes::A_CHARACTER_CLASS_RANGE_MUST_NOT_BE_BOUNDED_BY_ANOTHER_CHARACTER_CLASS,
                                 );
-                            }
-                            if matches!(max_atom, Some(ClassAtomKind::Unknown | ClassAtomKind::Class)) {
-                                emit(
+                        }
+                        if matches!(
+                            max_atom,
+                            Some(ClassAtomKind::Unknown | ClassAtomKind::Class)
+                        ) {
+                            emit(
                                     parser,
                                     max_start,
                                     1,
                                     "A character class range must not be bounded by another character class.",
                                     diagnostic_codes::A_CHARACTER_CLASS_RANGE_MUST_NOT_BE_BOUNDED_BY_ANOTHER_CHARACTER_CLASS,
                                 );
-                            }
                         }
+                    }
 
                     if let (
                         Some(ClassAtomKind::Character {
@@ -1538,7 +1561,9 @@ impl ParserState {
                                     }
                                     b'<' => {
                                         *pos += 1;
-                                        if *pos < body_end && (body[*pos] == b'=' || body[*pos] == b'!') {
+                                        if *pos < body_end
+                                            && (body[*pos] == b'=' || body[*pos] == b'!')
+                                        {
                                             *pos += 1;
                                             is_previous_term_quantifiable = false;
                                         } else {
@@ -1562,25 +1587,14 @@ impl ParserState {
                                     _ => {
                                         let saved_pos = *pos;
                                         let has_first = scan_regex_modifier_segment(
-                                            parser,
-                                            emit,
-                                            body,
-                                            body_end,
-                                            pos,
+                                            parser, emit, body, body_end, pos,
                                         );
 
-                                        if has_first
-                                            && *pos < body_end
-                                            && body[*pos] == b'-'
-                                        {
+                                        if has_first && *pos < body_end && body[*pos] == b'-' {
                                             *pos += 1;
                                             if *pos < body_end {
                                                 let has_second = scan_regex_modifier_segment(
-                                                    parser,
-                                                    emit,
-                                                    body,
-                                                    body_end,
-                                                    pos,
+                                                    parser, emit, body, body_end, pos,
                                                 );
 
                                                 if !has_second {
@@ -1591,7 +1605,8 @@ impl ParserState {
                                             }
                                         }
 
-                                        let is_modifier_group = has_first && *pos < body_end && body[*pos] == b':';
+                                        let is_modifier_group =
+                                            has_first && *pos < body_end && body[*pos] == b':';
 
                                         if !is_modifier_group {
                                             *pos = saved_pos;
@@ -1676,12 +1691,12 @@ impl ParserState {
                                         continue;
                                     }
                                 } else if max_length > 0 && !max_empty {
-                                    let max_value: u32 =
-                                        body[max_start..*pos]
-                                            .iter()
-                                            .fold(0u32, |acc, b| acc * 10 + u32::from(*b - b'0'));
-                                    let min_value: u32 =
-                                        min_text.iter().fold(0u32, |acc, b| acc * 10 + u32::from(*b - b'0'));
+                                    let max_value: u32 = body[max_start..*pos]
+                                        .iter()
+                                        .fold(0u32, |acc, b| acc * 10 + u32::from(*b - b'0'));
+                                    let min_value: u32 = min_text
+                                        .iter()
+                                        .fold(0u32, |acc, b| acc * 10 + u32::from(*b - b'0'));
                                     if max_value < min_value {
                                         emit(
                                             parser,

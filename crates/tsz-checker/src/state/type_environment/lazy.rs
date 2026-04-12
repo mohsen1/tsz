@@ -300,6 +300,15 @@ impl<'a> CheckerState<'a> {
             contains_infer_types_db, contains_type_query_db, is_application_type,
         };
 
+        // Declaration files like react16.d.ts generate very large volumes of
+        // transient evaluator entries. Persisting every intermediate entry
+        // forces an expensive recursive `contains_infer_types_db` scan that can
+        // cost more than the cache helps. Keep the top-level env-eval cache, but
+        // skip bulk persistence for ambient declaration graphs.
+        if self.ctx.is_declaration_file() {
+            return;
+        }
+
         let mut cache = self.ctx.env_eval_cache.borrow_mut();
         for (k, v) in entries {
             if k != v

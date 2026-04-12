@@ -1374,7 +1374,8 @@ impl<'a> CheckerState<'a> {
                             Some("type" | "defer")
                         ) && before_from.contains(char::is_whitespace)
                         {
-                            let modifier = before_from.split_whitespace().next().unwrap_or_default();
+                            let modifier =
+                                before_from.split_whitespace().next().unwrap_or_default();
                             if let Some(modifier_idx) = rest_full[..next_tag].find(modifier) {
                                 let error_pos = comment.pos
                                     + after_import as u32
@@ -1707,7 +1708,9 @@ impl<'a> CheckerState<'a> {
                 let resolved = self.resolve_jsdoc_type_str(expr);
                 self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
 
-                if resolved.is_none() && let Some(dot_idx) = expr.find('.') {
+                if resolved.is_none()
+                    && let Some(dot_idx) = expr.find('.')
+                {
                     let root_name = expr[..dot_idx].trim();
                     if !root_name.is_empty()
                         && Self::is_simple_type_name(root_name)

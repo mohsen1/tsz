@@ -55,7 +55,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let (declared_type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
+        let (declared_type_params, type_param_updates) =
+            self.push_type_parameters(&method.type_parameters);
         if type_params.is_empty() {
             type_params = declared_type_params;
         }
@@ -112,9 +113,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.ctx.type_parameter_scope.remove(&name);
             }
-            if shadowed_class_param
-                && let Some(ref mut c) = self.ctx.enclosing_class
-            {
+            if shadowed_class_param && let Some(ref mut c) = self.ctx.enclosing_class {
                 c.type_param_names.push(name);
             }
         }
