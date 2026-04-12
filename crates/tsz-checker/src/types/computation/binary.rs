@@ -265,10 +265,7 @@ impl<'a> CheckerState<'a> {
     fn is_valid_in_operator_rhs(&mut self, ty: TypeId) -> bool {
         use crate::query_boundaries::dispatch as query;
 
-        if matches!(
-            ty,
-            TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::OBJECT
-        ) {
+        if matches!(ty, TypeId::ANY | TypeId::ERROR | TypeId::OBJECT) {
             return true;
         }
 
@@ -849,14 +846,11 @@ impl<'a> CheckerState<'a> {
                     self.check_private_identifier_in_expression(left_idx, right_type);
                 }
 
-                // Note: tsc does NOT emit TS18046 for `unknown` in `in` operator
-                // context. The `in` operator has its own checks (TS2638 for types
-                // that may represent primitives, or TS2360/TS2361 for invalid RHS).
-                // TS18046 is only for property access / call on unknown.
-
-                // TS2322: The right-hand side of an 'in' expression must be assignable to 'object'
-                // This prevents using 'in' with primitives like string | number
-                if !self.is_valid_in_operator_rhs(right_type) {
+                // TS18046: tsc emits "'x' is of type 'unknown'" when the RHS of
+                // `in` is `unknown`. This takes priority over TS2322/TS2638.
+                if right_type == TypeId::UNKNOWN {
+                    self.error_is_of_type_unknown(right_idx);
+                } else if !self.is_valid_in_operator_rhs(right_type) {
                     // Route through the check_assignable_or_report(...) gateway family
                     // so computation-layer mismatches stay on the centralized path.
                     let _ = self.check_assignable_or_report_at_exact_anchor(
