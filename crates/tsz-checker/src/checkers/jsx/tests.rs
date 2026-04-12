@@ -1005,3 +1005,33 @@ fn jsx_type_predicate_default_props_no_false_ts2322() {
         "Expected no TS2322 for component with defaultProps (React Defaultize), got: {diagnostics:?}"
     );
 }
+
+/// JSX class component with optional constructor parameter must still report
+/// missing required props when the type param only has a constraint (no default).
+#[test]
+fn jsx_generic_class_optional_ctor_constraint_reports_errors() {
+    let source = concat!(
+        "declare namespace JSX {\n",
+        "  interface Element {}\n",
+        "  interface ElementAttributesProperty { props: {}; }\n",
+        "  interface IntrinsicElements {}\n",
+        "}\n",
+        "declare class Component<P, S> {\n",
+        "  constructor(props?: P, context?: any);\n",
+        "  props: P;\n",
+        "  state: S;\n",
+        "  render(): JSX.Element;\n",
+        "}\n",
+        "interface Prop { a: number; b: string; }\n",
+        "declare class MyComp<P extends Prop> extends Component<P, {}> {\n",
+        "  internalProp: P;\n",
+        "}\n",
+        "let x1 = <MyComp />;\n",
+    );
+    let diagnostics = check_jsx(source);
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2739) || codes.contains(&2322),
+        "Expected TS2739 or TS2322 for constraint-only generic with optional ctor, got: {codes:?}",
+    );
+}
