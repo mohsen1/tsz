@@ -440,8 +440,11 @@ impl<'a> CheckerState<'a> {
                     && let Some(sym_id) = self
                         .resolve_type_symbol_for_lowering(type_ref.type_name)
                         .map(tsz_binder::SymbolId)
-                    && (self.ctx.symbol_resolution_set.contains(&sym_id)
-                        || self.type_alias_reaches_resolving_alias(sym_id))
+                    // Only check direct self-references. Transitive walks through
+                    // type_alias_reaches_resolving_alias are too aggressive: cycles
+                    // through object/interface members are productive recursion that
+                    // tsc allows without emitting TS2577.
+                    && self.ctx.symbol_resolution_set.contains(&sym_id)
                 {
                     // For circular references, still check type arguments for missing
                     // names. The main resolution is skipped to avoid infinite recursion,
