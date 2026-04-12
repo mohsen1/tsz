@@ -573,7 +573,16 @@ impl<'a> CheckerState<'a> {
             let widened = self.widen_fresh_object_literal_properties_for_display(ty);
             return self.format_type_diagnostic_widened(widened);
         }
-        let ty = self.widen_type_for_display(ty);
+        // Only widen object-like types (to convert literal properties to primitives).
+        // For literal/primitive receiver types (e.g., `""`, `42`), tsc preserves the
+        // literal in TS2339 messages (e.g., `'""'` not `'string'`).
+        let is_literal_or_primitive = tsz_solver::literal_value(self.ctx.types, ty).is_some()
+            || tsz_solver::is_primitive_type(self.ctx.types, ty);
+        let ty = if is_literal_or_primitive {
+            ty
+        } else {
+            self.widen_type_for_display(ty)
+        };
         let assignability_display = self.format_type_for_assignability_message(ty);
         if let Some(name) = self.synthesized_object_parent_display_name(ty) {
             let generic_prefix = format!("{name}<");
