@@ -794,9 +794,13 @@ where
             TypeData::Callable(shape_id) => {
                 let shape = self.types.callable_shape(*shape_id);
                 shape.call_signatures.iter().any(|s| {
-                    s.params.iter().any(|p| self.check(p.type_id)) || self.check(s.return_type)
+                    s.params.iter().any(|p| self.check(p.type_id))
+                        || self.check(s.return_type)
+                        || s.this_type.is_some_and(|t| self.check(t))
                 }) || shape.construct_signatures.iter().any(|s| {
-                    s.params.iter().any(|p| self.check(p.type_id)) || self.check(s.return_type)
+                    s.params.iter().any(|p| self.check(p.type_id))
+                        || self.check(s.return_type)
+                        || s.this_type.is_some_and(|t| self.check(t))
                 }) || shape.properties.iter().any(|p| self.check(p.type_id))
             }
             TypeData::TypeParameter(info) | TypeData::Infer(info) => {
@@ -931,9 +935,13 @@ impl<'a> FreeInferChecker<'a> {
             TypeData::Callable(shape_id) => {
                 let shape = self.types.callable_shape(*shape_id);
                 shape.call_signatures.iter().any(|s| {
-                    s.params.iter().any(|p| self.check(p.type_id)) || self.check(s.return_type)
+                    s.params.iter().any(|p| self.check(p.type_id))
+                        || self.check(s.return_type)
+                        || s.this_type.is_some_and(|t| self.check(t))
                 }) || shape.construct_signatures.iter().any(|s| {
-                    s.params.iter().any(|p| self.check(p.type_id)) || self.check(s.return_type)
+                    s.params.iter().any(|p| self.check(p.type_id))
+                        || self.check(s.return_type)
+                        || s.this_type.is_some_and(|t| self.check(t))
                 }) || shape.properties.iter().any(|p| self.check(p.type_id))
             }
             TypeData::Application(app_id) => {
@@ -1064,9 +1072,13 @@ impl<'a> ShallowContainsTypeChecker<'a> {
             TypeData::Callable(shape_id) => {
                 let shape = self.types.callable_shape(*shape_id);
                 shape.call_signatures.iter().any(|s| {
-                    s.params.iter().any(|p| self.check(p.type_id)) || self.check(s.return_type)
+                    s.params.iter().any(|p| self.check(p.type_id))
+                        || self.check(s.return_type)
+                        || s.this_type.is_some_and(|t| self.check(t))
                 }) || shape.construct_signatures.iter().any(|s| {
-                    s.params.iter().any(|p| self.check(p.type_id)) || self.check(s.return_type)
+                    s.params.iter().any(|p| self.check(p.type_id))
+                        || self.check(s.return_type)
+                        || s.this_type.is_some_and(|t| self.check(t))
                 }) || shape.properties.iter().any(|p| self.check(p.type_id))
             }
             TypeData::Application(app_id) => {
