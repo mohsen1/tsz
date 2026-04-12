@@ -1400,8 +1400,9 @@ fn format_no_infer_type() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);
 
+    // NoInfer<T> is transparent in error messages - tsc displays just T
     let no_infer = db.no_infer(TypeId::STRING);
-    assert_eq!(fmt.format(no_infer), "NoInfer<string>");
+    assert_eq!(fmt.format(no_infer), "string");
 }
 
 // =================================================================
