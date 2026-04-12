@@ -967,10 +967,27 @@ impl<'a> TypeInstantiator<'a> {
                                 array_type
                             };
                         }
-                        // Non-array or unknown constraint: return any.
-                        // tsc returns any for all homomorphic mapped types over any.
-                        self.exit_shadowing_scope(shadowed_len, saved_visiting);
-                        return TypeId::ANY;
+                        // IDENTITY homomorphic mapped type with `any`: return any.
+                        // tsc returns `any` ONLY for identity templates (`T[K]`), not
+                        // for non-identity templates like `Box<T[K]>`.
+                        // For non-identity templates, we fall through to standard
+                        // instantiation which produces `{ [x: string]: Box<any> }`.
+                        let is_identity_template =
+                            crate::index_access_parts(self.interner, mapped.template).is_some_and(
+                                |(obj, key)| {
+                                    obj == keyof_source
+                                        && matches!(
+                                            self.interner.lookup(key),
+                                            Some(TypeData::TypeParameter(kp))
+                                                if kp.name == mapped.type_param.name
+                                        )
+                                },
+                            );
+                        if is_identity_template {
+                            self.exit_shadowing_scope(shadowed_len, saved_visiting);
+                            return TypeId::ANY;
+                        }
+                        // Non-identity template: fall through to standard instantiation
                     }
 
                     // Check for Tuple first (tsc: instantiateMappedTupleType)
