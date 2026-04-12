@@ -286,8 +286,17 @@ impl<'a> CheckerState<'a> {
         // Try class component: get construct signatures -> instance type -> props
         if let Some(props) = self.get_class_component_props_type(component_type, element_idx) {
             let props = self.apply_jsx_library_managed_attributes(raw_component_type, props);
-            let raw_has_tp = self.is_generic_jsx_component(component_type)
-                || tsz_solver::contains_type_parameters(self.ctx.types, props);
+            // Flag raw_has_tp when the props still contain type parameters, or when
+            // the component is generic AND its type params carry defaults.  Defaults
+            // signal that the caller should run generic inference / default
+            // instantiation (e.g. `MyComp<P = Prop>` → `<MyComp />` uses the
+            // default).  When type params only have constraints (no defaults), the
+            // props were already resolved via constraint substitution in
+            // `get_class_component_props_type`, so re-deriving them is unnecessary
+            // and can produce the wrong type for optional-parameter constructors.
+            let raw_has_tp = tsz_solver::contains_type_parameters(self.ctx.types, props)
+                || (self.is_generic_jsx_component(component_type)
+                    && self.generic_jsx_component_has_defaults(component_type));
             return Some((props, raw_has_tp));
         }
 
@@ -908,6 +917,31 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a generic JSX component's type params carry default types.
+    fn generic_jsx_component_has_defaults(&self, component_type: TypeId) -> bool {
+        if let Some(sigs) =
+            tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)
+        {
+            if sigs
+                .iter()
+                .any(|s| s.type_params.iter().any(|tp| tp.default.is_some()))
+            {
+                return true;
+            }
+        }
+        if let Some(sigs) =
+            tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
+        {
+            if sigs
+                .iter()
+                .any(|s| s.type_params.iter().any(|tp| tp.default.is_some()))
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Extract props type from a class component via construct signatures.
     fn get_class_component_props_type(
         &mut self,
@@ -935,20 +969,22 @@ impl<'a> CheckerState<'a> {
             }
         };
 
-        let inferred_sig = Some(first_sig.clone()).and_then(|sig| {
-            if sig.type_params.is_empty() {
-                None
-            } else {
-                element_idx.and_then(|idx| {
-                    self.infer_jsx_generic_class_component_signature(idx, component_type)
-                })
-            }
-        });
+        let inferred_sig = Some(first_sig.clone())
+            .and_then(|sig| {
+                if sig.type_params.is_empty() {
+                    None
+                } else {
+                    element_idx.and_then(|idx| {
+                        self.infer_jsx_generic_class_component_signature(idx, component_type)
+                    })
+                }
+            })
+            // When inference didn't resolve all type params (e.g. `<MyComp />`
+            // with no attributes to infer from), treat as inference failure and
+            // fall through to the default constraint-based substitution path.
+            .filter(|sig| sig.type_params.is_empty());
 
         let raw_instance_type = if let Some(sig) = inferred_sig.as_ref() {
-            if !sig.type_params.is_empty() {
-                return None;
-            }
             sig.return_type
         } else if first_sig.type_params.is_empty() {
             first_sig.return_type
