@@ -4,8 +4,9 @@
 //! intersection type members, enabling mixin patterns and similar TypeScript
 //! idioms where an intersection of callable types should be callable.
 
-use crate::state::CheckerState;
 use tsz_binder::BinderState;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -22,7 +23,7 @@ fn has_error_code(source: &str, code: u32) -> bool {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
+        CheckerOptions::default(),
     );
 
     checker.check_source_file(root);

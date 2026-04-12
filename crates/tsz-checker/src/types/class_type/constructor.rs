@@ -166,11 +166,6 @@ impl<'a> CheckerState<'a> {
         {
             return cached;
         }
-        let can_use_cache = apply_module_augmentations
-            && request.is_empty()
-            && current_sym
-                .map(|sym_id| !self.ctx.class_constructor_resolution_set.contains(&sym_id))
-                .unwrap_or(true);
 
         // Cycle detection: prevent infinite recursion on circular class hierarchies
         // (e.g. class C extends C {}, or A extends B extends A)
@@ -191,6 +186,12 @@ impl<'a> CheckerState<'a> {
         } else {
             false
         };
+
+        let can_use_cache = apply_module_augmentations
+            && request.is_empty()
+            && current_sym
+                .map(|sym_id| !self.ctx.class_constructor_resolution_set.contains(&sym_id))
+                .unwrap_or(true);
 
         // Check fuel to prevent timeout on pathological inheritance hierarchies
         if !self.ctx.consume_fuel() {
@@ -1690,6 +1691,38 @@ impl<'a> CheckerState<'a> {
             // If there's a base class with construct signatures, inherit them
             if let Some(inherited) = inherited_construct_signatures {
                 construct_signatures = inherited;
+            } else if class.heritage_clauses.is_some() {
+                // The class has a heritage clause but we couldn't resolve
+                // inherited construct signatures. This can happen in cross-file
+                // delegation contexts where heritage call expressions (e.g.,
+                // mixin patterns like `MyMixin(Base)<string>`) fail to resolve
+                // because imports aren't available in the delegation checker.
+                //
+                // Fall back to the shared definition store: if the original
+                // file's checker already computed this class's constructor type,
+                // extract construct signatures from it instead of using the
+                // default 0-param constructor.
+                let def_store_sigs = current_sym
+                    .and_then(|sym_id| self.ctx.symbol_to_def.borrow().get(&sym_id).copied())
+                    .and_then(|class_def| self.ctx.definition_store.get_constructor_def(class_def))
+                    .and_then(|ctor_def| self.ctx.definition_store.get_body(ctor_def))
+                    .filter(|&body| body != TypeId::ERROR)
+                    .and_then(|body| construct_signatures_for_type(self.ctx.types, body))
+                    .filter(|sigs| !sigs.is_empty());
+
+                if let Some(sigs) = def_store_sigs {
+                    construct_signatures = sigs;
+                } else {
+                    // No base class or base class has no explicit constructor - use default
+                    construct_signatures.push(CallSignature {
+                        type_params: class_type_params,
+                        params: Vec::new(),
+                        this_type: None,
+                        return_type: instance_type,
+                        type_predicate: None,
+                        is_method: false,
+                    });
+                }
             } else {
                 // No base class or base class has no explicit constructor - use default
                 construct_signatures.push(CallSignature {
