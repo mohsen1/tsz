@@ -500,6 +500,28 @@ impl<'a> CheckerState<'a> {
         // instantiated construct signatures, not the unevaluated Application shell.
         constructor_type = self.evaluate_type_with_env(constructor_type);
 
+        // Resolve Lazy(DefId) constructor types to their actual Callable shape.
+        // Variables typed as constructor interfaces (e.g., `declare var Proxy: ProxyConstructor`)
+        // may retain a Lazy(DefId) reference after evaluate_type_with_env if the interface
+        // body hasn't been resolved in the TypeEnvironment yet (first access from a lib file).
+        // Without this, the solver sees the unresolved Lazy and returns NotCallable → TS2351.
+        constructor_type = self.resolve_lazy_type(constructor_type);
+        // Fallback: if the constructor type is still Lazy after resolve_lazy_type,
+        // try resolving by name from lib contexts. This handles lib interfaces like
+        // ProxyConstructor whose DefId has no symbol mapping when first accessed.
+        if let Some(tsz_solver::types::TypeData::Lazy(def_id)) =
+            self.ctx.types.lookup(constructor_type)
+        {
+            if let Some(def_info) = self.ctx.definition_store.get(def_id) {
+                let name = self.ctx.types.resolve_atom(def_info.name);
+                if !name.is_empty() {
+                    if let Some(resolved) = self.resolve_lib_type_by_name(&name) {
+                        constructor_type = resolved;
+                    }
+                }
+            }
+        }
+
         // For intersection types (e.g., Constructor<Tagged> & typeof Base), evaluate
         // Application members within the intersection so the solver can find construct
         // signatures from all members. Without this, `Constructor<Tagged>` would remain
