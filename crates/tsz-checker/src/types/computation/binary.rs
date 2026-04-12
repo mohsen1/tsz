@@ -425,6 +425,79 @@ impl<'a> CheckerState<'a> {
         self.format_type(ty)
     }
 
+    /// Check if an identifier was declared as `unknown` and has been truthiness-narrowed
+    /// to an empty object `{}`.
+    ///
+    /// This is used for TS2638: when `unknown` is narrowed through truthiness to `{}`,
+    /// we still need to emit TS2638 because the original declared type was `unknown`.
+    /// However, `instanceof Object` narrowing produces a different type (the Object
+    /// instance type, not `{}`) that does NOT trigger TS2638 because it genuinely
+    /// excludes primitives.
+    ///
+    /// The two conditions we check:
+    /// 1. The declared type is `unknown`
+    /// 2. The narrowed type is an empty object `{}`
+    ///
+    /// If both are true, we emit TS2638. If the declared type is `unknown` but the
+    /// narrowed type is not `{}` (e.g., after `instanceof Object`), we don't emit TS2638.
+    fn truthiness_narrowed_from_unknown(
+        &mut self,
+        node_idx: NodeIndex,
+        narrowed_type: TypeId,
+    ) -> bool {
+        // First check if the narrowed type is an empty object `{}`
+        if !tsz_solver::visitor::is_empty_object_type(self.ctx.types, narrowed_type) {
+            return false;
+        }
+
+        // Now check if the declared type is `unknown`
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(sym_id) = self.resolve_identifier_symbol(node_idx) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        // Navigate to the declaration
+        let decl_idx = symbol.value_declaration;
+        let Some(mut decl_node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+
+        // Handle identifier inside variable declaration
+        if decl_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+            && ext.parent.is_some()
+            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+        {
+            decl_node = parent_node;
+        }
+
+        // Check parameter type annotation
+        if let Some(param) = self.ctx.arena.get_parameter(decl_node)
+            && param.type_annotation.is_some()
+        {
+            let declared_type = self.get_type_from_type_node(param.type_annotation);
+            return declared_type == TypeId::UNKNOWN;
+        }
+
+        // Check variable declaration type annotation
+        if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+            && var_decl.type_annotation.is_some()
+        {
+            let declared_type = self.get_type_from_type_node(var_decl.type_annotation);
+            return declared_type == TypeId::UNKNOWN;
+        }
+
+        false
+    }
+
     /// Get the type of a binary expression.
     ///
     /// Handles all binary operators including arithmetic, comparison, logical,
@@ -859,9 +932,21 @@ impl<'a> CheckerState<'a> {
                         right_idx,
                         right_idx,
                     );
-                } else if self.type_may_represent_primitive(right_type) {
+                } else if self.type_may_represent_primitive(right_type)
+                    || self.truthiness_narrowed_from_unknown(right_idx, right_type)
+                {
                     // TS2638: Type '{}' may represent a primitive value, which is not
                     // permitted as the right operand of the 'in' operator.
+                    //
+                    // This fires for:
+                    // 1. Type parameters with unconstrained or `{}` constraint
+                    // 2. Identifiers declared as `unknown` that were truthiness-narrowed to `{}`
+                    //
+                    // Note: `instanceof Object` narrowing produces a type that does NOT
+                    // trigger TS2638 because the `Object` instance type excludes primitives.
+                    // Truthiness narrowing produces `{}` which still "may represent primitive"
+                    // because the original `unknown` could have been any primitive value.
+                    //
                     // tsc displays the apparent type in the error message: for `unknown`
                     // and unconstrained type params, that's `{}`; for constrained type
                     // params, it's the constraint type.

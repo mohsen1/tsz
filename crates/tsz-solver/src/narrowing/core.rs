@@ -1655,6 +1655,21 @@ impl<'a> NarrowingContext<'a> {
                         return *instance_type;
                     }
 
+                    // When an empty object `{}` (e.g., from truthiness-narrowed `unknown`) is
+                    // narrowed by `instanceof Object`, we return `TypeId::OBJECT` (the intrinsic
+                    // non-primitive type) instead of the Object interface. This ensures that
+                    // the result is not considered an "empty object" for TS2638 purposes.
+                    //
+                    // TSC emits TS2638 "may represent a primitive value" for truthiness-narrowed
+                    // `unknown` used with `in`, but NOT after `instanceof Object` because the
+                    // instanceof check confirms the value is a non-primitive object.
+                    let resolved_instance = self.resolve_type(*instance_type);
+                    if crate::type_queries::is_empty_object_type(self.db, source_type)
+                        && self.is_object_interface(resolved_instance)
+                    {
+                        return TypeId::OBJECT;
+                    }
+
                     // CRITICAL: The payload is already the Instance Type (extracted by Checker)
                     // Use narrow_by_instance_type for instanceof-specific semantics:
                     // type parameters with matching constraints are kept, but anonymous

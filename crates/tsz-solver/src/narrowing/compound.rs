@@ -512,11 +512,12 @@ impl<'a> NarrowingContext<'a> {
             return source_type;
         }
 
-        // TypeScript does NOT narrow `unknown` through truthiness checks.
-        // In tsc's filterType, `unknown` passes all type-fact predicates
-        // (it could be anything) so it is returned unchanged.
+        // TypeScript narrows `unknown` to `{}` through truthiness checks.
+        // The truthy part of `unknown` excludes null, undefined, and other
+        // falsy primitives, leaving the non-nullish empty object type `{}`.
+        // This allows property access and `in` operator checks on the narrowed type.
         if source_type == TypeId::UNKNOWN {
-            return source_type;
+            return self.db.object(vec![]);
         }
 
         let resolved = self.resolve_type(source_type);
