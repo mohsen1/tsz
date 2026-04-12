@@ -6,10 +6,25 @@
 //! Extracted from `core.rs` to keep module size manageable.
 
 use crate::state::{CheckerState, MemberAccessLevel};
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn assignability_display_has_own_signature_type_params(&self, ty: TypeId) -> bool {
+        if let Some(fn_shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, ty) {
+            return !fn_shape.type_params.is_empty();
+        }
+
+        tsz_solver::type_queries::get_callable_shape(self.ctx.types, ty).is_some_and(|shape| {
+            shape
+                .call_signatures
+                .iter()
+                .chain(shape.construct_signatures.iter())
+                .any(|sig| !sig.type_params.is_empty())
+        })
+    }
+
     pub(crate) fn normalize_template_placeholder_spacing_for_display(&self, text: &str) -> String {
         if !text.contains("${") {
             return text.to_string();
@@ -84,6 +99,10 @@ impl<'a> CheckerState<'a> {
             if let Some(def) = self.ctx.definition_store.get(def_id) {
                 if def.kind == tsz_solver::def::DefKind::TypeAlias && def.type_params.is_empty() {
                     if let Some(body) = def.body {
+                        if self.assignability_display_has_own_signature_type_params(body) {
+                            let evaluated = self.evaluate_type_with_env(ty);
+                            return self.format_type_diagnostic(evaluated);
+                        }
                         if self.ctx.definition_store.is_computed_body(body) {
                             let evaluated = self.evaluate_type_with_env(ty);
                             return self.format_type_diagnostic(evaluated);
@@ -357,6 +376,14 @@ impl<'a> CheckerState<'a> {
             )
             .or_else(|| state.ctx.definition_store.find_def_for_type(candidate))?;
             let def = state.ctx.definition_store.get(def_id)?;
+            if def.kind == tsz_solver::def::DefKind::TypeAlias
+                && (def
+                    .body
+                    .is_some_and(|body| state.assignability_display_has_own_signature_type_params(body))
+                    || state.assignability_display_has_own_signature_type_params(candidate))
+            {
+                return None;
+            }
             let name = state.ctx.types.resolve_atom_ref(def.name).to_string();
             // Class constructor, enum, and namespace defs represent the static/value
             // side and should display as "typeof Name" to match tsc.
@@ -373,6 +400,9 @@ impl<'a> CheckerState<'a> {
         };
 
         let symbol_backed_name = |state: &Self, candidate: TypeId| {
+            if state.assignability_display_has_own_signature_type_params(candidate) {
+                return None;
+            }
             let symbol_name =
                 tsz_solver::type_queries::get_object_shape(state.ctx.types, candidate)
                     .and_then(|shape| shape.symbol)
@@ -476,6 +506,15 @@ impl<'a> CheckerState<'a> {
                     self.ctx.definition_store.find_def_for_type(evaluated)
                 })?;
         let def = self.ctx.definition_store.get(def_id)?;
+        if def.kind == tsz_solver::def::DefKind::TypeAlias
+            && (def
+                .body
+                .is_some_and(|body| self.assignability_display_has_own_signature_type_params(body))
+                || self.assignability_display_has_own_signature_type_params(ty)
+                || self.assignability_display_has_own_signature_type_params(display_ty))
+        {
+            return None;
+        }
         let name = self.ctx.types.resolve_atom_ref(def.name).to_string();
         if matches!(
             def.kind,
@@ -611,10 +650,45 @@ impl<'a> CheckerState<'a> {
             let parent = self.ctx.binder.get_symbol(symbol.parent)?;
             return Some(format!("{}.{}", parent.escaped_name, symbol.escaped_name));
         }
-        // For enum types, tsc uses the short enum name without namespace prefix.
-        // Only qualify with parent enum names (for merged enums), not modules/namespaces.
-        // Namespace qualification is only added for disambiguation (handled elsewhere).
-        Some(symbol.escaped_name.clone())
+        let mut parts = vec![symbol.escaped_name.clone()];
+        let decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            symbol.declarations.first().copied()?
+        };
+        let mut current = self.ctx.arena.get_extended(decl_idx)?.parent;
+
+        while current.is_some() {
+            let node = self.ctx.arena.get(current)?;
+            if node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module_decl) = self.ctx.arena.get_module(node)
+                && let Some(name) = self.ctx.arena.get_identifier_text(module_decl.name)
+            {
+                parts.push(name.to_string());
+            }
+
+            current = self.ctx.arena.get_extended(current)?.parent;
+        }
+
+        if parts.len() == 1 {
+            let mut current = symbol.parent;
+            while current != tsz_binder::SymbolId::NONE {
+                let parent = self.ctx.binder.get_symbol(current)?;
+                if (parent.flags
+                    & (tsz_binder::symbol_flags::NAMESPACE_MODULE
+                        | tsz_binder::symbol_flags::VALUE_MODULE
+                        | tsz_binder::symbol_flags::ENUM))
+                    == 0
+                {
+                    break;
+                }
+                parts.push(parent.escaped_name.clone());
+                current = parent.parent;
+            }
+        }
+
+        parts.reverse();
+        Some(parts.join("."))
     }
 
     fn format_disambiguated_enum_name_for_assignment(
@@ -640,14 +714,6 @@ impl<'a> CheckerState<'a> {
             ));
         }
 
-        // For same-name enum disambiguation, use namespace-qualified name
-        let def_id = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, ty)?;
-        let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
-        let qualified = self.namespace_qualified_symbol_name(sym_id)?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if qualified != symbol.escaped_name {
-            return Some(qualified);
-        }
         self.format_qualified_enum_name_for_message(ty)
     }
 
@@ -674,7 +740,7 @@ impl<'a> CheckerState<'a> {
                 ty_symbol.escaped_name
             ));
         }
-        let qualified = self.namespace_qualified_symbol_name(ty_sym)?;
+        let qualified = self.qualified_symbol_name_for_message(ty_sym)?;
         if qualified == ty_symbol.escaped_name {
             return None;
         }
@@ -696,57 +762,16 @@ impl<'a> CheckerState<'a> {
 
     fn qualified_symbol_name_for_message(&self, sym_id: tsz_binder::SymbolId) -> Option<String> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        let mut qualified_name = symbol.escaped_name.clone();
-        let mut current = symbol.parent;
-        // Walk up the parent chain, qualifying with enum parents only.
-        // tsc qualifies type names with their containing enum (e.g., `Choice.Yes`)
-        // but uses SHORT names for types inside namespaces (e.g., `Line` not `A.Line`)
-        // unless disambiguation is needed (same name in outer scope).
-        // Skip file-level module symbols (synthetic names like __test1__, "file.ts", etc.)
-        while current != tsz_binder::SymbolId::NONE {
-            let parent = self.ctx.binder.get_symbol(current)?;
-            let is_enum = (parent.flags & tsz_binder::symbol_flags::ENUM) != 0;
-            let name = &parent.escaped_name;
-            let is_file_module = name.starts_with('"')
-                || name.starts_with("__")
-                || name.contains('/')
-                || name.contains('\\')
-                || name.is_empty();
-            if is_enum && !is_file_module {
-                qualified_name = format!("{}.{}", parent.escaped_name, qualified_name);
-                current = parent.parent;
-            } else {
-                break;
-            }
-        }
-        Some(qualified_name)
-    }
-
-    /// Namespace-qualified symbol name for disambiguation contexts.
-    /// Unlike `qualified_symbol_name_for_message` (which uses short names),
-    /// this walks up namespace/module/enum parents to produce a fully-qualified
-    /// name for cases where two different types share the same short name.
-    fn namespace_qualified_symbol_name(&self, sym_id: tsz_binder::SymbolId) -> Option<String> {
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
         let mut parts = vec![symbol.escaped_name.clone()];
         let mut current = symbol.parent;
         while current != tsz_binder::SymbolId::NONE {
             let parent = self.ctx.binder.get_symbol(current)?;
             if (parent.flags
                 & (tsz_binder::symbol_flags::NAMESPACE_MODULE
-                    | tsz_binder::symbol_flags::VALUE_MODULE
-                    | tsz_binder::symbol_flags::ENUM))
+                        | tsz_binder::symbol_flags::VALUE_MODULE
+                        | tsz_binder::symbol_flags::ENUM))
                 == 0
             {
-                break;
-            }
-            let name = &parent.escaped_name;
-            let is_file_module = name.starts_with('"')
-                || name.starts_with("__")
-                || name.contains('/')
-                || name.contains('\\')
-                || name.is_empty();
-            if is_file_module {
                 break;
             }
             parts.push(parent.escaped_name.clone());
@@ -1157,6 +1182,10 @@ impl<'a> CheckerState<'a> {
         // Application like B<string>), let the formatter handle it — using the
         // raw alias name would lose the type arguments.
         if self.ctx.types.get_display_alias(ty).is_some() {
+            return None;
+        }
+
+        if self.assignability_display_has_own_signature_type_params(ty) {
             return None;
         }
 

@@ -25,6 +25,69 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn global_source_file_idx_for_name(&self, file_name: &str) -> Option<usize> {
+        if self.ctx.file_name == file_name {
+            return Some(self.ctx.current_file_idx);
+        }
+
+        self.ctx.all_arenas.as_ref().and_then(|arenas| {
+            arenas.iter().enumerate().find_map(|(file_idx, arena)| {
+                arena.source_files.first().and_then(|source_file| {
+                    (source_file.file_name == file_name).then_some(file_idx)
+                })
+            })
+        })
+    }
+
+    fn current_arena_source_file_idx_for_node(&self, idx: NodeIndex) -> Option<usize> {
+        let mut current = idx;
+        while current.is_some() {
+            let node = self.ctx.arena.get(current)?;
+            if let Some(source_file) = self.ctx.arena.get_source_file(node) {
+                return self
+                    .global_source_file_idx_for_name(&source_file.file_name)
+                    .or(Some(self.ctx.current_file_idx));
+            }
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+        None
+    }
+
+    fn symbol_file_idx_for_jsdoc_node(&self, idx: NodeIndex) -> Option<usize> {
+        let direct_sym = self.ctx.binder.get_node_symbol(idx);
+        if let Some(sym_id) = direct_sym
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.decl_file_idx != u32::MAX
+        {
+            return Some(symbol.decl_file_idx as usize);
+        }
+
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let var_decl = self.ctx.arena.get_variable_declaration(node)?;
+            let sym_id = self.ctx.binder.get_node_symbol(var_decl.name)?;
+            let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            if symbol.decl_file_idx != u32::MAX {
+                return Some(symbol.decl_file_idx as usize);
+            }
+        }
+
+        if node.kind == syntax_kind_ext::PARAMETER {
+            let param = self.ctx.arena.get_parameter(node)?;
+            let sym_id = self.ctx.binder.get_node_symbol(param.name)?;
+            let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            if symbol.decl_file_idx != u32::MAX {
+                return Some(symbol.decl_file_idx as usize);
+            }
+        }
+
+        None
+    }
+
     pub(crate) fn jsdoc_callable_type_annotation_for_node(
         &mut self,
         idx: NodeIndex,
@@ -86,29 +149,45 @@ impl<'a> CheckerState<'a> {
         }
 
         let current_file_name = self.ctx.file_name.clone();
+        let current_file_idx = self.ctx.current_file_idx;
         let mut current_arena_sources: Vec<_> = self
             .ctx
             .arena
             .source_files
             .iter()
-            .map(|source_file| {
+            .enumerate()
+            .map(|(source_file_idx, source_file)| {
                 (
+                    source_file_idx,
                     source_file.file_name.clone(),
                     source_file.comments.clone(),
                     source_file.text.to_string(),
                 )
             })
             .collect();
-        current_arena_sources.sort_by_key(|(file_name, _, _)| {
-            if *file_name == current_file_name {
+        current_arena_sources.sort_by_key(|(source_file_idx, file_name, _, _)| {
+            if *source_file_idx == current_file_idx || *file_name == current_file_name {
                 0usize
             } else {
                 1usize
             }
         });
 
-        for (_file_name, comments, source_text) in current_arena_sources {
-            if let Some(info) = self.resolve_jsdoc_typedef_info(name, &comments, &source_text) {
+        for (source_file_idx, source_file_name, comments, source_text) in current_arena_sources {
+            let prev_file_name = self.ctx.file_name.clone();
+            let prev_file_idx = self.ctx.current_file_idx;
+            self.ctx.file_name = source_file_name;
+            if let Some(global_file_idx) = self.global_source_file_idx_for_name(&self.ctx.file_name)
+            {
+                self.ctx.current_file_idx = global_file_idx;
+            } else if source_file_idx == prev_file_idx || self.ctx.file_name == prev_file_name {
+                self.ctx.current_file_idx = prev_file_idx;
+            }
+            let info = self.resolve_jsdoc_typedef_info(name, &comments, &source_text);
+            self.ctx.file_name = prev_file_name;
+            self.ctx.current_file_idx = prev_file_idx;
+
+            if let Some(info) = info {
                 return Some(info);
             }
         }
@@ -117,7 +196,7 @@ impl<'a> CheckerState<'a> {
         let all_binders = self.ctx.all_binders.clone()?;
 
         for (file_idx, (arena, binder)) in all_arenas.iter().zip(all_binders.iter()).enumerate() {
-            if file_idx == self.ctx.current_file_idx {
+            if file_idx == current_file_idx {
                 continue;
             }
 
@@ -245,6 +324,10 @@ impl<'a> CheckerState<'a> {
         if !sf.comments.iter().any(|c| c.is_multi_line) {
             return None;
         }
+        let source_file_name = sf.file_name.clone();
+        let source_file_idx = self
+            .symbol_file_idx_for_jsdoc_node(idx)
+            .or_else(|| self.current_arena_source_file_idx_for_node(idx));
         let source_text: String = sf.text.to_string();
         let comments = sf.comments.clone();
         let node = self.ctx.arena.get(idx)?;
@@ -261,10 +344,18 @@ impl<'a> CheckerState<'a> {
         );
         // Set the anchor position for typedef scoping.
         let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
+        let prev_file_name = self.ctx.file_name.clone();
+        let prev_file_idx = self.ctx.current_file_idx;
+        self.ctx.file_name = source_file_name;
+        if let Some(source_file_idx) = source_file_idx {
+            self.ctx.current_file_idx = source_file_idx;
+        }
         self.ctx.jsdoc_typedef_anchor_pos.set(node.pos);
         // Use the authoritative resolution kernel — no fallback chain needed.
         let result = self.resolve_jsdoc_reference(type_expr);
         self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
+        self.ctx.file_name = prev_file_name;
+        self.ctx.current_file_idx = prev_file_idx;
         result
     }
 

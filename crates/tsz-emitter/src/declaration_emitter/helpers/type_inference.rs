@@ -774,6 +774,40 @@ impl<'a> DeclarationEmitter<'a> {
         let binder = self.binder?;
         let cache = self.type_cache.as_ref()?;
         let resolved_sym_id = binder.resolve_import_symbol(sym_id).unwrap_or(sym_id);
+        let symbol = binder.symbols.get(resolved_sym_id)?;
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+
+            if let Some(prop_decl) = self.arena.get_property_decl(decl_node)
+                && let Some(type_id) = self.get_node_type_or_names(&[decl_idx, prop_decl.name])
+            {
+                let effective_type = if self
+                    .arena
+                    .has_modifier(&prop_decl.modifiers, SyntaxKind::ReadonlyKeyword)
+                {
+                    type_id
+                } else {
+                    self.type_interner
+                        .map(|interner| {
+                            tsz_solver::operations::widening::widen_literal_type(
+                                interner, type_id,
+                            )
+                        })
+                        .unwrap_or(type_id)
+                };
+                return Some(self.print_type_id(effective_type));
+            }
+
+            if let Some(accessor) = self.arena.get_accessor(decl_node)
+                && let Some(type_id) = self.get_node_type_or_names(&[decl_idx, accessor.name])
+            {
+                return Some(self.print_type_id(type_id));
+            }
+        }
+
         let type_id = cache.symbol_types.get(&resolved_sym_id).copied()?;
         Some(self.print_type_id(type_id))
     }

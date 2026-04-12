@@ -488,13 +488,22 @@ impl<'a> CheckerState<'a> {
         } else {
             self.evaluate_application_type(original_object_type)
         };
+        let receiver_has_jsdoc_type_annotation = if self.ctx.is_js_file()
+            && self.ctx.should_resolve_jsdoc()
+            && let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(access.expression)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.value_declaration.is_some()
+            && (symbol.flags
+                & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE))
+                != 0
+        {
+            self.jsdoc_type_annotation_for_node(symbol.value_declaration)
+                .is_some()
+        } else {
+            false
+        };
 
-        // Only fall back to known global value types when local type resolution
-        // failed.  Without this guard, a local variable named `location` (or any
-        // other name that happens to match a browser/Node global) would be
-        // silently retyped as the global, producing false TS2339 errors.
-        if (object_type == TypeId::UNKNOWN || object_type == TypeId::ERROR)
-            && let Some(ident) = self.ctx.arena.get_identifier_at(access.expression)
+        if let Some(ident) = self.ctx.arena.get_identifier_at(access.expression)
             && self.is_known_global_value_name(&ident.escaped_text)
         {
             let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
@@ -507,6 +516,7 @@ impl<'a> CheckerState<'a> {
             && self.ctx.should_resolve_jsdoc()
             && let Some(ident) = self.ctx.arena.get_identifier_at(access.expression)
             && let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(access.expression)
+            && !receiver_has_jsdoc_type_annotation
             && !self.is_require_call_bound_identifier(access.expression)
             && let Some(preferred_type) =
                 self.preferred_non_js_cross_file_global_value_type(&ident.escaped_text, sym_id)
@@ -850,6 +860,7 @@ impl<'a> CheckerState<'a> {
             && self.ctx.should_resolve_jsdoc()
             && let Some(ident) = self.ctx.arena.get_identifier_at(access.expression)
             && let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(access.expression)
+            && !receiver_has_jsdoc_type_annotation
             && !self.is_require_call_bound_identifier(access.expression)
             && let Some(preferred_type) =
                 self.preferred_non_js_cross_file_global_value_type(&ident.escaped_text, sym_id)

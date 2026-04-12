@@ -665,3 +665,82 @@ var b = mod.B;
         "Expected no TS2339 for require() binding beating ambient global d.ts, got: {ts2339:#?}\nAll diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_jsdoc_import_type_uses_commonjs_exported_constructor_instance() {
+    let diagnostics = check_commonjs_three_files_with_types(
+        "types.d.ts",
+        r#"
+declare function require(name: string): any;
+declare var exports: any;
+declare var module: { exports: any };
+"#,
+        "mod1.js",
+        r#"
+/// <reference path='./types.d.ts'/>
+class Chunk {
+    constructor() {
+        this.chunk = 1;
+    }
+}
+module.exports = Chunk;
+"#,
+        "use.js",
+        r#"
+/// <reference path='./types.d.ts'/>
+/** @typedef {import("./mod1")} C
+ * @type {C} */
+var c;
+c.chunk;
+"#,
+        "./mod1",
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 for bare JSDoc import() of CommonJS-exported constructor, got: {ts2339:#?}\nAll diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_import_type_uses_commonjs_exported_class_expression_instance() {
+    let diagnostics = check_commonjs_three_files_with_types(
+        "types.d.ts",
+        r#"
+declare function require(name: string): any;
+declare var exports: any;
+declare var module: { exports: any };
+"#,
+        "mod1.js",
+        r#"
+/// <reference path='./types.d.ts'/>
+module.exports = class Chunk {
+    constructor() {
+        this.chunk = 1;
+    }
+};
+"#,
+        "use.js",
+        r#"
+/// <reference path='./types.d.ts'/>
+/** @typedef {import("./mod1")} C
+ * @type {C} */
+var c;
+c.chunk;
+"#,
+        "./mod1",
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 for bare JSDoc import() of CommonJS-exported class expression, got: {ts2339:#?}\nAll diagnostics: {diagnostics:#?}"
+    );
+}

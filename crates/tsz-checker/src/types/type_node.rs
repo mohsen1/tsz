@@ -1325,6 +1325,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     pub(crate) fn resolve_type_symbol(&self, node_idx: NodeIndex) -> Option<u32> {
         use tsz_binder::symbol_flags;
         use tsz_solver::is_compiler_managed_type;
+        use tsz_parser::parser::syntax_kind_ext;
 
         let ident = self.ctx.arena.get_identifier_at(node_idx)?;
         let name = ident.escaped_text.as_str();
@@ -1333,16 +1334,84 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return None;
         }
 
+        let scoped_name = {
+            let node = self.ctx.arena.get(node_idx)?;
+            if node.kind != SyntaxKind::Identifier as u16 {
+                None
+            } else {
+                let mut prefixes = Vec::new();
+                let mut parent = self
+                    .ctx
+                    .arena
+                    .get_extended(node_idx)
+                    .map_or(NodeIndex::NONE, |info| info.parent);
+
+                while parent.is_some() {
+                    let parent_node = self.ctx.arena.get(parent)?;
+                    if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                        && let Some(module) = self.ctx.arena.get_module(parent_node)
+                        && let Some(name_node) = self.ctx.arena.get(module.name)
+                        && name_node.kind == SyntaxKind::Identifier as u16
+                        && let Some(name_ident) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        prefixes.push(name_ident.escaped_text.clone());
+                    }
+
+                    parent = self
+                        .ctx
+                        .arena
+                        .get_extended(parent)
+                        .map_or(NodeIndex::NONE, |info| info.parent);
+                }
+
+                if prefixes.is_empty() {
+                    None
+                } else {
+                    prefixes.reverse();
+                    prefixes.push(name.to_string());
+                    Some(prefixes.join("."))
+                }
+            }
+        };
+
+        let scoped_sym_id = scoped_name
+            .as_deref()
+            .and_then(|qualified| self.resolve_entity_name_text_symbol(qualified));
+
         // Prefer lexical scope resolution so local type parameters shadow outer
         // file-level aliases/types with the same name.
         if let Some(sym_id) = self.ctx.binder.resolve_identifier(self.ctx.arena, node_idx) {
             let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            if let Some(scoped_sym_id) = scoped_sym_id
+                && scoped_sym_id != sym_id
+                && let Some(scoped_symbol) = self.get_symbol_from_any_context(scoped_sym_id)
+                && (scoped_symbol.flags
+                    & (symbol_flags::TYPE | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM))
+                    != 0
+                && (scoped_symbol.flags & symbol_flags::TYPE_ALIAS) != 0
+                && (symbol.flags & symbol_flags::TYPE_ALIAS) == 0
+            {
+                return Some(scoped_sym_id.0);
+            }
             if (symbol.flags
                 & (symbol_flags::TYPE | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM))
                 != 0
             {
                 return Some(sym_id.0);
             }
+        }
+
+        if let Some(scoped_sym_id) = scoped_sym_id
+            && let Some(scoped_symbol) = self.get_symbol_from_any_context(scoped_sym_id)
+            && (scoped_symbol.flags
+                & (symbol_flags::TYPE | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM))
+                != 0
+        {
+            self.ctx
+                .cross_file_symbol_targets
+                .borrow_mut()
+                .insert(scoped_sym_id, scoped_symbol.decl_file_idx as usize);
+            return Some(scoped_sym_id.0);
         }
 
         if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
@@ -1362,8 +1431,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     & (symbol_flags::TYPE | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM))
                     != 0
                 {
-                    let file_sym_id = self.ctx.binder.file_locals.get(name).unwrap_or(lib_sym_id);
-                    return Some(file_sym_id.0);
+                    self.ctx
+                        .cross_file_symbol_targets
+                        .borrow_mut()
+                        .insert(lib_sym_id, symbol.decl_file_idx as usize);
+                    return Some(lib_sym_id.0);
                 }
             }
         }
@@ -1423,8 +1495,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         | symbol_flags::CONST_ENUM))
                     != 0
             {
-                let file_sym_id = self.ctx.binder.file_locals.get(name).unwrap_or(lib_sym_id);
-                return Some(file_sym_id.0);
+                self.ctx
+                    .cross_file_symbol_targets
+                    .borrow_mut()
+                    .insert(lib_sym_id, symbol.decl_file_idx as usize);
+                return Some(lib_sym_id.0);
             }
         }
 

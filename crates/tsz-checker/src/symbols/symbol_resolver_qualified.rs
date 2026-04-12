@@ -88,6 +88,9 @@ impl<'a> CheckerState<'a> {
                     {
                         return TypeSymbolResolution::Type(sym_id);
                     }
+                    if self.is_import_equals_type_anchor(sym_id, &lib_binders) {
+                        return TypeSymbolResolution::Type(sym_id);
+                    }
                     // Preserve unresolved alias symbols in type position.
                     // `import X = require("...")` aliases may not resolve to a concrete
                     // target symbol, but `X` is still a valid namespace-like type query
@@ -259,6 +262,7 @@ impl<'a> CheckerState<'a> {
             TypeSymbolResolution::Type(sym_id) => sym_id,
             other => return other,
         };
+        let original_left_sym = left_sym;
         left_sym = self
             .resolve_alias_symbol(left_sym, visited_aliases)
             .unwrap_or(left_sym);
@@ -374,7 +378,13 @@ impl<'a> CheckerState<'a> {
             return TypeSymbolResolution::Type(reexported_sym);
         }
 
-        if let Some(ref module_specifier) = left_symbol.import_module
+        let augmentation_module_specifier = left_symbol.import_module.clone().or_else(|| {
+            self.ctx
+                .binder
+                .get_symbol_with_libs(original_left_sym, &lib_binders)
+                .and_then(|symbol| symbol.import_module.clone())
+        });
+        if let Some(ref module_specifier) = augmentation_module_specifier
             && let Some(augmented_sym) = self.resolve_module_augmentation_member_symbol(
                 module_specifier,
                 right_name,
@@ -1168,7 +1178,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn resolve_module_augmentation_member_symbol(
+    pub(crate) fn resolve_module_augmentation_member_symbol(
         &self,
         module_specifier: &str,
         member_name: &str,

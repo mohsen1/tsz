@@ -442,18 +442,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // If the target symbol itself is marked type-only (e.g. `export type { A }`),
-        // it means it was exported as a type, so return Export.
-        if let Some(target_id) = target
-            && let Some(target_symbol) = self
-                .ctx
-                .binder
-                .get_symbol_with_libs(target_id, &lib_binders)
-            && target_symbol.is_type_only
-        {
-            return Some(TypeOnlyKind::Export);
-        }
-
         // Check for type-only propagation through `export =` chains.
         // When a module does `import type * as ns from './a'; export = ns;`,
         // any import from that module should inherit the type-only status.
@@ -513,6 +501,18 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
+
+        // If the target symbol itself is marked type-only (e.g. `export type { A }`),
+        // it means it was exported as a type, so return Export.
+        if let Some(target_id) = target
+            && let Some(target_symbol) = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(target_id, &lib_binders)
+            && target_symbol.is_type_only
+        {
+            return Some(TypeOnlyKind::Export);
         }
 
         None
