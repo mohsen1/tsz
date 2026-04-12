@@ -68,6 +68,11 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     conditional_subtype_cache: FxHashMap<(TypeId, TypeId), bool>,
     /// Ceiling for eager mapped-key expansion before bailing out.
     max_mapped_keys: usize,
+    /// When true, flag `depth_exceeded` on Application cycle detection.
+    /// Used for TS2589 detection at type alias definition sites where
+    /// self-referential conditional types produce the same Application TypeId
+    /// on each expansion, preventing the per-DefId depth counter from working.
+    flag_depth_on_app_cycle: bool,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -134,6 +139,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             suppress_this_binding: false,
             conditional_subtype_cache: FxHashMap::default(),
             max_mapped_keys: DEFAULT_MAX_MAPPED_KEYS,
+            flag_depth_on_app_cycle: false,
         }
     }
 }
@@ -177,6 +183,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             suppress_this_binding: false,
             conditional_subtype_cache: FxHashMap::default(),
             max_mapped_keys: DEFAULT_MAX_MAPPED_KEYS,
+            flag_depth_on_app_cycle: false,
         }
     }
 
@@ -193,6 +200,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// bound to the final derived interface type.
     pub const fn with_suppress_this_binding(mut self) -> Self {
         self.suppress_this_binding = true;
+        self
+    }
+
+    /// Flag `depth_exceeded` when cycle detection fires on an Application type.
+    /// Used for TS2589 detection at type alias definition sites where
+    /// self-referential conditional types produce the same Application TypeId
+    /// on each expansion (e.g., `Foo<unknown>` → body → `Foo<unknown>`),
+    /// preventing the normal per-DefId depth counter from triggering.
+    pub const fn with_flag_depth_on_app_cycle(mut self) -> Self {
+        self.flag_depth_on_app_cycle = true;
         self
     }
 
@@ -461,6 +478,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if matches!(key, Some(TypeData::Mapped(_))) {
                     self.cache.insert(type_id, type_id);
                     return type_id;
+                }
+                // When checking type alias definitions for TS2589, a cycle on an
+                // Application means the recursive expansion produces the same TypeId
+                // each time (e.g., `Foo<unknown>` → body → `Foo<unknown>`). This is
+                // effectively infinite recursion that the per-DefId counter can't
+                // catch because cycle detection fires first. Flag depth_exceeded so
+                // the checker can emit TS2589.
+                if self.flag_depth_on_app_cycle && matches!(key, Some(TypeData::Application(_))) {
+                    self.guard.mark_exceeded();
+                    return TypeId::ERROR;
                 }
                 return type_id;
             }

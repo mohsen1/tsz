@@ -332,6 +332,27 @@ pub(crate) fn evaluate_type_with_cache<R: tsz_solver::TypeResolver>(
     }
 }
 
+/// Evaluate a type for TS2589 detection at type alias definition sites.
+///
+/// Like `evaluate_type_with_cache` but flags `depth_exceeded` when cycle
+/// detection fires on an Application type. This catches self-referential
+/// conditional types that produce the same Application TypeId on each
+/// expansion (e.g., `type Foo<T> = T extends unknown ? Foo<T> : unknown`).
+pub(crate) fn evaluate_type_for_ts2589<R: tsz_solver::TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> EvalWithCacheResult {
+    let mut evaluator =
+        tsz_solver::TypeEvaluator::with_resolver(db, resolver).with_flag_depth_on_app_cycle();
+    let result = evaluator.evaluate(type_id);
+    EvalWithCacheResult {
+        result,
+        depth_exceeded: evaluator.is_depth_exceeded(),
+        cache_entries: evaluator.drain_cache().collect(),
+    }
+}
+
 /// Evaluate a type while suppressing `this` binding.
 ///
 /// Used during heritage merging where `this` must remain unbound until the

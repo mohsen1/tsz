@@ -182,13 +182,78 @@ impl<'a> CheckerState<'a> {
         // Check variance annotations match actual usage (TS2636).
         // Resolve the alias body type directly so the solver can compute variance.
         // This must be done while type parameters are still in scope.
-        {
+        let body_type = {
             let body_type = self.get_type_from_type_node(alias.type_node);
             self.check_variance_annotations_with_body(
                 node_idx,
                 &alias.type_parameters,
                 Some(body_type),
             );
+            body_type
+        };
+
+        // TS2589: detect excessively deep type instantiation at definition time.
+        // tsc emits TS2589 for type aliases whose body contains conditional types
+        // that self-reference and create infinite expansion (e.g.,
+        // `type Foo<T> = T extends unknown ? Foo<T> : unknown`).
+        // We check this by:
+        // 1. Verifying the body references the alias's own DefId
+        // 2. Registering the body temporarily so the evaluator can resolve it
+        // 3. Evaluating with a special flag that detects Application cycle = TS2589
+        if let Some(alias_sid) = alias_sym_id {
+            let def_id = self.ctx.get_or_create_def_id(alias_sid);
+            // Only check when the body is a conditional type — tsc emits TS2589
+            // at definition time specifically for recursive conditional types,
+            // not indexed access or other patterns.
+            let body_is_conditional = matches!(
+                self.ctx.types.as_type_database().lookup(body_type),
+                Some(tsz_solver::TypeData::Conditional(_))
+            );
+            let body_refs = if body_is_conditional {
+                tsz_solver::visitor::collect_lazy_def_ids(self.ctx.types, body_type)
+            } else {
+                Vec::new()
+            };
+            if body_refs.contains(&def_id) {
+                // Collect type params that were pushed into scope above
+                let type_params: Vec<tsz_solver::TypeParamInfo> = alias
+                    .type_parameters
+                    .as_ref()
+                    .map(|tps| {
+                        tps.nodes
+                            .iter()
+                            .filter_map(|&param_idx| {
+                                let param_node = self.ctx.arena.get(param_idx)?;
+                                let param = self.ctx.arena.get_type_parameter(param_node)?;
+                                let name_node = self.ctx.arena.get(param.name)?;
+                                let ident = self.ctx.arena.get_identifier(name_node)?;
+                                let atom = self.ctx.types.intern_string(&ident.escaped_text);
+                                Some(tsz_solver::TypeParamInfo {
+                                    name: atom,
+                                    constraint: None,
+                                    default: None,
+                                    is_const: false,
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                // Register body temporarily for evaluation
+                self.ctx
+                    .register_def_auto_params_in_envs(def_id, body_type, type_params);
+
+                // Evaluate with TS2589 detection flag
+                let depth_exceeded = self.evaluate_type_for_ts2589_check(body_type, def_id);
+                if depth_exceeded {
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.error_at_node(
+                        alias.type_node,
+                        diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                        diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                    );
+                }
+            }
         }
 
         // TS4109: detect circular type arguments when the alias body is directly
