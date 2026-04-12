@@ -78,9 +78,10 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn format_type_for_assignability_message(&mut self, ty: TypeId) -> String {
-        let format_without_def_store = |state: &Self, type_id: TypeId| {
+        let format_with_def_store = |state: &Self, type_id: TypeId| {
             let mut formatter =
                 tsz_solver::TypeFormatter::with_symbols(state.ctx.types, &state.ctx.binder.symbols)
+                    .with_def_store(&state.ctx.definition_store)
                     .with_diagnostic_mode()
                     .with_strict_null_checks(state.ctx.compiler_options.strict_null_checks);
             formatter.format(type_id).into_owned()
@@ -135,7 +136,7 @@ impl<'a> CheckerState<'a> {
                     // tsc shows `Id<{...}>` not `Foo` for `type Foo = Id<{...}>`.
                     let evaluated = self.evaluate_type_with_env(ty);
                     if is_generic_callable(self, evaluated) {
-                        return format_without_def_store(self, evaluated);
+                        return format_with_def_store(self, evaluated);
                     }
                     if evaluated != ty && self.ctx.types.get_display_alias(evaluated).is_some() {
                         return self.format_type_for_assignability_message(evaluated);
@@ -212,7 +213,7 @@ impl<'a> CheckerState<'a> {
                 .or_else(|| self.ctx.definition_store.find_def_for_type(ty))
                 .is_some()
         {
-            return format_without_def_store(self, display_ty);
+            return format_with_def_store(self, display_ty);
         }
         // For fresh object literal types, format without display properties so
         // widened types are shown: `{ two: number }` not `{ two: 1 }`.
