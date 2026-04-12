@@ -620,8 +620,11 @@ impl ParserState {
                     // tsc treats `await` as a keyword, tries to parse an await expression,
                     // and emits TS1109 "Expression expected." at the colon position.
                     if self.in_static_block_context() {
-                        use tsz_common::diagnostics::diagnostic_codes;
-                        self.parse_error_at_current_token(
+                        // Look ahead to get the colon position
+                        let colon_pos = self.look_ahead_get_labeled_colon_pos();
+                        self.parse_error_at(
+                            colon_pos,
+                            1,
                             "Expression expected.",
                             diagnostic_codes::EXPRESSION_EXPECTED,
                         );
@@ -1356,6 +1359,23 @@ impl ParserState {
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         is_colon
+    }
+
+    /// Look ahead to get the colon position for a labeled statement.
+    /// Used to emit TS1109 at the colon position when a reserved word
+    /// like `await` is used as a label in static blocks.
+    fn look_ahead_get_labeled_colon_pos(&mut self) -> u32 {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        // Skip identifier
+        self.next_token();
+        // Get colon position
+        let colon_pos = self.u32_from_usize(self.token_pos() as usize);
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        colon_pos
     }
 
     /// Look ahead to see if we have "const enum"
