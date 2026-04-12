@@ -689,10 +689,42 @@ impl<'a> CheckerState<'a> {
                 .get(decl_scope)
                 .is_some_and(|node| node.kind == syntax_kind_ext::SOURCE_FILE);
             if !decl_is_source_file {
-                return false;
-            }
-
-            if self.is_usage_in_deferred_function_relative_to_scope(idx, decl_scope) {
+                // Non-source-file cross-scope (e.g., variable declared in a
+                // function, used in a nested function).
+                //
+                // IIFEs: flow graph is connected inline — fall through to
+                // normal flow analysis.
+                //
+                // Deferred functions: disconnected flow graph. Apply
+                // heuristics to decide whether to emit TS2454:
+                //   - `var` declarations are hoisted to undefined → suppress
+                //   - `const` without initializer already gets TS1155 → suppress
+                //   - a simple (`=`) assignment exists elsewhere in the
+                //     enclosing function → suppress (the deferred call may
+                //     happen after the assignment)
+                //   - otherwise (only compound or no assignments) → fall
+                //     through so flow analysis emits TS2454
+                if self.is_usage_in_deferred_function_relative_to_scope(idx, decl_scope) {
+                    let is_function_scoped_var =
+                        symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0;
+                    if is_function_scoped_var {
+                        return false;
+                    }
+                    if !has_initializer
+                        && self
+                            .ctx
+                            .arena
+                            .is_const_variable_declaration(decl_id_to_check)
+                    {
+                        return false;
+                    }
+                    if self.symbol_has_simple_assignment_in_file(sym_id) {
+                        return false;
+                    }
+                    // Fall through — flow analysis will emit TS2454
+                }
+                // IIFE path: fall through to flow analysis
+            } else if self.is_usage_in_deferred_function_relative_to_scope(idx, decl_scope) {
                 // In external modules, only suppress if the variable has some
                 // assignment reachable in the file. If it is never assigned,
                 // the deferred function can never see a valid value.
@@ -1473,6 +1505,48 @@ impl<'a> CheckerState<'a> {
             if self.flow_assignment_targets_symbol(flow.node, sym_id) {
                 return true;
             }
+        }
+        false
+    }
+
+    /// Check whether a symbol has any *simple* (`=`) flow ASSIGNMENT in the file.
+    /// Compound assignments (`+=`, `|=`, `++`, `--`) are excluded because they
+    /// read the variable before writing, so they don't count as definite assignment.
+    fn symbol_has_simple_assignment_in_file(&self, sym_id: SymbolId) -> bool {
+        use tsz_binder::flow_flags;
+        let flow_arena = &self.ctx.binder.flow_nodes;
+        for i in 0..flow_arena.len() {
+            let flow_id = tsz_binder::FlowNodeId(i as u32);
+            let Some(flow) = flow_arena.get(flow_id) else {
+                continue;
+            };
+            if (flow.flags & flow_flags::ASSIGNMENT) == 0 || flow.node.is_none() {
+                continue;
+            }
+            if self.flow_assignment_targets_symbol(flow.node, sym_id)
+                && !self.is_compound_read_write_flow_assignment(flow.node)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if a flow assignment node is a compound read-write operation
+    /// (`++`, `--`, `+=`, `|=`, etc.) as opposed to a simple `=` assignment.
+    fn is_compound_read_write_flow_assignment(&self, node_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            || node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
+        {
+            return true;
+        }
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(bin) = self.ctx.arena.get_binary_expr(node)
+        {
+            return bin.operator_token != tsz_scanner::SyntaxKind::EqualsToken as u16;
         }
         false
     }
