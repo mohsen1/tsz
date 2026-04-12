@@ -210,7 +210,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let sig = self.call_signature_from_function(func, decl_idx);
+            let sig = if self.ctx.is_declaration_file() {
+                self.provisional_declaration_file_call_signature(func)
+            } else {
+                self.call_signature_from_function(func, decl_idx)
+            };
             if func.body.is_none() {
                 overloads.push(sig);
             } else if implementation_sig.is_none() {
@@ -241,6 +245,39 @@ impl<'a> CheckerState<'a> {
             is_method: false,
         });
         Some(func_type)
+    }
+
+    fn provisional_declaration_file_call_signature(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> tsz_solver::CallSignature {
+        let mut params = Vec::with_capacity(func.parameters.nodes.len());
+
+        for &param_idx in &func.parameters.nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            let param_name = self.parameter_name_for_error(param.name);
+            let name = self.ctx.types.intern_string(&param_name);
+            params.push(tsz_solver::ParamInfo {
+                name: Some(name),
+                type_id: TypeId::ANY,
+                optional: param.question_token || param.initializer.is_some(),
+                rest: param.dot_dot_dot_token,
+            });
+        }
+
+        tsz_solver::CallSignature {
+            type_params: Vec::new(),
+            params,
+            this_type: None,
+            return_type: TypeId::ANY,
+            type_predicate: None,
+            is_method: false,
+        }
     }
 
     /// Check if a symbol is a numeric enum and register it in the `TypeEnvironment`.

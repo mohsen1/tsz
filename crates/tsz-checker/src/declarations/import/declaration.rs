@@ -1735,6 +1735,27 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
 
+                        // Fast path: if there is no other local declaration merged into
+                        // this symbol and no separate same-name symbol in the current file,
+                        // there is nothing for this import to conflict with. Avoid resolving
+                        // the import alias just to discover the absence of a candidate.
+                        let has_merged_local_candidate = sym.declarations.iter().any(|&decl_idx| {
+                            decl_idx != binding_node_idx
+                                && decl_idx != clause_idx
+                                && decl_idx != stmt_idx
+                                && self.ctx.binder.node_symbols.contains_key(&decl_idx.0)
+                        });
+                        let has_same_name_candidate = self
+                            .ctx
+                            .binder
+                            .symbols
+                            .find_all_by_name(&name)
+                            .iter()
+                            .any(|&other_sym_id| other_sym_id != sym_id);
+                        if !has_merged_local_candidate && !has_same_name_candidate {
+                            continue;
+                        }
+
                         let mut import_has_value = false;
                         let mut import_has_type = false;
                         let mut visited = Vec::new();

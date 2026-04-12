@@ -1098,6 +1098,16 @@ impl<'a> CheckerState<'a> {
         // Also skip pure import aliases — they trigger expensive cross-file
         // delegation during build_type_environment but their types are resolved
         // on-demand when first accessed during statement checking.
+        //
+        // Declaration files (.d.ts) skip eager resolution entirely. These files
+        // contain thousands of type definitions (react16.d.ts has ~2700 lines) that
+        // would cascade through resolve_and_insert_def_type and cause timeouts.
+        // Their types are resolved lazily when actually referenced during import
+        // resolution or property access.
+        if self.ctx.is_declaration_file() {
+            return;
+        }
+
         for (sym_id, flags) in symbols_with_flags {
             // Skip variable and parameter symbols - their types will be computed
             // lazily during statement checking with proper class context

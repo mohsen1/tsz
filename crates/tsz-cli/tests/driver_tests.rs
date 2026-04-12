@@ -1749,7 +1749,6 @@ fn compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322()
     );
 }
 
-
 #[test]
 fn compile_generic_call_at_yield_expression_in_generic_call_fixture_reports_outer_ts2345() {
     let Some(source) = load_typescript_fixture(

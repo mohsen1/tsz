@@ -37,43 +37,6 @@ impl<'a> CheckerState<'a> {
             None => return,
         };
 
-        // Only whole-declaration type-only imports keep a `resolution-mode` override
-        // when the current module kind would otherwise reject import attributes.
-        let resolution_mode =
-            self.requested_resolution_mode(import.attributes, clause.is_type_only);
-        let uses_fallback_branch_resolution = resolution_mode.is_some()
-            && !self.resolution_mode_override_is_effective(import.attributes, clause.is_type_only);
-        let exports_table =
-            self.resolve_effective_module_exports_with_mode(module_name, resolution_mode);
-
-        let resolved_target = if resolution_mode.is_some() {
-            self.ctx.resolve_import_target_from_file_with_mode(
-                self.ctx.current_file_idx,
-                module_name,
-                resolution_mode,
-            )
-        } else {
-            self.ctx.resolve_import_target(module_name)
-        };
-        if let Some(target_idx) = resolved_target {
-            let arena = self.ctx.get_arena_for_file(target_idx as u32);
-            if let Some(source_file) = arena.source_files.first()
-                && !source_file.is_declaration_file
-            {
-                let file_name = source_file.file_name.as_str();
-                let is_js_like = file_name.ends_with(".js")
-                    || file_name.ends_with(".jsx")
-                    || file_name.ends_with(".mjs")
-                    || file_name.ends_with(".cjs");
-                let has_export_surface = exports_table
-                    .as_ref()
-                    .is_some_and(|exports| !exports.is_empty());
-                if is_js_like && !has_export_surface && resolution_mode.is_none() {
-                    return;
-                }
-            }
-        }
-
         let has_default_import = clause.name.is_some();
         let bindings_node = self.ctx.arena.get(clause.named_bindings);
         let has_named_imports = bindings_node
@@ -118,6 +81,56 @@ impl<'a> CheckerState<'a> {
         let has_namespace_import =
             bindings_node.is_some_and(|n| n.kind == syntax_kind_ext::NAMESPACE_IMPORT);
 
+        // Only whole-declaration type-only imports keep a `resolution-mode` override
+        // when the current module kind would otherwise reject import attributes.
+        let resolution_mode =
+            self.requested_resolution_mode(import.attributes, clause.is_type_only);
+        let uses_fallback_branch_resolution = resolution_mode.is_some()
+            && !self.resolution_mode_override_is_effective(import.attributes, clause.is_type_only);
+
+        let resolved_target = if resolution_mode.is_some() {
+            self.ctx.resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_name,
+                resolution_mode,
+            )
+        } else {
+            self.ctx.resolve_import_target(module_name)
+        };
+
+        // Default-only imports only need to know whether a default-like binding exists.
+        // Building the full export surface for large declaration bundles such as React
+        // is much more expensive than the diagnostic question we need to answer here.
+        let needs_full_exports = has_namespace_import
+            || has_non_default_named_imports
+            || (!has_default_import && has_named_default_binding);
+        let exports_table = if needs_full_exports {
+            self.resolve_effective_module_exports_with_mode(module_name, resolution_mode)
+        } else {
+            None
+        };
+
+        if let Some(target_idx) = resolved_target {
+            let arena = self.ctx.get_arena_for_file(target_idx as u32);
+            if let Some(source_file) = arena.source_files.first()
+                && !source_file.is_declaration_file
+            {
+                let file_name = source_file.file_name.as_str();
+                let is_js_like = file_name.ends_with(".js")
+                    || file_name.ends_with(".jsx")
+                    || file_name.ends_with(".mjs")
+                    || file_name.ends_with(".cjs");
+                let has_export_surface = if let Some(exports) = exports_table.as_ref() {
+                    !exports.is_empty()
+                } else {
+                    self.module_has_default_binding_fast_path(module_name, resolution_mode)
+                };
+                if is_js_like && !has_export_surface && resolution_mode.is_none() {
+                    return;
+                }
+            }
+        }
+
         // Nothing to check
         if !has_default_import && !has_named_imports && !has_namespace_import {
             return;
@@ -130,6 +143,11 @@ impl<'a> CheckerState<'a> {
         let quoted_module = format!("\"{module_name}\"");
         let has_json_default_export =
             self.module_has_json_default_export(module_name, Some(self.ctx.current_file_idx));
+        let has_default_binding = has_json_default_export
+            || self.module_has_default_binding_fast_path(module_name, resolution_mode)
+            || exports_table
+                .as_ref()
+                .is_some_and(|table| table.has("default") || table.has("export="));
 
         // TS2497: Module with `export =` targeting a non-module/non-variable symbol
         // can only be referenced via default import. Applies to namespace imports
@@ -242,10 +260,6 @@ impl<'a> CheckerState<'a> {
             let is_source_file = self.is_source_file_import(module_name);
             let uses_system_namespace_default =
                 self.source_file_import_uses_system_default_namespace_fallback(module_name);
-            let has_default_binding = has_json_default_export
-                || exports_table
-                    .as_ref()
-                    .is_some_and(|table| table.has("default") || table.has("export="));
             if exports_table.is_some() {
                 if !has_default_binding && !uses_system_namespace_default {
                     self.emit_no_default_export_error(module_name, clause.name, is_source_file);
@@ -268,10 +282,6 @@ impl<'a> CheckerState<'a> {
             let is_source_file = self.is_source_file_import(module_name);
             let uses_system_namespace_default =
                 self.source_file_import_uses_system_default_namespace_fallback(module_name);
-            let has_default_binding = has_json_default_export
-                || exports_table
-                    .as_ref()
-                    .is_some_and(|table| table.has("default") || table.has("export="));
             if exports_table.is_some() {
                 if !has_default_binding && !uses_system_namespace_default {
                     for &specifier_node in &named_default_binding_nodes {
@@ -689,6 +699,29 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    fn module_has_default_binding_fast_path(
+        &self,
+        module_name: &str,
+        resolution_mode: Option<crate::context::ResolutionModeOverride>,
+    ) -> bool {
+        let resolved_target = if resolution_mode.is_some() {
+            self.ctx.resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_name,
+                resolution_mode,
+            )
+        } else {
+            self.ctx.resolve_import_target(module_name)
+        };
+        let Some(target_idx) = resolved_target else {
+            return false;
+        };
+
+        let mut visited = rustc_hash::FxHashSet::default();
+        self.resolve_export_in_file(target_idx, "default", &mut visited)
+            .is_some()
     }
 
     /// Check if a symbol exists locally in the target module and whether it's

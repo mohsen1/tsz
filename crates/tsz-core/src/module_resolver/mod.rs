@@ -509,7 +509,8 @@ impl ModuleResolver {
             && !specifier.starts_with('/')
             && (!specifier.contains(':') || specifier.starts_with("node:"));
         let ambient_match = is_ordinary_bare && is_ambient_module(specifier);
-        let containing_is_declaration = ModuleExtension::from_path(containing_file).is_declaration();
+        let containing_is_declaration =
+            ModuleExtension::from_path(containing_file).is_declaration();
 
         // Declaration files frequently stitch together sibling `declare module "..."`
         // blocks with bare imports (for example, react16.d.ts declares both

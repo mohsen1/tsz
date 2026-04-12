@@ -1421,7 +1421,9 @@ impl BoundFile {
 
         // declaration_arenas
         size += self.declaration_arenas.capacity()
-            * (std::mem::size_of::<(SymbolId, NodeIndex)>() + std::mem::size_of::<Vec<Arc<NodeArena>>>() + 8);
+            * (std::mem::size_of::<(SymbolId, NodeIndex)>()
+                + std::mem::size_of::<Vec<Arc<NodeArena>>>()
+                + 8);
 
         // module_declaration_exports_publicly
         size += self.module_declaration_exports_publicly.capacity()
@@ -2955,9 +2957,9 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     dst.value_declaration = src_val_decl;
                 }
                 if let Some(src_exp) = src_exports {
-                    let dst_exp = dst.exports.get_or_insert_with(|| {
-                        Box::new(SymbolTable::with_capacity(src_exp.len()))
-                    });
+                    let dst_exp = dst
+                        .exports
+                        .get_or_insert_with(|| Box::new(SymbolTable::with_capacity(src_exp.len())));
                     for (ename, &esym) in src_exp.iter() {
                         if !dst_exp.has(ename) {
                             dst_exp.set(ename.clone(), esym);
@@ -2973,9 +2975,9 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     }
                 }
                 if let Some(src_mem) = src_members {
-                    let dst_mem = dst.members.get_or_insert_with(|| {
-                        Box::new(SymbolTable::with_capacity(src_mem.len()))
-                    });
+                    let dst_mem = dst
+                        .members
+                        .get_or_insert_with(|| Box::new(SymbolTable::with_capacity(src_mem.len())));
                     for (mname, &msym) in src_mem.iter() {
                         if !dst_mem.has(mname) {
                             dst_mem.set(mname.clone(), msym);
@@ -3089,7 +3091,9 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             if result.lib_symbol_ids.contains(&old_sym_id) {
                 continue;
             }
-            let has_non_local_arena = arenas.iter().any(|arena| !Arc::ptr_eq(arena, &result.arena));
+            let has_non_local_arena = arenas
+                .iter()
+                .any(|arena| !Arc::ptr_eq(arena, &result.arena));
             if !has_non_local_arena {
                 continue;
             }

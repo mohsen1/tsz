@@ -334,8 +334,7 @@ const 𝘳𝘦𝘨𝘦𝘹 = /(?𝘴𝘪-𝘮:^𝘧𝘰𝘰.)/𝘨𝘮𝘶;
         .count();
 
     assert_eq!(
-        ts1499_count,
-        6,
+        ts1499_count, 6,
         "Expected six TS1499 diagnostics for unknown inline and trailing non-BMP flags, got {diagnostics:?}"
     );
 }

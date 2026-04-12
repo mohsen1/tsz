@@ -690,6 +690,12 @@ pub struct CheckerContext<'a> {
     /// like `React.Component`, `React.ComponentClass`, `React.ReactNode`, etc.
     pub namespace_member_resolution_cache: RefCell<FxHashMap<(String, String), Option<SymbolId>>>,
 
+    /// Per-checker cache for text-based entity-name resolution used by lowering.
+    /// Keyed by names like `React.ReactNode` / `JSX.Element` and stores both
+    /// hits and misses to avoid repeatedly walking the same symbol graph during
+    /// declaration-file interface/type lowering.
+    pub lowering_entity_name_resolution_cache: RefCell<FxHashMap<String, Option<DefId>>>,
+
     /// Shared lib type resolution cache across parallel file checks.
     /// Uses `DashMap` for thread-safe concurrent access.
     pub shared_lib_type_cache: Option<Arc<dashmap::DashMap<String, Option<TypeId>>>>,

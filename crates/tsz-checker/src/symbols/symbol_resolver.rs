@@ -1199,6 +1199,16 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        if let Some(cached) = self
+            .ctx
+            .lowering_entity_name_resolution_cache
+            .borrow()
+            .get(name)
+            .copied()
+        {
+            return cached;
+        }
+
         let mut segments = name.split('.');
         let root_name = segments.next()?;
         let lib_binders = self.get_lib_binders();
@@ -1214,11 +1224,17 @@ impl<'a> CheckerState<'a> {
                 .resolve_alias_symbol(current_sym, &mut visited_aliases)
                 .unwrap_or(current_sym);
 
-            let symbol = self.get_cross_file_symbol(current_sym).or_else(|| {
+            let Some(symbol) = self.get_cross_file_symbol(current_sym).or_else(|| {
                 self.ctx
                     .binder
                     .get_symbol_with_libs(current_sym, &lib_binders)
-            })?;
+            }) else {
+                self.ctx
+                    .lowering_entity_name_resolution_cache
+                    .borrow_mut()
+                    .insert(name.to_string(), None);
+                return None;
+            };
 
             if let Some(member_sym) = symbol
                 .exports
@@ -1257,6 +1273,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            self.ctx
+                .lowering_entity_name_resolution_cache
+                .borrow_mut()
+                .insert(name.to_string(), None);
             return None;
         }
 
@@ -1264,7 +1284,12 @@ impl<'a> CheckerState<'a> {
         let resolved_sym = self
             .resolve_alias_symbol(current_sym, &mut visited_aliases)
             .unwrap_or(current_sym);
-        Some(self.ctx.get_or_create_def_id(resolved_sym))
+        let def_id = self.ctx.get_or_create_def_id(resolved_sym);
+        self.ctx
+            .lowering_entity_name_resolution_cache
+            .borrow_mut()
+            .insert(name.to_string(), Some(def_id));
+        Some(def_id)
     }
 
     // =========================================================================

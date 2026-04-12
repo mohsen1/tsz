@@ -232,15 +232,24 @@ impl<'a> CheckerState<'a> {
                 if let Some(target_sym_id) = target_sym_id
                     && target_sym_id != sym_id
                     && let Some(target_symbol) = self.get_symbol_globally(target_sym_id)
-                    && (target_symbol.flags & symbol_flags::CLASS) != 0
                 {
-                    let target_type = self.get_type_of_symbol(target_sym_id);
-                    // Also cache the instance type so type-position references
-                    // (`let x: Observable<number>`) continue to work.
-                    if let Some(&inst) = self.ctx.symbol_instance_types.get(&target_sym_id) {
-                        self.ctx.symbol_instance_types.insert(sym_id, inst);
+                    if (target_symbol.flags & symbol_flags::CLASS) != 0 {
+                        let target_type = self.get_type_of_symbol(target_sym_id);
+                        // Also cache the instance type so type-position references
+                        // (`let x: Observable<number>`) continue to work.
+                        if let Some(&inst) = self.ctx.symbol_instance_types.get(&target_sym_id) {
+                            self.ctx.symbol_instance_types.insert(sym_id, inst);
+                        }
+                        return (target_type, Vec::new());
                     }
-                    return (target_type, Vec::new());
+
+                    // Plain imported namespaces like `import React from "react"` do not
+                    // need eager structuralization at import time. Keep the alias lazy and
+                    // let qualified/member resolution use the namespace export tables on
+                    // demand. This avoids building the entire React namespace object for
+                    // every import site.
+                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    return (self.ctx.types.factory().lazy(def_id), Vec::new());
                 }
             }
         }
