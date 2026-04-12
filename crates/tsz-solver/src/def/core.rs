@@ -544,7 +544,7 @@ pub struct DefinitionStore {
     /// which was the root cause of hangs on large type libraries like ts-toolbelt.
     fully_populated: std::sync::atomic::AtomicBool,
 
-    /// Set of DefIds detected as circular type aliases (shared across checkers).
+    /// Set of `DefId`s detected as circular type aliases (shared across checkers).
     circular_def_ids: DashSet<DefId>,
 }
 
