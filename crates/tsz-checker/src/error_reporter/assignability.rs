@@ -447,16 +447,75 @@ impl<'a> CheckerState<'a> {
         anchor_idx: NodeIndex,
         downgrade_missing_to_2322: bool,
     ) {
+        self.error_type_not_assignable_at_with_anchor_elaboration_inner_with_value_anchor(
+            source,
+            target,
+            anchor_idx,
+            None,
+            downgrade_missing_to_2322,
+        );
+    }
+
+    /// Like [`error_type_not_assignable_at_with_anchor_elaboration_inner`], but
+    /// also relocates any emitted missing-property diagnostics (TS2741/TS2739/
+    /// TS2740) to `value_anchor_idx` when provided. tsc's
+    /// `elaborateElementwise` anchors missing-property elaborations on the
+    /// property initializer (the value), while plain TS2322 assignability
+    /// diagnostics remain anchored on the property name — so callers pass the
+    /// value anchor only when they want missing-property codes repositioned.
+    pub fn error_type_not_assignable_at_with_anchor_elaboration_inner_with_value_anchor(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+        value_anchor_idx: Option<NodeIndex>,
+        downgrade_missing_to_2322: bool,
+    ) {
         let anchor_idx =
             self.resolve_diagnostic_anchor_node(anchor_idx, DiagnosticAnchorKind::Exact);
         let diag_count_before = self.ctx.diagnostics.len();
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
 
+        use crate::diagnostics::diagnostic_codes;
+
+        // When a value anchor is supplied, reposition missing-property codes
+        // (TS2741/TS2739/TS2740) to anchor on the property value — matching
+        // tsc's `elaborateElementwise` behavior that uses the initializer as
+        // the error node for missing-property elaborations.
+        if let Some(value_anchor_src) = value_anchor_idx {
+            let resolved_value_anchor =
+                self.resolve_diagnostic_anchor_node(value_anchor_src, DiagnosticAnchorKind::Exact);
+            let value_span = self
+                .resolve_diagnostic_anchor(resolved_value_anchor, DiagnosticAnchorKind::Exact)
+                .map(|anchor| (anchor.start, anchor.length))
+                .or_else(|| {
+                    self.get_node_span(resolved_value_anchor).map(|(pos, end)| {
+                        self.normalized_anchor_span(
+                            resolved_value_anchor,
+                            pos,
+                            end.saturating_sub(pos),
+                        )
+                    })
+                });
+            if let Some((start, length)) = value_span {
+                for diag in &mut self.ctx.diagnostics[diag_count_before..] {
+                    if matches!(
+                        diag.code,
+                        diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                            | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                            | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+                    ) {
+                        diag.start = start;
+                        diag.length = length;
+                    }
+                }
+            }
+        }
+
         if !downgrade_missing_to_2322 {
             return;
         }
 
-        use crate::diagnostics::diagnostic_codes;
         let needs_downgrade = self.ctx.diagnostics[diag_count_before..].iter().any(|d| {
             matches!(
                 d.code,
