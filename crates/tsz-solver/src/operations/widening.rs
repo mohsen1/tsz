@@ -275,7 +275,9 @@ fn widen_type_cached(
                         new_shape.properties = new_props;
                         db.object_with_index(new_shape)
                     } else {
-                        db.object(new_props)
+                        // Preserve symbol and flags so named types (interfaces,
+                        // classes) retain their identity through widening.
+                        db.object_with_flags_and_symbol(new_props, shape.flags, shape.symbol)
                     };
 
                 // Carry forward display properties from the original TypeId.
@@ -518,7 +520,8 @@ pub(crate) fn widen_object_literal_properties(
                     new_shape.properties = new_props;
                     db.object_with_index(new_shape)
                 } else {
-                    db.object(new_props)
+                    // Preserve symbol and flags so named types retain identity.
+                    db.object_with_flags_and_symbol(new_props, shape.flags, shape.symbol)
                 }
             } else {
                 type_id
