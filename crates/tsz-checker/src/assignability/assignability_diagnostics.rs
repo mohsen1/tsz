@@ -177,7 +177,10 @@ impl<'a> CheckerState<'a> {
             let keyof_type = get_keyof_type(self.ctx.types, target)
                 .expect("is_keyof_type guard ensures this succeeds");
             let allowed_keys = self.get_keyof_type_keys(keyof_type, self.ctx.types);
-            if !allowed_keys.contains(&str_lit) {
+            // Only use this pre-check when we could determine concrete keys.
+            // An empty set means the inner type couldn't be resolved (e.g., ThisType,
+            // Application, or Lazy reference). Fall through to the solver check.
+            if !allowed_keys.is_empty() && !allowed_keys.contains(&str_lit) {
                 self.error_type_does_not_satisfy_the_expected_type(
                     source,
                     target,

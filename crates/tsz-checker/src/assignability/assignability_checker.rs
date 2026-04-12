@@ -1688,7 +1688,10 @@ impl<'a> CheckerState<'a> {
         {
             let source_str = self.ctx.types.resolve_atom(source_atom);
             let allowed_keys = get_allowed_keys(self.ctx.types, keyof_type);
-            if !allowed_keys.contains(&source_str) {
+            // Only reject when we could determine concrete keys. An empty set means
+            // the inner type couldn't be resolved (e.g., ThisType, TypeParameter,
+            // or Application). In that case, trust the solver's result.
+            if !allowed_keys.is_empty() && !allowed_keys.contains(&source_str) {
                 return false;
             }
         }
@@ -1977,7 +1980,10 @@ impl<'a> CheckerState<'a> {
         {
             let source_str = self.ctx.types.resolve_atom(source_atom);
             let allowed_keys = get_allowed_keys(self.ctx.types, keyof_type);
-            if !allowed_keys.contains(&source_str) {
+            // Only reject when we could determine concrete keys. An empty set means
+            // the inner type couldn't be resolved (e.g., ThisType, TypeParameter,
+            // or Application). In that case, trust the solver's result.
+            if !allowed_keys.is_empty() && !allowed_keys.contains(&source_str) {
                 return false;
             }
         }
