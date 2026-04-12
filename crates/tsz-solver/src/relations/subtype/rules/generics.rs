@@ -1758,12 +1758,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // When the operand is a ThisType (polymorphic `this`), resolve it to
         // the concrete class/interface instance type via the resolver and recurse.
         // E.g., `keyof this` inside PersonModel → keyof PersonModel.
-        if matches!(self.interner.lookup(operand), Some(TypeData::ThisType)) {
-            if let Some(concrete_this) = self.resolver.resolve_this_type(self.interner) {
-                if concrete_this != operand {
-                    return self.try_get_keyof_keys_depth(concrete_this, depth + 1);
-                }
-            }
+        if matches!(self.interner.lookup(operand), Some(TypeData::ThisType))
+            && let Some(concrete_this) = self.resolver.resolve_this_type(self.interner)
+            && concrete_this != operand
+        {
+            return self.try_get_keyof_keys_depth(concrete_this, depth + 1);
         }
 
         None

@@ -1750,6 +1750,7 @@ impl ParserState {
                     } else {
                         self.current_keyword_text().to_string()
                     };
+                    let prev_token = self.current_token;
                     let name_start = self.token_pos();
                     let name_end = self.token_end();
                     use tsz_common::diagnostics::diagnostic_codes;
@@ -1760,9 +1761,21 @@ impl ParserState {
                         diagnostic_codes::NAMESPACE_NAME_CANNOT_BE,
                     );
                     self.next_token();
-                    // tsc also emits TS1005 ("';' expected") at the token after
-                    // the reserved word when followed by '{'.
-                    if self.is_token(SyntaxKind::OpenBraceToken) {
+                    // tsc emits TS1005 ("';' expected") for some reserved words
+                    // followed by '{', specifically for literals and references
+                    // that cannot be followed by '{}' in valid expressions.
+                    // Keywords like void, return, typeof can be followed by '{}'.
+                    if self.is_token(SyntaxKind::OpenBraceToken)
+                        && matches!(
+                            prev_token,
+                            SyntaxKind::NullKeyword
+                                | SyntaxKind::TrueKeyword
+                                | SyntaxKind::FalseKeyword
+                                | SyntaxKind::ThisKeyword
+                                | SyntaxKind::SuperKeyword
+                                | SyntaxKind::NumericLiteral
+                        )
+                    {
                         self.parse_expected(SyntaxKind::SemicolonToken);
                     }
                     // Create a missing identifier for recovery
