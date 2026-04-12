@@ -1240,8 +1240,8 @@ ensure_large_ts_repo_fixture() {
         fi
     fi
 
-    # Create flat tsconfig (includes all files directly) since tsz doesn't support
-    # --build mode for project references yet
+    # Create flat tsconfig (includes all files directly) for consistent benchmarking.
+    # Note: tsz supports --build mode, but we use flat config for apples-to-apples comparison.
     local flat_tsconfig="$LARGE_TS_DIR/tsconfig.flat.json"
     if [ ! -f "$flat_tsconfig" ]; then
         cat > "$flat_tsconfig" << 'FLATEOF'
