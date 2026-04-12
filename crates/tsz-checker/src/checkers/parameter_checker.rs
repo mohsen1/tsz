@@ -1107,30 +1107,68 @@ impl<'a> CheckerState<'a> {
 
             // In malformed signatures like `(...arg?) => {}`, TypeScript still
             // reports TS2370 in addition to TS1047/TS7019.
-            // However, this is only reported for function expressions and arrow functions,
-            // not for methods or function declarations.
-            if param.question_token
-                && param.type_annotation.is_none()
-                && param.initializer.is_none()
-            {
-                let is_arrow_or_expr = if let Some(ext) = self.ctx.arena.get_extended(param_idx)
-                    && let Some(parent_node) = self.ctx.arena.get(ext.parent)
-                {
-                    parent_node.kind == tsz_parser::parser::syntax_kind_ext::ARROW_FUNCTION
-                        || parent_node.kind
-                            == tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
+            // This is reported for function expressions, arrow functions, and
+            // function/constructor types in type alias context.
+            if param.question_token {
+                let parent_kind = self
+                    .ctx
+                    .arena
+                    .get_extended(param_idx)
+                    .and_then(|ext| self.ctx.arena.get(ext.parent))
+                    .map(|n| n.kind);
+
+                let is_arrow_or_expr = parent_kind.is_some_and(|k| {
+                    k == tsz_parser::parser::syntax_kind_ext::ARROW_FUNCTION
+                        || k == tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
+                });
+
+                let is_callable_type = parent_kind.is_some_and(|k| {
+                    k == tsz_parser::parser::syntax_kind_ext::FUNCTION_TYPE
+                        || k == tsz_parser::parser::syntax_kind_ext::CONSTRUCTOR_TYPE
+                });
+
+                // For arrow/function expressions: only emit TS2370 if no type annotation and no initializer
+                // For callable types in type aliases: always emit TS2370 for optional rest params
+                let should_emit = if is_callable_type {
+                    true
+                } else if is_arrow_or_expr {
+                    param.type_annotation.is_none() && param.initializer.is_none()
                 } else {
                     false
                 };
 
-                if is_arrow_or_expr {
-                    self.error_at_node(
-                        param.name,
-                        "A rest parameter must be of an array type.",
-                        diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
-                    );
+                if should_emit {
+                    // For callable types, report at the parameter position (includes the ...)
+                    // to match tsc's error position behavior. Use error_at_position directly
+                    // because error_at_node would normalize to the name node.
+                    if is_callable_type {
+                        if let Some(pn) = self.ctx.arena.get(param_idx) {
+                            // Report at the ... token position (param node start)
+                            // Use name's length to get correct span length
+                            if let Some(name_node) = self.ctx.arena.get(param.name) {
+                                let length = name_node.end.saturating_sub(pn.pos);
+                                self.error_at_position(
+                                    pn.pos,
+                                    length,
+                                    "A rest parameter must be of an array type.",
+                                    diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
+                                );
+                            }
+                        }
+                    } else {
+                        self.error_at_node(
+                            param.name,
+                            "A rest parameter must be of an array type.",
+                            diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
+                        );
+                    }
                 }
-                continue;
+
+                // For callable types, we've handled TS2370; continue to skip the normal array check.
+                // For arrow/expr, continue only if we emitted or if there's no type annotation.
+                if is_callable_type || (is_arrow_or_expr && param.type_annotation.is_none()) {
+                    continue;
+                }
             }
 
             if param.type_annotation.is_some() {

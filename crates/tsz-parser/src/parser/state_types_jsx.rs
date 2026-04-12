@@ -273,7 +273,19 @@ impl ParserState {
             };
 
             // Parse optional ?
+            let question_pos = self.token_pos();
             let question = self.parse_optional(SyntaxKind::QuestionToken);
+
+            // TS1047: A rest parameter cannot be optional
+            if dot_dot_dot && question {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    question_pos,
+                    1,
+                    "A rest parameter cannot be optional.",
+                    diagnostic_codes::A_REST_PARAMETER_CANNOT_BE_OPTIONAL,
+                );
+            }
 
             // Parse type annotation
             let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
