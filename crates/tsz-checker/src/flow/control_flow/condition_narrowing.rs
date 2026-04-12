@@ -1109,12 +1109,16 @@ impl<'a> FlowAnalyzer<'a> {
         if (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
             return None;
         }
-        let decl_idx = if symbol.value_declaration.is_some() {
+        let mut decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else {
             *symbol.declarations.first()?
         };
-        let decl_node = self.arena.get(decl_idx)?;
+        let mut decl_node = self.arena.get(decl_idx)?;
+        if decl_node.kind == SyntaxKind::Identifier as u16 {
+            decl_idx = self.arena.get_extended(decl_idx)?.parent;
+            decl_node = self.arena.get(decl_idx)?;
+        }
         if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
             return None;
         }

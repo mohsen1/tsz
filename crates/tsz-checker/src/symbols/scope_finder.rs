@@ -413,7 +413,22 @@ impl<'a> CheckerState<'a> {
                         .is_some_and(|accessor| self.has_static_modifier(&accessor.modifiers));
                 }
                 k if k == CLASS_STATIC_BLOCK_DECLARATION => return true,
-                k if k == FUNCTION_DECLARATION || k == FUNCTION_EXPRESSION || k == CONSTRUCTOR => {
+                k if k == FUNCTION_DECLARATION || k == FUNCTION_EXPRESSION => {
+                    let parent_is_class_member = self
+                        .ctx
+                        .arena
+                        .get_extended(current)
+                        .and_then(|ext| self.ctx.arena.get(ext.parent))
+                        .is_some_and(|parent| {
+                            parent.kind == METHOD_DECLARATION
+                                || parent.kind == GET_ACCESSOR
+                                || parent.kind == SET_ACCESSOR
+                        });
+                    if !parent_is_class_member {
+                        return false;
+                    }
+                }
+                k if k == CONSTRUCTOR => {
                     return false;
                 }
                 k if k == CLASS_DECLARATION || k == CLASS_EXPRESSION => return false,

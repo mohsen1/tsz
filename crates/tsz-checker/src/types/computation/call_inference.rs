@@ -1706,7 +1706,12 @@ impl<'a> CheckerState<'a> {
         // contextual_type_for_expression evaluates it away. ThisType<T> is an empty
         // interface marker, so intersection simplification removes it. We need to
         // preserve it for object literal methods' `this` type.
-        let pushed_this_type = if let Some(et) = expected_type {
+        let is_object_literal_arg = self
+            .ctx
+            .arena
+            .get(self.ctx.arena.skip_parenthesized_and_assertions(arg_idx))
+            .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
+        let pushed_this_type = if is_object_literal_arg && let Some(et) = expected_type {
             let ctx_helper = common::ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
                 et,

@@ -645,11 +645,7 @@ impl<'a> CheckerState<'a> {
                 if self.is_import_equals_type_anchor(sym_id, &lib_binders) =>
             {
                 self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
-                let mut visited_aliases = Vec::new();
-                Some(
-                    self.resolve_alias_symbol(sym_id, &mut visited_aliases)
-                        .unwrap_or(sym_id),
-                )
+                Some(sym_id)
             }
             TypeSymbolResolution::ValueOnly(_) | TypeSymbolResolution::NotFound => None,
         }

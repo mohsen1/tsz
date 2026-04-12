@@ -1043,7 +1043,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
     ) -> Option<(NodeIndex, bool)> {
         let is_static_member_context = self.find_enclosing_static_block(expr_idx).is_some()
-            || self.is_this_in_static_class_member(expr_idx);
+            || self.is_in_static_class_member_context(expr_idx);
 
         if self.is_this_expression(expr_idx)
             && let Some(ref class_info) = self.ctx.enclosing_class

@@ -928,6 +928,28 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if self
+            .ctx
+            .arena
+            .get(access.expression)
+            .is_some_and(|node| node.kind == SyntaxKind::ThisKeyword as u16)
+            && let Some(class_this_type) = self
+                .ctx
+                .enclosing_class
+                .as_ref()
+                .and_then(|class_info| class_info.cached_instance_this_type)
+            && crate::query_boundaries::common::object_shape_for_type(
+                self.ctx.types,
+                class_this_type,
+            )
+            .is_some()
+            && crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)
+                .is_none()
+        {
+            object_type = class_this_type;
+            display_object_type = class_this_type;
+        }
+
         if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
             return self.get_type_of_private_property_access(
                 idx,
@@ -1980,6 +2002,71 @@ impl<'a> CheckerState<'a> {
                         self.resolve_class_for_access(access.expression, object_type_for_access);
                     let class_chain_summary = resolved_class_access
                         .map(|(class_idx, _)| self.summarize_class_chain(class_idx));
+                    let static_this_member_context = is_this_access
+                        && (self
+                            .find_enclosing_static_block(access.expression)
+                            .is_some()
+                            || self
+                                .find_enclosing_function(access.expression)
+                                .and_then(|func_idx| {
+                                    let mut member_idx = func_idx;
+                                    if let Some(func_node) = self.ctx.arena.get(func_idx)
+                                        && (func_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                                            || func_node.kind
+                                                == syntax_kind_ext::FUNCTION_EXPRESSION)
+                                        && let Some(ext) = self.ctx.arena.get_extended(func_idx)
+                                        && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+                                        && (parent_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                                            || parent_node.kind == syntax_kind_ext::GET_ACCESSOR
+                                            || parent_node.kind == syntax_kind_ext::SET_ACCESSOR)
+                                    {
+                                        member_idx = ext.parent;
+                                    }
+                                    Some(self.class_member_is_static(member_idx))
+                                })
+                                .unwrap_or(false));
+
+                    if !access.question_dot_token
+                        && static_this_member_context
+                        && let Some(class_idx) = self.nearest_enclosing_class(access.expression)
+                    {
+                        let summary = self.summarize_class_chain(class_idx);
+                        if let Some(member_info) = summary.lookup(property_name, true, true) {
+                            return self.finalize_property_access_result(
+                                idx,
+                                effective_write_result(
+                                    member_info.type_id,
+                                    Some(member_info.type_id),
+                                ),
+                                skip_flow_narrowing,
+                                false,
+                            );
+                        }
+                        if summary.lookup(property_name, false, true).is_some() {
+                            self.error_property_not_exist_at(
+                                property_name,
+                                object_type_for_access,
+                                access.name_or_argument,
+                            );
+                            return TypeId::ERROR;
+                        }
+                    }
+
+                    if !access.question_dot_token
+                        && is_this_access
+                        && let Some((_, is_static_access)) = resolved_class_access
+                        && is_static_access
+                        && let Some(summary) = class_chain_summary.as_ref()
+                        && summary.lookup(property_name, true, true).is_none()
+                        && summary.lookup(property_name, false, true).is_some()
+                    {
+                        self.error_property_not_exist_at(
+                            property_name,
+                            object_type_for_access,
+                            access.name_or_argument,
+                        );
+                        return TypeId::ERROR;
+                    }
 
                     if let Some(augmented_type) = self.resolve_array_global_augmentation_property(
                         object_type_for_access,
@@ -2144,7 +2231,11 @@ impl<'a> CheckerState<'a> {
                     // TypeScript allows property assignments to function/class declarations
                     // without emitting TS2339. The assigned properties become part of the
                     // function's type (expando pattern).
+                    let static_class_this_write = is_this_access
+                        && resolved_class_access
+                            .is_some_and(|(_, is_static_access)| is_static_access);
                     if !commonjs_named_props_disallowed
+                        && !static_class_this_write
                         && self.is_expando_function_assignment(
                             idx,
                             access.expression,
@@ -2292,6 +2383,20 @@ impl<'a> CheckerState<'a> {
                     // regular instance access (e.g., `instance.y` where `y` is static), not
                     // super access. See: superAccess2.ts — `super.y()` in instance method and
                     // `super.x()` in static method produce no TS2576 errors in tsc.
+
+                    if let Some((_, is_static_access)) = resolved_class_access
+                        && is_static_access
+                        && let Some(member_info) = class_chain_summary
+                            .as_ref()
+                            .and_then(|summary| summary.lookup(property_name, true, true))
+                    {
+                        return self.finalize_property_access_result(
+                            idx,
+                            effective_write_result(member_info.type_id, Some(member_info.type_id)),
+                            skip_flow_narrowing,
+                            false,
+                        );
+                    }
 
                     // TS2576: instance.member where `member` exists on the class static side.
                     // Route this through the shared class summary so inherited

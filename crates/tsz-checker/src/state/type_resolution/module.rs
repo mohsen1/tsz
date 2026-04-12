@@ -330,6 +330,67 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    pub(crate) fn resolve_namespace_import_module_for_local_name(
+        &self,
+        local_name: &str,
+    ) -> Option<String> {
+        let source_file = self.ctx.arena.source_files.first()?;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+                continue;
+            }
+            let Some(import_decl) = self.ctx.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            if import_decl.import_clause.is_none() {
+                continue;
+            }
+            let Some(clause_node) = self.ctx.arena.get(import_decl.import_clause) else {
+                continue;
+            };
+            let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
+                continue;
+            };
+            if clause.named_bindings.is_none() {
+                continue;
+            }
+            let named_bindings_idx = clause.named_bindings;
+            let Some(bindings_node) = self.ctx.arena.get(named_bindings_idx) else {
+                continue;
+            };
+            if bindings_node.kind != syntax_kind_ext::NAMESPACE_IMPORT {
+                continue;
+            }
+            let Some(namespace_import) = self.ctx.arena.get_named_imports(bindings_node) else {
+                continue;
+            };
+            let Some(local_ident) = self
+                .ctx
+                .arena
+                .get(namespace_import.name)
+                .and_then(|n| self.ctx.arena.get_identifier(n))
+            else {
+                continue;
+            };
+            if local_ident.escaped_text.as_str() != local_name {
+                continue;
+            }
+            let Some(module_node) = self.ctx.arena.get(import_decl.module_specifier) else {
+                continue;
+            };
+            let Some(module_literal) = self.ctx.arena.get_literal(module_node) else {
+                continue;
+            };
+            return Some(module_literal.text.clone());
+        }
+
+        None
+    }
+
     /// Resolve an export from another file using cross-file resolution.
     ///
     /// This method uses `all_binders` and `resolved_module_paths` to look up an export
@@ -671,6 +732,11 @@ impl<'a> CheckerState<'a> {
             self.merge_export_equals_members(target_binder, exports, &mut combined);
             let mut visited = rustc_hash::FxHashSet::default();
             self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
+            self.merge_module_augmentation_namespace_exports(
+                &mut combined,
+                target_file_idx,
+                Some(module_specifier),
+            );
             record_symbols(&combined);
             return Some(combined);
         }
@@ -688,6 +754,11 @@ impl<'a> CheckerState<'a> {
             let mut combined = tsz_binder::SymbolTable::new();
             let mut visited = rustc_hash::FxHashSet::default();
             self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
+            self.merge_module_augmentation_namespace_exports(
+                &mut combined,
+                target_file_idx,
+                Some(module_specifier),
+            );
             if !combined.is_empty() {
                 record_symbols(&combined);
             }
@@ -730,6 +801,11 @@ impl<'a> CheckerState<'a> {
             self.merge_export_equals_members(target_binder, exports, &mut combined);
             let mut visited = rustc_hash::FxHashSet::default();
             self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
+            self.merge_module_augmentation_namespace_exports(
+                &mut combined,
+                target_file_idx,
+                module_specifier,
+            );
             record_symbols(&combined);
             return Some(combined);
         }
@@ -744,6 +820,11 @@ impl<'a> CheckerState<'a> {
             let mut combined = tsz_binder::SymbolTable::new();
             let mut visited = rustc_hash::FxHashSet::default();
             self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
+            self.merge_module_augmentation_namespace_exports(
+                &mut combined,
+                target_file_idx,
+                module_specifier,
+            );
             if !combined.is_empty() {
                 record_symbols(&combined);
             }
@@ -751,6 +832,48 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn merge_module_augmentation_namespace_exports(
+        &self,
+        exports: &mut tsz_binder::SymbolTable,
+        target_file_idx: usize,
+        module_specifier: Option<&str>,
+    ) {
+        let mut names: Vec<String> = Vec::new();
+
+        if let Some(module_specifier) = module_specifier {
+            for name in self.collect_module_augmentation_names(module_specifier) {
+                if !names.iter().any(|existing| existing == &name) {
+                    names.push(name);
+                }
+            }
+        }
+
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        if let Some(target_file_name) = target_arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.as_str())
+        {
+            for name in self.collect_module_augmentation_names(target_file_name) {
+                if !names.iter().any(|existing| existing == &name) {
+                    names.push(name);
+                }
+            }
+        }
+
+        for name in names {
+            if exports.get(name.as_str()).is_some() {
+                continue;
+            }
+            if let Some((sym_id, owner_file_idx)) =
+                self.resolve_module_augmentation_export_for_file(target_file_idx, &name)
+            {
+                exports.set(name, sym_id);
+                self.ctx.register_symbol_file_target(sym_id, owner_file_idx);
+            }
+        }
     }
 
     /// Resolve a module's effective export surface.

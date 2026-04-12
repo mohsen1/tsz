@@ -118,20 +118,33 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
                 continue;
             }
 
-            // Avoid canonicalizing symlinked package roots so package-link
-            // identities survive into declaration emit. For ordinary linked
-            // files, keep the existing canonicalization behavior.
+            // Avoid canonicalizing package-link paths whose lexical path is
+            // outside node_modules but whose real target lives under
+            // node_modules. Ordinary resolved package files should still
+            // canonicalize so tempdir aliases like /var -> /private/var
+            // collapse to a stable path.
             let resolved = if options.follow_links {
-                if path.components().any(|component| {
+                let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+                let path_has_node_modules = path.components().any(|component| {
                     matches!(
                         component,
                         std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
                     )
-                }) || path_has_symlinked_package_ancestor(path, &options.base_dir)
-                {
+                });
+                let canonical_has_node_modules = canonical.components().any(|component| {
+                    matches!(
+                        component,
+                        std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
+                    )
+                });
+                let preserve_symlink_identity =
+                    !path_has_node_modules && canonical_has_node_modules;
+                if preserve_symlink_identity {
+                    path.to_path_buf()
+                } else if path_has_symlinked_package_ancestor(path, &options.base_dir) {
                     path.to_path_buf()
                 } else {
-                    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+                    canonical
                 }
             } else {
                 path.to_path_buf()
@@ -172,7 +185,6 @@ fn path_has_symlinked_package_ancestor(path: &Path, base_dir: &Path) -> bool {
     }
     false
 }
-
 fn build_include_patterns(options: &FileDiscoveryOptions) -> Vec<String> {
     match options.include.as_ref() {
         Some(patterns) if patterns.is_empty() => Vec::new(),

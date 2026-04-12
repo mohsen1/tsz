@@ -505,6 +505,10 @@ impl<'a> CheckerState<'a> {
 
         // If the target symbol itself is marked type-only (e.g. `export type { A }`),
         // it means it was exported as a type, so return Export.
+        //
+        // Keep this fallback after the `export =` propagation path above: an
+        // `export =` alias can itself resolve to a type-only symbol while still
+        // needing to preserve an underlying `import type` origin for TS1361.
         if let Some(target_id) = target
             && let Some(target_symbol) = self
                 .ctx

@@ -218,6 +218,16 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // Variable declaration names are assignment targets, not source expressions.
+        // When TS2322 is anchored at the declared name (e.g. `b` in
+        // `const b: typeof A = B`), the source expression is the initializer `B`.
+        if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+            && let Some(decl) = self.ctx.arena.get_variable_declaration(parent_node)
+            && decl.name == expr_idx
+        {
+            return None;
+        }
+
         // JSX attribute names are not source expressions.
         // When TS2322 is anchored at an attribute name (e.g., `x` in `<Comp x={10} />`),
         // the error reporter must not call get_type_of_node on the attribute name
@@ -528,7 +538,11 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn format_type_diagnostic_structural(&self, ty: TypeId) -> String {
-        let mut formatter = self.ctx.create_diagnostic_type_formatter();
+        let mut formatter =
+            tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
+                .with_diagnostic_mode()
+                .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
+                .with_display_properties();
         formatter.format(ty).into_owned()
     }
 
@@ -1234,7 +1248,6 @@ impl<'a> CheckerState<'a> {
         let target_expr = self
             .assignment_target_expression(anchor_idx)
             .unwrap_or(anchor_idx);
-
         if let Some(display) = self.declared_type_annotation_text_for_expression(target_expr)
             && (display.starts_with("keyof ")
                 || display.contains("[P in ")
@@ -1263,6 +1276,26 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.format_type(self.widen_fresh_object_literal_properties_for_display(target))
                 };
+                // Generic callable targets preserve type alias names from annotations
+                let target_is_generic_callable =
+                    crate::query_boundaries::common::callable_shape_for_type(
+                        self.ctx.types,
+                        target,
+                    )
+                    .is_some_and(|shape| {
+                        shape
+                            .call_signatures
+                            .iter()
+                            .chain(shape.construct_signatures.iter())
+                            .any(|sig| !sig.type_params.is_empty())
+                    }) || crate::query_boundaries::common::function_shape_for_type(
+                        self.ctx.types,
+                        target,
+                    )
+                    .is_some_and(|shape| !shape.type_params.is_empty());
+                if target_is_generic_callable {
+                    return self.format_annotation_like_type(&display);
+                }
                 if Self::display_has_member_literals_assignability(&display) {
                     return self.format_annotation_like_type(&display);
                 }
@@ -1768,7 +1801,10 @@ impl<'a> CheckerState<'a> {
                 });
             !is_control_flow_typed_any
         } else {
-            true
+            let expr_is_strictly_narrower = expr_display_type != declared_type
+                && self.is_assignable_to(expr_display_type, declared_type)
+                && !self.is_assignable_to(declared_type, expr_display_type);
+            !expr_is_strictly_narrower
         };
 
         // If flow narrowing narrowed a nullable union to specifically null or
@@ -1802,8 +1838,42 @@ impl<'a> CheckerState<'a> {
             self.widen_function_like_display_type(self.widen_type_for_display(declared_type));
         let expr_display_type =
             self.widen_function_like_display_type(self.widen_type_for_display(expr_display_type));
-        let declared_display =
-            self.format_assignability_type_for_message(declared_display_type, target);
+        let declared_is_generic_callable = crate::query_boundaries::common::callable_shape_for_type(
+            self.ctx.types,
+            declared_display_type,
+        )
+        .is_some_and(|shape| {
+            shape
+                .call_signatures
+                .iter()
+                .chain(shape.construct_signatures.iter())
+                .any(|sig| !sig.type_params.is_empty())
+        })
+            || crate::query_boundaries::common::function_shape_for_type(
+                self.ctx.types,
+                declared_display_type,
+            )
+            .is_some_and(|shape| !shape.type_params.is_empty());
+        if declared_is_generic_callable
+            && let Some(annotation_text) = self.declared_diagnostic_source_annotation_text(expr_idx)
+        {
+            let annotation_display =
+                self.format_declared_annotation_for_diagnostic(&annotation_text);
+            let expr_display =
+                self.format_assignability_type_for_message(expr_display_type, target);
+            if prefer_declared_display && annotation_display != expr_display {
+                return Some(annotation_display);
+            }
+        }
+        let declared_display = if declared_is_generic_callable {
+            let mut formatter =
+                tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
+                    .with_diagnostic_mode()
+                    .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks);
+            formatter.format(declared_display_type).into_owned()
+        } else {
+            self.format_assignability_type_for_message(declared_display_type, target)
+        };
         let expr_display = self.format_assignability_type_for_message(expr_display_type, target);
 
         (prefer_declared_display && declared_display != expr_display).then_some(declared_display)

@@ -10246,6 +10246,109 @@ fn test_control_flow_unannotated_loop_incrementor_reads_assignment_union() {
 }
 
 #[test]
+fn test_const_null_alias_equality_reports_null_not_number() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+const myNull: null = null;
+
+function f(x: number | null) {
+    if (x === myNull) {
+        const s: string = x;
+    }
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected one TS2322, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322[0]
+            .1
+            .contains("Type 'null' is not assignable to type 'string'"),
+        "Expected null-based TS2322 after const-null alias narrowing, got: {ts2322:#?}"
+    );
+}
+
+#[test]
+fn test_direct_null_equality_reports_null_not_number() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function f(x: number | null) {
+    if (x === null) {
+        const s: string = x;
+    }
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected one TS2322, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322[0]
+            .1
+            .contains("Type 'null' is not assignable to type 'string'"),
+        "Expected null-based TS2322 for direct null equality, got: {ts2322:#?}"
+    );
+}
+
+#[test]
+fn test_class_constructor_assignment_reports_typeof_names() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+abstract class A {}
+class B extends A {
+    constructor(x: number) {
+        super();
+    }
+}
+const b: typeof A = B;
+        "#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected one TS2322, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322[0]
+            .1
+            .contains("Type 'typeof B' is not assignable to type 'typeof A'"),
+        "Expected constructor-space TS2322, got: {ts2322:#?}"
+    );
+}
+
+#[test]
 fn test_control_flow_explicit_any_loop_incrementor_stays_any() {
     let diagnostics = compile_and_get_diagnostics(
         r#"

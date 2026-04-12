@@ -590,6 +590,22 @@ impl<'a> CheckerState<'a> {
             class_type_parameters: _type_params,
         });
 
+        // Drop any value-side or instance-side class shape cached during the
+        // earlier environment-building pass. Member checking needs a fresh view
+        // so `this` inside methods observes the checked class shape rather than
+        // a provisional snapshot.
+        self.ctx.class_instance_type_cache.remove(&stmt_idx);
+        self.ctx.class_constructor_type_cache.remove(&stmt_idx);
+        if let Some(sym_id) = self.ctx.binder.get_node_symbol(stmt_idx) {
+            self.ctx.symbol_types.remove(&sym_id);
+        }
+        if class.name.is_some()
+            && let Some(ident) = self.ctx.arena.get_identifier_at(class.name)
+            && let Some(name_sym) = self.ctx.binder.file_locals.get(&ident.escaped_text)
+        {
+            self.ctx.symbol_types.remove(&name_sym);
+        }
+
         // Class bodies reset the async context — field initializers and static blocks
         // don't inherit async from the enclosing function. Methods define their own context.
         let saved_async_depth = self.ctx.async_depth;
