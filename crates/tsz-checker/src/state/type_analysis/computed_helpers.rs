@@ -422,11 +422,17 @@ impl<'a> CheckerState<'a> {
                             });
                             if is_alias {
                                 self.ctx.circular_type_aliases.insert(stack_sym);
+                                if let Some(did) = self.ctx.get_existing_def_id(stack_sym) {
+                                    self.ctx.definition_store.mark_circular_def(did);
+                                }
                             }
                         }
                     }
                     // Always mark the target itself as circular (handles cross-file cycles).
                     self.ctx.circular_type_aliases.insert(target_sym_id);
+                    if let Some(did) = self.ctx.get_existing_def_id(target_sym_id) {
+                        self.ctx.definition_store.mark_circular_def(did);
+                    }
                 }
 
                 return is_direct;
@@ -468,10 +474,16 @@ impl<'a> CheckerState<'a> {
                             });
                             if is_alias {
                                 self.ctx.circular_type_aliases.insert(stack_sym);
+                                if let Some(did) = self.ctx.get_existing_def_id(stack_sym) {
+                                    self.ctx.definition_store.mark_circular_def(did);
+                                }
                             }
                         }
                     }
                     self.ctx.circular_type_aliases.insert(target_sym_id);
+                    if let Some(did) = self.ctx.get_existing_def_id(target_sym_id) {
+                        self.ctx.definition_store.mark_circular_def(did);
+                    }
                     return true;
                 }
             }
@@ -903,13 +915,23 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Only check if the resolved type is a Lazy reference (unresolved
-            // cross-file placeholder).
-            if lazy_def_id(self.ctx.types, resolved).is_none() {
+            // Check circularity via two paths:
+            // 1. Lazy chain: resolved type is still Lazy -> follow through DefinitionStore.
+            // 2. Shared circular set: another file's checker already marked this
+            //    symbol's DefId as circular (mutual cycle where the other direction
+            //    was cached, skipping re-delegation).
+            let is_lazy = lazy_def_id(self.ctx.types, resolved).is_some();
+            let shared_circular = !is_lazy
+                && self
+                    .ctx
+                    .get_existing_def_id(sym_id)
+                    .is_some_and(|def_id| self.ctx.definition_store.is_circular_def(def_id));
+
+            if !is_lazy && !shared_circular {
                 continue;
             }
 
-            if self.is_cross_file_circular_alias(sym_id, resolved) {
+            if shared_circular || self.is_cross_file_circular_alias(sym_id, resolved) {
                 // Get the symbol name for the diagnostic message.
                 let name = self
                     .ctx
@@ -1012,8 +1034,11 @@ impl<'a> CheckerState<'a> {
 
         // Apply side effects after scanning all aliases so diagnostics are not
         // order-dependent.
-        for sym_id in circular_ids {
-            self.ctx.circular_type_aliases.insert(sym_id);
+        for sym_id in &circular_ids {
+            self.ctx.circular_type_aliases.insert(*sym_id);
+            if let Some(def_id) = self.ctx.get_existing_def_id(*sym_id) {
+                self.ctx.definition_store.mark_circular_def(def_id);
+            }
         }
     }
 

@@ -268,6 +268,10 @@ impl<'a> CheckerState<'a> {
                     // Mark this alias as circular so downstream checks (TS2313)
                     // can detect constraints referencing it.
                     self.ctx.circular_type_aliases.insert(sym_id);
+                    // Also mark in the shared DefinitionStore for cross-file visibility.
+                    if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
+                        self.ctx.definition_store.mark_circular_def(def_id);
+                    }
 
                     // Suppress TS2456 when the file has parse errors — the
                     // circularity may be an artifact of parser recovery (e.g.,

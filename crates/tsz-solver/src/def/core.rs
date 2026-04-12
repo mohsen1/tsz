@@ -543,6 +543,9 @@ pub struct DefinitionStore {
     /// This prevents O(files * `total_defs`) work when checking many files in parallel,
     /// which was the root cause of hangs on large type libraries like ts-toolbelt.
     fully_populated: std::sync::atomic::AtomicBool,
+
+    /// Set of DefIds detected as circular type aliases (shared across checkers).
+    circular_def_ids: DashSet<DefId>,
 }
 
 // =============================================================================
@@ -703,6 +706,7 @@ impl DefinitionStore {
             resolved_symbol_types: DashMap::new(),
             file_delegation_locks: DashMap::new(),
             fully_populated: std::sync::atomic::AtomicBool::new(false),
+            circular_def_ids: DashSet::new(),
         }
     }
 
@@ -898,6 +902,16 @@ impl DefinitionStore {
         self.resolved_symbol_types
             .entry((symbol_id, file_idx))
             .or_insert(type_id);
+    }
+
+    /// Mark a DefId as participating in a circular type alias cycle.
+    pub fn mark_circular_def(&self, def_id: DefId) {
+        self.circular_def_ids.insert(def_id);
+    }
+
+    /// Check whether a DefId has been marked as circular by any checker.
+    pub fn is_circular_def(&self, def_id: DefId) -> bool {
+        self.circular_def_ids.contains(&def_id)
     }
 
     /// This method synchronizes them into the `DefinitionInfo` so that
