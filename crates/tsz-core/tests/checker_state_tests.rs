@@ -4379,6 +4379,59 @@ class C {
 }
 
 #[test]
+fn test_static_member_suggestion_2662_assignment_target() {
+    // Error 2662: Cannot find name 's'. Did you mean the static member 'C.s'?
+    // This tests the case where a static member is used as an assignment target,
+    // which goes through get_type_of_assignment_target instead of get_type_of_identifier.
+    use crate::parser::ParserState;
+    let source = r#"
+class C {
+    static s: any;
+
+    constructor() {
+        s = 1;
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    // Debug: show all diagnostics
+    println!("=== Diagnostics for static member assignment target ===");
+    for d in &checker.ctx.diagnostics {
+        println!("  code={}, msg={}", d.code, d.message_text);
+    }
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2662),
+        "Expected error 2662 (Cannot find name 's'. Did you mean the static member 'C.s'?) for assignment target, got: {codes:?}"
+    );
+
+    // Should NOT have generic "cannot find name" error 2304
+    assert!(
+        !codes.contains(&2304),
+        "Should not have generic error 2304, should have specific 2662 instead. Got: {codes:?}"
+    );
+}
+
+#[test]
 fn test_class_static_side_property_assignability() {
     use crate::parser::ParserState;
 
