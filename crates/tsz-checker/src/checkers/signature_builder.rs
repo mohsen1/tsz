@@ -29,7 +29,9 @@ impl<'a> CheckerState<'a> {
         // type parameters from outer function/class/interface scopes.
         let enclosing_updates = self.push_enclosing_type_parameters(func_idx);
 
+        self.exclude_params_for_type_param_constraints(&func.parameters);
         let (type_params, type_param_updates) = self.push_type_parameters(&func.type_parameters);
+        self.clear_excluded_params_for_type_param_constraints();
         let (params, this_type) = self.extract_params_from_parameter_list(&func.parameters);
         let (return_type, type_predicate) =
             self.return_type_and_predicate(func.type_annotation, &params);
@@ -64,7 +66,9 @@ impl<'a> CheckerState<'a> {
         explicit_this_type: Option<TypeId>,
         method_idx: NodeIndex,
     ) -> tsz_solver::CallSignature {
+        self.exclude_params_for_type_param_constraints(&method.parameters);
         let (type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
+        self.clear_excluded_params_for_type_param_constraints();
         let (params, this_type) = self.extract_params_from_parameter_list(&method.parameters);
         let (mut return_type, mut type_predicate) =
             if method.type_annotation.is_none() && method.body.is_some() {
@@ -171,7 +175,9 @@ impl<'a> CheckerState<'a> {
         instance_type: TypeId,
         class_type_params: &[tsz_solver::TypeParamInfo],
     ) -> tsz_solver::CallSignature {
+        self.exclude_params_for_type_param_constraints(&ctor.parameters);
         let (type_params, type_param_updates) = self.push_type_parameters(&ctor.type_parameters);
+        self.clear_excluded_params_for_type_param_constraints();
         let enclosing_class_template_types = self.enclosing_jsdoc_class_template_types(ctor_idx);
         let (mut params, this_type) = self.extract_params_from_parameter_list(&ctor.parameters);
 

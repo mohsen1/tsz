@@ -1118,6 +1118,11 @@ pub struct CheckerContext<'a> {
     /// can resolve to the parameter's type.
     pub typeof_param_scope: FxHashMap<String, TypeId>,
 
+    /// Parameter names excluded from `typeof` resolution in type parameter constraints.
+    /// When processing type parameter constraints for a function/method/constructor,
+    /// the function's own value parameters are NOT in scope for `typeof paramName`.
+    pub type_param_constraint_excluded_params: FxHashSet<String>,
+
     /// Contextual type for expression being checked.
     pub contextual_type: Option<TypeId>,
 

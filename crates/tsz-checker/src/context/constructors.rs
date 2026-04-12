@@ -176,6 +176,7 @@ impl<'a> CheckerContext<'a> {
             type_parameter_scope: FxHashMap::default(),
             in_conditional_extends_depth: 0,
             typeof_param_scope: FxHashMap::default(),
+            type_param_constraint_excluded_params: FxHashSet::default(),
             contextual_type: None,
             contextual_type_is_assertion: false,
             is_checking_statements: false,

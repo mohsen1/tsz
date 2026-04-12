@@ -89,6 +89,23 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        // Type parameter constraints cannot reference function parameters of the
+        // same function via `typeof`. Emit TS2304/TS2552 instead of silently resolving.
+        if is_identifier
+            && let Some(ref name) = name_text
+            && self
+                .ctx
+                .type_param_constraint_excluded_params
+                .contains(name.as_str())
+        {
+            self.report_not_found_at_boundary(
+                name,
+                type_query.expr_name,
+                crate::query_boundaries::name_resolution::NameLookupKind::Value,
+            );
+            return TypeId::ERROR;
+        }
+
         // Check typeof_param_scope — resolves `typeof paramName` in return type
         // annotations where the parameter isn't a file-level binding.
         if is_identifier
