@@ -153,6 +153,17 @@ impl<'a> CheckerState<'a> {
         }
         EVAL_ENV_DEPTH.set(eval_depth + 1);
 
+        // Set this_type on the TypeEnvironment so the evaluator can resolve `keyof this`
+        // and similar constructs that depend on the enclosing class type.
+        let class_this_type = self.current_this_type();
+        let mut set_this_type = false;
+        if class_this_type.is_some() {
+            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                env.set_this_type(class_this_type);
+                set_this_type = true;
+            }
+        }
+
         // Only resolve refs when not already inside an evaluate_type_with_env_impl
         // call AND not inside symbol resolution. Nested evaluation or active symbol
         // resolution can trigger compute_type_of_symbol → merge_interface_heritage_types,
@@ -264,6 +275,13 @@ impl<'a> CheckerState<'a> {
                     depth_exceeded,
                 },
             );
+        }
+
+        // Restore the this_type to avoid leaking class context into other checks.
+        if set_this_type {
+            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                env.set_this_type(None);
+            }
         }
 
         EVAL_ENV_DEPTH.set(eval_depth);

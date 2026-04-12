@@ -131,7 +131,12 @@ pub fn classify_for_assignability_eval(
                 AssignabilityEvalKind::NeedsEnvEval
             }
         }
-        TypeData::KeyOf(_) if crate::type_queries::contains_type_parameters_db(db, type_id) => {
+        // For KeyOf, use contains_generic_type_parameters_db which excludes ThisType.
+        // This ensures `keyof this` is evaluated (resolving `this` to the class type)
+        // while `keyof T` (with generic T) remains deferred as Resolved.
+        TypeData::KeyOf(_)
+            if crate::type_queries::contains_generic_type_parameters_db(db, type_id) =>
+        {
             AssignabilityEvalKind::Resolved
         }
         TypeData::KeyOf(_)
