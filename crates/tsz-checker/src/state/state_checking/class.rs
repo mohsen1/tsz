@@ -150,13 +150,12 @@ impl<'a> CheckerState<'a> {
         self.check_class_name_strict_mode_reserved(class.name);
 
         // Check for reserved class names (error 2414)
-        // TSC forbids using predefined type names as class names.
+        // tsc's checkTypeNameIsReserved forbids predefined type names.
         if class.name.is_some()
             && let Some(name_node) = self.ctx.arena.get(class.name)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-            && matches!(
+            && crate::error_reporter::assignability::is_reserved_type_name(
                 ident.escaped_text.as_str(),
-                "any" | "number" | "boolean" | "string" | "undefined"
             )
         {
             self.error_at_node(
