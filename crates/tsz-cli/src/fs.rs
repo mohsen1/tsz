@@ -139,9 +139,9 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
                 });
                 let preserve_symlink_identity =
                     !path_has_node_modules && canonical_has_node_modules;
-                if preserve_symlink_identity {
-                    path.to_path_buf()
-                } else if path_has_symlinked_package_ancestor(path, &options.base_dir) {
+                if preserve_symlink_identity
+                    || path_has_symlinked_package_ancestor(path, &options.base_dir)
+                {
                     path.to_path_buf()
                 } else {
                     canonical
