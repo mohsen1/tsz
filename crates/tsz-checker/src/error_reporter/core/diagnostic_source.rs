@@ -1281,8 +1281,21 @@ impl<'a> CheckerState<'a> {
                 {
                     return self.format_annotation_like_type(&display);
                 }
+                // When the target is an enum type, format_type() may resolve to
+                // an unrelated type name (e.g., a DOM interface that shares the
+                // same structural shape). Use the assignability formatter which
+                // correctly produces namespace-qualified enum names.
+                if tsz_solver::type_queries::get_enum_def_id(self.ctx.types, target).is_some() {
+                    return self.format_assignability_type_for_message(target, source);
+                }
                 return fallback;
             }
+        }
+
+        // When the target is an enum type without annotation text, use the
+        // assignability formatter for correct qualified enum name display.
+        if tsz_solver::type_queries::get_enum_def_id(self.ctx.types, display_target).is_some() {
+            return self.format_assignability_type_for_message(display_target, source);
         }
 
         if self.target_preserves_literal_surface(source) {

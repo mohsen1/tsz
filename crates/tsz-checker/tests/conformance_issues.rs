@@ -24829,3 +24829,59 @@ fn test_ts7060_not_emitted_with_constraint() {
         "Expected 0 TS7060 with constraint. Got: {diagnostics:#?}"
     );
 }
+
+/// Enum types from different namespaces with the same name should produce
+/// TS2322 with namespace-qualified type names in the diagnostic message, not
+/// TS2719 ("Two different types with this name exist").
+///
+/// tsc displays the target as the qualified enum name (e.g.,
+/// "numerics.DiagnosticCategory") rather than a structural type alias.
+/// Previously, the target formatter lacked an enum-specific path, causing
+/// it to resolve enum types to unrelated display aliases.
+#[test]
+fn test_enum_assignment_compat_uses_qualified_names_not_ts2719() {
+    let code = r#"
+namespace numerics {
+    export enum DiagnosticCategory {
+        Warning,
+        Error,
+        Suggestion,
+        Message,
+    }
+}
+namespace strings {
+    export enum DiagnosticCategory {
+        Warning = "Warning",
+        Error = "Error",
+        Suggestion = "Suggestion",
+        Message = "Message",
+    }
+}
+function f(x: numerics.DiagnosticCategory, y: strings.DiagnosticCategory) {
+    x = y;
+    y = x;
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(code);
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for incompatible enum assignment, got: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2719),
+        "Should NOT emit TS2719 for enums from different namespaces, got: {diagnostics:?}"
+    );
+    // Verify the message uses qualified names
+    let ts2322_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322)
+        .map(|(_, msg)| msg.as_str())
+        .collect();
+    for msg in &ts2322_messages {
+        assert!(
+            msg.contains("strings.DiagnosticCategory")
+                || msg.contains("numerics.DiagnosticCategory"),
+            "TS2322 message should use qualified enum names, got: {msg}"
+        );
+    }
+}
