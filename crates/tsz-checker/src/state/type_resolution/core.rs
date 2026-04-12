@@ -556,15 +556,6 @@ impl<'a> CheckerState<'a> {
                     }
                     // Route through boundary for TS2304/TS2552 with spelling suggestions
                     let _ = self.resolve_type_name_or_report(name, type_name_idx);
-                    // Still walk the type arguments so that unresolved names inside
-                    // them (e.g., `Foo<T>` where both `Foo` and `T` are undefined)
-                    // also produce TS2304. Otherwise the early return below would
-                    // hide all errors in the generic argument subtree.
-                    if let Some(args) = &type_ref.type_arguments {
-                        for &arg_idx in &args.nodes {
-                            let _ = self.get_type_from_type_node(arg_idx);
-                        }
-                    }
                     return TypeId::ERROR;
                 }
                 if !is_builtin_array
