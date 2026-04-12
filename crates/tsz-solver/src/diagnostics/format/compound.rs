@@ -167,13 +167,17 @@ impl<'a> TypeFormatter<'a> {
     }
 
     /// Check if a type already contains `undefined` (as a union member or is undefined itself).
+    /// Also treats `any` and `unknown` as absorbing undefined, since `any | undefined` == `any`
+    /// and `unknown | undefined` == `unknown` in tsc's display.
     fn type_contains_undefined(&self, type_id: TypeId) -> bool {
-        if type_id == TypeId::UNDEFINED {
+        if type_id == TypeId::UNDEFINED || type_id == TypeId::ANY || type_id == TypeId::UNKNOWN {
             return true;
         }
         if let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) {
             let members = self.interner.type_list(list_id);
-            return members.contains(&TypeId::UNDEFINED);
+            return members
+                .iter()
+                .any(|&m| m == TypeId::UNDEFINED || m == TypeId::ANY || m == TypeId::UNKNOWN);
         }
         false
     }
@@ -1164,12 +1168,17 @@ impl<'a> TypeFormatter<'a> {
         // optional modifier is Add and the template doesn't already contain undefined.
         let needs_undefined = if mapped.optional_modifier == Some(MappedModifier::Add)
             && mapped.template != TypeId::UNDEFINED
+            && mapped.template != TypeId::ANY
+            && mapped.template != TypeId::UNKNOWN
         {
             // Check if the template type already contains undefined
-            // (e.g., if it's a union that includes undefined).
+            // (e.g., if it's a union that includes undefined, any, or unknown).
             if let Some(TypeData::Union(members)) = self.interner.lookup(mapped.template) {
                 let list = self.interner.type_list(members);
-                !list.as_ref().contains(&TypeId::UNDEFINED)
+                !list
+                    .as_ref()
+                    .iter()
+                    .any(|&m| m == TypeId::UNDEFINED || m == TypeId::ANY || m == TypeId::UNKNOWN)
             } else {
                 true
             }
