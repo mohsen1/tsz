@@ -938,6 +938,24 @@ impl<'a> FlowAnalyzer<'a> {
             );
         }
 
+        // For FUNCTION symbols (e.g., JS constructor functions with @constructor),
+        // resolve the function's type and extract the instance type from construct
+        // signatures or prototype property.
+        if (symbol.flags & symbol_flags::FUNCTION) != 0 {
+            if let Some(env) = &self.type_environment {
+                let env_borrow = env.borrow();
+                if let Some(func_type) = env_borrow.get(symbol_ref)
+                    && let Some(instance_type) =
+                        crate::query_boundaries::flow_analysis::instance_type_from_constructor(
+                            self.interner,
+                            func_type,
+                        )
+                {
+                    return Some(instance_type);
+                }
+            }
+        }
+
         // For plain VARIABLE symbols (e.g., `declare var C: CConstructor`),
         // resolve the variable's type annotation to find the constructor type,
         // then extract the instance type from its construct signatures or prototype.

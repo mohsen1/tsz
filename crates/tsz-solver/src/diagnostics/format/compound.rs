@@ -814,13 +814,12 @@ impl<'a> TypeFormatter<'a> {
         // Try to qualify duplicate names
         let mut result = Vec::with_capacity(formatted.len());
         for (name, &member) in formatted.iter().zip(members.iter()) {
-            if counts.get(name.as_str()).copied().unwrap_or(0) > 1 {
-                if let Some(qualified) = self.namespace_qualified_name_for_type(member) {
-                    if qualified != *name {
-                        result.push(qualified);
-                        continue;
-                    }
-                }
+            if counts.get(name.as_str()).copied().unwrap_or(0) > 1
+                && let Some(qualified) = self.namespace_qualified_name_for_type(member)
+                && qualified != *name
+            {
+                result.push(qualified);
+                continue;
             }
             result.push(name.clone());
         }
@@ -1542,6 +1541,7 @@ impl<'a> TypeFormatter<'a> {
         def_name
     }
 
+    #[allow(clippy::missing_const_for_fn)] // Can't be const with &self in stable Rust
     fn qualify_namespace_name_if_needed(
         &self,
         _sym_id: SymbolId,
