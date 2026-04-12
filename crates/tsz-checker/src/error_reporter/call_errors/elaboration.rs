@@ -1406,6 +1406,39 @@ impl<'a> CheckerState<'a> {
                         .arena
                         .get(prop_value_idx)
                         .is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16);
+                    // tsc's `elaborateDidYouMeanToCallOrConstruct` anchors
+                    // missing-property codes (TS2741/TS2739/TS2740) on the
+                    // property initializer when the initializer is a bare
+                    // identifier whose type has call/construct signatures —
+                    // so the "Did you mean to use 'new'/call this expression"
+                    // related hint and the primary diagnostic both point at
+                    // the identifier value. For plain variable references or
+                    // other shapes, tsc keeps the anchor on the property name.
+                    let value_is_bare_identifier = self
+                        .ctx
+                        .arena
+                        .get(prop_value_idx)
+                        .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
+                    let value_is_callable_or_constructor = value_is_bare_identifier
+                        && source_prop_type != TypeId::ERROR
+                        && source_prop_type != TypeId::ANY
+                        && (tsz_solver::type_queries::has_call_signatures(
+                            self.ctx.types,
+                            source_prop_type,
+                        ) || tsz_solver::type_queries::has_construct_signatures(
+                            self.ctx.types,
+                            source_prop_type,
+                        ));
+                    let value_anchor_for_missing_props = if elem_node.kind
+                        == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                        && prop_value_idx != prop_name_idx
+                        && !value_is_this_keyword
+                        && value_is_callable_or_constructor
+                    {
+                        Some(prop_value_idx)
+                    } else {
+                        None
+                    };
                     if target_prop_type != target_prop_type_for_diagnostic {
                         self.error_type_not_assignable_at_with_display_types(
                             source_prop_type_for_diagnostic,
@@ -1413,10 +1446,11 @@ impl<'a> CheckerState<'a> {
                             prop_name_idx,
                         );
                     } else {
-                        self.error_type_not_assignable_at_with_anchor_elaboration_inner(
+                        self.error_type_not_assignable_at_with_anchor_elaboration_inner_with_value_anchor(
                             source_prop_type_for_diagnostic,
                             target_prop_type_for_diagnostic,
                             prop_name_idx,
+                            value_anchor_for_missing_props,
                             value_is_this_keyword,
                         );
                     }
