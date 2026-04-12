@@ -414,6 +414,36 @@ impl<'a> CheckerState<'a> {
             // `static getInstance() { return new C(); }` infer the correct
             // return type when the class is a class expression.
             let instance_type = self.get_class_instance_type(decl_idx, class);
+            // Guard: don't overwrite a valid cached instance type with a degraded
+            // value (ERROR/ANY). This happens when compute_type_of_symbol is called
+            // re-entrantly from within get_class_instance_type_inner (e.g., during
+            // prescan of a method whose return type references the same class).
+            // The re-entrant get_class_instance_type hits the in-progress guard and
+            // returns ERROR/ANY, which would corrupt the previously-cached correct type.
+            if instance_type == TypeId::ANY || instance_type == TypeId::ERROR {
+                if let Some(&existing) = self.ctx.symbol_instance_types.get(&sym_id) {
+                    if existing != TypeId::ANY && existing != TypeId::ERROR {
+                        // Keep the existing valid type; skip the degraded overwrite.
+                        let ctor_type = self.get_class_constructor_type(decl_idx, class);
+                        self.ctx.symbol_types.insert(sym_id, ctor_type);
+
+                        let ctor_type = if flags & symbol_flags::FUNCTION != 0 {
+                            self.merge_function_call_signatures_into_class(ctor_type, declarations)
+                        } else {
+                            ctor_type
+                        };
+
+                        if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+                            != 0
+                        {
+                            let merged =
+                                self.merge_namespace_exports_into_constructor(sym_id, ctor_type);
+                            return (merged, Vec::new());
+                        }
+                        return (ctor_type, Vec::new());
+                    }
+                }
+            }
             self.ctx.symbol_instance_types.insert(sym_id, instance_type);
 
             let ctor_type = self.get_class_constructor_type(decl_idx, class);

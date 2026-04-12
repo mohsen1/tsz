@@ -1821,3 +1821,61 @@ var p = new MyProxy(t, {});
         ts2351.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn no_false_ts2339_on_generic_class_with_self_referential_return_type() {
+    // When a generic class has a method whose return type references the same class,
+    // the class instance type cache is invalidated during check_class_declaration.
+    // Re-entrant compute_type_of_symbol must not overwrite the valid cached instance
+    // type with a degraded value (ANY/ERROR), which would cause false TS2339 on
+    // property access through parameterized instances of the class.
+    let diags = check_source_diagnostics(
+        r#"
+class Vec2<A> {
+    constructor(public x: A, public y: A) {}
+    fmap<B>(f: (a: A) => B): Vec2<B> {
+        var x: B = f(this.x);
+        var y: B = f(this.y);
+        return new Vec2(x, y);
+    }
+    apply<B>(f: Vec2<(a: A) => B>): Vec2<B> {
+        var x: B = f.x(this.x);
+        var y: B = f.y(this.y);
+        return new Vec2(x, y);
+    }
+}
+"#,
+    );
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for property access on generic class with self-referential return type, got: {:?}",
+        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn no_false_ts2339_on_class_param_with_same_class_type() {
+    // A method that takes a parameter of the same class type should be able to
+    // access properties on that parameter, even when another method returns
+    // the same class type (triggering class instance type cache invalidation).
+    let diags = check_source_diagnostics(
+        r#"
+class Foo<A> {
+    constructor(public x: A) {}
+    bar(): Foo<any> { return this; }
+    test(f: Foo<string>): void {
+        let v = f.x;
+    }
+}
+"#,
+    );
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for f.x where f: Foo<string>, got: {:?}",
+        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
