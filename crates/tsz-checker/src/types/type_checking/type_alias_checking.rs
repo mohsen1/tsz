@@ -205,9 +205,9 @@ impl<'a> CheckerState<'a> {
             // Only check when the body is a conditional type — tsc emits TS2589
             // at definition time specifically for recursive conditional types,
             // not indexed access or other patterns.
-            let body_is_conditional = matches!(
-                self.ctx.types.as_type_database().lookup(body_type),
-                Some(tsz_solver::TypeData::Conditional(_))
+            let body_is_conditional = tsz_solver::visitor::is_conditional_type(
+                self.ctx.types.as_type_database(),
+                body_type,
             );
             let body_refs = if body_is_conditional {
                 tsz_solver::visitor::collect_lazy_def_ids(self.ctx.types, body_type)
