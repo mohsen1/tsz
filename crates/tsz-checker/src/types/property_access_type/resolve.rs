@@ -867,12 +867,27 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(original_object_type)
         };
 
+        // Override display type with global value type only when the identifier
+        // actually resolves to a global, not when a local variable shadows it.
         if let Some(ident) = self.ctx.arena.get_identifier_at(access.expression)
             && self.is_known_global_value_name(&ident.escaped_text)
         {
-            let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
-            if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
-                display_object_type = value_type;
+            let is_local_shadow = self
+                .resolve_identifier_symbol_without_tracking(access.expression)
+                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                .is_some_and(|symbol| {
+                    (symbol.flags
+                        & (symbol_flags::FUNCTION_SCOPED_VARIABLE
+                            | symbol_flags::BLOCK_SCOPED_VARIABLE
+                            | symbol_flags::PROPERTY))
+                        != 0
+                });
+
+            if !is_local_shadow {
+                let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
+                if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                    display_object_type = value_type;
+                }
             }
         }
 
