@@ -64,6 +64,17 @@ impl<'a> CheckerState<'a> {
             .type_arguments
             .as_ref()
             .is_some_and(|args| !args.nodes.is_empty());
+        // Resolve type arguments up-front so their own diagnostics (unresolved
+        // names, malformed nodes) are reported independently of whether the
+        // base of the `typeof X<...>` query resolves. tsc reports both the
+        // unresolved base and each unresolved type argument. The results are
+        // memoized and will be reused by the success paths below.
+        if has_type_args && let Some(args) = type_query.type_arguments.as_ref() {
+            let arg_nodes: Vec<NodeIndex> = args.nodes.iter().copied().collect();
+            for arg_idx in arg_nodes {
+                let _ = self.get_type_from_type_node(arg_idx);
+            }
+        }
         let factory = self.ctx.types.factory();
         let use_flow_sensitive_query =
             !self.is_type_query_in_non_flow_sensitive_signature_parameter(idx);
