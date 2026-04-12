@@ -666,9 +666,16 @@ impl<'a> CheckerState<'a> {
             .unwrap_or_else(|| self.ctx.file_name.clone());
         let delegate_file_idx = self.ctx.get_file_idx_for_arena(decl_arena.as_ref());
 
+        // Use the target arena's binder so symbol lookups resolve in the
+        // declaration's context. Critical for module augmentation, where the
+        // class symbol lives in the declaration's binder, not the parent's.
+        let delegate_binder = self
+            .ctx
+            .get_binder_for_arena(decl_arena.as_ref())
+            .unwrap_or(self.ctx.binder);
         let mut checker = Box::new(CheckerState::with_parent_cache(
             decl_arena.as_ref(),
-            self.ctx.binder,
+            delegate_binder,
             self.ctx.types,
             delegate_file_name,
             self.ctx.compiler_options.clone(),
