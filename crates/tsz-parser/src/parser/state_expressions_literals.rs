@@ -1013,7 +1013,7 @@ impl ParserState {
                     .map(|ch| (ch, ch.len_utf8()))
             }
 
-            fn is_word_char(ch: u8) -> bool {
+            const fn is_word_char(ch: u8) -> bool {
                 ch == b'_' || ch.is_ascii_alphanumeric() || ch >= 0x80
             }
 
@@ -1031,13 +1031,13 @@ impl ParserState {
                     )
                 } else {
                     ch.is_alphabetic()
-                        || ch.to_digit(10).is_some()
+                        || ch.is_ascii_digit()
                         || ch == '\u{200c}'
                         || ch == '\u{200d}'
                 }
             }
 
-            fn is_regex_flag(ch: char) -> bool {
+            const fn is_regex_flag(ch: char) -> bool {
                 matches!(ch, 'g' | 'i' | 'm' | 's' | 'u' | 'v' | 'y' | 'd')
             }
 
@@ -1080,6 +1080,7 @@ impl ParserState {
                 consumed_any
             }
 
+            #[allow(clippy::too_many_arguments)]
             fn scan_character_escape(
                 parser: &mut ParserState,
                 emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
@@ -1140,15 +1141,6 @@ impl ParserState {
                             );
                         }
                     }
-                    b'b' => {
-                        *pos += 1;
-                    }
-                    b'd' | b'D' | b's' | b'S' | b'w' | b'W' => {
-                        *pos += 1;
-                    }
-                    b't' | b'n' | b'v' | b'f' | b'r' => {
-                        *pos += 1;
-                    }
                     b'o' if atom_escape => {
                         *pos += 1;
                     }
@@ -1184,12 +1176,10 @@ impl ParserState {
                             *pos += 1;
                         }
                     }
-                    b'^' | b'$' | b'/' | b'\\' | b'.' | b'*' | b'+' | b'?' | b'(' | b')' | b'['
-                    | b']' | b'{' | b'}' | b'|' => {
-                        *pos += 1;
-                    }
-                    b'-' | b',' | b'_' | b'#' | b'%' | b';' | b':' | b'<' | b'=' | b'>' | b'@'
-                    | b'`' | b'~' => {
+                    b'b' | b'd' | b'D' | b's' | b'S' | b'w' | b'W' | b't' | b'n' | b'v' | b'f'
+                    | b'r' | b'^' | b'$' | b'/' | b'\\' | b'.' | b'*' | b'+' | b'?' | b'('
+                    | b')' | b'[' | b']' | b'{' | b'}' | b'|' | b'-' | b',' | b'_' | b'#'
+                    | b'%' | b';' | b':' | b'<' | b'=' | b'>' | b'@' | b'`' | b'~' => {
                         *pos += 1;
                     }
                     _ => {
@@ -1342,7 +1332,7 @@ impl ParserState {
                 if let Some((ch, char_len)) = next_utf8_char(body, body_end, *pos) {
                     range.push(ClassAtomKind::Character {
                         value: ch as u32,
-                        utf16_len: ch.len_utf16() as usize,
+                        utf16_len: ch.len_utf16(),
                     });
                     *pos += char_len;
                 }
@@ -1440,23 +1430,22 @@ impl ParserState {
                     if let (
                         Some(ClassAtomKind::Character {
                             value: left,
-                            utf16_len: left_len,
+                            utf16_len: 1,
                         }),
                         Some(ClassAtomKind::Character {
                             value: right,
-                            utf16_len: right_len,
+                            utf16_len: 1,
                         }),
                     ) = (min_atom, max_atom)
+                        && left > right
                     {
-                        if left_len == 1 && right_len == 1 && left > right {
-                            emit(
-                                parser,
-                                min_start,
-                                (max_start as u32).saturating_sub(min_start as u32),
-                                "Range out of order in character class.",
-                                diagnostic_codes::RANGE_OUT_OF_ORDER_IN_CHARACTER_CLASS,
-                            );
-                        }
+                        emit(
+                            parser,
+                            min_start,
+                            (max_start as u32).saturating_sub(min_start as u32),
+                            "Range out of order in character class.",
+                            diagnostic_codes::RANGE_OUT_OF_ORDER_IN_CHARACTER_CLASS,
+                        );
                     }
                 }
             }
@@ -1505,18 +1494,6 @@ impl ParserState {
                                         diagnostic_codes::K_MUST_BE_FOLLOWED_BY_A_CAPTURING_GROUP_NAME_ENCLOSED_IN_ANGLE_BRACKETS,
                                     );
                                 }
-                            } else if body[*pos] == b'q' && false {
-                                scan_character_escape(
-                                    parser,
-                                    emit,
-                                    body,
-                                    strict_mode,
-                                    body_end,
-                                    pos,
-                                    true,
-                                    escape_start,
-                                    start_pos,
-                                );
                             } else {
                                 scan_character_escape(
                                     parser,

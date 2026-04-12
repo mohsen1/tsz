@@ -1495,6 +1495,7 @@ impl MergedAugmentations {
     }
 }
 
+#[allow(dead_code)]
 pub(super) fn create_binder_from_bound_file(
     file: &BoundFile,
     program: &MergedProgram,
