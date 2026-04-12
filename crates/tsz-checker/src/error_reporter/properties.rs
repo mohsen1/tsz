@@ -387,6 +387,22 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Suppress TS2339 when the object is a type parameter whose constraint
+        // resolved to ERROR. The constraint itself already produced a diagnostic
+        // (e.g., `typeof a` where `a` is out of scope in a type-parameter
+        // constraint → TS2552). Emitting TS2339 on `.b` on top of that is a
+        // cascading error tsc also suppresses.
+        if crate::query_boundaries::state::checking::is_type_parameter_like(self.ctx.types, type_id)
+            && let Some(constraint) =
+                crate::query_boundaries::state::checking::type_parameter_constraint(
+                    self.ctx.types,
+                    type_id,
+                )
+            && constraint == TypeId::ERROR
+        {
+            return;
+        }
+
         // Suppress TS2339 when the file has syntax parse errors.
         // This prevents cascading errors when the parser has already reported syntax issues
         // (e.g., malformed import.defer() without parentheses → TS1005 already emitted).
