@@ -2041,13 +2041,28 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     /// Get the source file path for a symbol via the binder's `symbol_arenas` and `arena_to_path`.
+    ///
+    /// Falls back to `global_symbol_arenas` for cross-file symbols whose arenas
+    /// are not in the current file's binder (e.g., imported types from node_modules).
     pub(in crate::declaration_emitter) fn get_symbol_source_path(
         &self,
         sym_id: SymbolId,
         binder: &BinderState,
     ) -> Option<String> {
-        let source_arena = binder.symbol_arenas.get(&sym_id)?;
-        let arena_addr = Arc::as_ptr(source_arena) as usize;
-        self.arena_to_path.get(&arena_addr).cloned()
+        // Try the current file's binder first
+        if let Some(source_arena) = binder.symbol_arenas.get(&sym_id) {
+            let arena_addr = Arc::as_ptr(source_arena) as usize;
+            if let Some(path) = self.arena_to_path.get(&arena_addr) {
+                return Some(path.clone());
+            }
+        }
+        // Fall back to global symbol arenas for cross-file symbols
+        if let Some(source_arena) = self.global_symbol_arenas.get(&sym_id) {
+            let arena_addr = Arc::as_ptr(source_arena) as usize;
+            if let Some(path) = self.arena_to_path.get(&arena_addr) {
+                return Some(path.clone());
+            }
+        }
+        None
     }
 }
