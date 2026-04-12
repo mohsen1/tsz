@@ -1053,6 +1053,50 @@ impl<'a> CheckerState<'a> {
                         if src_min > tgt_max || tgt_min > src_max {
                             return false;
                         }
+
+                        // Thread through signature: even with overlapping arity, tsc's
+                        // comparable relation requires pairwise parameter comparability
+                        // and return-type comparability. Two optional params of unrelated
+                        // types are still comparable because both admit `undefined`
+                        // (e.g., `a?: Base` vs `a?: C`); skip those positions. Rest
+                        // params compare by their element type.
+                        let min_pairs = src_fn.params.len().min(tgt_fn.params.len());
+                        let mut sig_ok = true;
+                        for i in 0..min_pairs {
+                            let sp = &src_fn.params[i];
+                            let tp = &tgt_fn.params[i];
+                            if sp.optional && tp.optional && !sp.rest && !tp.rest {
+                                continue;
+                            }
+                            let src_t = if sp.rest {
+                                crate::query_boundaries::common::array_element_type(
+                                    self.ctx.types,
+                                    sp.type_id,
+                                )
+                                .unwrap_or(sp.type_id)
+                            } else {
+                                sp.type_id
+                            };
+                            let tgt_t = if tp.rest {
+                                crate::query_boundaries::common::array_element_type(
+                                    self.ctx.types,
+                                    tp.type_id,
+                                )
+                                .unwrap_or(tp.type_id)
+                            } else {
+                                tp.type_id
+                            };
+                            if !self.is_type_comparable_to(src_t, tgt_t) {
+                                sig_ok = false;
+                                break;
+                            }
+                        }
+                        if !sig_ok {
+                            return false;
+                        }
+                        if !self.is_type_comparable_to(src_fn.return_type, tgt_fn.return_type) {
+                            return false;
+                        }
                     }
                     (None, None) => {
                         // Neither is a function type — check normal comparability
