@@ -17,6 +17,7 @@ pub(super) enum SelfReferenceResultV2 {
     /// Not a self-reference (package name doesn't match) - should continue searching
     NotSelfReference,
     /// TS2209: Project root is ambiguous for export map entry
+    #[allow(dead_code)]
     AmbiguousRoot {
         export_map_entry: String,
         package_json_path: String,

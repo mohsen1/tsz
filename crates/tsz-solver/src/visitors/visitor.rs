@@ -609,14 +609,15 @@ pub fn contains_concrete_application_with_def(
         }
         if let Some(TypeData::Application(app_id)) = types.lookup(type_id) {
             let app = types.type_application(app_id);
-            if let Some(TypeData::Lazy(def_id)) = types.lookup(app.base) {
-                if def_id == target_def_id {
-                    let args_are_concrete = !app.args.iter().any(|&arg| {
-                        super::visitor_predicates::contains_type_parameters(types, arg)
-                    });
-                    if args_are_concrete {
-                        found = true;
-                    }
+            if let Some(TypeData::Lazy(def_id)) = types.lookup(app.base)
+                && def_id == target_def_id
+            {
+                let args_are_concrete = !app
+                    .args
+                    .iter()
+                    .any(|&arg| super::visitor_predicates::contains_type_parameters(types, arg));
+                if args_are_concrete {
+                    found = true;
                 }
             }
         }
