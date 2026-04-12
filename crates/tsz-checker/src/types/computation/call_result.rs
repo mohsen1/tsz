@@ -122,23 +122,22 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn argument_supports_literal_elaboration(&self, arg_idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(arg_idx) else {
-            return false;
-        };
-        matches!(
-            node.kind,
-            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                || k == syntax_kind_ext::ARROW_FUNCTION
-                || k == syntax_kind_ext::FUNCTION_EXPRESSION
-        )
+        self.is_callback_like_argument(arg_idx)
+            || self.ctx.arena.get(arg_idx).is_some_and(|node| {
+                matches!(
+                    node.kind,
+                    k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                )
+            })
     }
 
     fn callback_prefers_argument_level_return_mismatch(&self, arg_idx: NodeIndex) -> bool {
-        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
-            return false;
-        };
-        let Some(func) = self.ctx.arena.get_function(arg_node) else {
+        let Some(func) = self
+            .callback_function_index(arg_idx)
+            .and_then(|idx| self.ctx.arena.get(idx))
+            .and_then(|arg_node| self.ctx.arena.get_function(arg_node))
+        else {
             return false;
         };
         self.ctx
@@ -527,11 +526,12 @@ impl<'a> CheckerState<'a> {
                         && !suppress_inner_elaboration
                         && !prefer_argument_level_return_mismatch
                         && self
-                            .callback_body_span(arg_idx)
-                            .is_some_and(|(start, end)| {
+                            .callback_body_spans(arg_idx)
+                            .iter()
+                            .any(|(start, end)| {
                                 self.has_diagnostic_code_within_span(
-                                    start,
-                                    end,
+                                    *start,
+                                    *end,
                                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                                 )
                             })
@@ -544,14 +544,18 @@ impl<'a> CheckerState<'a> {
                     if !elaborated
                         && !suppress_inner_elaboration
                         && !prefer_argument_level_return_mismatch
-                        && let Some(body_span) = self.callback_body_span(arg_idx)
                     {
-                        let (body_start, body_end) = body_span;
                         let stored: Vec<_> = self
                             .ctx
                             .callback_return_type_errors
                             .iter()
-                            .filter(|d| d.start >= body_start && d.start < body_end)
+                            .filter(|d| {
+                                self.callback_body_spans(arg_idx).iter().any(
+                                    |(body_start, body_end)| {
+                                        d.start >= *body_start && d.start < *body_end
+                                    },
+                                )
+                            })
                             .cloned()
                             .collect();
                         if !stored.is_empty() {
@@ -562,13 +566,13 @@ impl<'a> CheckerState<'a> {
                     // When suppressing inner elaboration, remove any TS2322 inside the
                     // callback body that was left from the arg collection pass, so the
                     // outer TS2345 is the only diagnostic at the argument site.
-                    if (suppress_inner_elaboration || prefer_argument_level_return_mismatch)
-                        && let Some((body_start, body_end)) = self.callback_body_span(arg_idx)
-                    {
+                    if suppress_inner_elaboration || prefer_argument_level_return_mismatch {
+                        let body_spans = self.callback_body_spans(arg_idx);
                         self.ctx.diagnostics.retain(|d| {
                             !(d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                                && d.start >= body_start
-                                && d.start < body_end)
+                                && body_spans.iter().any(|(body_start, body_end)| {
+                                    d.start >= *body_start && d.start < *body_end
+                                }))
                         });
                         self.ctx.rebuild_emitted_diagnostics_from_current();
                     }
@@ -712,8 +716,11 @@ impl<'a> CheckerState<'a> {
                 // Check if we should suppress TS2769 due to structural errors on the callee
                 let suppress_due_to_structural_errors =
                     self.should_suppress_no_overload_due_to_structural_errors(callee_expr);
+                let suppress_due_to_callback_body_errors =
+                    self.should_suppress_no_overload_due_to_callback_body_errors(args);
 
                 if !suppress_due_to_structural_errors
+                    && !suppress_due_to_callback_body_errors
                     && !self.should_suppress_weak_key_no_overload(callee_expr, args)
                 {
                     self.error_no_overload_matches_at(call_idx, &failures);
@@ -956,20 +963,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_callee_function_expression(&self, callee_expr: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(callee_expr) else {
-            return false;
-        };
-        match node.kind {
-            syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION => true,
-            syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
-                    self.is_callee_function_expression(paren.expression)
-                } else {
-                    false
-                }
-            }
-            _ => false,
-        }
+        self.is_callback_like_argument(callee_expr)
     }
 
     pub(crate) fn build_expanded_args_for_error(&mut self, args: &[NodeIndex]) -> Vec<NodeIndex> {
@@ -1034,6 +1028,24 @@ impl<'a> CheckerState<'a> {
 
         // Check if this symbol has structural error diagnostics
         self.symbol_has_structural_errors(symbol_id)
+    }
+
+    fn should_suppress_no_overload_due_to_callback_body_errors(&self, args: &[NodeIndex]) -> bool {
+        const CALLBACK_BODY_DIAGNOSTIC_CODES: &[u32] = &[2322, 2339, 2345, 2347, 7006, 7019, 7031];
+
+        args.iter().copied().any(|arg_idx| {
+            self.is_callback_like_argument(arg_idx)
+                && self
+                    .callback_body_spans(arg_idx)
+                    .iter()
+                    .any(|(start, end)| {
+                        self.ctx.diagnostics.iter().any(|diag| {
+                            diag.start >= *start
+                                && diag.start < *end
+                                && CALLBACK_BODY_DIAGNOSTIC_CODES.contains(&diag.code)
+                        })
+                    })
+        })
     }
 
     /// Check if a symbol has structural error diagnostics (TS2420, TS2430, TS2694).

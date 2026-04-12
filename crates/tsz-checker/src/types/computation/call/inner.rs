@@ -708,9 +708,7 @@ impl<'a> CheckerState<'a> {
                         let Some(arg_node) = self.ctx.arena.get(args[i]) else {
                             continue;
                         };
-                        if arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
-                            && arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
-                        {
+                        if !self.is_callback_like_argument(args[i]) {
                             continue;
                         }
                         if self
@@ -858,12 +856,10 @@ impl<'a> CheckerState<'a> {
                         if !sensitive_args.get(i).copied().unwrap_or(false) {
                             continue;
                         }
-                        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                        let Some(_) = self.ctx.arena.get(arg_idx) else {
                             continue;
                         };
-                        if arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
-                            && arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
-                        {
+                        if !self.is_callback_like_argument(arg_idx) {
                             continue;
                         }
                         let Some(param_type) =
@@ -1104,10 +1100,7 @@ impl<'a> CheckerState<'a> {
                         .map(|(i, &ty)| {
                             if i < sensitive_args.len()
                                 && sensitive_args[i]
-                                && self.ctx.arena.get(args[i]).is_some_and(|n| {
-                                    n.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                        || n.kind == syntax_kind_ext::ARROW_FUNCTION
-                                })
+                                && self.is_callback_like_argument(args[i])
                                 && shape.params.get(i).is_some_and(|p| {
                                     common::is_type_parameter_or_intersection_with_type_parameter(
                                         self.ctx.types,
@@ -1577,9 +1570,7 @@ impl<'a> CheckerState<'a> {
                         let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
                             continue;
                         };
-                        if arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
-                            && arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
-                        {
+                        if !self.is_callback_like_argument(arg_idx) {
                             continue;
                         }
                         if self
@@ -1609,13 +1600,14 @@ impl<'a> CheckerState<'a> {
                                     arg_idx,
                                     base_contextual_param_types.get(i).copied().flatten(),
                                 )
-                                .then(|| self.ctx.arena.get(arg_idx))
-                                .flatten()
-                                .filter(|node| {
-                                    node.kind == syntax_kind_ext::ARROW_FUNCTION
-                                        || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                                .then(|| {
+                                    self.ctx.arena.get(arg_idx).and_then(|node| {
+                                        (node.kind == syntax_kind_ext::ARROW_FUNCTION
+                                            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+                                            .then(|| (node.pos, node.end))
+                                    })
                                 })
-                                .map(|node| (node.pos, node.end))
+                                .flatten()
                             })
                             .collect();
                         let return_context_substitution = self
@@ -1721,12 +1713,10 @@ impl<'a> CheckerState<'a> {
                                 let Some(&arg_idx) = args.get(i) else {
                                     continue;
                                 };
-                                let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                                let Some(_) = self.ctx.arena.get(arg_idx) else {
                                     continue;
                                 };
-                                if arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
-                                    && arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
-                                {
+                                if !self.is_callback_like_argument(arg_idx) {
                                     continue;
                                 }
                                 let Some(fn_shape) =

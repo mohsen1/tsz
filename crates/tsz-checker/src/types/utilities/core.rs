@@ -340,6 +340,13 @@ impl<'a> CheckerState<'a> {
                     .into_iter()
                     .flatten()
                 {
+                    if let Some(&existing) = self.ctx.symbol_types.get(&sym_id)
+                        && existing != TypeId::ERROR
+                        && type_id != existing
+                        && matches!(type_id, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+                    {
+                        continue;
+                    }
                     // When called without pre-computed param_types (None path),
                     // don't overwrite a parameter type that was already cached by
                     // get_type_of_function (which computes types from initializer

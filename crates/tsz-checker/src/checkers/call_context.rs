@@ -16,6 +16,60 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn collect_callback_function_indices(
+        &self,
+        idx: NodeIndex,
+        out: &mut Vec<NodeIndex>,
+        depth: usize,
+    ) {
+        if idx.is_none() || depth > 32 {
+            return;
+        }
+
+        let current = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let Some(node) = self.ctx.arena.get(current) else {
+            return;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
+                if !out.contains(&current) {
+                    out.push(current);
+                }
+            }
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
+                    self.collect_callback_function_indices(cond.when_true, out, depth + 1);
+                    self.collect_callback_function_indices(cond.when_false, out, depth + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn callback_function_indices(&self, idx: NodeIndex) -> Vec<NodeIndex> {
+        let mut callbacks = Vec::new();
+        self.collect_callback_function_indices(idx, &mut callbacks, 0);
+        callbacks
+    }
+
+    pub(crate) fn callback_function_index(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        self.callback_function_indices(idx).into_iter().next()
+    }
+
+    pub(crate) fn is_callback_like_argument(&self, idx: NodeIndex) -> bool {
+        !self.callback_function_indices(idx).is_empty()
+    }
+
+    pub(crate) fn callback_argument_span(&self, idx: NodeIndex) -> Option<(u32, u32)> {
+        self.is_callback_like_argument(idx)
+            .then(|| self.ctx.arena.get(idx))
+            .flatten()
+            .map(|node| (node.pos, node.end))
+    }
+
     pub(crate) fn contextual_type_is_unresolved_for_argument_refresh(
         &self,
         type_id: TypeId,
@@ -213,10 +267,7 @@ impl<'a> CheckerState<'a> {
                             continue;
                         };
                         let init_idx = prop.initializer;
-                        if checker.ctx.arena.get(init_idx).is_some_and(|init_node| {
-                            init_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                                || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                        }) {
+                        if checker.is_callback_like_argument(init_idx) {
                             collect_function_spans(checker, init_idx, spans);
                         } else {
                             collect(checker, init_idx, spans);
@@ -259,12 +310,52 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn callback_body_span(&self, arg_idx: NodeIndex) -> Option<(u32, u32)> {
-        self.ctx
-            .arena
-            .get(arg_idx)
-            .and_then(|node| self.ctx.arena.get_function(node))
-            .and_then(|func| self.ctx.arena.get(func.body))
-            .map(|body_node| (body_node.pos, body_node.end))
+        self.callback_body_spans(arg_idx).into_iter().next()
+    }
+
+    pub(crate) fn callback_body_spans(&self, arg_idx: NodeIndex) -> Vec<(u32, u32)> {
+        self.callback_function_indices(arg_idx)
+            .into_iter()
+            .filter_map(|callback_idx| {
+                self.ctx
+                    .arena
+                    .get(callback_idx)
+                    .and_then(|node| self.ctx.arena.get_function(node))
+                    .and_then(|func| self.ctx.arena.get(func.body))
+                    .map(|body_node| (body_node.pos, body_node.end))
+            })
+            .collect()
+    }
+
+    pub(crate) fn callback_function_param_spans(&self, arg_idx: NodeIndex) -> Vec<(u32, u32)> {
+        self.callback_function_indices(arg_idx)
+            .into_iter()
+            .flat_map(|callback_idx| self.function_like_param_spans_for_node(callback_idx))
+            .collect()
+    }
+
+    pub(crate) fn contextual_callback_function_indices(
+        &self,
+        arg_idx: NodeIndex,
+    ) -> Vec<NodeIndex> {
+        self.callback_function_indices(arg_idx)
+            .into_iter()
+            .filter(|callback_idx| {
+                self.ctx
+                    .implicit_any_contextual_closures
+                    .contains(callback_idx)
+            })
+            .collect()
+    }
+
+    pub(crate) fn contextual_callback_function_param_spans(
+        &self,
+        arg_idx: NodeIndex,
+    ) -> Vec<(u32, u32)> {
+        self.contextual_callback_function_indices(arg_idx)
+            .into_iter()
+            .flat_map(|callback_idx| self.function_like_param_spans_for_node(callback_idx))
+            .collect()
     }
 
     /// Returns true when the callback argument has at least one explicitly-typed parameter
@@ -284,7 +375,10 @@ impl<'a> CheckerState<'a> {
         arg_idx: NodeIndex,
         expected: tsz_solver::TypeId,
     ) -> bool {
-        let Some(node) = self.ctx.arena.get(arg_idx) else {
+        let Some(node) = self
+            .callback_function_index(arg_idx)
+            .and_then(|idx| self.ctx.arena.get(idx))
+        else {
             return false;
         };
         let Some(func) = self.ctx.arena.get_function(node) else {
@@ -354,14 +448,12 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn suppress_generic_return_context_for_arg(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(idx) else {
+        let Some(node) = self
+            .callback_function_index(idx)
+            .and_then(|callback_idx| self.ctx.arena.get(callback_idx))
+        else {
             return false;
         };
-        if node.kind != syntax_kind_ext::ARROW_FUNCTION
-            && node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
-        {
-            return false;
-        }
         let Some(func) = self.ctx.arena.get_function(node) else {
             return false;
         };
@@ -398,10 +490,7 @@ impl<'a> CheckerState<'a> {
             let Some(prop) = self.ctx.arena.get_property_assignment(element) else {
                 return false;
             };
-            self.ctx.arena.get(prop.initializer).is_some_and(|init| {
-                init.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || init.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            })
+            self.is_callback_like_argument(prop.initializer)
         })
     }
 
@@ -442,10 +531,7 @@ impl<'a> CheckerState<'a> {
             // callback `() => 1` references T in its return position, but T has no
             // other inference source; suppressing the contextual type loses the
             // literal preservation.
-            if self.ctx.arena.get(arg_idx).is_some_and(|n| {
-                n.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || n.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            }) {
+            if self.is_callback_like_argument(arg_idx) {
                 continue;
             }
 
@@ -704,10 +790,7 @@ impl<'a> CheckerState<'a> {
             }
             break;
         }
-        if let Some(callee_node) = self.ctx.arena.get(callee_idx)
-            && (callee_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || callee_node.kind == syntax_kind_ext::ARROW_FUNCTION)
-        {
+        if self.is_callback_like_argument(callee_idx) {
             return false;
         }
 

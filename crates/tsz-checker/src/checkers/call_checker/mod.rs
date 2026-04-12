@@ -130,12 +130,7 @@ impl<'a> CheckerState<'a> {
         let Some(expected_context_type) = expected_context_type else {
             return false;
         };
-        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
-            return false;
-        };
-        if arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
-            && arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
-        {
+        if !self.is_callback_like_argument(arg_idx) {
             return false;
         }
 
@@ -217,8 +212,7 @@ impl<'a> CheckerState<'a> {
                     let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
                         return false;
                     };
-                    let is_callback_arg = arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                        || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION;
+                    let is_callback_arg = self.is_callback_like_argument(arg_idx);
                     !is_callback_arg && diag.start >= arg_node.pos && diag.start < arg_node.end
                 })
             })
@@ -237,6 +231,7 @@ impl<'a> CheckerState<'a> {
     const CALLBACK_BODY_REJECTION_CODES: &'static [u32] = &[
         2322, // Type 'X' is not assignable to type 'Y'
         2345, // Argument of type 'X' is not assignable to parameter of type 'Y'
+        2347, // Untyped function calls may not accept type arguments
         2339, // Property 'X' does not exist on type 'Y'
         2769, // No overload matches this call
     ];
@@ -251,15 +246,14 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         for &arg_idx in args {
-            let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            let Some(_) = self.ctx.arena.get(arg_idx) else {
                 continue;
             };
-            let is_callback_arg = arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION;
+            let is_callback_arg = self.is_callback_like_argument(arg_idx);
             if !is_callback_arg {
                 continue;
             }
-            if let Some((body_start, body_end)) = self.callback_body_span(arg_idx) {
+            for (body_start, body_end) in self.callback_body_spans(arg_idx) {
                 if speculative.iter().any(|diag| {
                     diag.start >= body_start
                         && diag.start < body_end
@@ -279,24 +273,23 @@ impl<'a> CheckerState<'a> {
     ) {
         // Pre-compute callback body spans before entering the mutable borrow
         // for rollback_diagnostics_filtered.
-        let callback_spans: Vec<Option<(u32, u32)>> = args
+        let callback_spans: Vec<(u32, u32)> = args
             .iter()
-            .map(|&arg_idx| {
-                let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
-                    return None;
+            .flat_map(|&arg_idx| {
+                let Some(_) = self.ctx.arena.get(arg_idx) else {
+                    return Vec::new();
                 };
-                let is_callback_arg = arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION;
+                let is_callback_arg = self.is_callback_like_argument(arg_idx);
                 if !is_callback_arg {
-                    return None;
+                    return Vec::new();
                 }
-                self.callback_body_span(arg_idx)
+                self.callback_body_spans(arg_idx)
             })
             .collect();
         self.ctx.rollback_diagnostics_filtered(snap, |diag| {
-            !callback_spans.iter().any(|span| {
-                span.is_some_and(|(start, end)| diag.start >= start && diag.start < end)
-            })
+            !callback_spans
+                .iter()
+                .any(|(start, end)| diag.start >= *start && diag.start < *end)
         });
     }
 
@@ -306,13 +299,23 @@ impl<'a> CheckerState<'a> {
         mut expected_for_index: impl FnMut(&mut Self, usize) -> Option<TypeId>,
     ) -> Option<(usize, TypeId, TypeId)> {
         args.iter().enumerate().find_map(|(index, &arg_idx)| {
-            let arg_node = self.ctx.arena.get(arg_idx)?;
-            if arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
-                && arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+            let _arg_node = self.ctx.arena.get(arg_idx)?;
+            if !self.is_callback_like_argument(arg_idx) {
+                return None;
+            }
+            let callback_idx = self.callback_function_index(arg_idx)?;
+            if self
+                .ctx
+                .implicit_any_contextual_closures
+                .contains(&callback_idx)
             {
                 return None;
             }
-            let func = self.ctx.arena.get_function(arg_node)?;
+            let func = self
+                .ctx
+                .arena
+                .get(callback_idx)
+                .and_then(|node| self.ctx.arena.get_function(node))?;
             let body = self.ctx.arena.get(func.body)?;
             if body.kind != syntax_kind_ext::BLOCK {
                 return None;
@@ -339,7 +342,20 @@ impl<'a> CheckerState<'a> {
             self.ctx.daa_error_nodes.remove(&arg_idx.0);
             self.ctx.flow_narrowed_nodes.remove(&arg_idx.0);
             let diag_snap = self.ctx.snapshot_diagnostics();
-            let actual = self.get_type_of_node_with_request(arg_idx, &TypingRequest::NONE);
+            let callback_declares_own_types = func.type_annotation.is_some()
+                || func.parameters.nodes.iter().any(|&param_idx| {
+                    self.ctx
+                        .arena
+                        .get(param_idx)
+                        .and_then(|node| self.ctx.arena.get_parameter(node))
+                        .is_some_and(|param| param.type_annotation.is_some())
+                });
+            let recheck_request = if callback_declares_own_types {
+                TypingRequest::NONE
+            } else {
+                TypingRequest::with_contextual_type(expected)
+            };
+            let actual = self.get_type_of_node_with_request(arg_idx, &recheck_request);
             let refined_actual = if self
                 .target_has_concrete_return_context_for_generic_refinement(expected)
             {
@@ -350,12 +366,13 @@ impl<'a> CheckerState<'a> {
                 self.instantiate_generic_function_argument_against_target_params(actual, expected)
             };
             let has_callback_body_diagnostic =
-                self.callback_body_span(arg_idx)
-                    .is_some_and(|(start, end)| {
+                self.callback_body_spans(arg_idx)
+                    .iter()
+                    .any(|(start, end)| {
                         self.ctx
                             .speculative_diagnostics_since(&diag_snap)
                             .iter()
-                            .any(|diag| diag.start >= start && diag.start < end)
+                            .any(|diag| diag.start >= *start && diag.start < *end)
                     });
             self.ctx.rollback_full(&snap);
             // Restore the node_types entry so the contextually-typed result
@@ -454,13 +471,13 @@ impl<'a> CheckerState<'a> {
         mut expected_for_index: impl FnMut(&mut Self, usize) -> Option<TypeId>,
     ) -> Option<(usize, TypeId, TypeId)> {
         args.iter().enumerate().find_map(|(index, &arg_idx)| {
-            let arg_node = self.ctx.arena.get(arg_idx)?;
-            if arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
-                && arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
-            {
+            if !self.is_callback_like_argument(arg_idx) {
                 return None;
             }
-            let func = self.ctx.arena.get_function(arg_node)?;
+            let func = self
+                .callback_function_index(arg_idx)
+                .and_then(|idx| self.ctx.arena.get(idx))
+                .and_then(|node| self.ctx.arena.get_function(node))?;
             let expected = expected_for_index(self, index)?;
             let expected_shape = crate::query_boundaries::checkers::call::get_contextual_signature(
                 self.ctx.types,
@@ -556,8 +573,7 @@ impl<'a> CheckerState<'a> {
                     // that depend on contextual typing (e.g., ThisType<T> markers).
                     // Filter them like callback body diagnostics so they don't
                     // persist when a different overload resolves successfully.
-                    let is_context_sensitive_arg = arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                        || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                    let is_context_sensitive_arg = self.is_callback_like_argument(arg_idx)
                         || arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION;
                     if !is_context_sensitive_arg {
                         return false;
@@ -566,8 +582,9 @@ impl<'a> CheckerState<'a> {
                         // For object literals, filter diagnostics within the entire span
                         diag.start >= arg_node.pos && diag.start < arg_node.end
                     } else {
-                        self.callback_body_span(arg_idx)
-                            .is_some_and(|(start, end)| diag.start >= start && diag.start < end)
+                        self.callback_body_spans(arg_idx)
+                            .iter()
+                            .any(|(start, end)| diag.start >= *start && diag.start < *end)
                     }
                 })
             })
@@ -589,12 +606,12 @@ impl<'a> CheckerState<'a> {
                     let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
                         return false;
                     };
-                    let is_callback_arg = arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                        || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION;
+                    let is_callback_arg = self.is_callback_like_argument(arg_idx);
                     if is_callback_arg
-                        && let Some((start, end)) = self.callback_body_span(arg_idx)
-                        && diag.start >= start
-                        && diag.start < end
+                        && self
+                            .callback_body_spans(arg_idx)
+                            .iter()
+                            .any(|(start, end)| diag.start >= *start && diag.start < *end)
                     {
                         return diag.code != diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
                             && diag.code
@@ -1223,11 +1240,18 @@ impl<'a> CheckerState<'a> {
             let arg_type = self.get_type_of_node_with_request(arg_idx, &request);
             self.ctx.in_const_assertion = prev_const_assertion;
 
-            let is_direct_function_arg = self.ctx.arena.get(arg_idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            });
+            let is_direct_function_arg = self.is_callback_like_argument(arg_idx);
             let arg_node = self.ctx.arena.get(arg_idx);
+            let callback_body_spans: Vec<_> = self
+                .callback_body_spans(arg_idx)
+                .into_iter()
+                .filter(|(start, end)| start < end)
+                .collect();
+            let callback_param_spans = self.callback_function_param_spans(arg_idx);
+            let contextual_callback_param_spans =
+                self.contextual_callback_function_param_spans(arg_idx);
+            let contextual_callback_indices = self.contextual_callback_function_indices(arg_idx);
+            let function_arg_span = self.callback_argument_span(arg_idx);
             let is_sensitive_contextual_arg = apply_contextual
                 && expected_type.is_some()
                 && arg_node.is_some_and(|arg_node| {
@@ -1243,13 +1267,6 @@ impl<'a> CheckerState<'a> {
                     } else {
                         Vec::new()
                     };
-                let callback_body_span = self
-                    .ctx
-                    .arena
-                    .get_function(arg_node)
-                    .and_then(|func| self.ctx.arena.get(func.body))
-                    .filter(|body_node| body_node.kind != syntax_kind_ext::BLOCK)
-                    .map(|body_node| (body_node.pos, body_node.end));
                 let object_literal_has_excess_property_diag = arg_node.kind
                     == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                     && self
@@ -1286,8 +1303,9 @@ impl<'a> CheckerState<'a> {
                             | diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE
                             | diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN
                     );
-                    let is_callback_body_diag = callback_body_span
-                        .is_some_and(|(start, end)| diag.start >= start && diag.start < end);
+                    let is_callback_body_diag = callback_body_spans
+                        .iter()
+                        .any(|(start, end)| diag.start >= *start && diag.start < *end);
                     let is_object_literal_diag = arg_node.kind
                         == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         && diag.start >= arg_node.pos
@@ -1297,19 +1315,14 @@ impl<'a> CheckerState<'a> {
                         && object_literal_function_param_spans
                             .iter()
                             .any(|(start, end)| diag.start >= *start && diag.start < *end);
-                    let is_function_arg_implicit_any_diag =
-                        (arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                            || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-                            && is_provisional_implicit_any
-                            && diag.start >= arg_node.pos
-                            && diag.start < arg_node.end;
-                    let is_direct_callback_body_assignability = callback_body_span.is_some_and(
-                        |(start, end)| {
-                            diag.start >= start
-                                && diag.start < end
-                                && is_provisional_assignability
-                        },
-                    );
+                    let is_function_arg_implicit_any_diag = is_provisional_implicit_any
+                        && callback_param_spans
+                            .iter()
+                            .any(|(start, end)| diag.start >= *start && diag.start < *end);
+                    let is_direct_callback_body_assignability = is_provisional_assignability
+                        && callback_body_spans
+                            .iter()
+                            .any(|(start, end)| diag.start >= *start && diag.start < *end);
                     let keep = if !is_provisional_assignability && !is_provisional_implicit_any {
                         true
                     } else if is_direct_function_arg {
@@ -1380,15 +1393,26 @@ impl<'a> CheckerState<'a> {
             // contextual types. Drop provisional implicit-any diagnostics (TS7006/TS7031).
             if unresolved_refresh_context
                 && is_direct_function_arg
-                && let Some(n) = self.ctx.arena.get(arg_idx)
+                && let Some((s, e)) = function_arg_span
             {
-                let (s, e) = (n.pos, n.end);
                 let count_before = self.ctx.diagnostics.len();
+                let callback_indices = self.callback_function_indices(arg_idx);
+                let contextual_param_spans = contextual_callback_param_spans;
+                let had_contextual_callbacks = !contextual_callback_indices.is_empty();
                 self.ctx.rollback_diagnostics_filtered(&arg_snap, |d| {
-                    !(matches!(d.code, 7006 | 7019 | 7031 | 7051) && d.start >= s && d.start < e)
+                    !(matches!(d.code, 7006 | 7019 | 7031 | 7051)
+                        && d.start >= s
+                        && d.start < e
+                        && contextual_param_spans
+                            .iter()
+                            .any(|(start, end)| d.start >= *start && d.start < *end))
                 });
-                if self.ctx.diagnostics.len() < count_before {
-                    self.ctx.implicit_any_checked_closures.remove(&arg_idx);
+                if had_contextual_callbacks || self.ctx.diagnostics.len() < count_before {
+                    for callback_idx in callback_indices {
+                        self.ctx.implicit_any_checked_closures.remove(&callback_idx);
+                    }
+                    self.clear_contextual_resolution_cache();
+                    self.invalidate_expression_for_contextual_retry(arg_idx);
                 }
             }
             arg_types.push(arg_type);

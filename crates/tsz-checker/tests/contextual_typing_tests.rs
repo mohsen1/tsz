@@ -1717,3 +1717,37 @@ const f: (s: number) => string = make((x) => x.toUpperCase());
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn test_parenthesized_conditional_callbacks_preserve_contextual_typing() {
+    let source = r#"
+type FuncType = (x: <T>(p: T) => T) => typeof x;
+declare const coin: number;
+
+function fun<T>(f: FuncType, x: T): T;
+function fun<T>(f: FuncType, g: FuncType, x: T): T;
+function fun<T>(...rest: any[]): T {
+    return undefined as any;
+}
+
+var i = fun((coin < 0.5 ? x => { x<number>(undefined); return x; } : x => undefined), 10);
+var k = fun((coin < 0.5 ? (x => { x<number>(undefined); return x; }) : (x => undefined)), x => { x<number>(undefined); return x; }, 10);
+"#;
+
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2347),
+        "Expected TS2347 from the uncontextualized conditional branch callback, got diagnostics={diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(&2769),
+        "Conditional callback retry should not degrade into outer TS2769, got diagnostics={diagnostics:?}"
+    );
+}
