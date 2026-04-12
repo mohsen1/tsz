@@ -1201,8 +1201,17 @@ impl<'a> CheckerState<'a> {
 
         let mut segments = name.split('.');
         let root_name = segments.next()?;
-        let mut current_sym = self.ctx.binder.file_locals.get(root_name)?;
         let lib_binders = self.get_lib_binders();
+        let mut current_sym = self
+            .ctx
+            .binder
+            .file_locals
+            .get(root_name)
+            .or_else(|| {
+                lib_binders
+                    .iter()
+                    .find_map(|binder| binder.file_locals.get(root_name))
+            })?;
 
         for segment in segments {
             let mut visited_aliases = Vec::new();

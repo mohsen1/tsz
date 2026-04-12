@@ -572,7 +572,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .is_some_and(|ident| ident.escaped_text == "Symbol")
     }
 
-    fn get_symbol_from_any_context(
+    pub(crate) fn get_symbol_from_any_context(
         &self,
         sym_id: tsz_binder::SymbolId,
     ) -> Option<&tsz_binder::Symbol> {

@@ -142,7 +142,7 @@ fi
 if ! $QUICK; then
     echo ""
     echo -e "${CYAN}━━━ [emit tests] ━━━${RESET}"
-    EMIT_JSON="$(mktemp "${TMPDIR:-/tmp}/tsz-emit-verify.XXXXXX.json")"
+    EMIT_JSON="$(mktemp "${TMPDIR:-/tmp}/tsz-emit-verify.XXXXXX").json"
     echo -e "${CYAN}→${RESET}  scripts/safe-run.sh ./scripts/emit/run.sh --json-out=$EMIT_JSON"
     echo ""
 
@@ -188,7 +188,7 @@ fi
 if ! $QUICK && ! $SKIP_LSP; then
     echo ""
     echo -e "${CYAN}━━━ [fourslash/LSP] ━━━${RESET}"
-    FOURSLASH_JSON="$(mktemp "${TMPDIR:-/tmp}/tsz-fourslash-verify.XXXXXX.json")"
+    FOURSLASH_JSON="$(mktemp "${TMPDIR:-/tmp}/tsz-fourslash-verify.XXXXXX").json"
     echo -e "${CYAN}→${RESET}  scripts/safe-run.sh ./scripts/fourslash/run-fourslash.sh --max=50 --workers=8 --json-out=$FOURSLASH_JSON"
     echo ""
 
