@@ -1686,7 +1686,36 @@ impl ParserState {
         if keyword == SyntaxKind::ClassKeyword && self.is_token(SyntaxKind::SemicolonToken) {
             self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
         } else if keyword == SyntaxKind::TypeOfKeyword {
-            self.error_expression_expected();
+            if !self.is_expression_start() {
+                // `var typeof;` → TS1109 because `;` can't start an expression.
+                self.error_expression_expected();
+            } else if self.is_token(SyntaxKind::OpenParenToken) {
+                // `var typeof(x);` → skip the parenthesized expression to avoid extra TS1005.
+                // TSC reparses `typeof(x)` as a typeof expression, consuming the operand.
+                let mut paren_depth = 0u32;
+                while !matches!(
+                    self.token(),
+                    SyntaxKind::SemicolonToken
+                        | SyntaxKind::CloseBraceToken
+                        | SyntaxKind::EndOfFileToken
+                ) && !self.scanner.has_preceding_line_break()
+                {
+                    match self.token() {
+                        SyntaxKind::OpenParenToken => paren_depth += 1,
+                        SyntaxKind::CloseParenToken => {
+                            if paren_depth == 0 {
+                                break;
+                            }
+                            paren_depth -= 1;
+                        }
+                        _ => {}
+                    }
+                    self.next_token();
+                    if paren_depth == 0 {
+                        break;
+                    }
+                }
+            }
         }
     }
 
