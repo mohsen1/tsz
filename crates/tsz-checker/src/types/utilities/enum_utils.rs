@@ -1302,16 +1302,86 @@ impl<'a> CheckerState<'a> {
         is_constructor_only(self, left) && is_constructor_only(self, right)
     }
 
-    /// Check if both types are callable/function types that always overlap.
+    /// Check if both types are callable/function types that overlap.
     ///
-    /// In tsc, all function/callable types are objects at runtime and are considered
-    /// comparable even when their call signatures are structurally incompatible.
-    /// This handles cases where generic constraints prevent assignability but the
-    /// types should still be comparable (e.g., `<T, U extends T>(x: T, y: U) => T`
-    /// vs `(x: Base, y: C) => Base`).
-    fn both_callable_types_overlap(&self, left: TypeId, right: TypeId) -> bool {
-        common::is_callable_type(self.ctx.types, left)
-            && common::is_callable_type(self.ctx.types, right)
+    /// Two callable types overlap if there exists at least one (src, tgt) call-
+    /// signature pair whose shared-arity parameters are pairwise comparable and
+    /// whose return types are comparable. This preserves tsc's behavior for
+    /// generic callables (constraints resolve to apparent types during
+    /// `is_type_comparable_to`) while correctly reporting no-overlap for
+    /// callables with concretely incompatible signatures (e.g.,
+    /// `(a: number, b: string) => void` vs `(a: string) => void`).
+    fn both_callable_types_overlap(&mut self, left: TypeId, right: TypeId) -> bool {
+        if !common::is_callable_type(self.ctx.types, left)
+            || !common::is_callable_type(self.ctx.types, right)
+        {
+            return false;
+        }
+
+        let left_resolved = self.evaluate_type_with_resolution(left);
+        let right_resolved = self.evaluate_type_with_resolution(right);
+        let Some(left_shape) = crate::query_boundaries::common::callable_shape_for_type_extended(
+            self.ctx.types,
+            left_resolved,
+        ) else {
+            return true;
+        };
+        let Some(right_shape) = crate::query_boundaries::common::callable_shape_for_type_extended(
+            self.ctx.types,
+            right_resolved,
+        ) else {
+            return true;
+        };
+        if left_shape.call_signatures.is_empty() || right_shape.call_signatures.is_empty() {
+            return true;
+        }
+
+        for lsig in &left_shape.call_signatures {
+            let lparams = lsig.params.clone();
+            let lret = lsig.return_type;
+            for rsig in &right_shape.call_signatures {
+                let rparams = rsig.params.clone();
+                let rret = rsig.return_type;
+                let min_pairs = lparams.len().min(rparams.len());
+                let mut sig_ok = true;
+                for i in 0..min_pairs {
+                    let lp = &lparams[i];
+                    let rp = &rparams[i];
+                    if lp.optional && rp.optional && !lp.rest && !rp.rest {
+                        continue;
+                    }
+                    let lt = if lp.rest {
+                        crate::query_boundaries::common::array_element_type(
+                            self.ctx.types,
+                            lp.type_id,
+                        )
+                        .unwrap_or(lp.type_id)
+                    } else {
+                        lp.type_id
+                    };
+                    let rt = if rp.rest {
+                        crate::query_boundaries::common::array_element_type(
+                            self.ctx.types,
+                            rp.type_id,
+                        )
+                        .unwrap_or(rp.type_id)
+                    } else {
+                        rp.type_id
+                    };
+                    if !self.is_type_comparable_to(lt, rt) && !self.is_type_comparable_to(rt, lt) {
+                        sig_ok = false;
+                        break;
+                    }
+                }
+                if sig_ok
+                    && (self.is_type_comparable_to(lret, rret)
+                        || self.is_type_comparable_to(rret, lret))
+                {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Check if two object types have all common properties with independently
