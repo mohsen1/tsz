@@ -1054,6 +1054,40 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_input_ready(constructor_type);
         self.ensure_relation_inputs_ready(&arg_types);
 
+        // When the constructor type is still a Lazy(DefId) reference (e.g., for
+        // `declare var Proxy: ProxyConstructor` where ProxyConstructor's DefId→SymbolId
+        // mapping may not have been established in the current context), resolve it
+        // by finding the definition's name in the DefinitionStore and looking up the
+        // lib type by name. Without this, `new Proxy(...)` incorrectly gets TS2351
+        // because the solver can't find construct signatures on an unresolved Lazy type.
+        if let Some(def_id) = tsz_solver::query::lazy_def_id(self.ctx.types, constructor_type) {
+            // First try the normal DefId → SymbolId path
+            let resolved_via_symbol = self.ctx.def_to_symbol_id(def_id).and_then(|sym_id| {
+                let resolved = self.type_reference_symbol_type(sym_id);
+                (resolved != constructor_type
+                    && resolved != TypeId::ERROR
+                    && resolved != TypeId::ANY)
+                    .then_some(resolved)
+            });
+            if let Some(resolved) = resolved_via_symbol {
+                constructor_type = resolved;
+            } else {
+                // DefId has no SymbolId mapping — try to find the interface by name
+                // through lib type resolution. Look up the DefId's name from the
+                // DefinitionStore and resolve the lib type.
+                if let Some(def) = self.ctx.definition_store.get(def_id) {
+                    let name = self.ctx.types.resolve_atom_ref(def.name);
+                    if let Some(lib_type) = self.resolve_lib_type_by_name(&name) {
+                        if lib_type != TypeId::ERROR && lib_type != TypeId::ANY {
+                            // Register the mapping so future lookups succeed
+                            self.ctx.register_def_in_envs(def_id, lib_type);
+                            constructor_type = lib_type;
+                        }
+                    }
+                }
+            }
+        }
+
         tracing::debug!(
             constructor_type = constructor_type.0,
             "new_expr constructor resolution"
