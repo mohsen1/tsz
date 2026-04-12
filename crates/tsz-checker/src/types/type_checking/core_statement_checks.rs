@@ -469,7 +469,9 @@ impl<'a> CheckerState<'a> {
                 && let Some(name_node) = self.ctx.arena.get(tp_data.name)
                 && let Some(ident) = self.ctx.arena.get_identifier(name_node)
             {
-                infer_params.push((ident.escaped_text.clone(), tp_data.name));
+                // Use the InferType node (idx) for positioning, not the identifier (tp_data.name)
+                // TSC spans the diagnostic across `infer U`, not just `U`
+                infer_params.push((ident.escaped_text.clone(), idx));
             }
             for child in self.ctx.arena.get_children(idx) {
                 stack.push(child);
