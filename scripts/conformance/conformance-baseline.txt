@@ -381,7 +381,6 @@ FAIL TypeScript/tests/cases/conformance/classes/nestedClassDeclaration.ts | expe
 FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/autoAccessorDisallowedModifiers.ts | expected:[TS1029,TS1030,TS1070,TS1243,TS1275,TS1276,TS2307,TS2882] actual:[TS1029,TS1030,TS2307,TS2882]
 FAIL TypeScript/tests/cases/conformance/controlFlow/assertionTypePredicates1.ts | expected:[TS1228,TS2775,TS2776,TS7027] actual:[TS1005,TS1228]
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowAliasing.ts | expected:[TS2322,TS2339,TS2448,TS2454] actual:[TS2322,TS2339,TS2448,TS2454]
-FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowBindingElement.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowBindingPatternOrder.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowGenericTypes.ts | expected:[TS2339,TS2345,TS2355,TS18048] actual:[TS2339,TS2345,TS2355,TS18048]
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowIterationErrors.ts | expected:[TS2345,TS2769] actual:[TS2345,TS2769]
@@ -706,7 +705,6 @@ FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeConstraints2.ts |
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeErrors.ts | expected:[TS2313,TS2322,TS2339,TS2344,TS2345,TS2353,TS2403,TS2536] actual:[TS2313,TS2322,TS2339,TS2344,TS2345,TS2353,TS2403,TS2536]
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeRelationships.ts | expected:[TS2322,TS2536,TS2542] actual:[TS2322,TS2536,TS2542]
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeWithAny.ts | expected:[TS2322,TS2339,TS2740] actual:[TS2322,TS2339,TS2740]
-FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypes2.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/conformance/types/members/duplicateNumericIndexers.ts | expected:[TS2374] actual:[TS2374]
 FAIL TypeScript/tests/cases/conformance/types/members/indexSignatures1.ts | expected:[TS1268,TS1337,TS2322,TS2353,TS2374,TS2413,TS7053] actual:[TS1268,TS1337,TS2322,TS2339,TS2353,TS2538,TS2722,TS7052]
 FAIL TypeScript/tests/cases/conformance/types/members/objectTypeWithStringAndNumberIndexSignatureToAny.ts | expected:[TS2322,TS2739] actual:[TS2322,TS2739]
@@ -7533,6 +7531,7 @@ PASS TypeScript/tests/cases/conformance/classes/methodDeclarations/optionalMetho
 PASS TypeScript/tests/cases/conformance/classes/mixinAbstractClasses.2.ts
 PASS TypeScript/tests/cases/conformance/classes/mixinAbstractClasses.ts
 PASS TypeScript/tests/cases/conformance/classes/mixinAbstractClassesReturnTypeInference.ts
+PASS TypeScript/tests/cases/conformance/classes/mixinAccessors1.ts
 PASS TypeScript/tests/cases/conformance/classes/mixinAccessors2.ts
 PASS TypeScript/tests/cases/conformance/classes/mixinAccessors4.ts
 PASS TypeScript/tests/cases/conformance/classes/mixinAccessors5.ts
@@ -7647,6 +7646,7 @@ PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowAssignmentExpress
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowAssignmentPatternOrder.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowBinaryAndExpression.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowBinaryOrExpression.ts
+PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowBindingElement.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowCommaOperator.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowComputedPropertyNames.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowConditionalExpression.ts
@@ -7816,6 +7816,7 @@ PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionAsyncE
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionAsyncES6System.ts
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionAsyncES6UMD.ts
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionCheckReturntype1.ts
+PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionDeclarationEmit1.ts
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionDeclarationEmit2.ts
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionDeclarationEmit3.ts
 PASS TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionES5AMD.ts
@@ -11782,6 +11783,7 @@ PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypeModifiers.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypeOverlappingStringEnumKeys.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypeProperties.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypes1.ts
+PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypes2.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypes3.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypes4.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypes5.ts
