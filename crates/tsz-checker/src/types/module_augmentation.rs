@@ -116,6 +116,29 @@ impl<'a> CheckerState<'a> {
             push_unique(&mut candidates, normalized.to_string_lossy().to_string());
         }
 
+        // When `trimmed` is a resolved file path that points inside a
+        // node_modules directory, also push the bare package name. This lets
+        // `declare module 'math2d' { ... }` apply to imports resolved to
+        // `node_modules/math2d/index.d.ts`.
+        if let Some(nm_pos) = trimmed.rfind("node_modules/") {
+            let after_nm = &trimmed[nm_pos + "node_modules/".len()..];
+            let package_name = if after_nm.starts_with('@') {
+                let parts: Vec<&str> = after_nm.splitn(3, '/').collect();
+                if parts.len() >= 2 {
+                    format!("{}/{}", parts[0], parts[1])
+                } else {
+                    String::new()
+                }
+            } else {
+                after_nm.split('/').next().unwrap_or("").to_string()
+            };
+            if !package_name.is_empty() {
+                push_unique(&mut candidates, package_name.clone());
+                push_unique(&mut candidates, format!("'{package_name}'"));
+                push_unique(&mut candidates, format!("\"{package_name}\""));
+            }
+        }
+
         candidates
     }
 

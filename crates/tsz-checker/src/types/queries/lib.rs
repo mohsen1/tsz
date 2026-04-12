@@ -670,12 +670,10 @@ impl<'a> CheckerState<'a> {
             && (member_symbol.flags & symbol_flags::CLASS) != 0
             && member_symbol.value_declaration.is_some()
         {
-            return Some(
-                self.type_of_value_declaration_for_symbol_without_module_augmentations(
-                    resolved_member_id,
-                    member_symbol.value_declaration,
-                ),
-            );
+            return Some(self.type_of_value_declaration_for_symbol(
+                resolved_member_id,
+                member_symbol.value_declaration,
+            ));
         }
 
         self.get_validated_member_type(resolved_member_id, property_name)
