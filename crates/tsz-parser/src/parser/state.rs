@@ -1743,10 +1743,6 @@ impl ParserState {
         }
     }
 
-    pub(crate) fn recover_reserved_word_variable_declaration_tail(&mut self, keyword: SyntaxKind) {
-        self.recover_after_reserved_word_in_variable_declaration(keyword);
-    }
-
     /// Error: TS1390 - '{0}' is not allowed as a parameter name.
     ///
     /// For a few legacy keyword parameter forms, tsc also emits a companion parser
