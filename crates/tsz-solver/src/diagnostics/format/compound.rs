@@ -832,7 +832,12 @@ impl<'a> TypeFormatter<'a> {
     /// `(A | B) & (C | D)` is semantically different from `A | B & C | D`.
     fn format_intersection_member(&mut self, id: TypeId) -> String {
         let formatted = self.format(id);
-        if matches!(self.interner.lookup(id), Some(TypeData::Union(_))) {
+        // Only parenthesize if the type is a union AND the formatted result
+        // actually contains `|` (i.e., wasn't collapsed to a named alias).
+        // Type aliases like `type T1 = "a" | "b"` display as `T1`, not
+        // `"a" | "b"`, so they don't need parentheses in intersections.
+        if matches!(self.interner.lookup(id), Some(TypeData::Union(_))) && formatted.contains(" | ")
+        {
             format!("({formatted})")
         } else {
             formatted.into_owned()
