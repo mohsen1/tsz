@@ -32,6 +32,14 @@ impl<'a> CheckerState<'a> {
             || helper.get_return_type().is_some()
             || helper.get_parameter_type(0).is_some()
             || helper.get_rest_parameter_type(0).is_some()
+            // Preserve callable aliases whose raw signature can be extracted even
+            // when ContextualTypeContext is obscured by return-position queries
+            // like `typeof x`. Evaluating these too early erases callback param context.
+            || crate::query_boundaries::checkers::call::get_contextual_signature(
+                self.ctx.types,
+                type_id,
+            )
+            .is_some()
     }
 
     pub(crate) fn contextual_type_for_expression(&mut self, type_id: TypeId) -> TypeId {
@@ -172,19 +180,41 @@ impl<'a> CheckerState<'a> {
             || is_conditional_type(self.ctx.types, type_id)
             || type_application(self.ctx.types, type_id).is_some();
 
-        // Handle parenthesized expressions: the contextual type should flow through
-        // parentheses to the inner expression. This ensures that callbacks wrapped in
-        // parens (e.g., `fun((x) => x)`) still get the correct contextual typing.
-        if arg_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            if let Some(paren) = self.ctx.arena.get_parenthesized(arg_node) {
-                return self.contextual_type_option_for_call_argument_at(
-                    Some(type_id),
-                    paren.expression,
-                    arg_index,
-                    arg_count,
-                    callable_ctx,
-                );
-            }
+        // Outer wrappers should not block raw contextual typing for inner callbacks.
+        if arg_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.ctx.arena.get_parenthesized(arg_node)
+        {
+            return self.contextual_type_option_for_call_argument_at(
+                Some(type_id),
+                paren.expression,
+                arg_index,
+                arg_count,
+                callable_ctx,
+            );
+        }
+        if (arg_node.kind == syntax_kind_ext::AS_EXPRESSION
+            || arg_node.kind == syntax_kind_ext::TYPE_ASSERTION
+            || arg_node.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
+            && let Some(assertion) = self.ctx.arena.get_type_assertion(arg_node)
+        {
+            return self.contextual_type_option_for_call_argument_at(
+                Some(type_id),
+                assertion.expression,
+                arg_index,
+                arg_count,
+                callable_ctx,
+            );
+        }
+        if arg_node.kind == syntax_kind_ext::NON_NULL_EXPRESSION
+            && let Some(unary) = self.ctx.arena.get_unary_expr_ex(arg_node)
+        {
+            return self.contextual_type_option_for_call_argument_at(
+                Some(type_id),
+                unary.expression,
+                arg_index,
+                arg_count,
+                callable_ctx,
+            );
         }
 
         if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
@@ -210,7 +240,12 @@ impl<'a> CheckerState<'a> {
 
         if preserve_raw_object_context
             || (preserve_raw
-                && !needs_resolved_callable_context
+                && (!needs_resolved_callable_context
+                    || matches!(
+                        arg_node.kind,
+                        k if k == syntax_kind_ext::ARROW_FUNCTION
+                            || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    ))
                 && self.raw_contextual_signature_available(type_id))
         {
             Some(type_id)

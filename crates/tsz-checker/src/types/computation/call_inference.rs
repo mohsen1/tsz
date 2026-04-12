@@ -1050,12 +1050,9 @@ impl<'a> CheckerState<'a> {
         &self,
         arg_idx: NodeIndex,
     ) -> Option<NodeIndex> {
-        let node = self.ctx.arena.get(arg_idx)?;
-        if node.kind != syntax_kind_ext::ARROW_FUNCTION
-            && node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
-        {
-            return None;
-        }
+        let node = self
+            .callback_function_index(arg_idx)
+            .and_then(|idx| self.ctx.arena.get(idx))?;
         let func = self.ctx.arena.get_function(node)?;
         if !func.parameters.nodes.is_empty() || func.type_annotation.is_some() {
             return None;
@@ -1099,14 +1096,12 @@ impl<'a> CheckerState<'a> {
         arg_idx: NodeIndex,
         arg_type: TypeId,
     ) -> TypeId {
-        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+        let Some(arg_node) = self
+            .callback_function_index(arg_idx)
+            .and_then(|idx| self.ctx.arena.get(idx))
+        else {
             return arg_type;
         };
-        if arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
-            && arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
-        {
-            return arg_type;
-        }
 
         let Some(func) = self.ctx.arena.get_function(arg_node) else {
             return arg_type;
@@ -1285,14 +1280,9 @@ impl<'a> CheckerState<'a> {
 
             let arg_idx = args.get(index).copied();
             let skip_unresolved_callable_recheck = arg_idx.is_some_and(|arg_idx| {
-                self.ctx.arena.get(arg_idx).is_some_and(|node| {
-                    matches!(
-                        node.kind,
-                        k if k == tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
-                            || k == tsz_parser::parser::syntax_kind_ext::ARROW_FUNCTION
-                    )
-                }) && (common::contains_type_parameters(self.ctx.types, expected)
-                    || common::contains_infer_types(self.ctx.types, expected))
+                self.is_callback_like_argument(arg_idx)
+                    && (common::contains_type_parameters(self.ctx.types, expected)
+                        || common::contains_infer_types(self.ctx.types, expected))
                     && crate::query_boundaries::checkers::call::get_contextual_signature(
                         self.ctx.types,
                         expected,
@@ -1826,8 +1816,15 @@ impl<'a> CheckerState<'a> {
             self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
         }
 
+        let arg_node = self.ctx.arena.get(arg_idx);
+        let provisional_context_arg_span = arg_node.and_then(|node| {
+            let is_context_sensitive_arg = self.is_callback_like_argument(arg_idx)
+                || node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION;
+            is_context_sensitive_arg.then_some((node.pos, node.end))
+        });
+
         if let Some(snap) = &speculation_snap {
-            let arg_node = self.ctx.arena.get(arg_idx);
             let object_literal_method_param_spans: Vec<(u32, u32)> = arg_node
                 .filter(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
                 .and_then(|node| self.ctx.arena.get_literal_expr(node))
@@ -1867,15 +1864,13 @@ impl<'a> CheckerState<'a> {
                         .collect()
                 })
                 .unwrap_or_default();
-            let callback_body_start = arg_node
-                .filter(|node| {
-                    node.kind == syntax_kind_ext::ARROW_FUNCTION
-                        || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                })
-                .and_then(|node| self.ctx.arena.get_function(node))
-                .and_then(|func| self.ctx.arena.get(func.body))
-                .filter(|body_node| body_node.kind != syntax_kind_ext::BLOCK)
-                .map(|body_node| body_node.pos);
+            let callback_body_spans: Vec<_> = self
+                .callback_body_spans(arg_idx)
+                .into_iter()
+                .filter(|(start, end)| start < end)
+                .collect();
+            let callback_param_spans = self.callback_function_param_spans(arg_idx);
+            let function_arg_span = self.callback_argument_span(arg_idx);
             let diag_len = snap.diagnostics_len;
             // Build pre-existing diagnostic keys for exact dedup.
             let existing_diag_keys: Vec<_> = self
@@ -1917,21 +1912,14 @@ impl<'a> CheckerState<'a> {
                         && diag.start >= node.pos
                         && diag.start < node.end
                 });
-                let is_function_arg_implicit_any_diag = arg_node.is_some_and(|node| {
-                    (node.kind == syntax_kind_ext::ARROW_FUNCTION
-                        || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-                        && is_provisional_implicit_any
-                        && diag.start >= node.pos
-                        && diag.start < node.end
-                });
-                let is_function_arg_diag = arg_node.is_some_and(|node| {
-                    (node.kind == syntax_kind_ext::ARROW_FUNCTION
-                        || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-                        && diag.start >= node.pos
-                        && diag.start < node.end
-                });
-                let is_nullish_callback_body_diag = callback_body_start.is_some_and(|start| {
-                    diag.start == start
+                let is_function_arg_implicit_any_diag = is_provisional_implicit_any
+                    && callback_param_spans
+                        .iter()
+                        .any(|(start, end)| diag.start >= *start && diag.start < *end);
+                let is_function_arg_diag = function_arg_span
+                    .is_some_and(|(start, end)| diag.start >= start && diag.start < end);
+                let is_nullish_callback_body_diag = callback_body_spans.iter().any(|(start, _)| {
+                    diag.start == *start
                         && matches!(
                             diag.code,
                             diagnostic_codes::IS_POSSIBLY_NULL
@@ -1945,9 +1933,10 @@ impl<'a> CheckerState<'a> {
                                 | diagnostic_codes::CANNOT_INVOKE_AN_OBJECT_WHICH_IS_POSSIBLY_NULL_OR_UNDEFINED
                         )
                 });
-                let is_direct_callback_body_assignability =
-                    callback_body_start.is_some_and(|start| diag.start >= start)
-                        && is_assignability;
+                let is_direct_callback_body_assignability = is_assignability
+                    && callback_body_spans
+                        .iter()
+                        .any(|(start, end)| diag.start >= *start && diag.start < *end);
                 // When the contextual type for a callback argument is fully
                 // resolved (no type parameters, no infer types), assignability
                 // errors from inside the callback body are real — the later
@@ -1980,10 +1969,11 @@ impl<'a> CheckerState<'a> {
                 // the expression that fails) — block-body callbacks may get
                 // stale TS2339 from speculative union-contextual passes that
                 // will be refined in the instantiated retry.
-                let is_concrete_callback_body_property_error =
-                    callback_body_start.is_some_and(|start| diag.start >= start)
-                        && diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
-                        && has_concrete_expected_type;
+                let is_concrete_callback_body_property_error = has_concrete_expected_type
+                    && diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                    && callback_body_spans
+                        .iter()
+                        .any(|(start, end)| diag.start >= *start && diag.start < *end);
                 if expected_is_unresolved
                     && (is_function_arg_diag
                         || (is_object_literal_diag && is_provisional_implicit_any))
@@ -2061,17 +2051,10 @@ impl<'a> CheckerState<'a> {
             }
         }
         if let Some(snap) = &provisional_context_snap {
-            let arg_node = self.ctx.arena.get(arg_idx);
             self.ctx.rollback_diagnostics_filtered(snap, |diag| {
                 Self::should_preserve_speculative_call_diagnostic(diag)
-                    || !arg_node.is_some_and(|node| {
-                        diag.start >= node.pos
-                            && diag.start < node.end
-                            && (node.kind == syntax_kind_ext::ARROW_FUNCTION
-                                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                || node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                                || node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
-                    })
+                    || !provisional_context_arg_span
+                        .is_some_and(|(start, end)| diag.start >= start && diag.start < end)
             });
         }
 

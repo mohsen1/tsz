@@ -723,10 +723,6 @@ impl<'a> CheckerState<'a> {
                     || jsdoc_initializer_callable_context;
                 let suppresses_implicit_any_context =
                     has_contextual_type && !has_never_expected_context;
-                if is_closure && suppresses_implicit_any_context {
-                    self.ctx.implicit_any_contextual_closures.insert(idx);
-                    _any_param_contextually_typed = true;
-                }
                 // Use type annotation if present, otherwise infer from context
                 let (type_id, has_external_binding_context) = if param.type_annotation.is_some() {
                     // Check parameter type for parameter properties in function types
@@ -795,9 +791,6 @@ impl<'a> CheckerState<'a> {
                     } else {
                         None
                     };
-                    let has_external_binding_context = contextual_type.is_some()
-                        || iife_arg_type.is_some()
-                        || jsdoc_param_type.is_some();
                     let inferred_type = if let Some(jsdoc_type) = jsdoc_param_type {
                         jsdoc_type
                     } else if is_js_file {
@@ -892,6 +885,12 @@ impl<'a> CheckerState<'a> {
                     } else {
                         inferred_type
                     };
+                    let has_external_binding_context = jsdoc_param_type.is_some()
+                        || iife_arg_type.is_some()
+                        || (contextual_type.is_some()
+                            && ty != TypeId::ANY
+                            && ty != TypeId::UNKNOWN
+                            && ty != TypeId::ERROR);
                     (ty, has_external_binding_context)
                 };
                 let mut element_type_from_pattern = None;
@@ -955,6 +954,10 @@ impl<'a> CheckerState<'a> {
                 let binding_context_type = (has_external_binding_context
                     || cached_param_type.is_some())
                 .then_some(type_id);
+                if is_closure && suppresses_implicit_any_context {
+                    self.ctx.implicit_any_contextual_closures.insert(idx);
+                    _any_param_contextually_typed = true;
+                }
                 if is_this_param {
                     if this_type.is_none() {
                         this_type = Some(type_id);

@@ -220,6 +220,17 @@ impl<'a> CheckerState<'a> {
                         self.prune_callback_body_diagnostics(args, &overload_snap.diag);
                         continue;
                     }
+                    // The union-context pass can successfully match an overload while still
+                    // leaving inline callback bodies typed under a lossy contextual union.
+                    // Defer those candidates to the signature-specific pass, which can
+                    // re-evaluate callbacks with per-overload parameter types.
+                    if signatures.len() > 1
+                        && self
+                            .overload_candidate_has_callback_body_errors(args, &overload_snap.diag)
+                    {
+                        self.prune_callback_body_diagnostics(args, &overload_snap.diag);
+                        continue;
+                    }
                     // For generic overloads that will undergo an instantiated retry,
                     // defer the hard-error check. The first-pass argument collection
                     // uses unresolved type parameters, which can cause false errors
@@ -529,6 +540,7 @@ impl<'a> CheckerState<'a> {
         // constraint violations that must still resolve to a return type).
         let mut constraint_violation_fallback: Option<(TypeId, Vec<TypeId>)> = None;
         for (sig, &func_type) in signatures.iter().zip(signature_types.iter()) {
+            self.ctx.rollback_full(&overload_snap);
             let sig_helper = ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
                 func_type,
@@ -557,9 +569,13 @@ impl<'a> CheckerState<'a> {
             let candidate_callable_ctx = CallableContext::new(func_type);
             let candidate_param_types: Vec<Option<TypeId>> = (0..args.len())
                 .map(|i| {
-                    sig_helper
-                        .get_parameter_type_for_call(i, args.len())
-                        .map(|param_type| self.normalize_contextual_call_param_type(param_type))
+                    self.contextual_parameter_type_for_call_with_env_from_expected(
+                        func_type,
+                        i,
+                        args.len(),
+                    )
+                    .or_else(|| sig_helper.get_parameter_type_for_call(i, args.len()))
+                    .map(|param_type| self.normalize_contextual_call_param_type(param_type))
                 })
                 .collect();
             let candidate_refresh_args: Vec<bool> = args
@@ -652,8 +668,17 @@ impl<'a> CheckerState<'a> {
                             Self::should_preserve_speculative_call_diagnostic(diag)
                         });
                     self.ctx.restore_ts2454_state(&candidate_ts2454_errors);
+                    self.clear_contextual_resolution_cache();
                     self.ctx.node_types = Default::default();
                     refresh_all_args(self);
+                    for (i, &arg_idx) in args.iter().enumerate() {
+                        if self.argument_needs_refresh_for_contextual_call(
+                            arg_idx,
+                            candidate_param_types.get(i).copied().flatten(),
+                        ) {
+                            self.invalidate_expression_for_contextual_retry(arg_idx);
+                        }
+                    }
 
                     let refreshed_contextual_types = if !return_sub_for_preinfer.is_empty() {
                         (0..args.len())
