@@ -1795,3 +1795,29 @@ try {} catch ([x]) {}
         diags.iter().map(|d| (d.code, d.start)).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn interface_with_construct_signature_no_ts2351() {
+    // An interface with a construct signature (like ProxyConstructor) should
+    // be constructable via `new` without TS2351.
+    let diags = check_source_diagnostics(
+        r#"
+interface MyHandler<T extends object> {
+    get?(target: T, p: string): any;
+}
+interface MyConstructor {
+    new <T extends object>(target: T, handler: MyHandler<T>): T;
+}
+declare var MyProxy: MyConstructor;
+var t: object = {};
+var p = new MyProxy(t, {});
+"#,
+    );
+    let ts2351: Vec<_> = diags.iter().filter(|d| d.code == 2351).collect();
+    assert_eq!(
+        ts2351.len(),
+        0,
+        "Expected no TS2351 for interface with construct signature, got: {:?}",
+        ts2351.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}

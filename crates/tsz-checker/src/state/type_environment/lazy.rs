@@ -1012,6 +1012,7 @@ impl<'a> CheckerState<'a> {
                     }
                     return self.resolve_lazy_type_inner(resolved, visited);
                 }
+                drop(env);
             }
 
             // Try to look up the definition's body in the definition store
@@ -1022,7 +1023,7 @@ impl<'a> CheckerState<'a> {
 
             // If not in the definition store or type_env, try to resolve via symbol lookup
             // This handles type aliases that are resolved through compute_type_of_symbol
-            let sym_id_opt = self.ctx.def_to_symbol.borrow().get(&def_id).copied();
+            let sym_id_opt = self.ctx.def_to_symbol_id(def_id);
             if let Some(sym_id) = sym_id_opt {
                 // Trigger type computation for this symbol first.
                 // For CLASS symbols, this populates symbol_instance_types as a side effect.
@@ -1040,6 +1041,49 @@ impl<'a> CheckerState<'a> {
                 // Only recurse if the resolved type is different from the original
                 if resolved != type_id {
                     return self.resolve_lazy_type_inner(resolved, visited);
+                }
+            }
+
+            // Fourth fallback: resolve lib interface types by name.
+            //
+            // When a lib interface (e.g., ProxyConstructor) is referenced in a type
+            // annotation (e.g., `declare var Proxy: ProxyConstructor`), the Lazy(DefId)
+            // may not have a SymbolId mapping or type_env entry if the lib file's
+            // checker context didn't propagate them to the main context. The
+            // DefinitionStore still has the name, so we can materialize the interface
+            // type through the lib type resolution system.
+            if self.ctx.has_lib_loaded() {
+                if let Some(def_info) = self.ctx.definition_store.get(def_id) {
+                    if matches!(
+                        def_info.kind,
+                        tsz_solver::def::DefKind::Interface | tsz_solver::def::DefKind::TypeAlias
+                    ) {
+                        let name = self.ctx.types.resolve_atom(def_info.name);
+                        drop(def_info);
+                        if let Some(lib_type) = self.resolve_lib_type_by_name(&name) {
+                            if lib_type != type_id
+                                && lib_type != TypeId::ERROR
+                                && lib_type != TypeId::ANY
+                            {
+                                // Re-check the type_env: resolve_lib_type_by_name
+                                // materializes the interface and registers it in
+                                // the type_env as a side effect.
+                                let env = self.ctx.type_env.borrow();
+                                if let Some(resolved) = tsz_solver::TypeResolver::resolve_lazy(
+                                    &*env,
+                                    def_id,
+                                    self.ctx.types,
+                                ) && resolved != type_id
+                                {
+                                    drop(env);
+                                    return self.resolve_lazy_type_inner(resolved, visited);
+                                }
+                                drop(env);
+                                // If type_env still doesn't have it, use the lib type directly
+                                return self.resolve_lazy_type_inner(lib_type, visited);
+                            }
+                        }
+                    }
                 }
             }
         }
