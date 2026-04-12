@@ -315,6 +315,13 @@ impl<'a> CheckerState<'a> {
             if member_flags & tsz_binder::symbol_flags::VALUE == 0 {
                 continue;
             }
+            // For merged symbols (e.g., namespace + interface), verify that the
+            // VALUE part is actually exported. If only the TYPE part is exported,
+            // the value isn't accessible at runtime.
+            // symbol_has_exported_value_declaration handles lib symbols (u32::MAX) correctly.
+            if !self.symbol_has_exported_value_declaration(member_id) {
+                continue;
+            }
             let member_type = self.namespace_export_member_type(member_id, member_flags);
             let name_atom = self.ctx.types.intern_string(name);
             props.push(PropertyInfo {
