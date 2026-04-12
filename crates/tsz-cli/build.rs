@@ -16,6 +16,17 @@ fn detect_tsc_version_from_local_scripts(manifest_dir: &str) -> Option<String> {
     }
 }
 
+fn detect_tsc_version_from_versions_file(versions_path: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(versions_path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let current_sha = json.get("current")?.as_str()?;
+    json.get("mappings")?
+        .get(current_sha)?
+        .get("npm")?
+        .as_str()
+        .map(ToString::to_string)
+}
+
 fn detect_tsc_version_from_path() -> Option<String> {
     let output = Command::new("tsc").arg("--version").output().ok()?;
     if !output.status.success() {
@@ -34,8 +45,13 @@ fn detect_tsc_version_from_path() -> Option<String> {
 }
 
 fn main() {
-    // Read typescript-versions.json to extract the current npm version string
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let local_scripts_package_json = Path::new(&manifest_dir)
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("scripts/node_modules/typescript/package.json");
     let versions_path = Path::new(&manifest_dir)
         .parent()
         .unwrap()
@@ -43,7 +59,8 @@ fn main() {
         .unwrap()
         .join("scripts/conformance/typescript-versions.json");
 
-    let version = detect_tsc_version_from_local_scripts(&manifest_dir)
+    let version = detect_tsc_version_from_versions_file(&versions_path)
+        .or_else(|| detect_tsc_version_from_local_scripts(&manifest_dir))
         .or_else(detect_tsc_version_from_path)
         .unwrap_or_else(|| {
             if versions_path.exists() {
@@ -61,4 +78,8 @@ fn main() {
 
     println!("cargo:rustc-env=TSZ_TSC_VERSION={version}");
     println!("cargo:rerun-if-changed={}", versions_path.display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        local_scripts_package_json.display()
+    );
 }

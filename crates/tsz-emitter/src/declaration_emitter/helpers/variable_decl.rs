@@ -153,7 +153,6 @@ impl<'a> DeclarationEmitter<'a> {
                         .then_some(printed_type_text.as_str())
                     });
                 let preferred_type_is_directly_nameable = directly_nameable_type_text.is_some();
-
                 // TS2883: Check for non-portable inferred type references
                 if let Some(name_text) = self.get_identifier_text(decl_name)
                     && let Some(name_node) = self.arena.get(decl_name)
@@ -214,25 +213,6 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         let _ = self.emit_non_portable_import_type_text_diagnostics(
                             directly_nameable_type_text.unwrap_or(&printed_type_text),
-                            &name_text,
-                            &file_path,
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                        );
-                        self.emit_non_portable_initializer_declaration_diagnostics(
-                            initializer,
-                            &name_text,
-                            &file_path,
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                        );
-                    }
-                    if self.diagnostics.len() == diagnostics_before
-                        && has_initializer
-                        && !preferred_type_is_directly_nameable
-                    {
-                        self.emit_non_portable_initializer_declaration_diagnostics(
-                            initializer,
                             &name_text,
                             &file_path,
                             name_node.pos,
