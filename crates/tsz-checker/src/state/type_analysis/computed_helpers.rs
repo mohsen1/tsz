@@ -799,6 +799,15 @@ impl<'a> CheckerState<'a> {
         let mut current = alias_type;
         let mut visited = FxHashSet::default();
         visited.insert(own_def_id);
+        // Track whether we have traversed at least one intermediate alias.
+        // get_type_of_symbol_with_params pre-caches a Lazy(own_def_id) placeholder
+        // for type aliases before computing their real type. If the cached type
+        // is still this placeholder (e.g., because the parent checker's cache was
+        // not overwritten by a child checker's merge), the first hop would
+        // immediately match own_def_id and produce a false positive TS2456.
+        // A real cross-file circular alias must traverse through at least one
+        // other alias body before returning to own_def_id.
+        let mut hops = 0;
 
         loop {
             let Some(def_id) = lazy_def_id(self.ctx.types, current) else {
@@ -806,7 +815,10 @@ impl<'a> CheckerState<'a> {
             };
 
             if def_id == own_def_id {
-                return true;
+                // Only flag as circular if we traversed at least one intermediate
+                // alias. A direct Lazy(own_def_id) on the first hop is the
+                // pre-cached placeholder, not a real cycle.
+                return hops > 0;
             }
             if !visited.insert(def_id) {
                 return false;
@@ -827,6 +839,7 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
             current = body;
+            hops += 1;
         }
     }
 
