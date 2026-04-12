@@ -459,6 +459,7 @@ impl<'a> TypeFormatter<'a> {
                 | TypeData::Tuple(_)
                 | TypeData::Union(_)
                 | TypeData::Function(_)
+                | TypeData::Enum(_, _)
         );
         if !is_simple_type
             && let Some(alias_origin) = self.interner.get_display_alias(type_id)
