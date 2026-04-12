@@ -1956,3 +1956,33 @@ x2.f4();
         "Union of multi-overload interfaces with compatible this-pair (B) should NOT emit TS2349, got: {codes:?}"
     );
 }
+
+#[test]
+fn block_body_callback_emits_ts2345_not_ts2322_for_return_type_mismatch() {
+    // When a block-bodied callback's return type doesn't match the expected
+    // parameter type, tsc emits TS2345 at the argument level ("Argument of
+    // type ... is not assignable to parameter of type ..."), not TS2322 at
+    // the return statement. The elaboration path in handle_call_result must
+    // skip callback return elaboration for block-bodied callbacks so the
+    // outer TS2345 is emitted instead of an inner TS2322.
+    // Use simple types that don't require built-in lib.d.ts
+    let source = r#"
+interface Target { tag: "target" }
+
+declare function callWithCallback<T>(f: (x: number) => T): T;
+
+// Block-bodied callback whose return type (string) doesn't match T=Target
+var r1 = callWithCallback<Target>((x) => { return "hello" as string; });
+"#;
+    let diags = get_diagnostics(source);
+    let ts2322_count = diags.iter().filter(|(code, _)| *code == 2322).count();
+    let ts2345_count = diags.iter().filter(|(code, _)| *code == 2345).count();
+    assert_eq!(
+        ts2322_count, 0,
+        "Block-bodied callback should NOT emit TS2322 for return type mismatch. Diagnostics: {diags:?}"
+    );
+    assert!(
+        ts2345_count >= 1,
+        "Block-bodied callback should emit TS2345 for argument type mismatch. Diagnostics: {diags:?}"
+    );
+}
