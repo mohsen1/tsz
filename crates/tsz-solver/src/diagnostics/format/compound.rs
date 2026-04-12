@@ -424,7 +424,11 @@ impl<'a> TypeFormatter<'a> {
             .iter()
             .map(|&m| self.format_union_member(m))
             .collect();
-        formatted.join(" | ")
+        // Disambiguate duplicate display names by adding namespace qualification.
+        // tsc shows `Foo.Yep | Bar.Yep` instead of `Yep | Yep` when two different
+        // types share the same name in different namespaces.
+        let disambiguated = self.disambiguate_union_member_names(&ordered, formatted);
+        disambiguated.join(" | ")
     }
 
     fn collapse_same_enum_members_for_display(&mut self, members: &[TypeId]) -> Option<String> {
@@ -787,6 +791,78 @@ impl<'a> TypeFormatter<'a> {
             return Some(symbol.escaped_name.to_string());
         }
 
+        None
+    }
+
+    /// Disambiguate union member display names: when two members format to
+    /// the same string (e.g., `Yep | Yep`), try to add namespace qualification
+    /// so the output matches tsc (e.g., `Foo.Yep | Bar.Yep`).
+    fn disambiguate_union_member_names(
+        &mut self,
+        members: &[TypeId],
+        formatted: Vec<String>,
+    ) -> Vec<String> {
+        // Count occurrences of each display name
+        let mut counts = std::collections::HashMap::<&str, usize>::new();
+        for name in &formatted {
+            *counts.entry(name.as_str()).or_default() += 1;
+        }
+        // If no duplicates, return as-is
+        if !counts.values().any(|&c| c > 1) {
+            return formatted;
+        }
+        // Try to qualify duplicate names
+        let mut result = Vec::with_capacity(formatted.len());
+        for (name, &member) in formatted.iter().zip(members.iter()) {
+            if counts.get(name.as_str()).copied().unwrap_or(0) > 1 {
+                if let Some(qualified) = self.namespace_qualified_name_for_type(member) {
+                    if qualified != *name {
+                        result.push(qualified);
+                        continue;
+                    }
+                }
+            }
+            result.push(name.clone());
+        }
+        result
+    }
+
+    /// Try to get a namespace-qualified name for a type (for disambiguation).
+    fn namespace_qualified_name_for_type(&mut self, type_id: TypeId) -> Option<String> {
+        // Try object shape symbol
+        if let Some(shape) = crate::type_queries::get_object_shape(self.interner, type_id) {
+            if let Some(sym_id) = shape.symbol {
+                let name = self.format_symbol_name(sym_id)?;
+                return Some(self.namespace_qualify_symbol_name(sym_id, name));
+            }
+            // Try def-store lookup for anonymous object types (type alias bodies)
+            if let Some(def_store) = self.def_store
+                && let Some(def_id) = def_store.find_def_by_shape(&shape)
+                && let Some(def) = def_store.get(def_id)
+                && let Some(sym_raw) = def.symbol_id
+            {
+                let name = self.format_symbol_name(SymbolId(sym_raw))?;
+                return Some(self.namespace_qualify_symbol_name(SymbolId(sym_raw), name));
+            }
+        }
+        // Try Lazy(DefId)
+        if let Some(def_id) = crate::type_queries::get_lazy_def_id(self.interner, type_id) {
+            let def_store = self.def_store?;
+            let def = def_store.get(def_id)?;
+            if let Some(sym_raw) = def.symbol_id {
+                let name = self.format_symbol_name(SymbolId(sym_raw))?;
+                return Some(self.namespace_qualify_symbol_name(SymbolId(sym_raw), name));
+            }
+        }
+        // Try Enum
+        if let Some(def_id) = crate::type_queries::get_enum_def_id(self.interner, type_id) {
+            let def_store = self.def_store?;
+            let def = def_store.get(def_id)?;
+            if let Some(sym_raw) = def.symbol_id {
+                let name = self.format_symbol_name(SymbolId(sym_raw))?;
+                return Some(self.namespace_qualify_symbol_name(SymbolId(sym_raw), name));
+            }
+        }
         None
     }
 
@@ -1468,23 +1544,27 @@ impl<'a> TypeFormatter<'a> {
 
     fn qualify_namespace_name_if_needed(
         &self,
+        _sym_id: SymbolId,
+        _original_name: &str,
+        current_name: String,
+    ) -> String {
+        // tsc uses SHORT names in general type display, even when multiple types
+        // share the same name across different namespaces. Namespace qualification
+        // is only added in specific contexts (union display with same-name members,
+        // explicit disambiguation messages). Those paths are handled separately.
+        current_name
+    }
+
+    /// Namespace-qualify a symbol name for contexts where disambiguation is needed
+    /// (e.g., union display with same-name members from different namespaces).
+    pub(super) fn namespace_qualify_symbol_name(
+        &self,
         sym_id: SymbolId,
-        original_name: &str,
         current_name: String,
     ) -> String {
         let Some(arena) = self.symbol_arena else {
             return current_name;
         };
-
-        let has_name_collision = arena
-            .find_all_by_name(original_name)
-            .iter()
-            .copied()
-            .any(|other| other != sym_id);
-        if !has_name_collision {
-            return current_name;
-        }
-
         let Some(symbol) = arena.get(sym_id) else {
             return current_name;
         };
