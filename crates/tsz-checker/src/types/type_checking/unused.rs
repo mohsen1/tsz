@@ -561,13 +561,27 @@ impl<'a> CheckerState<'a> {
                         {
                             spec_name_node
                         } else if is_import {
-                            // ES import declarations are anchored at declaration start, but
-                            // import-equals diagnostics are anchored at the imported name.
+                            // TSC anchors at import statement start when either:
+                            // - There's only one binding in the import, OR
+                            // - All bindings are unused (entire import is unused)
+                            // Otherwise, anchor at the specific binding name.
                             if let Some(import_decl_idx) =
                                 self.find_parent_import_declaration(decl_idx)
                             {
-                                import_decl_idx
+                                let anchor_at_stmt = if let Some(&(total_count, unused_count)) =
+                                    import_declarations.get(&import_decl_idx)
+                                {
+                                    total_count == 1 || unused_count == total_count
+                                } else {
+                                    true
+                                };
+                                if anchor_at_stmt {
+                                    import_decl_idx
+                                } else {
+                                    self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx)
+                                }
                             } else {
+                                // Import-equals: anchor at binding name
                                 self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx)
                             }
                         } else {
