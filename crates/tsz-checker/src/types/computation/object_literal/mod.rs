@@ -132,6 +132,42 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Check if a function node is a "set" method inside an Object.defineProperty descriptor.
+    /// This is used to suppress TS7006 for setter parameters since they are contextually typed
+    /// from the getter (same as true SET_ACCESSOR nodes).
+    pub(crate) fn is_object_define_property_setter(&mut self, func_idx: NodeIndex) -> bool {
+        // func_idx is the METHOD_DECLARATION node itself
+        let Some(func_node) = self.ctx.arena.get(func_idx) else {
+            return false;
+        };
+
+        // Check if this is a method declaration named "set"
+        let is_set_method = if let Some(method) = self.ctx.arena.get_method_decl(func_node) {
+            self.get_property_name_resolved(method.name)
+                .is_some_and(|name| name == "set")
+        } else {
+            false
+        };
+        if !is_set_method {
+            return false;
+        }
+
+        // Get parent (object literal)
+        let Some(func_ext) = self.ctx.arena.get_extended(func_idx) else {
+            return false;
+        };
+        let object_literal_idx = func_ext.parent;
+        let Some(obj_node) = self.ctx.arena.get(object_literal_idx) else {
+            return false;
+        };
+        if obj_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+
+        // Check if object literal is an Object.defineProperty descriptor
+        self.is_object_define_property_descriptor_literal(object_literal_idx)
+    }
+
     /// Get the type of an object literal expression.
     ///
     /// Computes the type of object literals like `{ x: 1, y: 2 }` or `{ foo, bar }`.

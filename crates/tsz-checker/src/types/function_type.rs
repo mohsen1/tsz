@@ -1034,7 +1034,8 @@ impl<'a> CheckerState<'a> {
                 // build_type_environment (no contextual type), decorator closures,
                 // re-entrant closure resolution (first call handles diagnostics),
                 // and ambient declarations (declare class/module private members).
-                let is_setter = node.kind == syntax_kind_ext::SET_ACCESSOR;
+                let is_setter = node.kind == syntax_kind_ext::SET_ACCESSOR
+                    || self.is_object_define_property_setter(idx);
                 // In ambient contexts (declare class, .d.ts), tsc suppresses
                 // TS7006/TS7031 for private members since they're excluded from
                 // .d.ts output. check_method_declaration in ambient_signature_checks.rs
