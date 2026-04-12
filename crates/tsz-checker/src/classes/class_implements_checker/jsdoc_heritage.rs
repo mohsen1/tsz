@@ -1,5 +1,6 @@
 //! JSDoc @extends/@augments/@implements helpers and heritage clause utilities.
 
+use super::super::class_checker::format_property_name_for_diagnostic;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::query_boundaries::class::{
     should_report_member_type_mismatch, should_report_member_type_mismatch_bivariant,
@@ -815,10 +816,11 @@ impl<'a> CheckerState<'a> {
                     })
                     .unwrap_or(class_error_idx);
 
+                let display_name = format_property_name_for_diagnostic(&member_name);
                 self.error_at_node(
                     error_node_idx,
                     &format!(
-                        "Property '{member_name}' in type '{class_name}' is not assignable to the same property in base type '{target_name}'."
+                        "Property '{display_name}' in type '{class_name}' is not assignable to the same property in base type '{target_name}'."
                     ),
                     diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                 );

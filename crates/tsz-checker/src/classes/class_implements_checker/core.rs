@@ -1,6 +1,7 @@
 //! Class interface and implements checking (TS2420, TS2515, TS2654, TS2720).
 //! - Interface-extends-class accessibility checks
 
+use super::super::class_checker::format_property_name_for_diagnostic;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::query_boundaries::class::{
     should_report_member_type_mismatch, should_report_own_member_type_mismatch,
@@ -1337,10 +1338,11 @@ impl<'a> CheckerState<'a> {
                                 } else {
                                     class_member_idx
                                 };
+                            let display_name = format_property_name_for_diagnostic(&member_name);
                             self.error_at_node(
                                 error_node_idx,
                                 &format!(
-                                    "Property '{member_name}' in type '{class_name}' is not assignable to the same property in base type '{interface_display_name}'."
+                                    "Property '{display_name}' in type '{class_name}' is not assignable to the same property in base type '{interface_display_name}'."
                                 ),
                                 diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                             );
