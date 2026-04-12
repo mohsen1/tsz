@@ -516,28 +516,23 @@ impl<'a> CheckerState<'a> {
                     let arg_count = args.len();
                     (0..arg_count)
                         .map(|i| {
-                            // Check both the raw shape parameter type and the contextual
-                            // parameter type. Rest parameters use the last param, and the
-                            // contextual helper handles that mapping.
+                            // Check if the parameter type IS a bare type parameter (T),
+                            // not just a complex type that contains type parameters
+                            // (like a mapped type). Only bare type parameters capture
+                            // the full object shape, making excess property checking
+                            // inappropriate.
                             let from_shape = if i < shape.params.len() {
-                                common::contains_type_parameters(
-                                    self.ctx.types,
-                                    shape.params[i].type_id,
-                                )
+                                is_type_parameter_type(self.ctx.types, shape.params[i].type_id)
                             } else if let Some(last) = shape.params.last() {
                                 // Rest parameter: check the rest param's type
-                                last.rest
-                                    && common::contains_type_parameters(
-                                        self.ctx.types,
-                                        last.type_id,
-                                    )
+                                last.rest && is_type_parameter_type(self.ctx.types, last.type_id)
                             } else {
                                 false
                             };
                             let from_ctx = ctx_helper
                                 .get_parameter_type_for_call(i, arg_count)
                                 .is_some_and(|param_type| {
-                                    common::contains_type_parameters(self.ctx.types, param_type)
+                                    is_type_parameter_type(self.ctx.types, param_type)
                                 });
                             from_shape || from_ctx
                         })
@@ -1919,7 +1914,9 @@ impl<'a> CheckerState<'a> {
             )
         };
         self.ctx.preserve_literal_types = prev_preserve_literals;
-        self.ctx.generic_excess_skip = prev_generic_excess_skip;
+        // NOTE: generic_excess_skip is NOT restored here. It's kept until after all
+        // excess property checks are done (including recovery paths and handle_call_result).
+        // It's restored right before handle_call_result at the end of this function.
         // Keep shape_this_type on the stack through finalize_generic_call_result
         // and handle_call_result. Without this, post-inference rechecks triggered by
         // the call result handler would see an empty this_type_stack and fall back to
@@ -2029,9 +2026,17 @@ impl<'a> CheckerState<'a> {
                         node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                     });
             if recover_object_literal {
+                // Skip excess property checking when the original parameter type was a
+                // type parameter (captured via generic_excess_skip during arg collection).
+                let skip_epc_for_generic = self
+                    .ctx
+                    .generic_excess_skip
+                    .as_ref()
+                    .is_some_and(|skip| index < skip.len() && skip[index]);
                 if expected != TypeId::ANY
                     && expected != TypeId::UNKNOWN
                     && !is_type_parameter_type(self.ctx.types, expected)
+                    && !skip_epc_for_generic
                     && !self.contextual_type_is_unresolved_for_argument_refresh(expected)
                 {
                     self.check_object_literal_excess_properties(actual, expected, arg_idx);
@@ -2315,6 +2320,11 @@ impl<'a> CheckerState<'a> {
         if pushed_this_type_from_shape {
             self.ctx.this_type_stack.pop();
         }
-        self.handle_call_result(result, call_context)
+        // Keep generic_excess_skip set through handle_call_result so that error
+        // elaboration respects the skip flag for generic calls with type parameter
+        // targets. Restore it after handle_call_result completes.
+        let call_result = self.handle_call_result(result, call_context);
+        self.ctx.generic_excess_skip = prev_generic_excess_skip;
+        call_result
     }
 }

@@ -493,7 +493,15 @@ impl<'a> CheckerState<'a> {
                         .is_some_and(|arg_idx| self.argument_supports_literal_elaboration(arg_idx));
                 if let Some(arg_idx) = arg_idx {
                     self.suppress_later_call_excess_property_diagnostics(args, arg_idx);
+                    // Skip elaboration when the original parameter type was a type parameter
+                    // (excess properties are allowed for generic calls with type param targets).
+                    let skip_for_generic = self
+                        .ctx
+                        .generic_excess_skip
+                        .as_ref()
+                        .is_some_and(|skip| index < skip.len() && skip[index]);
                     if should_try_deferred_elaboration
+                        && !skip_for_generic
                         && !self.should_suppress_weak_key_arg_mismatch(
                             callee_expr,
                             args,
