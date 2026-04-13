@@ -1045,8 +1045,14 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let Some((from_path, type_name)) =
-            self.first_non_portable_type_reference(resolved_inferred_type)
+        // Check both the original (possibly Lazy) type and the resolved type.
+        // A Lazy(DefId) at the top level gets resolved away, losing the DefId
+        // that links back to the non-portable symbol. By checking the original
+        // type first, we catch cases like `export const x = getSpecial()` where
+        // the return type is a single non-portable interface reference.
+        if let Some((from_path, type_name)) = self
+            .first_non_portable_type_reference(inferred_type)
+            .or_else(|| self.first_non_portable_type_reference(resolved_inferred_type))
         {
             self.error_at_node_msg(
                 name_idx,
