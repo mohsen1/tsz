@@ -390,6 +390,33 @@ impl<'a> CheckerState<'a> {
                     return type_id;
                 }
 
+                // Guard: when a global interface (Function, Object, RegExp, Date,
+                // Error, etc.) resolves to an empty Object shape via cross-file
+                // delegation, it means the interface members were not fully
+                // populated. Preserve the original Lazy(DefId) so the subtype
+                // checker can recognise it via `is_boxed_def_id` and apply the
+                // correct intrinsic semantics (e.g., callable source ⊂ Function).
+                // Without this guard, `number` becomes assignable to the empty
+                // `{}` object, silencing TS2345/TS2769 errors.
+                if let Some(shape_id) = tsz_solver::visitor::object_shape_id(
+                    self.ctx.types.as_type_database(),
+                    resolved,
+                ) {
+                    let shape = self.ctx.types.object_shape(shape_id);
+                    if shape.properties.is_empty()
+                        && shape.string_index.is_none()
+                        && shape.number_index.is_none()
+                    {
+                        use tsz_solver::IntrinsicKind;
+                        let db = self.ctx.types.as_type_database();
+                        let is_known_boxed = db.is_boxed_def_id(def_id, IntrinsicKind::Function)
+                            || db.is_boxed_def_id(def_id, IntrinsicKind::Object);
+                        if is_known_boxed {
+                            return type_id;
+                        }
+                    }
+                }
+
                 // FIX: Detect identity loop by comparing DefId, not TypeId.
                 // When get_type_of_symbol hits a circular reference, it returns a Lazy placeholder
                 // for the same symbol. Even though the TypeId might be different (due to fresh interning),
