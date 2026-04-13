@@ -1857,3 +1857,28 @@ class Vec2_T<A> {
         ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn no_false_ts2339_on_class_param_with_same_class_type() {
+    // A method that takes a parameter of the same class type should be able to
+    // access properties on that parameter, even when another method returns
+    // the same class type (triggering class instance type cache invalidation).
+    let diags = check_source_diagnostics(
+        r#"
+class Foo<A> {
+    constructor(public x: A) {}
+    bar(): Foo<any> { return this; }
+    test(f: Foo<string>): void {
+        let v = f.x;
+    }
+}
+"#,
+    );
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for f.x where f: Foo<string>, got: {:?}",
+        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
