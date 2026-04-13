@@ -214,6 +214,13 @@ impl<'a> CheckerState<'a> {
         };
 
         if array.elements.nodes.is_empty() {
+            // In const assertion context (e.g., `[] as const` or inside a `const T`
+            // type parameter call), empty arrays become empty readonly tuples, not
+            // `never[]`. This matches tsc's behavior for `[] as const` → `readonly []`.
+            if self.ctx.in_const_assertion {
+                return factory.tuple(vec![]);
+            }
+
             // Empty array literal: always never[] in strict mode, any[] otherwise.
             // This matches tsc's checkArrayLiteral which unconditionally uses
             // implicitNeverType for empty arrays in strict mode, regardless of
