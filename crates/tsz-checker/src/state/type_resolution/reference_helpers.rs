@@ -679,8 +679,14 @@ impl<'a> CheckerState<'a> {
                 .get(&sym_id)
                 .or_else(|| self.ctx.symbol_instance_types.get(&active_class_sym))
             {
-                self.pop_type_parameters(updates);
-                return Some((instance_type, params));
+                // Don't return ERROR from the cache — it may have been temporarily
+                // stored by another code path (e.g., constructor type building's
+                // save/restore cycle). Fall through to re-resolve from the
+                // class_instance_type_cache which always has the correct final type.
+                if instance_type != TypeId::ERROR {
+                    self.pop_type_parameters(updates);
+                    return Some((instance_type, params));
+                }
             }
 
             let instance_type = self.get_class_instance_type(decl_idx, class);

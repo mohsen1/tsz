@@ -138,8 +138,24 @@ impl<'a> CheckerState<'a> {
             if let Some(&cached) = self.ctx.class_instance_type_cache.get(&class_idx) {
                 return cached;
             }
-        } else if is_in_resolution_set {
-            return TypeId::ERROR;
+        } else {
+            // When called without module augmentations (e.g., from constructor type
+            // building), still check the cache. Re-entering get_class_instance_type_inner
+            // when a cached result already exists corrupts shared state:
+            // - Overwrites class_instance_type_cache with an incomplete prescan type
+            // - The prescan type propagates to symbol_instance_types as ERROR
+            // - Subsequent property lookups on generic class instances fail (TS2339)
+            if is_in_resolution_set {
+                return self
+                    .ctx
+                    .class_instance_type_cache
+                    .get(&class_idx)
+                    .copied()
+                    .unwrap_or(TypeId::ERROR);
+            }
+            if let Some(&cached) = self.ctx.class_instance_type_cache.get(&class_idx) {
+                return cached;
+            }
         }
 
         let mut visited = FxHashSet::default();
@@ -1907,6 +1923,18 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .definition_store
                     .register_type_to_def(instance_type, def_id);
+                // Register the class instance type in both type environments
+                // so that Lazy(DefId) can resolve via resolve_lazy during
+                // property access on generic class instances (Application types).
+                // Without this, the solver's property_helpers cannot find the
+                // body type for Application(Lazy(DefId), Args), causing false
+                // TS2339 on property access like `f.x` where f: Vec2<T>.
+                self.ctx
+                    .register_class_instance_in_envs(def_id, instance_type);
+                // Also register the DefId-to-SymbolId mapping and body in the
+                // type environments so the solver can resolve type parameters.
+                self.ctx
+                    .register_resolved_type(sym_id, instance_type, class_type_params.clone());
                 // Use get_type_params_for_symbol to populate the cache with properly
                 // merged params. For merged class+interface declarations (e.g.,
                 // `declare class C<P, S>` + `interface C<P = {}, S = {}>`), the
