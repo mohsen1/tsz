@@ -96,3 +96,48 @@ SomeClass.prop = 0;
         "Expected no TS2300/TS7009 for checked-JS constructor/class merge, got: {diagnostics:#?}"
     );
 }
+
+/// Regression test: when a constructor function in file1.js merges with a class
+/// in file2.js, accessing static properties on the class (e.g. `SomeClass.prop = 0`)
+/// should NOT produce TS18046 ("'SomeClass' is of type 'unknown'").
+///
+/// Root cause: `compute_class_symbol_type` only searched the current file's arena
+/// for the class declaration. When the CLASS declaration was in a different file's
+/// arena, the function returned TypeId::UNKNOWN, triggering false TS18046 errors
+/// on any property access or constructor call on the class.
+#[test]
+fn cross_file_class_merge_no_false_ts18046() {
+    let diagnostics = check_project(&[
+        (
+            "file1.js",
+            r#"
+var SomeClass = function () {
+    this.otherProp = 0;
+};
+
+new SomeClass();
+"#,
+        ),
+        (
+            "file2.js",
+            r#"
+class SomeClass { }
+SomeClass.prop = 0;
+"#,
+        ),
+    ]);
+
+    let mut ts18046_errors = Vec::new();
+    for (file_name, codes) in &diagnostics {
+        for &code in codes {
+            if code == 18046 {
+                ts18046_errors.push(file_name.clone());
+            }
+        }
+    }
+
+    assert!(
+        ts18046_errors.is_empty(),
+        "Expected no TS18046 for cross-file class/constructor merge, but got TS18046 in: {ts18046_errors:?}\nAll diagnostics: {diagnostics:#?}"
+    );
+}
