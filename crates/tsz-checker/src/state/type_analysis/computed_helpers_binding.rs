@@ -447,7 +447,35 @@ impl<'a> CheckerState<'a> {
             self.ctx.symbol_instance_types.insert(sym_id, instance_type);
 
             let ctor_type = self.get_class_constructor_type(decl_idx, class);
-            self.ctx.symbol_types.insert(sym_id, ctor_type);
+            // Guard against constructor type cache corruption.
+            //
+            // When an outer `get_class_constructor_type(C)` is already in
+            // progress (typical for self-referential static member types
+            // like `static instance: C<string>[]`), a nested
+            // `get_type_of_symbol(C)` can re-enter this function. The
+            // nested call's `get_class_constructor_type(C)` hits the
+            // in-progress guard and returns a cycle-fallback: the current
+            // `symbol_types[C]`, which at this point is the `Lazy(DefId)`
+            // placeholder that `get_type_of_symbol_inner` installed. That
+            // Lazy resolves to the class's INSTANCE type (not the
+            // constructor type). Storing it in `symbol_types[C]` would
+            // corrupt later value-position lookups of `C` (e.g.
+            // `C.instance` in an instance method body → false TS2339).
+            //
+            // Detect the degenerate case (ctor_type is a Lazy pointing at
+            // the class's own DefId) and skip the cache overwrite so that
+            // the outer resolution, once it completes, keeps providing the
+            // correct constructor type on the next lookup.
+            let is_degenerate_lazy = {
+                use crate::query_boundaries::common as common_query;
+                let lazy_def =
+                    common_query::lazy_def_id(self.ctx.types.as_type_database(), ctor_type);
+                let own_def = self.ctx.get_existing_def_id(sym_id);
+                lazy_def.is_some() && lazy_def == own_def
+            };
+            if !is_degenerate_lazy {
+                self.ctx.symbol_types.insert(sym_id, ctor_type);
+            }
 
             let ctor_type = if flags & symbol_flags::FUNCTION != 0 {
                 self.merge_function_call_signatures_into_class(ctor_type, declarations)

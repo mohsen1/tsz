@@ -1892,8 +1892,40 @@ impl<'a> CheckerState<'a> {
             .symbol_resolution_depth
             .set(self.ctx.symbol_resolution_depth.get() - 1);
 
-        // Cache result
-        self.ctx.symbol_types.insert(sym_id, result);
+        // Cache result.
+        //
+        // Guard against constructor type cache corruption from cycle-
+        // fallback values: when an outer `get_class_constructor_type(C)`
+        // is in progress and a nested `get_type_of_symbol(C)` arrives,
+        // `compute_class_symbol_type` can observe a Lazy(DefId)
+        // cycle-fallback and propagate it as `result`. That Lazy points
+        // at the class's own DefId and resolves to the INSTANCE type —
+        // caching it here would poison later value-position lookups of
+        // the class (e.g. `C.staticProp` inside an instance method body)
+        // and produce false TS2339. Instead, drop the placeholder so the
+        // next lookup re-enters and observes the fully-built constructor
+        // type after the outer resolution completes.
+        let result_is_lazy_to_self = {
+            use crate::query_boundaries::common as common_query;
+            common_query::lazy_def_id(self.ctx.types.as_type_database(), result)
+                .and_then(|def_id| {
+                    self.ctx
+                        .get_existing_def_id(sym_id)
+                        .map(|own| (def_id, own))
+                })
+                .is_some_and(|(ld, od)| ld == od)
+        };
+        if result_is_lazy_to_self
+            && self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|s| s.flags & symbol_flags::CLASS != 0)
+        {
+            self.ctx.symbol_types.remove(&sym_id);
+        } else {
+            self.ctx.symbol_types.insert(sym_id, result);
+        }
         trace!(
             sym_id = sym_id.0,
             type_id = result.0,
