@@ -2995,10 +2995,36 @@ impl<'a> CheckerState<'a> {
                     || is_inside_declare_context()
             }),
             syntax_kind_ext::VARIABLE_DECLARATION => {
-                // For variable declarations, check if inside a declare context
-                // (e.g., `declare namespace Foo { var x: number; }`)
-                // The export modifier is on the parent VARIABLE_STATEMENT, not the declaration itself
-                Some(is_inside_export_decl() || is_inside_declare_context())
+                // For variable declarations, the export modifier is on the
+                // grandparent VariableStatement, not the VariableDeclaration itself.
+                // AST: VariableStatement → VariableDeclarationList → VariableDeclaration
+                let has_export_on_var_stmt = || -> bool {
+                    // VariableDeclaration → parent → VariableDeclarationList
+                    let Some(ext1) = arena.get_extended(decl_idx) else {
+                        return false;
+                    };
+                    // VariableDeclarationList → parent → VariableStatement
+                    let Some(ext2) = arena.get_extended(ext1.parent) else {
+                        return false;
+                    };
+                    let Some(var_stmt) = arena.get(ext2.parent) else {
+                        return false;
+                    };
+                    if var_stmt.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                        return false;
+                    }
+                    arena
+                        .get_variable(var_stmt)
+                        .and_then(|v| v.modifiers.as_ref())
+                        .is_some_and(|mods| {
+                            arena.has_modifier_ref(Some(mods), SyntaxKind::ExportKeyword)
+                        })
+                };
+                Some(
+                    has_export_on_var_stmt()
+                        || is_inside_export_decl()
+                        || is_inside_declare_context(),
+                )
             }
             _ => Some(false), // Skip non-value declarations (interface, type alias)
         }
