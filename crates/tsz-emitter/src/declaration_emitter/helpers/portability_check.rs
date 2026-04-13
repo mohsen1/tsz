@@ -96,6 +96,174 @@ impl<'a> DeclarationEmitter<'a> {
         true
     }
 
+    /// When the inferred type is `any`/`error` and the initializer is a call
+    /// expression,
+    /// trace through the callee's declared return type to check for non-portable
+    /// type references. This handles cases like:
+    ///   `export const special = getSpecial();`
+    /// where `getSpecial()` returns `MySpecialType` from a nested node_modules.
+    pub(crate) fn check_call_expression_return_type_portability(
+        &mut self,
+        initializer: NodeIndex,
+        decl_name: &str,
+        file: &str,
+        pos: u32,
+        length: u32,
+    ) {
+        if self.skip_portability_check {
+            return;
+        }
+
+        let Some(init_node) = self.arena.get(initializer) else {
+            return;
+        };
+
+        if init_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return;
+        }
+
+        let Some(call) = self.arena.get_call_expr(init_node) else {
+            return;
+        };
+
+        // Get the callee's type from the type cache
+        let Some(interner) = self.type_interner else {
+            return;
+        };
+        let Some(callee_type_id) = self.get_node_type_or_names(&[call.expression]) else {
+            return;
+        };
+
+        // Extract the return type of the callee function
+        let Some(return_type_id) =
+            tsz_solver::type_queries::get_return_type(&*interner, callee_type_id)
+        else {
+            return;
+        };
+
+        // Skip if return type is also `any` or `error` — no useful information
+        if return_type_id == tsz_solver::types::TypeId::ANY
+            || return_type_id == tsz_solver::types::TypeId::ERROR
+        {
+            // The return type is unresolved. Fall back to checking the callee
+            // function's declaration-level return type annotation by tracing
+            // through the binder's symbol declarations.
+            self.check_callee_declaration_return_type_portability(
+                call.expression,
+                decl_name,
+                file,
+                pos,
+                length,
+            );
+            return;
+        }
+
+        // Run the full portability check on the return type
+        let _ =
+            self.emit_non_portable_type_diagnostic(return_type_id, decl_name, file, pos, length);
+    }
+
+    /// When the callee's return type can't be resolved through the solver,
+    /// trace through the binder's symbol declarations to find the return type
+    /// annotation and check the referenced type symbols for portability.
+    fn check_callee_declaration_return_type_portability(
+        &mut self,
+        callee_expr: NodeIndex,
+        decl_name: &str,
+        file: &str,
+        pos: u32,
+        length: u32,
+    ) {
+        let Some(binder) = self.binder else {
+            return;
+        };
+
+        // Get the callee's symbol
+        let Some(sym_id) = self.value_reference_symbol(callee_expr) else {
+            return;
+        };
+
+        // Resolve alias (import) to the target symbol
+        let resolved = self.resolve_portability_symbol(sym_id, binder);
+        let Some(symbol) = binder.symbols.get(resolved) else {
+            return;
+        };
+
+        // Find the function declaration and look for a return type annotation
+        for &decl_idx in &symbol.declarations {
+            let source_arena = binder
+                .symbol_arenas
+                .get(&resolved)
+                .map(|arena| arena.as_ref())
+                .unwrap_or(self.arena);
+
+            let Some(decl_node) = source_arena.get(decl_idx) else {
+                continue;
+            };
+
+            // Check if it's a function declaration with a return type annotation
+            let Some(func) = source_arena.get_function(decl_node) else {
+                continue;
+            };
+
+            if func.type_annotation.is_none() {
+                continue;
+            }
+
+            // Get the return type annotation node
+            let Some(type_node) = source_arena.get(func.type_annotation) else {
+                continue;
+            };
+
+            // If the return type is a type reference (simple identifier),
+            // find its symbol and check portability
+            if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                let Some(type_ref) = source_arena.get_type_ref(type_node) else {
+                    continue;
+                };
+                // Get the type name from the type reference
+                let type_name_idx = type_ref.type_name;
+                let type_name_text = source_arena
+                    .get(type_name_idx)
+                    .and_then(|n| source_arena.get_identifier(n))
+                    .map(|id| id.escaped_text.clone());
+                let Some(type_name_text) = type_name_text else {
+                    continue;
+                };
+
+                // Look up the type symbol through the binder's node-symbol mapping
+                let type_sym_id = binder.get_node_symbol(type_name_idx);
+                if let Some(type_sym_id) = type_sym_id {
+                    let current_file_path = self.current_file_path.as_deref().unwrap_or("");
+                    let mut visited_types = rustc_hash::FxHashSet::default();
+                    let mut visited_symbols = rustc_hash::FxHashSet::default();
+                    let mut visited_declaration_symbols = rustc_hash::FxHashSet::default();
+                    let mut visited_nodes = rustc_hash::FxHashSet::default();
+
+                    if let Some((from_path, _type_name)) = self.check_symbol_portability(
+                        type_sym_id,
+                        binder,
+                        current_file_path,
+                        &mut visited_types,
+                        &mut visited_symbols,
+                        &mut visited_declaration_symbols,
+                        &mut visited_nodes,
+                    ) {
+                        use tsz_common::diagnostics::Diagnostic;
+                        self.diagnostics.push(Diagnostic::from_code(
+                            2883,
+                            file,
+                            pos,
+                            length,
+                            &[decl_name, &from_path, &type_name_text],
+                        ));
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     pub(crate) fn emit_non_portable_expression_symbol_diagnostic(
         &mut self,
         expr_idx: NodeIndex,
