@@ -91,7 +91,8 @@
     }
   ],
   "known_dead_ends": [
-    "Analyzed 4 representative tests: chainedPrototypeAssignment (require resolution), genericDefaults (default type params), strictSubtypeAndNarrowing (type predicates), assignmentToVoidZero1 (flow analysis)"
+    "Analyzed 4 representative tests: chainedPrototypeAssignment (require resolution), genericDefaults (default type params), strictSubtypeAndNarrowing (type predicates), assignmentToVoidZero1 (flow analysis)",
+    "2026-04-13: cross-file interface merging (mergedInterfaceFromMultipleFiles1.ts, parameterNamesInTypeParameterList.ts, typeOfThisInInstanceMember2.ts). Attempted single-session fix via per-declaration arena delegation in compute_interface_type_from_declarations (added helper compute_interface_decl_type_in_arena in cross_file.rs). Reverted because the root cause is deeper: per-file binders only see their own file's declarations for the symbol (decls_count=1 in debug log, when tsc sees 2). The symbol-level merge happens in tsz_core::parallel::core.rs only for non-external-module files, but the symbol ID visible to the checker in _1.ts doesn't resolve to the globally-merged symbol — it remains the per-file local view. The ///<reference path=> tests need either: (a) checker uses the GLOBAL merged symbol (via merged_symbols map in parallel merge), OR (b) per-file binders each expose all declarations via cross-file lookup. Touching this requires coordinated changes across tsz-binder, tsz-core/parallel, and checker symbol resolution — beyond a single agent cycle."
   ],
   "promising_leads": [
     "assignmentToVoidZero1.ts is close-to-passing (diff=1) with missing TS2322 - flow analysis issue",
