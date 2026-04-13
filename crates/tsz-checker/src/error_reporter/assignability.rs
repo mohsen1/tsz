@@ -1006,7 +1006,13 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         target_display: String,
     ) -> String {
+        // Callable types use syntax like `{ (x: "foo"): number; }` which has `: "` pattern
+        // but these are parameter literals that should be preserved, not object property
+        // literals that should be widened. Skip rewriting for callable types.
+        let is_callable_type =
+            tsz_solver::type_queries::get_callable_shape(self.ctx.types, target).is_some();
         if target_display.contains("=>")
+            || is_callable_type
             || !Self::display_has_member_literals_assignability(&target_display)
         {
             return target_display;
