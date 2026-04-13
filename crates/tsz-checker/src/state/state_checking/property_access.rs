@@ -172,34 +172,67 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // If the solver returned PropertyNotFound for a TypeParameter whose
-        // constraint is an Application (e.g. `P extends Partial<Foo>`), the
-        // solver's NoopResolver couldn't expand the Application body.  Evaluate
-        // the constraint through the checker's TypeEnvironment and retry.
+        // If the solver returned PropertyNotFound or a bare Success{ANY} for a
+        // TypeParameter whose constraint is a Lazy type reference (e.g.
+        // `T extends Box` where Box is an interface, or `P extends Partial<Foo>`),
+        // the solver's NoopResolver couldn't expand the constraint body and
+        // falls back to ANY. Evaluate the constraint through the checker's
+        // TypeEnvironment and retry to recover the real property type.
+        //
+        // Restrict the Success{ANY} case to direct `Lazy(DefId)` constraints
+        // to avoid retriggering on unconstrained type parameters participating
+        // in generic inference (which can loop when the evaluated constraint
+        // still contains type parameters).
         // TODO: Move this resolution into the solver's PropertyAccessEvaluator
         // once it gains full TypeEnvironment/TypeResolver awareness.
-        if matches!(
+        let retry_for_not_found = matches!(
             result,
             tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
-        ) && let Some(constraint) =
-            crate::query_boundaries::state::checking::type_parameter_constraint(
-                self.ctx.types,
-                resolved_object_type,
-            )
+        );
+        let retry_for_any = matches!(
+            result,
+            tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id: TypeId::ANY,
+                from_index_signature: false,
+                ..
+            }
+        );
+        if (retry_for_not_found || retry_for_any)
+            && let Some(constraint) =
+                crate::query_boundaries::state::checking::type_parameter_constraint(
+                    self.ctx.types,
+                    resolved_object_type,
+                )
         {
-            let evaluated = self.evaluate_type_with_env(constraint);
-            if evaluated != constraint && evaluated != TypeId::ANY && evaluated != TypeId::ERROR {
-                let retry_result = self.ctx.types.resolve_property_access_with_options(
-                    evaluated,
-                    prop_name,
-                    self.ctx.compiler_options.no_unchecked_indexed_access,
-                );
-                if matches!(
-                    retry_result,
-                    tsz_solver::operations::property::PropertyAccessResult::Success { .. }
-                ) {
-                    result = retry_result;
-                    resolved_object_type = evaluated;
+            let should_retry =
+                retry_for_not_found || tsz_solver::is_lazy_type(self.ctx.types, constraint);
+            if should_retry {
+                let evaluated = self.evaluate_type_with_env(constraint);
+                if evaluated != constraint && evaluated != TypeId::ANY && evaluated != TypeId::ERROR
+                {
+                    let retry_result = self.ctx.types.resolve_property_access_with_options(
+                        evaluated,
+                        prop_name,
+                        self.ctx.compiler_options.no_unchecked_indexed_access,
+                    );
+                    // Only accept the retry if it produced a concrete Success
+                    // (not another bare Success{ANY}), so we don't mask genuine
+                    // TypeParameter-with-any-constraint cases.
+                    let retry_improved = match retry_result {
+                        tsz_solver::operations::property::PropertyAccessResult::Success {
+                            type_id,
+                            from_index_signature,
+                            ..
+                        } => type_id != TypeId::ANY || from_index_signature,
+                        tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
+                            ..
+                        } => false,
+                        _ => true,
+                    };
+                    if retry_improved {
+                        result = retry_result;
+                        resolved_object_type = evaluated;
+                    }
                 }
             }
         }
