@@ -35693,3 +35693,154 @@ export const myVar: number = 42;
         mappings.len()
     );
 }
+
+/// Test that super() in a class extending a class with private static fields
+/// does NOT emit false TS2346 ("Call target does not contain any signatures").
+/// Regression test for conformance: privateNamesAndStaticFields.ts
+#[test]
+fn test_super_call_no_false_ts2346_with_private_static_fields() {
+    use crate::parser::ParserState;
+
+    let source = r#"
+class A {
+    static #foo: number;
+    static #bar: number;
+    constructor () {
+    }
+}
+
+class B extends A {
+    static #foo: string;
+    constructor () {
+        super();
+        B.#foo = "some string";
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    println!("=== super() with private static fields ===");
+    for diag in &checker.ctx.diagnostics {
+        println!(
+            "  TS{}: {} (pos={})",
+            diag.code, diag.message_text, diag.start
+        );
+    }
+
+    let has_2346 = checker.ctx.diagnostics.iter().any(|d| d.code == 2346);
+    assert!(
+        !has_2346,
+        "Should NOT emit TS2346 for super() in class with private static fields. Diagnostics: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Test that super() in a class extending a forward-declared class
+/// does NOT emit false TS2346. tsc emits TS2449 for the forward reference
+/// but NOT TS2346 for the super() call.
+/// Regression test for conformance: classSideInheritance2.ts
+#[test]
+fn test_super_call_no_false_ts2346_with_forward_reference() {
+    use crate::parser::ParserState;
+
+    let source = r#"
+interface IText {
+    foo: number;
+}
+
+interface TextSpan {}
+
+class SubText extends TextBase {
+    constructor(text: IText, span: TextSpan) {
+        super();
+    }
+}
+
+class TextBase implements IText {
+    public foo: number;
+    public subText(span: TextSpan): IText {
+        return new SubText(this, span);
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    println!("=== super() with forward reference ===");
+    for diag in &checker.ctx.diagnostics {
+        println!(
+            "  TS{}: {} (pos={})",
+            diag.code, diag.message_text, diag.start
+        );
+    }
+
+    let has_2346 = checker.ctx.diagnostics.iter().any(|d| d.code == 2346);
+    assert!(
+        !has_2346,
+        "Should NOT emit TS2346 for super() in class with forward-referenced base. Diagnostics: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+
+    // TS2449 (forward reference) should still be emitted
+    let has_2449 = checker.ctx.diagnostics.iter().any(|d| d.code == 2449);
+    assert!(
+        has_2449,
+        "Should still emit TS2449 for class used before its declaration"
+    );
+}

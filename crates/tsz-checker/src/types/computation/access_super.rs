@@ -72,7 +72,40 @@ impl<'a> CheckerState<'a> {
                     extends_type_args.as_ref(),
                 )
             {
-                return ctor_type;
+                // For super() calls without explicit type arguments, verify
+                // the resolved type has construct signatures. When the base
+                // class is forward-referenced (used before its declaration),
+                // identifier resolution may return a stale symbol type (a
+                // Callable with static properties but missing construct
+                // signatures) even though the direct class constructor type
+                // computation produces the correct type. In that case, fall
+                // through to get_class_constructor_type which builds the
+                // constructor type from the AST and always includes construct
+                // signatures (including default constructors).
+                //
+                // When type arguments ARE present, missing construct sigs may
+                // be intentional (e.g., `extends Base<any>` where Base is not
+                // generic — apply_type_arguments_to_constructor_type_for_extends
+                // deliberately strips construct sigs so TS2346 fires). In that
+                // case, return the type as-is.
+                if is_super_call && extends_type_args.is_none() {
+                    let has_construct_sigs =
+                        crate::query_boundaries::common::construct_signatures_for_type(
+                            self.ctx.types,
+                            ctor_type,
+                        )
+                        .is_some_and(|sigs| !sigs.is_empty());
+
+                    if !has_construct_sigs {
+                        // Fall through: super() target lacks construct
+                        // signatures without type args — likely a forward
+                        // reference. Try direct class constructor type lookup.
+                    } else {
+                        return ctor_type;
+                    }
+                } else {
+                    return ctor_type;
+                }
             }
 
             let Some(base_class_idx) = self.get_base_class_idx(class_info.class_idx) else {
