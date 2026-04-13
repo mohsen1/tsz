@@ -387,9 +387,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 && !self.checker.is_assignable_to(*arg_type, constraint)
                 && !self.is_function_union_compat(*arg_type, constraint)
             {
+                // Use the type parameter itself (e.g., `T`) in the error message,
+                // not its constraint (e.g., `Base`). tsc reports "not assignable
+                // to parameter of type 'T'" rather than "type 'Base'".
                 return Some(CallResult::ArgumentTypeMismatch {
                     index: i,
-                    expected: constraint,
+                    expected: param_info.type_id,
                     actual: *arg_type,
                     fallback_return: TypeId::ERROR,
                 });
