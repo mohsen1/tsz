@@ -559,7 +559,6 @@ FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Expressions/parserCon
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Fuzz/parser0_004152.ts | expected:[TS1005,TS1068,TS1137,TS1434] actual:[TS1005,TS1068,TS1137,TS1434]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Generics/parserGenericsInTypeContexts1.ts | expected:[TS2304,TS2315,TS2503] actual:[TS2304,TS2315,TS2503]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Generics/parserGenericsInTypeContexts2.ts | expected:[TS2304,TS2315,TS2503] actual:[TS2304,TS2315,TS2503]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Generics/parserGenericsInVariableDeclaration1.ts | expected:[TS2304] actual:[TS2304]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser509698.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserForStatement3.ts | expected:[TS2304] actual:[TS2304]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/StrictMode/parserStrictMode15-negative.ts | expected:[TS2304] actual:[TS2304]
@@ -10750,6 +10749,7 @@ PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Generics/parserGeneri
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Generics/parserGenericConstraint6.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Generics/parserGenericConstraint7.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Generics/parserGenericsInInterfaceDeclaration1.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Generics/parserGenericsInVariableDeclaration1.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Generics/parserGreaterThanTokenAmbiguity1.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Generics/parserGreaterThanTokenAmbiguity10.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/Generics/parserGreaterThanTokenAmbiguity11.ts
