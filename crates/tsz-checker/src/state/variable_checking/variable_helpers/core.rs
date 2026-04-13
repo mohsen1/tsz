@@ -462,6 +462,19 @@ impl<'a> CheckerState<'a> {
             return enum_obj;
         }
 
+        // For TS2403, when strictNullChecks is off, tsc still reports the raw
+        // expression type (`undefined`) rather than the widened `any`. Recompute
+        // the initializer type without widening for element access expressions
+        // that may return `undefined` (e.g., out-of-bounds tuple access).
+        if fallback_type == TypeId::ANY
+            && init_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            let raw_type = self.get_type_of_node(init_idx);
+            if raw_type == TypeId::UNDEFINED || raw_type == TypeId::NULL {
+                return raw_type;
+            }
+        }
+
         fallback_type
     }
 
