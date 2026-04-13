@@ -70,7 +70,7 @@ impl<'a> CheckerState<'a> {
         // unresolved base and each unresolved type argument. The results are
         // memoized and will be reused by the success paths below.
         if has_type_args && let Some(args) = type_query.type_arguments.as_ref() {
-            let arg_nodes: Vec<NodeIndex> = args.nodes.iter().copied().collect();
+            let arg_nodes: Vec<NodeIndex> = args.nodes.to_vec();
             for arg_idx in arg_nodes {
                 let _ = self.get_type_from_type_node(arg_idx);
             }

@@ -3175,23 +3175,18 @@ class C3 {
 
     for i in 0..arena.len() {
         let node_idx = NodeIndex(i as u32);
-        if let Some(node) = arena.get(node_idx) {
-            if node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16 {
-                if let Some(ident) = arena.get_identifier(node) {
-                    if ident.escaped_text == "#a2_accessor_storage" {
-                        // Check if this is the one in the binary expression (not the declaration)
-                        if let Some(ext) = arena.get_extended(node_idx) {
-                            if let Some(parent) = arena.get(ext.parent) {
-                                if parent.kind
-                                    == tsz_parser::parser::syntax_kind_ext::BINARY_EXPRESSION
-                                {
-                                    private_ident_idx = node_idx;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
+        if let Some(node) = arena.get(node_idx)
+            && node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
+            && let Some(ident) = arena.get_identifier(node)
+            && ident.escaped_text == "#a2_accessor_storage"
+        {
+            // Check if this is the one in the binary expression (not the declaration)
+            if let Some(ext) = arena.get_extended(node_idx)
+                && let Some(parent) = arena.get(ext.parent)
+                && parent.kind == tsz_parser::parser::syntax_kind_ext::BINARY_EXPRESSION
+            {
+                private_ident_idx = node_idx;
+                break;
             }
         }
     }

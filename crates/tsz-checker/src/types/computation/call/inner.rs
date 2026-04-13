@@ -1604,7 +1604,7 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.arena.get(arg_idx).and_then(|node| {
                                         (node.kind == syntax_kind_ext::ARROW_FUNCTION
                                             || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-                                            .then(|| (node.pos, node.end))
+                                            .then_some((node.pos, node.end))
                                     })
                                 })
                                 .flatten()
