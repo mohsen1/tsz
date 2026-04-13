@@ -611,6 +611,23 @@ impl BinderState {
             return true;
         }
 
+        // Files with extensions that unambiguously imply a module format (Node16+
+        // CJS/ESM extensions) are always modules, regardless of statement content.
+        // Matches tsc's `isFileForcedToBeModuleByFormat` under `moduleDetection: auto`.
+        // Excludes declaration files (`.d.cts`, `.d.mts`), which still require an
+        // explicit module indicator.
+        let fname = source.file_name.as_str();
+        let is_declaration_file =
+            fname.ends_with(".d.ts") || fname.ends_with(".d.cts") || fname.ends_with(".d.mts");
+        if !is_declaration_file
+            && (fname.ends_with(".cts")
+                || fname.ends_with(".mts")
+                || fname.ends_with(".cjs")
+                || fname.ends_with(".mjs"))
+        {
+            return true;
+        }
+
         // Check for CommonJS module indicator: `module.exports = ...` or `exports.x = ...`
         Self::source_file_has_commonjs_indicator(arena, &source.statements.nodes)
     }
