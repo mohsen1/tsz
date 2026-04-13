@@ -1004,3 +1004,38 @@ export var publicVar: publicClass;
         "exported class should be emitted"
     );
 }
+
+// ── TS2883 portability check: call expression return type ──────────
+
+#[test]
+fn check_call_expression_return_type_portability_skips_non_call() {
+    // Verify that check_call_expression_return_type_portability does nothing
+    // for non-call-expression initializers (e.g., simple identifiers).
+    let mut parser = ParserState::new("test.ts".to_string(), "let x = 42;".to_string());
+    let _ = parser.parse_source_file();
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+
+    // Should not panic or produce diagnostics for non-call nodes
+    emitter.check_call_expression_return_type_portability(NodeIndex::NONE, "x", "test.ts", 4, 1);
+
+    assert!(
+        emitter.diagnostics.is_empty(),
+        "no diagnostics expected for non-call initializers"
+    );
+}
+
+#[test]
+fn check_call_expression_return_type_portability_skip_when_disabled() {
+    // Verify the check respects skip_portability_check flag
+    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
+    let _ = parser.parse_source_file();
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    emitter.set_skip_portability_check(true);
+
+    emitter.check_call_expression_return_type_portability(NodeIndex::NONE, "x", "test.ts", 0, 1);
+
+    assert!(
+        emitter.diagnostics.is_empty(),
+        "no diagnostics when portability check is disabled"
+    );
+}

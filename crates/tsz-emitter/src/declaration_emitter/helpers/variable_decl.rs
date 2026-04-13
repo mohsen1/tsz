@@ -201,6 +201,24 @@ impl<'a> DeclarationEmitter<'a> {
                             );
                         }
                     }
+                    // When the inferred type is `any` or `error` and the
+                    // initializer is a call expression, the type cache may not
+                    // have the correct type for the variable. Trace through the
+                    // callee's declared return type to check for non-portable
+                    // references.
+                    if self.diagnostics.len() == diagnostics_before
+                        && has_initializer
+                        && (type_id == tsz_solver::types::TypeId::ANY
+                            || type_id == tsz_solver::types::TypeId::ERROR)
+                    {
+                        self.check_call_expression_return_type_portability(
+                            initializer,
+                            &name_text,
+                            &file_path,
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                        );
+                    }
                     if !ran_symbol_check
                         && self.diagnostics.len() == diagnostics_before
                         && has_initializer
