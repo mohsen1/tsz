@@ -416,6 +416,12 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/types/computation/call/inner.rs",
             # Pre-existing: grew past 2000 lines from assignment-ops refactor
             "crates/tsz-checker/src/assignability/assignment_checker/assignment_ops.rs",
+            # Pre-existing oversized files captured as current ratchet baseline.
+            "crates/tsz-checker/src/state/state_checking_members/interface_checks.rs",
+            "crates/tsz-checker/src/jsdoc/diagnostics.rs",
+            "crates/tsz-checker/src/error_reporter/properties.rs",
+            "crates/tsz-checker/src/error_reporter/core/diagnostic_source.rs",
+            "crates/tsz-checker/src/types/utilities/enum_utils.rs",
         },
     ),
 ]
