@@ -1069,3 +1069,27 @@ fn boundary_assignability_rejects_stricter_generic_constraints() {
         "assignability boundary unexpectedly accepts stricter generic constraints"
     );
 }
+
+#[test]
+fn import_meta_assignment_emits_ts2364() {
+    // import.meta is parsed as PROPERTY_ACCESS_EXPRESSION in tsz, but assigning to
+    // import.meta directly should emit TS2364 (not a valid assignment target), matching tsc.
+    let diags = diagnostics_for("import.meta = {};");
+    assert!(
+        diags.iter().any(|d| d.code == 2364),
+        "Expected TS2364 for `import.meta = {{}}` but got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn import_meta_property_assignment_is_valid() {
+    // import.meta.foo is a regular property access — assignment should NOT emit TS2364.
+    // It may emit TS2339 (property not found) but that's a different check.
+    let diags = diagnostics_for("import.meta.foo = 42;");
+    assert!(
+        !diags.iter().any(|d| d.code == 2364),
+        "Should NOT emit TS2364 for `import.meta.foo = 42` but got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
