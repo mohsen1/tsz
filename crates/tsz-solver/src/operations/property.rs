@@ -205,6 +205,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
         self.skip_this_binding.set(skip);
     }
 
+    /// Returns the current state of the `skip_this_binding` flag.
+    pub(crate) fn is_skip_this_binding(&self) -> bool {
+        self.skip_this_binding.get()
+    }
+
     /// Helper to access the underlying `TypeDatabase`
     pub(crate) fn interner(&self) -> &dyn TypeDatabase {
         self.db.as_type_database()
@@ -413,8 +418,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 for prop in &shape.properties {
                     if prop.name == prop_atom {
-                        let read_type = self.optional_property_type(prop);
-                        let write_type = self.optional_property_write_type(prop);
+                        let read_type = self
+                            .bind_object_receiver_this(obj_type, self.optional_property_type(prop));
+                        let write_type = self.bind_object_receiver_this(
+                            obj_type,
+                            self.optional_property_write_type(prop),
+                        );
                         let write = (write_type != read_type).then_some(write_type);
                         return PropertyAccessResult::Success {
                             type_id: read_type,
