@@ -25117,3 +25117,71 @@ var p2: typeof M2.Point;
         "typeof M2.Point should NOT emit TS2403 for merged namespace+interface, got: {diagnostics:?}"
     );
 }
+
+/// Dotted namespace `namespace M2.X { export interface Point }` merged with
+/// `namespace M2 { export namespace X { export var Point: number } }` should
+/// expose `Point` as a number in the namespace value type. Previously,
+/// `check_value_decl_has_export_in_arena` did not walk from VARIABLE_DECLARATION
+/// up through VARIABLE_DECLARATION_LIST to VARIABLE_STATEMENT to check for the
+/// export modifier, so the exported variable was silently dropped and `M2.X`
+/// resolved to `{}` instead of `{ Point: number }`.
+///
+/// Additionally, `namespace_export_member_type` must use the variable type (not
+/// the interface type) for merged INTERFACE+VARIABLE symbols.
+#[test]
+fn test_dotted_namespace_merged_interface_variable_export_no_false_ts2339() {
+    let source = r#"
+namespace M2.X {
+    export interface Point {
+        x: number;
+        y: number;
+    }
+}
+
+namespace M2 {
+    export namespace X {
+        export var Point: number;
+    }
+}
+
+var m = M2.X;
+var point: number;
+var point = m.Point;
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "m.Point should NOT emit TS2339: namespace value type should include exported var Point. Got: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2403),
+        "m.Point should be number, matching the prior 'var point: number' declaration. Got: {diagnostics:?}"
+    );
+}
+
+/// Verify that the first part of the nestedModules fix works in isolation:
+/// `namespace A.B.C` declarations properly seed their exports into the merged
+/// namespace, and `export var` inside a sub-namespace is accessible.
+#[test]
+fn test_nested_namespace_export_var_accessible_through_value() {
+    let source = r#"
+namespace A.B.C {
+    export interface Point {
+        x: number;
+        y: number;
+    }
+}
+
+namespace A {
+    export namespace B {
+        var Point: C.Point = { x: 0, y: 0 };
+    }
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    // tsc expects no errors for this pattern
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "C.Point should be accessible within namespace A.B. Got: {diagnostics:?}"
+    );
+}
