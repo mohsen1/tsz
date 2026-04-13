@@ -311,78 +311,21 @@ impl<'a> CheckerState<'a> {
             })
             .collect();
 
-        // For paths with 2+ node_modules segments, check whether the
-        // innermost package has no "exports" field.  Without an exports
-        // restriction every subpath is accessible via standard Node.js
-        // resolution, so the type reference IS portable.  This handles
-        // workspace symlinks where a package manager hoists deps into
-        // nested node_modules directories.
-        if nm_positions.len() >= 2 {
-            let last_nm = *nm_positions.last().expect("nm_positions has len >= 2");
-            let inner_pkg_start = last_nm + 1;
-            let inner_pkg_len = if components.get(inner_pkg_start).is_some_and(|c| {
-                matches!(c, Component::Normal(p) if p.to_str().is_some_and(|s| s.starts_with('@')))
-            }) {
-                2
-            } else {
-                1
-            };
-            if inner_pkg_start + inner_pkg_len <= components.len() {
-                let inner_pkg_root: std::path::PathBuf = components
-                    [..inner_pkg_start + inner_pkg_len]
-                    .iter()
-                    .collect();
-                let inner_pkg_json = inner_pkg_root.join("package.json");
-                // No package.json → no exports restriction → all subpaths accessible.
-                // Has package.json without "exports" → same: pre-exports behaviour.
-                // In both cases the type reference is portable.
-                let has_exports_restriction = if let Ok(pkg_content) =
-                    std::fs::read_to_string(&inner_pkg_json)
-                    && let Ok(pkg_json) = serde_json::from_str::<serde_json::Value>(&pkg_content)
-                {
-                    pkg_json.get("exports").is_some()
-                } else {
-                    false // no package.json or parse failure → no restriction
-                };
-                if !has_exports_restriction {
-                    return None;
-                }
-            }
-        }
-
+        // Case 1: Import alias with a bare module specifier pointing into
+        // nested node_modules.  The "from" path uses the import specifier.
+        // The parent package is between the FIRST node_modules and the second.
         if nm_positions.len() >= 2
             && symbol.has_any_flags(symbol_flags::ALIAS)
             && let Some(import_module) = &symbol.import_module
             && !import_module.starts_with('.')
             && !import_module.starts_with('/')
         {
-            let Some(&last_nm) = nm_positions.last() else {
-                return None;
-            };
-            let pkg_start = last_nm + 1;
-            let pkg_len = if components.get(pkg_start).is_some_and(|c| {
-                matches!(c, Component::Normal(p) if p.to_str().is_some_and(|s| s.starts_with('@')))
-            }) {
-                2
-            } else {
-                1
-            };
+            let first_nm = nm_positions[0];
+            let second_nm = nm_positions[1];
+            let pkg_start = first_nm + 1;
+            let pkg_end = second_nm;
 
-            // Before reporting as non-portable, check the parent package's
-            // package.json. If it has no "exports" field, all subpaths are
-            // accessible and this is not a portability issue (common for
-            // symlinked workspace dependencies).
-            let parent_pkg_root: std::path::PathBuf =
-                components[..pkg_start + pkg_len].iter().collect();
-            let parent_pkg_json = parent_pkg_root.join("package.json");
-            if let Ok(pkg_content) = std::fs::read_to_string(&parent_pkg_json)
-                && let Ok(pkg_json) = serde_json::from_str::<serde_json::Value>(&pkg_content)
-                && pkg_json.get("exports").is_none()
-            {
-                return None;
-            }
-
-            let parent_package: Vec<String> = components[pkg_start..pkg_start + pkg_len]
+            let parent_package: Vec<String> = components[pkg_start..pkg_end]
                 .iter()
                 .filter_map(|c| match c {
                     Component::Normal(part) => part.to_str().map(str::to_string),
@@ -400,15 +343,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Case 2: Any type whose source file lives inside nested
+        // node_modules (2+ segments).  A type from a transitive dependency
+        // is non-portable regardless of whether the inner package has a
+        // package.json or "exports" field — consumers may resolve a
+        // different version of the transitive dep.
         if nm_positions.len() >= 2 {
             let first_nm = nm_positions[0];
             let second_nm = nm_positions[1];
 
-            // Check if the nested package has no "exports" field. Without
-            // an exports restriction, all subpaths are accessible via
-            // standard Node.js resolution — even for symlinked workspace
-            // deps.  This matches tsc which doesn't emit TS2883 for
-            // workspace symlinks that lack an exports map.
             let nested_start = second_nm + 1;
             let nested_len = if components.get(nested_start).is_some_and(|c| {
                 matches!(c, Component::Normal(p) if p.to_str().is_some_and(|s| s.starts_with('@')))
@@ -417,16 +360,6 @@ impl<'a> CheckerState<'a> {
             } else {
                 1
             };
-
-            let nested_pkg_root: std::path::PathBuf =
-                components[..nested_start + nested_len].iter().collect();
-            let nested_pkg_json = nested_pkg_root.join("package.json");
-            if let Ok(pkg_content) = std::fs::read_to_string(&nested_pkg_json)
-                && let Ok(pkg_json) = serde_json::from_str::<serde_json::Value>(&pkg_content)
-                && pkg_json.get("exports").is_none()
-            {
-                return None;
-            }
 
             let parent_parts: Vec<String> = components[first_nm + 1..second_nm]
                 .iter()

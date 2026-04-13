@@ -69,7 +69,6 @@ fn is_harness_directive(key: &str) -> bool {
             | "skip"
             | "nocheck"
             | "notypesandscript"
-            | "declaration"
             | "declarationdir"
             | "declarationmap"
             | "emitdeclarationonly"
@@ -642,6 +641,7 @@ fn directive_to_field_name(key: &str) -> Option<&'static str> {
         "nouncheckedsideeffectimports" => "noUncheckedSideEffectImports",
         "noimplicitoverride" => "noImplicitOverride",
         "strictbuiltiniteratorreturn" => "strictBuiltinIteratorReturn",
+        "declaration" => "declaration",
         _ => return None,
     })
 }
@@ -734,5 +734,24 @@ mod tests {
         let libs = opts["lib"].as_array().unwrap();
         assert_eq!(libs.len(), 1);
         assert_eq!(libs[0], "es5");
+    }
+
+    #[test]
+    fn declaration_directive_passed_to_server_options() {
+        let mut directives = HashMap::new();
+        directives.insert("declaration".to_string(), "true".to_string());
+        let opts = directives_to_check_options(&directives);
+        assert_eq!(
+            opts["declaration"], true,
+            "declaration: true should be passed to server CheckOptions"
+        );
+    }
+
+    #[test]
+    fn declaration_directive_not_treated_as_harness_only() {
+        assert!(
+            !is_harness_directive("declaration"),
+            "declaration must not be filtered as a harness-only directive"
+        );
     }
 }
