@@ -2043,7 +2043,7 @@ impl<'a> DeclarationEmitter<'a> {
     /// Get the source file path for a symbol via the binder's `symbol_arenas` and `arena_to_path`.
     ///
     /// Falls back to `global_symbol_arenas` for cross-file symbols whose arenas
-    /// are not in the current file's binder (e.g., imported types from node_modules).
+    /// are not in the current file's binder (e.g., imported types from `node_modules`).
     pub(in crate::declaration_emitter) fn get_symbol_source_path(
         &self,
         sym_id: SymbolId,

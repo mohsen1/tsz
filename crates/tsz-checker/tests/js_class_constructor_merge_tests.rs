@@ -99,11 +99,11 @@ SomeClass.prop = 0;
 
 /// Regression test: when a constructor function in file1.js merges with a class
 /// in file2.js, accessing static properties on the class (e.g. `SomeClass.prop = 0`)
-/// should NOT produce TS18046 ("'SomeClass' is of type 'unknown'").
+/// should NOT produce TS18046 (`'SomeClass' is of type 'unknown'`).
 ///
 /// Root cause: `compute_class_symbol_type` only searched the current file's arena
-/// for the class declaration. When the CLASS declaration was in a different file's
-/// arena, the function returned TypeId::UNKNOWN, triggering false TS18046 errors
+/// for the class declaration. When the `CLASS` declaration was in a different file's
+/// arena, the function returned `TypeId::UNKNOWN`, triggering false TS18046 errors
 /// on any property access or constructor call on the class.
 #[test]
 fn cross_file_class_merge_no_false_ts18046() {

@@ -1179,9 +1179,7 @@ impl<'a> CheckerState<'a> {
         let trace_enabled = tracing::enabled!(tracing::Level::TRACE);
         let left_to_right = !skip_signature_only_assignability
             && self.is_assignable_to(effective_left, effective_right);
-        let right_to_left = if left_to_right {
-            false
-        } else if skip_signature_only_assignability {
+        let right_to_left = if left_to_right || skip_signature_only_assignability {
             false
         } else {
             self.is_assignable_to(effective_right, effective_left)
@@ -1263,8 +1261,8 @@ impl<'a> CheckerState<'a> {
         if !has_signatures {
             return false;
         }
-        !crate::query_boundaries::assignability::object_shape_for_type(self.ctx.types, resolved)
-            .is_some_and(|obj| !obj.properties.is_empty())
+        crate::query_boundaries::assignability::object_shape_for_type(self.ctx.types, resolved)
+            .is_none_or(|obj| obj.properties.is_empty())
     }
 
     /// Check if two types are both object types whose properties are ALL optional.
@@ -1375,7 +1373,7 @@ impl<'a> CheckerState<'a> {
         let right_calls = !right_shape.call_signatures.is_empty();
         let left_ctors = !left_shape.construct_signatures.is_empty();
         let right_ctors = !right_shape.construct_signatures.is_empty();
-        if !(left_calls && right_calls) && !(left_ctors && right_ctors) {
+        if (!left_calls || !right_calls) && (!left_ctors || !right_ctors) {
             return false;
         }
         if left_calls && right_calls {

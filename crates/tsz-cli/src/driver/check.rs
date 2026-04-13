@@ -3141,7 +3141,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
         );
     }
 
-    /// TS2883: Nested node_modules types should be detected as non-portable.
+    /// TS2883: Nested `node_modules` types should be detected as non-portable.
     /// When an exported variable's inferred type references a type from a
     /// nested `node_modules` (e.g., `foo/node_modules/nested`), tsz must
     /// emit TS2883 even when the nested package lacks a `package.json`.

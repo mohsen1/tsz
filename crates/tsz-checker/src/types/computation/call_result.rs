@@ -510,7 +510,6 @@ impl<'a> CheckerState<'a> {
                     if should_try_deferred_elaboration
                         && !prefer_argument_level_return_mismatch
                         && !skip_for_generic
-                        && !prefer_argument_level_return_mismatch
                         && !self.should_suppress_weak_key_arg_mismatch(
                             callee_expr,
                             args,

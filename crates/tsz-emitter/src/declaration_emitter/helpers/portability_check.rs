@@ -101,7 +101,7 @@ impl<'a> DeclarationEmitter<'a> {
     /// trace through the callee's declared return type to check for non-portable
     /// type references. This handles cases like:
     ///   `export const special = getSpecial();`
-    /// where `getSpecial()` returns `MySpecialType` from a nested node_modules.
+    /// where `getSpecial()` returns `MySpecialType` from a nested `node_modules`.
     pub(crate) fn check_call_expression_return_type_portability(
         &mut self,
         initializer: NodeIndex,
@@ -136,7 +136,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Extract the return type of the callee function
         let Some(return_type_id) =
-            tsz_solver::type_queries::get_return_type(&*interner, callee_type_id)
+            tsz_solver::type_queries::get_return_type(interner, callee_type_id)
         else {
             return;
         };

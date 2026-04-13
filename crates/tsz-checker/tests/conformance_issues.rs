@@ -25121,8 +25121,8 @@ var p2: typeof M2.Point;
 /// Dotted namespace `namespace M2.X { export interface Point }` merged with
 /// `namespace M2 { export namespace X { export var Point: number } }` should
 /// expose `Point` as a number in the namespace value type. Previously,
-/// `check_value_decl_has_export_in_arena` did not walk from VARIABLE_DECLARATION
-/// up through VARIABLE_DECLARATION_LIST to VARIABLE_STATEMENT to check for the
+/// `check_value_decl_has_export_in_arena` did not walk from `VARIABLE_DECLARATION`
+/// up through `VARIABLE_DECLARATION_LIST` to `VARIABLE_STATEMENT` to check for the
 /// export modifier, so the exported variable was silently dropped and `M2.X`
 /// resolved to `{}` instead of `{ Point: number }`.
 ///
