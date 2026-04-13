@@ -58,6 +58,9 @@ pub struct DeclarationEmitter<'a> {
     pub(super) arena_to_path: FxHashMap<usize, String>,
     /// Map of file index -> file path (fallback for resolving symbol source via `decl_file_idx`)
     pub(super) file_idx_to_path: FxHashMap<u32, String>,
+    /// Global symbol-to-arena mapping from all program files, enabling cross-file
+    /// symbol source path resolution for TS2883 portability checks.
+    pub(super) global_symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
     /// Map of module → symbol names to auto-generate imports for
     /// Pre-calculated in driver where `MergedProgram` is available
     pub(super) required_imports: FxHashMap<String, Vec<String>>,
