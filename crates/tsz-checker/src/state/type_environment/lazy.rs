@@ -407,11 +407,14 @@ impl<'a> CheckerState<'a> {
                         && shape.string_index.is_none()
                         && shape.number_index.is_none()
                     {
+                        // Narrow to Function only. Extending this guard to Object
+                        // re-enters the same cross-file resolution path for any
+                        // `{}`-shaped anonymous type (e.g. `Record<string, unknown>`
+                        // members inside recursive mapped types), causing quadratic
+                        // blow-up on patterns like `Definition<T[K]>`.
                         use tsz_solver::IntrinsicKind;
                         let db = self.ctx.types.as_type_database();
-                        let is_known_boxed = db.is_boxed_def_id(def_id, IntrinsicKind::Function)
-                            || db.is_boxed_def_id(def_id, IntrinsicKind::Object);
-                        if is_known_boxed {
+                        if db.is_boxed_def_id(def_id, IntrinsicKind::Function) {
                             return type_id;
                         }
                     }
