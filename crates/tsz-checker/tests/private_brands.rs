@@ -4,8 +4,8 @@
 //! not structurally. This implements TypeScript's "brand checking" where private
 //! members create a nominal identity that overrides structural compatibility.
 
-use crate::state::CheckerState;
 use tsz_binder::BinderState;
+use tsz_checker::{context::CheckerOptions, diagnostics::Diagnostic, state::CheckerState};
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -26,7 +26,7 @@ fn has_error_code(source: &str, code: u32) -> bool {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
+        CheckerOptions::default(),
     );
 
     checker.check_source_file(root);
@@ -51,7 +51,7 @@ fn test_private_brands_with_codes(source: &str, expected_errors: usize, error_co
     );
 }
 
-fn collect_private_brand_diagnostics(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+fn collect_private_brand_diagnostics(source: &str) -> Vec<Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -64,7 +64,7 @@ fn collect_private_brand_diagnostics(source: &str) -> Vec<crate::diagnostics::Di
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
+        CheckerOptions::default(),
     );
 
     checker.check_source_file(root);
@@ -370,5 +370,40 @@ fn test_ts2339_private_id_on_any_inside_class() {
             18013,
         ),
         "Should NOT emit TS18013 for undeclared private name on any inside class"
+    );
+}
+
+/// Private identifier brand check in nested static block should resolve to outer class.
+/// `#field in obj` inside a nested class static block should find the outer class's private field.
+#[test]
+fn test_private_identifier_in_nested_static_block() {
+    // This tests the autoAccessor10.ts conformance case
+    // The private field is declared on C3, and accessed via `#a2_accessor_storage in C3`
+    // inside a nested class's static block.
+    let source = r#"
+class C3 {
+    static #a2_accessor_storage = 1;
+    static {
+        class C3_Inner {
+            static {
+                #a2_accessor_storage in C3;
+            }
+        }
+    }
+}
+"#;
+
+    let diagnostics = collect_private_brand_diagnostics(source);
+
+    // Filter for TS2339 errors
+    let ts2339_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2339).collect();
+
+    assert!(
+        ts2339_errors.is_empty(),
+        "Should NOT emit TS2339 for private identifier in nested static block brand check. \
+        The private field #a2_accessor_storage should be resolved from the outer class C3. \
+        Got {} errors: {:?}",
+        ts2339_errors.len(),
+        ts2339_errors
     );
 }

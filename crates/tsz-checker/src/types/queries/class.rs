@@ -1564,6 +1564,50 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Get the declaring class symbol for a private member.
+    /// Returns the SymbolId of the class that contains the private member declaration.
+    pub(crate) fn private_member_declaring_class_symbol(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<tsz_binder::SymbolId> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+
+        for &decl_idx in &symbol.declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            if !matches!(
+                node.kind,
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION
+                    || k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::GET_ACCESSOR
+                    || k == syntax_kind_ext::SET_ACCESSOR
+            ) {
+                continue;
+            }
+
+            let Some(ext) = self.ctx.arena.get_extended(decl_idx) else {
+                continue;
+            };
+            if ext.parent.is_none() {
+                continue;
+            }
+            let Some(parent_node) = self.ctx.arena.get(ext.parent) else {
+                continue;
+            };
+            if parent_node.kind != syntax_kind_ext::CLASS_DECLARATION
+                && parent_node.kind != syntax_kind_ext::CLASS_EXPRESSION
+            {
+                continue;
+            }
+
+            // Return the symbol of the parent class
+            return self.ctx.binder.get_node_symbol(ext.parent);
+        }
+
+        None
+    }
+
     /// Check if a type annotation node is a simple type reference to a given class.
     /// Returns true if the type annotation is a `TypeReference` to the class by name.
     fn type_annotation_refers_to_current_class(

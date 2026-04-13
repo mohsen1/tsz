@@ -3139,6 +3139,89 @@ class Foo {
     assert!(members.has("x"), "accessor x should be in class members");
 }
 
+#[test]
+fn private_identifier_resolution_in_nested_static_block() {
+    // Private identifier `#field in obj` should resolve across nested class static blocks.
+    // In TypeScript, private fields are lexically scoped and accessible from nested contexts.
+    let (binder, parser) = parse_and_bind(
+        r#"
+class C3 {
+    static #a2_accessor_storage = 1;
+    static {
+        class C3_Inner {
+            static {
+                #a2_accessor_storage in C3;
+            }
+        }
+    }
+}
+"#,
+    );
+
+    // First, verify the private field is bound in C3's scope
+    let c3_sym_id = binder.file_locals.get("C3").expect("expected C3");
+    let c3_symbol = binder.symbols.get(c3_sym_id).unwrap();
+    let members = c3_symbol.members.as_ref().expect("C3 should have members");
+    assert!(
+        members.has("#a2_accessor_storage"),
+        "C3 should have #a2_accessor_storage as member"
+    );
+
+    // Find the private identifier node in the inner static block (the one used in `in` expression)
+    // We need to walk the AST to find it
+    use tsz_parser::NodeIndex;
+    let arena = parser.get_arena();
+    let mut private_ident_idx = NodeIndex::NONE;
+
+    for i in 0..arena.len() {
+        let node_idx = NodeIndex(i as u32);
+        if let Some(node) = arena.get(node_idx) {
+            if node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16 {
+                if let Some(ident) = arena.get_identifier(node) {
+                    if ident.escaped_text == "#a2_accessor_storage" {
+                        // Check if this is the one in the binary expression (not the declaration)
+                        if let Some(ext) = arena.get_extended(node_idx) {
+                            if let Some(parent) = arena.get(ext.parent) {
+                                if parent.kind
+                                    == tsz_parser::parser::syntax_kind_ext::BINARY_EXPRESSION
+                                {
+                                    private_ident_idx = node_idx;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        private_ident_idx.is_some(),
+        "Should find private identifier in binary expression"
+    );
+
+    // Now resolve the private identifier symbols
+    let (symbols, saw_class_scope) =
+        binder.resolve_private_identifier_symbols(arena, private_ident_idx);
+
+    assert!(
+        saw_class_scope,
+        "Should have seen a class scope while resolving"
+    );
+    assert!(
+        !symbols.is_empty(),
+        "Should resolve #a2_accessor_storage to a symbol from the outer class C3"
+    );
+
+    // The resolved symbol should be the one from C3
+    let resolved_sym = binder.symbols.get(symbols[0]).unwrap();
+    assert_eq!(
+        resolved_sym.escaped_name, "#a2_accessor_storage",
+        "Resolved symbol should be #a2_accessor_storage"
+    );
+}
+
 // =============================================================================
 // 25. ENUM MERGING WITH NAMESPACE
 // =============================================================================

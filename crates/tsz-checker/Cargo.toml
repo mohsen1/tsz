@@ -36,6 +36,10 @@ name = "ts1238_tests"
 path = "tests/ts1238_tests.rs"
 
 [[test]]
+name = "private_brands"
+path = "tests/private_brands.rs"
+
+[[test]]
 name = "lazy_class_constructor_type_tests"
 path = "tests/lazy_class_constructor_type_tests.rs"
 

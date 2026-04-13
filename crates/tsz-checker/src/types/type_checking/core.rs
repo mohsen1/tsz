@@ -336,6 +336,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_private_identifier_in_expression(
         &mut self,
         name_idx: NodeIndex,
+        _rhs_idx: NodeIndex,
         rhs_type: TypeId,
     ) {
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
@@ -349,7 +350,6 @@ impl<'a> CheckerState<'a> {
         let (symbols, saw_class_scope) = self.resolve_private_identifier_symbols(name_idx);
         if symbols.is_empty() {
             if saw_class_scope {
-                // Use original rhs_type for error message to preserve nominal identity (e.g., D<string>)
                 self.error_property_not_exist_at(&property_name, rhs_type, name_idx);
             }
             return;
@@ -362,8 +362,11 @@ impl<'a> CheckerState<'a> {
             self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
         }
 
-        // Evaluate for type checking but keep original for error messages
-        let evaluated_rhs_type = self.evaluate_application_type(rhs_type);
+        // Evaluate for type checking but keep original for error messages.
+        // First resolve Lazy(DefId) types which can occur when the RHS class is still
+        // being resolved (circular reference fallback). Then evaluate Application types.
+        let resolved_rhs_type = self.resolve_lazy_type(rhs_type);
+        let evaluated_rhs_type = self.evaluate_application_type(resolved_rhs_type);
         if evaluated_rhs_type == TypeId::ANY
             || evaluated_rhs_type == TypeId::ERROR
             || evaluated_rhs_type == TypeId::UNKNOWN
@@ -375,7 +378,6 @@ impl<'a> CheckerState<'a> {
             Some(ty) => ty,
             None => {
                 if saw_class_scope {
-                    // Use original rhs_type for error message to preserve nominal identity
                     self.error_property_not_exist_at(&property_name, rhs_type, name_idx);
                 }
                 return;
@@ -383,6 +385,21 @@ impl<'a> CheckerState<'a> {
         };
 
         if !self.is_assignable_to(evaluated_rhs_type, declaring_type) {
+            // Symbol-based fallback: if both types reference the same underlying class,
+            // the brand check is valid even if TypeIds differ. This handles cases like
+            // nested static blocks where the class type may be represented by different
+            // TypeIds during resolution (e.g., from symbol_types cache vs
+            // class_constructor_type_cache).
+            use tsz_solver::type_queries as tq;
+            let rhs_class_symbol = tq::get_type_shape_symbol(self.ctx.types, evaluated_rhs_type);
+            let declaring_class_symbol = tq::get_type_shape_symbol(self.ctx.types, declaring_type);
+            if rhs_class_symbol.is_some()
+                && declaring_class_symbol.is_some()
+                && rhs_class_symbol == declaring_class_symbol
+            {
+                return;
+            }
+
             let shadowed = symbols.iter().skip(1).any(|sym_id| {
                 self.private_member_declaring_type(*sym_id)
                     .is_some_and(|ty| self.is_assignable_to(evaluated_rhs_type, ty))
