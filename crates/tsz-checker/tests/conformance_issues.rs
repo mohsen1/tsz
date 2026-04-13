@@ -25048,5 +25048,34 @@ class Vec2<A> {
     assert!(
         !has_error(&diagnostics, 2339),
         "Property access on generic class instance should not produce TS2339, got: {diagnostics:?}"
+/// typeof on a merged namespace+interface symbol should resolve to the namespace
+/// value type (the structural object with exported functions), not the interface type.
+/// Without the fix, `typeof M2.Point` would resolve to the `Point` interface type,
+/// causing a false TS2403 when compared against `{ Origin(): { x: number; y: number; } }`.
+///
+/// Test case from: conformance/internalModules/moduleDeclarations/nonInstantiatedModule.ts
+#[test]
+fn test_typeof_merged_namespace_interface_no_false_ts2403() {
+    let source = r#"
+namespace M2 {
+    export namespace Point {
+        export function Origin(): Point {
+            return { x: 0, y: 0 };
+        }
+    }
+
+    export interface Point {
+        x: number;
+        y: number;
+    }
+}
+
+var p2: { Origin() : { x: number; y: number; } };
+var p2: typeof M2.Point;
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2403),
+        "typeof M2.Point should NOT emit TS2403 for merged namespace+interface, got: {diagnostics:?}"
     );
 }

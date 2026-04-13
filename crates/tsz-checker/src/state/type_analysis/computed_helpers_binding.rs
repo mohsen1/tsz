@@ -599,12 +599,20 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         flags: u32,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
-        if flags & symbol_flags::INTERFACE != 0 {
-            let interface_type = self.compute_interface_type_from_declarations(sym_id);
-            self.ctx
-                .symbol_instance_types
-                .insert(sym_id, interface_type);
-        }
+        // Compute the interface/type-alias types for type-position resolution.
+        // Note: compute_interface_type_from_declarations has the side effect of
+        // inserting the interface type into symbol_instance_types. We need to
+        // temporarily remove it before calling build_namespace_object_type,
+        // because that function uses symbol_instance_types as a cache and would
+        // return the interface type instead of building the structural namespace
+        // object type. This fixes false TS2403 errors for merged
+        // namespace+interface symbols like `typeof M2.Point`.
+        let interface_type = if flags & symbol_flags::INTERFACE != 0 {
+            let it = self.compute_interface_type_from_declarations(sym_id);
+            Some(it)
+        } else {
+            None
+        };
 
         if flags & symbol_flags::TYPE_ALIAS != 0
             && let Some(alias_type) = self.compute_type_alias_body(sym_id)
@@ -621,8 +629,21 @@ impl<'a> CheckerState<'a> {
         // Type-only namespaces (only interfaces/type aliases) must keep Lazy(DefId)
         // so property access goes through namespace export resolution.
         if self.namespace_has_value_exports(sym_id) {
+            // Clear any stale symbol_instance_types entry (from
+            // compute_interface_type_from_declarations side effect) so that
+            // build_namespace_object_type builds the real structural object type
+            // instead of returning the cached interface type.
+            if interface_type.is_some() {
+                self.ctx.symbol_instance_types.remove(&sym_id);
+            }
             let ns_obj = self.build_namespace_object_type(sym_id);
-            self.ctx.symbol_instance_types.insert(sym_id, ns_obj);
+            // Restore the interface type for type-position resolution.
+            // The namespace object type is returned as the value-position type
+            // (stored in symbol_types by the caller), while the interface type
+            // is the instance type used for type annotations like `M2.Point`.
+            if let Some(it) = interface_type {
+                self.ctx.symbol_instance_types.insert(sym_id, it);
+            }
             (ns_obj, Vec::new())
         } else {
             (lazy, Vec::new())
