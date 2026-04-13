@@ -1134,7 +1134,7 @@ impl<'a> CheckerState<'a> {
         let method = self.ctx.arena.get_method_decl(member_node)?;
         let name = self.get_member_name_text(method.name)?;
         let (type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
-        let (params, _this_type) = self.extract_params_from_parameter_list(&method.parameters);
+        let (params, this_type) = self.extract_params_from_parameter_list(&method.parameters);
         let return_type = if method.type_annotation.is_some() {
             self.get_type_from_type_node(method.type_annotation)
         } else if method.body.is_some() {
@@ -1151,7 +1151,7 @@ impl<'a> CheckerState<'a> {
             .function(tsz_solver::FunctionShape {
                 type_params,
                 params,
-                this_type: None,
+                this_type,
                 return_type,
                 type_predicate: None,
                 is_constructor: false,

@@ -1290,6 +1290,31 @@ let x = a.equalsShallow(b);
     );
 }
 
+#[test]
+fn union_this_type_in_functions_emits_ts2684() {
+    // unionThisTypeInFunctions conformance test: calling a method with `this: this`
+    // on a union type where members have incompatible `data` properties.
+    // The `this` context is Real | Fake, but the method requires Real & Fake.
+    let source = r#"
+interface Real {
+    method(this: this, n: number): void;
+    data: string;
+}
+interface Fake {
+    method(this: this, n: number): void;
+    data: number;
+}
+function test(r: Real | Fake) {
+    r.method(12);
+}
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2684),
+        "Should emit TS2684 for union this type mismatch. Got: {diags:#?}"
+    );
+}
+
 // ─── Higher-order generic contextual types (compose/flip patterns) ──────
 
 #[test]

@@ -374,9 +374,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
         };
 
         let shape = self.interner().object_shape(ObjectShapeId(shape_id));
-        // PERF: Reuse existing interned type for this shape instead of cloning
-        // the entire property list and re-interning. The shape is already interned,
-        // so this is an O(1) cache hit.
         let obj_type = self
             .interner()
             .object_type_from_shape(ObjectShapeId(shape_id));
@@ -537,6 +534,16 @@ impl<'a> PropertyAccessEvaluator<'a> {
         prop_atom: Option<Atom>,
     ) -> Option<PropertyAccessResult> {
         use crate::objects::index_signatures::{IndexKind, IndexSignatureResolver};
+
+        // Re-enable `this` binding for union member resolution. When a union is
+        // nested inside an intersection (e.g., `(A & B) | (C & D)`), the
+        // intersection handler sets `skip_this_binding = true` to prevent
+        // per-member binding within the intersection. But each union member is a
+        // distinct receiver type and needs its own `this` substitution — otherwise
+        // polymorphic `this: this` methods on different interfaces collapse to the
+        // same unsubstituted function type, breaking TS2684 detection.
+        let prev_skip = self.is_skip_this_binding();
+        self.set_skip_this_binding(false);
 
         let members = self.interner().type_list(crate::types::TypeListId(list_id));
 
@@ -726,6 +733,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 }
             }
         }
+
+        // Restore the `this` binding flag after processing all union members.
+        self.set_skip_this_binding(prev_skip);
 
         // If all non-nullable, non-unknown members had no results and some were unknown,
         // then the union is effectively unknown for property access purposes.
