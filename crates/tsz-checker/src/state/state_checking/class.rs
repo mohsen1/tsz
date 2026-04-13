@@ -594,7 +594,25 @@ impl<'a> CheckerState<'a> {
         // earlier environment-building pass. Member checking needs a fresh view
         // so `this` inside methods observes the checked class shape rather than
         // a provisional snapshot.
+        //
+        // For the constructor type cache, we save and temporarily restore it
+        // rather than clearing entirely. This prevents a cycle when a generic
+        // class has a static member whose type references itself (e.g.,
+        // `private static instance: Bar<string>`). Without a cached
+        // constructor type, recomputation during member body checking can
+        // re-enter `get_class_constructor_type` and hit cycle detection,
+        // returning the instance type as a fallback instead of the correct
+        // constructor type. The cache is definitively cleared and refreshed
+        // after member checking completes (see below).
         self.ctx.class_instance_type_cache.remove(&stmt_idx);
+        // Clear the constructor type cache for a fresh view. Save the old
+        // value so it can be temporarily restored during member checking to
+        // prevent cycles. When a generic class has a private static member
+        // whose type references itself (e.g., `private static instance:
+        // Bar<string>`), recomputing the class type during method body
+        // checking can re-enter get_class_constructor_type and hit cycle
+        // detection. Without a valid fallback, the cycle returns the instance
+        // type instead of the constructor type, causing false TS2339 errors.
         self.ctx.class_constructor_type_cache.remove(&stmt_idx);
         if let Some(sym_id) = self.ctx.binder.get_node_symbol(stmt_idx) {
             self.ctx.symbol_types.remove(&sym_id);

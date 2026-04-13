@@ -176,22 +176,46 @@ impl<'a> CheckerState<'a> {
                 // Already resolving this class's constructor type. If a partial
                 // constructor type is cached in symbol_types, prefer that over
                 // collapsing the recursive lookup to ERROR.
-                return self
+                //
+                // IMPORTANT: Prefer the constructor type cache over symbol_types.
+                // During re-entrant class type computation (e.g., when a static
+                // member's type annotation references the class itself like
+                // `private static instance: Bar<string>`), symbol_types may contain
+                // a Lazy placeholder that resolves to the INSTANCE type, not the
+                // constructor type. Using the instance type as the fallback causes
+                // false TS2339 errors when accessing static members via the class
+                // name (e.g., `Bar.instance`).
+                if let Some(&cached_ctor) = self.ctx.class_constructor_type_cache.get(&class_idx) {
+                    return cached_ctor;
+                }
+                // Check symbol_types for a partial constructor type. If the
+                // cached value is a Callable (i.e., a partial constructor type
+                // built during static member processing), use it. Otherwise
+                // the cache likely holds a Lazy placeholder that resolves to
+                // the instance type — using that as the constructor type
+                // causes false TS2339 on static member access. Return ANY as
+                // a safe fallback so property access succeeds without a false
+                // error; the correct constructor type will be resolved once
+                // the outer call completes.
+                let fallback = self
                     .ctx
                     .symbol_types
                     .get(&sym_id)
                     .copied()
                     .unwrap_or(TypeId::ERROR);
+                if crate::query_boundaries::common::callable_shape_for_type(
+                    self.ctx.types,
+                    fallback,
+                )
+                .is_some()
+                {
+                    return fallback;
+                }
+                return TypeId::ANY;
             }
         } else {
             false
         };
-
-        let can_use_cache = apply_module_augmentations
-            && request.is_empty()
-            && current_sym
-                .map(|sym_id| !self.ctx.class_constructor_resolution_set.contains(&sym_id))
-                .unwrap_or(true);
 
         // Check fuel to prevent timeout on pathological inheritance hierarchies
         if !self.ctx.consume_fuel() {
@@ -215,6 +239,15 @@ impl<'a> CheckerState<'a> {
 
         // Cache all terminal outcomes (including ERROR) so repeated constructor
         // type queries can short-circuit pathological inheritance recursion.
+        // NOTE: Evaluate can_use_cache AFTER removing from resolution set,
+        // otherwise the `!contains` check always fails for the first call
+        // (because we just inserted the symbol above) and the result is
+        // never cached.
+        let can_use_cache = apply_module_augmentations
+            && request.is_empty()
+            && current_sym
+                .map(|sym_id| !self.ctx.class_constructor_resolution_set.contains(&sym_id))
+                .unwrap_or(true);
         if can_use_cache {
             self.ctx
                 .class_constructor_type_cache
