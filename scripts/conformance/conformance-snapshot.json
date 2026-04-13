@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-04-13T21:07:33Z",
-  "git_sha": "e1df075bf631f53949b3752ad5f236181a60508f",
+  "timestamp": "2026-04-13T22:02:12Z",
+  "git_sha": "ac227f1bf0bea85c3115f4c88d087ba3f83b5b43",
   "summary": {
     "total_tests": 12581,
-    "passed": 11852,
-    "failed": 729,
+    "passed": 11853,
+    "failed": 728,
     "pass_rate": 94.2
   },
   "areas_by_pass_rate": [
@@ -457,18 +457,18 @@
       "pass_rate": 98.25
     },
     {
-      "area": "parser/ecmascript5",
-      "total": 687,
-      "passed": 675,
-      "failed": 12,
-      "pass_rate": 98.25
-    },
-    {
       "area": "esDecorators/classDeclaration",
       "total": 61,
       "passed": 60,
       "failed": 1,
       "pass_rate": 98.36
+    },
+    {
+      "area": "parser/ecmascript5",
+      "total": 687,
+      "passed": 676,
+      "failed": 11,
+      "pass_rate": 98.4
     },
     {
       "area": "async/es6",
@@ -1268,11 +1268,11 @@
       "count": 4
     },
     {
-      "code": "TS2536",
+      "code": "TS2883",
       "count": 2
     },
     {
-      "code": "TS2883",
+      "code": "TS2536",
       "count": 2
     },
     {
@@ -1636,7 +1636,7 @@
     "false_positive": 13,
     "all_missing": 41,
     "wrong_code": 144,
-    "fingerprint_only": 509,
+    "fingerprint_only": 508,
     "close_to_passing": 84
   }
 }
