@@ -402,16 +402,26 @@ impl<'a> TypeFormatter<'a> {
         // Sort non-nullish members by source position to match tsc's display order.
         // The interner sorts Lazy types by DefId.0 (allocation order), which doesn't
         // match source declaration order. Display-time sorting fixes this for diagnostics.
-        // Only sort if we can get source positions for ALL members - otherwise preserve
-        // the interner's order to avoid breaking cases where positions can't be determined.
+        //
+        // Sorting rules:
+        // - Tier 0/1 (builtins/user types with source): always sort these
+        // - Tier 2 objects only (all anonymous objects): sort by property count
+        // - Mixed tier 2 or non-object tier 2: preserve original order
         if let Some(def_store) = self.def_store {
             let positions: Vec<_> = ordered
                 .iter()
                 .map(|&m| self.get_source_position_for_type(m, def_store))
                 .collect();
-            // Only sort if no member has tier 2 (unknown position)
-            let all_have_positions = positions.iter().all(|&(tier, _, _)| tier < 2);
-            if all_have_positions {
+
+            // Check if we should sort: either all have positions (tier < 2),
+            // or all are tier 2 objects (which have property count as sort key)
+            let all_tier_0_or_1 = positions.iter().all(|&(tier, _, _)| tier < 2);
+            let all_tier_2_objects = positions.iter().all(|&(tier, second, _)| {
+                // Tier 2 objects have second=0, non-objects have second=u32::MAX
+                tier == 2 && second == 0
+            });
+
+            if all_tier_0_or_1 || all_tier_2_objects {
                 let mut pairs: Vec<_> = ordered.iter().copied().zip(positions).collect();
                 pairs.sort_by_key(|&(_, pos)| pos);
                 ordered = pairs.into_iter().map(|(id, _)| id).collect();
@@ -1711,7 +1721,18 @@ impl<'a> TypeFormatter<'a> {
             }
         }
 
-        // Tier 2: Fallback - sort last
+        // Tier 2: Fallback for anonymous types without source info.
+        // For Object types, sort by property count (fewer properties first) to match
+        // tsc's display order for anonymous object unions like `{} | { a: number }`.
+        if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) = &data {
+            let shape = self.interner.object_shape(*shape_id);
+            let prop_count = shape.properties.len() as u32;
+            // Use property count as the sort key. Objects with fewer properties
+            // are displayed first by tsc.
+            return (2, 0, prop_count);
+        }
+
+        // Other tier 2 types: sort after objects, preserve relative order
         (2, u32::MAX, u32::MAX)
     }
 }
