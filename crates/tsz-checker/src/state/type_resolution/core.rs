@@ -556,6 +556,13 @@ impl<'a> CheckerState<'a> {
                     }
                     // Route through boundary for TS2304/TS2552 with spelling suggestions
                     let _ = self.resolve_type_name_or_report(name, type_name_idx);
+                    // Process type arguments to emit TS2304 for nested unresolved types.
+                    // E.g., `Foo<Bar<T>>` should emit TS2304 for Foo, Bar, and T.
+                    if let Some(args) = &type_ref.type_arguments {
+                        for &arg_idx in &args.nodes {
+                            let _ = self.get_type_from_type_node(arg_idx);
+                        }
+                    }
                     return TypeId::ERROR;
                 }
                 if !is_builtin_array
