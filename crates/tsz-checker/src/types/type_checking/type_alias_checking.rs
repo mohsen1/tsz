@@ -783,8 +783,18 @@ impl<'a> CheckerState<'a> {
                 // TS2370: Check that rest parameters have array types.
                 // This is needed because function/constructor types in type aliases
                 // don't go through the normal function declaration checking path.
+                //
+                // Push the function type's own type parameters into scope so that
+                // rest parameter annotations referencing them (e.g. `<L>(...args: L)`)
+                // resolve correctly instead of emitting a spurious TS2304.
+                // `get_type_from_function_type` pushes/pops these internally, so by
+                // the time we reach this sibling check the scope no longer contains
+                // the inner signature's type parameters.
                 if let Some(func_type) = self.ctx.arena.get_function_type(node) {
+                    let tp_updates =
+                        self.push_missing_name_type_parameters(&func_type.type_parameters);
                     self.check_rest_parameter_types(&func_type.parameters.nodes);
+                    self.pop_type_parameters(tp_updates);
                 }
             }
             k if k == syntax_kind_ext::TYPE_QUERY => {
