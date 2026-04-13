@@ -85,10 +85,14 @@ pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
 /// Widen for diagnostic display: like `widen_type` but preserves boolean
 /// literal intrinsics (`true`/`false`) so that narrowed types like
 /// `string | false` display correctly instead of `string | boolean`.
+///
+/// Does NOT recurse into function/callable parameter types, preserving
+/// literal parameters so `(x: "bar") => number` displays as-is rather than
+/// being widened to `(x: string) => number`.
 pub fn widen_type_for_display(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, false, true)
+    widen_type_cached(db, type_id, &mut cache, false, false)
 }
 
 /// Widen type for inference resolution: like `widen_type` but does NOT
