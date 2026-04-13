@@ -327,7 +327,6 @@ b = f;
 }
 
 #[test]
-#[ignore] // TODO: generic signature assignment should report expected TS2322s
 fn generic_signature_assignment_reports_expected_ts2322s() {
     let source = r#"
 type A3 = <T>(x: T) => void;

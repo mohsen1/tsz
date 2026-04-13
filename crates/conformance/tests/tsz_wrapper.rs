@@ -440,7 +440,6 @@ fn find_tsz_binary() -> String {
 }
 
 #[test]
-#[ignore = "requires tsz binary: cargo build --profile dist-fast -p tsz-cli"]
 fn test_compile_simple_error() {
     let _ = tracing_subscriber::fmt::try_init();
     let content = r#"
@@ -454,7 +453,6 @@ const x: number = "string";
 }
 
 #[test]
-#[ignore = "requires tsz binary: cargo build --profile dist-fast -p tsz-cli"]
 fn test_compile_no_errors() {
     let content = r#"
 // @strict: true
@@ -814,7 +812,6 @@ fn test_prepare_test_dir_implicit_include_matches_tsc_harness() {
 }
 
 #[test]
-#[ignore = "requires tsz binary: cargo build --profile dist-fast -p tsz-cli"]
 fn test_compile_prepared_dir_mts_only_emits_ts18003() {
     let content = r#"
 // @target: es2015

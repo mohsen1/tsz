@@ -93,7 +93,6 @@ fn diagnostic_message(diagnostics: &[(u32, String)], code: u32) -> Option<&str> 
 /// either skip rewriting for non-destructuring initializers or add a
 /// `DiagnosticAnchorKind` variant that preserves the initializer position.
 #[test]
-#[ignore]
 fn test_ts2322_variable_decl_diagnostic_anchored_at_initializer() {
     let source = r#"
 interface ParserFunc {
@@ -1732,7 +1731,6 @@ function f4<T extends any[]>(t: T) {
 }
 
 #[test]
-#[ignore = "pre-existing: higher-order generic rest call inference not yet matching tsc"]
 fn test_higher_order_generic_rest_call_accepts_generic_binary_function() {
     let source = r#"
 function call<T extends unknown[], U>(f: (...args: T) => U, ...args: T) {
@@ -3022,7 +3020,6 @@ c.p + c.q;
 }
 
 #[test]
-#[ignore = "pre-existing regression"]
 fn test_js_void_zero_expando_reports_named_receiver_type() {
     let diagnostics = compile_and_get_diagnostics_named(
         "a.js",
@@ -3089,7 +3086,6 @@ k.x === j.x;
 }
 
 #[test]
-#[ignore = "regressed after remote changes: expected 2 TS2322 for CommonJS late-bound assignments, now emits 0"]
 fn test_current_file_commonjs_exports_use_late_bound_assignment_types() {
     let diagnostics = compile_and_get_diagnostics_named(
         "a.js",
@@ -8993,7 +8989,6 @@ three<number>();
 /// instance of C. Accessing instance properties on `this` in a static method should
 /// emit TS2339 because instance properties don't exist on the constructor type.
 #[test]
-#[ignore] // TODO: this.p in static method should emit TS2339
 fn test_ts2339_this_in_static_method() {
     let diagnostics = compile_and_get_diagnostics(
         r"
@@ -13603,7 +13598,6 @@ enum A {
 }
 
 #[test]
-#[ignore = "regression from remote commits"]
 fn test_js_namespace_enum_expando_assignment_skips_whole_object_ts2322() {
     let diagnostics = compile_two_global_files_get_diagnostics_with_options(
         "lovefield-ts.d.ts",
@@ -14774,7 +14768,6 @@ k = "fooProp";
 }
 
 #[test]
-#[ignore] // TODO: object spread should exclude private members from resulting type
 fn private_name_object_spread_excludes_private_members() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
@@ -20178,7 +20171,6 @@ const f: (x: Expression) => boolean = sink;
 }
 
 #[test]
-#[ignore = "regression from remote commits"]
 fn test_union_restricted_indexed_access_prefers_ts2339_over_constraint_failure() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
@@ -24711,11 +24703,6 @@ let p: Passport = passport.use();
 }
 
 #[test]
-#[ignore = "TODO: needs surgical objects.rs fix — previous fix (9bf81e5d86) was too broad \
-            (broke 13 conformance tests). The correct behavior requires NOT binding the \
-            target `this` return type when checking PassportStatic <: Passport, but only \
-            for `use(): this` (exact this return), not `extend(): this & T` or methods \
-            with `this` parameters. See b4f0e0750f for context."]
 fn test_cross_binder_symbol_id_collision_emits_ts2322_for_this_return() {
     let passport_dts = r#"
 declare module 'passport' {

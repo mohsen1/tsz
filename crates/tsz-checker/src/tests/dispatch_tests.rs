@@ -1075,7 +1075,6 @@ foo({ aliasX: "world" });
 }
 
 #[test]
-#[ignore = "pre-existing regression: stack overflow in JSDoc generic constructor type resolution"]
 fn jsdoc_constructor_template_scope_flows_to_prototype_methods() {
     let diags = check_js_source_diagnostics(
         r#"
@@ -1135,7 +1134,6 @@ let answer = new Zet(1).add(3, { nested: 4 });
 }
 
 #[test]
-#[ignore = "pre-existing regression: stack overflow in JSDoc generic constructor type resolution"]
 fn jsdoc_generic_constructor_prototype_object_literal_methods_use_instance_this() {
     let diags = check_js_source_diagnostics(
         r#"

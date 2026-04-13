@@ -951,7 +951,6 @@ if (isA(v)) {
 /// solver's narrowing context — ensuring inner Lazy types are resolved before
 /// the conditional is evaluated/distributed.
 #[test]
-#[ignore = "TODO: implement negated assertion narrowing with conditional type predicates"]
 fn test_negated_assertion_with_conditional_type_predicate() {
     let source = r#"
 type Foo = {type: 'A', a: number} | {type: 'B', b: number};

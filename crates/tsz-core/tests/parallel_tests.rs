@@ -1813,7 +1813,6 @@ declare module "./a" {
 
 // TODO: Implement TS2300 detection for module augmentation re-export type duplicates.
 #[test]
-#[ignore]
 fn test_check_files_parallel_module_augmentation_reexport_type_duplicate_stays_off_importing_consumer()
  {
     let files = vec![

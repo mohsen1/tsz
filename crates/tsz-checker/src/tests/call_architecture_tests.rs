@@ -1666,7 +1666,6 @@ if (g.check(val)) {
 }
 
 #[test]
-#[ignore] // TODO: block body contextual callback return mismatch should report TS2345
 fn block_body_contextual_callback_return_mismatch_reports_ts2345() {
     let diags = check_source_diagnostics(
         r#"

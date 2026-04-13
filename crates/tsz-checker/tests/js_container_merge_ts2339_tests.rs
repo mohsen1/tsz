@@ -227,9 +227,6 @@ var x = function () {
 }
 
 #[test]
-#[ignore = "TODO: pre-existing failure — tsz emits TS2318 (cannot find global types \
-            String/CallableFunction/NewableFunction) instead of TS2339. The test setup \
-            lacks a complete lib.d.ts that includes these types."]
 fn checked_js_define_property_call_still_reports_missing_class_member() {
     let diagnostics = check_entry(
         &[

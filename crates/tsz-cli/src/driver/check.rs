@@ -2912,7 +2912,6 @@ type Recurse2 = {
     }
 
     #[test]
-    #[ignore = "regression: emits 1 TS2345 instead of 2 TS2322 after recent type resolution changes"]
     fn test_collect_diagnostics_preserves_invariant_generic_error_elaboration_ts2322() {
         let dir = tempfile::TempDir::new().expect("temp dir");
         let file_path = dir.path().join("main.ts");

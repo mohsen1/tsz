@@ -190,7 +190,6 @@ import "unaliasedModule2";
 }
 
 #[test]
-#[ignore] // TODO: declaration emit should prefer canonical named reference message for TS2883
 fn declaration_emit_ts2883_prefers_canonical_named_reference_message() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
@@ -259,7 +258,6 @@ export type SomeType = import('./inner').SomeType;
 }
 
 #[test]
-#[ignore] // TODO: declaration emit should report non-portable nested reference for default object assign
 fn declaration_emit_default_object_assign_reports_non_portable_nested_reference() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
@@ -355,7 +353,6 @@ export default Object.assign(A, {
 }
 
 #[test]
-#[ignore] // TODO: declaration emit should report non-serializable foreign unique symbol property
 fn declaration_emit_reports_non_serializable_foreign_unique_symbol_property() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
@@ -3624,7 +3621,6 @@ fn compile_with_project_dir_resolves_package_exported_tsconfig_extends() {
 }
 
 #[test]
-#[ignore = "regression: emits 1 TS2345 instead of 2 TS2322 after recent type resolution changes"]
 fn compile_with_project_dir_preserves_invariant_generic_error_elaboration_ts2322() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -12686,7 +12682,6 @@ fn phase_timings_are_populated_after_compilation() {
 }
 
 #[test]
-#[ignore] // TODO: should report outer TS2345 for block body contextual callback return mismatch
 fn compile_reports_outer_ts2345_for_block_body_contextual_callback_return_mismatch() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
