@@ -1078,15 +1078,44 @@ impl<'a> CheckerState<'a> {
                 // Note: When a class merges with a function declaration, we must use
                 // get_type_of_symbol to get the merged type with both call and construct
                 // signatures.
-                let preferred_value_decl = self
-                    .preferred_value_declaration(sym_id, value_decl, &symbol_declarations)
-                    .unwrap_or(value_decl);
-                let ctor_type =
-                    self.type_of_value_declaration_for_symbol(sym_id, preferred_value_decl);
-                if ctor_type != TypeId::UNKNOWN && ctor_type != TypeId::ERROR {
-                    ctor_type
+                //
+                // Guard: if the class constructor is ALSO being resolved
+                // (class_constructor_resolution_set contains this symbol), calling
+                // type_of_value_declaration_for_symbol would re-enter
+                // get_class_constructor_type and hit cycle detection, returning the
+                // instance type as a fallback. Instead, check the constructor type
+                // cache directly, or fall through to get_type_of_symbol.
+                let ctor_already_resolving =
+                    self.ctx.class_constructor_resolution_set.contains(&sym_id);
+                if ctor_already_resolving {
+                    // Try cached constructor type first
+                    if let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
+                        && let Some(&cached_ctor) =
+                            self.ctx.class_constructor_type_cache.get(&class_idx)
+                    {
+                        cached_ctor
+                    } else {
+                        // The constructor type is actively being resolved and no
+                        // cached value is available. Returning the Lazy placeholder
+                        // from get_type_of_symbol would give the instance type,
+                        // causing false TS2339 on static member access (e.g.,
+                        // `Bar.instance`). Return ANY as a safe fallback - the
+                        // property access succeeds without a false error, and the
+                        // final type will be computed correctly after the
+                        // constructor resolution completes.
+                        TypeId::ANY
+                    }
                 } else {
-                    self.get_type_of_symbol(sym_id)
+                    let preferred_value_decl = self
+                        .preferred_value_declaration(sym_id, value_decl, &symbol_declarations)
+                        .unwrap_or(value_decl);
+                    let ctor_type =
+                        self.type_of_value_declaration_for_symbol(sym_id, preferred_value_decl);
+                    if ctor_type != TypeId::UNKNOWN && ctor_type != TypeId::ERROR {
+                        ctor_type
+                    } else {
+                        self.get_type_of_symbol(sym_id)
+                    }
                 }
             } else {
                 self.get_type_of_symbol(sym_id)

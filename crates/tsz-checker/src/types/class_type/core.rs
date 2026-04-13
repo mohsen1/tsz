@@ -1083,8 +1083,39 @@ impl<'a> CheckerState<'a> {
                 .class_instance_type_cache
                 .insert(class_idx, partial_type);
 
+            // Check if the class constructor is currently being resolved.
+            // When it is, method body inference can trigger a cycle:
+            //   instance type → method body inference → Bar.instance → constructor type → CYCLE
+            // In this case, skip body-based return type inference and use ANY
+            // as a placeholder. The final constructor type will be computed
+            // correctly after the instance type is done.
+            let in_constructor_resolution = current_sym
+                .is_some_and(|sym_id| self.ctx.class_constructor_resolution_set.contains(&sym_id));
+
             for (member_idx, method) in deferred_methods {
-                let mut signature = self.call_signature_from_method(method, member_idx);
+                let mut signature = if in_constructor_resolution
+                    && method.type_annotation.is_none()
+                    && method.body.is_some()
+                {
+                    // Skip body inference to avoid cycle - build a minimal signature
+                    self.exclude_params_for_type_param_constraints(&method.parameters);
+                    let (type_params, type_param_updates) =
+                        self.push_type_parameters(&method.type_parameters);
+                    self.clear_excluded_params_for_type_param_constraints();
+                    let (params, this_type) =
+                        self.extract_params_from_parameter_list(&method.parameters);
+                    self.pop_type_parameters(type_param_updates);
+                    tsz_solver::CallSignature {
+                        type_params,
+                        params,
+                        this_type,
+                        return_type: TypeId::ANY,
+                        type_predicate: None,
+                        is_method: true,
+                    }
+                } else {
+                    self.call_signature_from_method(method, member_idx)
+                };
                 // When a class method without an explicit return type annotation
                 // infers its return type from the body and the result is the partial
                 // class instance type (i.e. the body does `return this;`), replace
