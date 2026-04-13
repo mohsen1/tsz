@@ -1570,11 +1570,12 @@ impl<'a> CheckerState<'a> {
                 )
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-                // tsc always shows the narrow (non-widened) types in TS2367 messages,
-                // preserving literal types like `"foo"` and `"bar"` rather than
-                // widening to `string`. This matches diagnostics like:
-                //   `types 'Refrigerator | "foo"' and '"bar"' have no overlap`
-                let (left_display, right_display) = (left_narrow, right_narrow);
+                // tsc widens literal types to their base primitives when comparing
+                // types from different primitive families (e.g., string vs number).
+                // For same-family comparisons (e.g., `"foo"` vs `"bar"`), literal
+                // types are preserved in the error message.
+                let (left_display, right_display) =
+                    self.widen_for_ts2367_cross_family_display(left_narrow, right_narrow);
                 let (left_str, right_str) = self.format_type_pair(left_display, right_display);
                 let message = format_message(
                     diagnostic_messages::THIS_COMPARISON_APPEARS_TO_BE_UNINTENTIONAL_BECAUSE_THE_TYPES_AND_HAVE_NO_OVERLA,
@@ -2207,6 +2208,75 @@ impl<'a> CheckerState<'a> {
             current = parent;
         }
         false
+    }
+
+    /// Get the primitive type family of a type: `TypeId::STRING` for string/string literals,
+    /// `TypeId::NUMBER` for number/number literals, `TypeId::BOOLEAN` for boolean/boolean literals,
+    /// `TypeId::BIGINT` for bigint/bigint literals, or `TypeId::ERROR` for non-primitive types.
+    ///
+    /// Used to determine if two types are from different primitive families (e.g., string vs number)
+    /// for TS2367 display purposes. When types are from different families, tsc widens literals
+    /// to their base primitive types in error messages.
+    fn get_primitive_family(&self, type_id: TypeId) -> TypeId {
+        use crate::query_boundaries::common::{
+            classify_literal_type, is_string_intrinsic_type, is_template_literal_type,
+        };
+        use tsz_solver::type_queries::LiteralTypeKind;
+
+        // Check direct primitive type IDs
+        if type_id == TypeId::STRING
+            || type_id == TypeId::NUMBER
+            || type_id == TypeId::BOOLEAN
+            || type_id == TypeId::BIGINT
+        {
+            return type_id;
+        }
+
+        // Check literal types via query boundary
+        match classify_literal_type(self.ctx.types, type_id) {
+            LiteralTypeKind::String(_) => return TypeId::STRING,
+            LiteralTypeKind::Number(_) => return TypeId::NUMBER,
+            LiteralTypeKind::Boolean(_) => return TypeId::BOOLEAN,
+            LiteralTypeKind::BigInt(_) => return TypeId::BIGINT,
+            LiteralTypeKind::NotLiteral => {}
+        }
+
+        // Check template literals and string intrinsics
+        if is_template_literal_type(self.ctx.types, type_id)
+            || is_string_intrinsic_type(self.ctx.types, type_id)
+        {
+            return TypeId::STRING;
+        }
+
+        TypeId::ERROR // Non-primitive types
+    }
+
+    /// Widen types for TS2367 display when they are from different primitive families.
+    ///
+    /// tsc's rule: when comparing types from different primitive families (e.g., string vs number),
+    /// both types are widened to their base primitives in the error message. For same-family
+    /// comparisons (e.g., `"foo"` vs `"bar"`), literal types are preserved.
+    fn widen_for_ts2367_cross_family_display(
+        &self,
+        left: TypeId,
+        right: TypeId,
+    ) -> (TypeId, TypeId) {
+        let left_family = self.get_primitive_family(left);
+        let right_family = self.get_primitive_family(right);
+
+        // Both are primitives, but from different families → widen both
+        if left_family != TypeId::ERROR
+            && right_family != TypeId::ERROR
+            && left_family != right_family
+        {
+            (
+                crate::query_boundaries::common::widen_literal_type(self.ctx.types, left),
+                crate::query_boundaries::common::widen_literal_type(self.ctx.types, right),
+            )
+        } else {
+            // Same family (or non-primitives): preserve literal types
+            (left, right)
+        }
     }
 
     /// Check if a binary operation with `IndexAccess` operands is valid through assignability.

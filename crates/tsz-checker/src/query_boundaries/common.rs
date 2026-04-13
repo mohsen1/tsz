@@ -642,6 +642,16 @@ pub(crate) fn widen_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Type
     tsz_solver::widen_literal_type(db, type_id)
 }
 
+/// Check if a type is a template literal type.
+pub(crate) fn is_template_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_template_literal_type(db, type_id)
+}
+
+/// Check if a type is a string intrinsic type (Uppercase, Lowercase, Capitalize, Uncapitalize).
+pub(crate) fn is_string_intrinsic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::string_intrinsic_components(db, type_id).is_some()
+}
+
 // ── Contextual/operation wrappers ──
 
 /// Check whether a type is a "fresh" object literal type (for excess property checking).
