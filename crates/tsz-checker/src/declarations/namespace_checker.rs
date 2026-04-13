@@ -264,6 +264,15 @@ impl<'a> CheckerState<'a> {
                 .lazy(self.ctx.get_or_create_def_id(member_id));
         }
 
+        // For merged INTERFACE+VARIABLE symbols (e.g., `export interface Point { ... }`
+        // merged with `export var Point: number`), get_type_of_symbol returns the
+        // interface type. But namespace value exports need the variable's type.
+        // Use merged_value_type_for_symbol_if_available to get the variable declaration
+        // type directly.
+        if let Some(value_type) = self.merged_value_type_for_symbol_if_available(member_id) {
+            return value_type;
+        }
+
         self.get_type_of_symbol(member_id)
     }
 
