@@ -492,6 +492,14 @@ impl<'a> CheckerState<'a> {
                         .is_some_and(|arg_idx| self.argument_supports_literal_elaboration(arg_idx));
                 if let Some(arg_idx) = arg_idx {
                     self.suppress_later_call_excess_property_diagnostics(args, arg_idx);
+                    // When a callback has a block body, TSC reports TS2345 at the
+                    // argument level rather than elaborating with an inner TS2322
+                    // on return statements. Compute this BEFORE the elaboration
+                    // call so we can skip callback return elaboration entirely.
+                    let prefer_argument_level_return_mismatch =
+                        self.callback_prefers_argument_level_return_mismatch(arg_idx);
+                    let suppress_inner_elaboration =
+                        self.callback_has_explicit_param_type_conflict(arg_idx, expected);
                     // Skip elaboration when the original parameter type was a type parameter
                     // (excess properties are allowed for generic calls with type param targets).
                     let skip_for_generic = self
@@ -501,6 +509,7 @@ impl<'a> CheckerState<'a> {
                         .is_some_and(|skip| index < skip.len() && skip[index]);
                     if should_try_deferred_elaboration
                         && !skip_for_generic
+                        && !prefer_argument_level_return_mismatch
                         && !self.should_suppress_weak_key_arg_mismatch(
                             callee_expr,
                             args,
@@ -514,14 +523,6 @@ impl<'a> CheckerState<'a> {
                             Some(actual),
                         );
                     }
-                    // When a callback has explicitly-typed parameters that conflict with the
-                    // expected parameter types, TSC reports TS2345 at the argument level
-                    // rather than elaborating with an inner TS2322. Only suppress inner
-                    // elaboration when the *parameter* types are the source of the mismatch.
-                    let prefer_argument_level_return_mismatch =
-                        self.callback_prefers_argument_level_return_mismatch(arg_idx);
-                    let suppress_inner_elaboration =
-                        self.callback_has_explicit_param_type_conflict(arg_idx, expected);
                     if !elaborated
                         && !suppress_inner_elaboration
                         && !prefer_argument_level_return_mismatch
