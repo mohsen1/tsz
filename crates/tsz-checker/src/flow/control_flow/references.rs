@@ -240,6 +240,16 @@ impl<'a> FlowAnalyzer<'a> {
                 trace!("Matched: both are 'super'");
                 return true;
             }
+            // `import.meta` and `new.target` have no symbol backing; match two
+            // `import` meta-property roots so narrowing can flow through
+            // `import.meta.foo` chains. Two distinct ImportKeyword nodes within
+            // the same file always refer to the same `import.meta`.
+            if node_a.kind == SyntaxKind::ImportKeyword as u16
+                && node_b.kind == SyntaxKind::ImportKeyword as u16
+            {
+                trace!("Matched: both are 'import' meta-property root");
+                return true;
+            }
         }
 
         let sym_a = self.reference_symbol(a);
