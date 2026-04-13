@@ -390,6 +390,8 @@ struct CheckOptions {
     no_implicit_override: bool,
     #[serde(default)]
     strict_builtin_iterator_return: Option<bool>,
+    #[serde(default)]
+    declaration: bool,
 }
 
 /// Legacy response to client
