@@ -1313,7 +1313,6 @@ const f11: <T>(x: T) => Box<T[]> = compose(list, box);
 }
 
 #[test]
-#[ignore = "pre-existing regression: generic function composition inference"]
 fn compose_with_wrapped_generic_function_arguments() {
     // compose(unbox, unlist) should infer <T>(x: Box<T[]>) => T
     // when assigned to a variable with that generic function annotation.

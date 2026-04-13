@@ -2184,10 +2184,6 @@ declare const TestComponentWithoutChildren: <T, TParam>(props: {{
 }
 
 #[test]
-#[ignore = "TODO: pre-existing failure — tsz emits TS2322 'boolean[] not assignable to \
-            State' because the inferred TSelected=boolean[] from selector is not properly \
-            propagated to the children callback contextual type. Generic JSX inference \
-            with defaulted type params needs improvement."]
 fn test_generic_jsx_children_defaulted_type_param_infers_from_selector() {
     let source = format!(
         r#"

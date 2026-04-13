@@ -2964,7 +2964,6 @@ var x = <div></div><div></div>
 }
 
 #[test]
-#[ignore] // TODO: JSX type argument recovery in JS files not yet implemented
 fn test_jsx_type_arguments_in_js_report_ts2657() {
     let source = r#"
 /// <reference path="/.lib/react.d.ts" />
@@ -3014,7 +3013,6 @@ Foo<number>``;
 }
 
 #[test]
-#[ignore] // TODO: JSX type argument closing tag recovery in JS files not yet implemented
 fn test_jsx_type_arguments_in_js_with_closing_tag_report_ts17002() {
     let source = r#"
 <Foo<number>></Foo>;

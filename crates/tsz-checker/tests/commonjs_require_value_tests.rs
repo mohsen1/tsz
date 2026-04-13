@@ -105,7 +105,6 @@ fn check_js_require_value_diagnostics(
 }
 
 #[test]
-#[ignore = "pre-existing regression: JSDoc @type on require binding not fully applied"]
 fn check_js_require_of_json_preserves_property_presence_and_assignment() {
     let diagnostics = check_js_require_value_diagnostics(
         r#"{ "a": 0 }"#,
