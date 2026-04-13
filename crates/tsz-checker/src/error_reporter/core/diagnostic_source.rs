@@ -1275,17 +1275,30 @@ impl<'a> CheckerState<'a> {
             return formatted;
         }
 
-        if let Some(annotation_text) =
-            self.declared_type_annotation_text_for_symbol_type(source, true)
-        {
-            return self.format_declared_annotation_for_diagnostic(&annotation_text);
-        }
-        let evaluated_source = self.evaluate_type_with_env(source);
-        if evaluated_source != source
-            && let Some(annotation_text) =
-                self.declared_type_annotation_text_for_symbol_type(evaluated_source, true)
-        {
-            return self.format_declared_annotation_for_diagnostic(&annotation_text);
+        // Check if source is a single-call-signature callable that tsc displays in
+        // arrow syntax. For these, use the TypeFormatter instead of annotation text.
+        let source_uses_arrow_syntax =
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, source)
+                .is_some_and(|shape| {
+                    shape.call_signatures.len() == 1
+                        && shape.construct_signatures.is_empty()
+                        && shape.properties.is_empty()
+                        && shape.string_index.is_none()
+                        && shape.number_index.is_none()
+                });
+        if !source_uses_arrow_syntax {
+            if let Some(annotation_text) =
+                self.declared_type_annotation_text_for_symbol_type(source, true)
+            {
+                return self.format_declared_annotation_for_diagnostic(&annotation_text);
+            }
+            let evaluated_source = self.evaluate_type_with_env(source);
+            if evaluated_source != source
+                && let Some(annotation_text) =
+                    self.declared_type_annotation_text_for_symbol_type(evaluated_source, true)
+            {
+                return self.format_declared_annotation_for_diagnostic(&annotation_text);
+            }
         }
 
         self.format_assignability_type_for_message(source, target)
@@ -1501,17 +1514,30 @@ impl<'a> CheckerState<'a> {
             return self.format_assignability_type_for_message(display_type, target);
         }
 
-        if let Some(annotation_text) =
-            self.declared_type_annotation_text_for_symbol_type(source, true)
-        {
-            return self.format_declared_annotation_for_diagnostic(&annotation_text);
-        }
-        let evaluated_source = self.evaluate_type_with_env(source);
-        if evaluated_source != source
-            && let Some(annotation_text) =
-                self.declared_type_annotation_text_for_symbol_type(evaluated_source, true)
-        {
-            return self.format_declared_annotation_for_diagnostic(&annotation_text);
+        // Check if source is a single-call-signature callable that tsc displays in
+        // arrow syntax. For these, use the TypeFormatter instead of annotation text.
+        let source_uses_arrow_syntax =
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, source)
+                .is_some_and(|shape| {
+                    shape.call_signatures.len() == 1
+                        && shape.construct_signatures.is_empty()
+                        && shape.properties.is_empty()
+                        && shape.string_index.is_none()
+                        && shape.number_index.is_none()
+                });
+        if !source_uses_arrow_syntax {
+            if let Some(annotation_text) =
+                self.declared_type_annotation_text_for_symbol_type(source, true)
+            {
+                return self.format_declared_annotation_for_diagnostic(&annotation_text);
+            }
+            let evaluated_source = self.evaluate_type_with_env(source);
+            if evaluated_source != source
+                && let Some(annotation_text) =
+                    self.declared_type_annotation_text_for_symbol_type(evaluated_source, true)
+            {
+                return self.format_declared_annotation_for_diagnostic(&annotation_text);
+            }
         }
 
         self.format_assignability_type_for_message(source, target)
@@ -1935,12 +1961,28 @@ impl<'a> CheckerState<'a> {
         if declared_is_generic_callable
             && let Some(annotation_text) = self.declared_diagnostic_source_annotation_text(expr_idx)
         {
-            let annotation_display =
-                self.format_declared_annotation_for_diagnostic(&annotation_text);
-            let expr_display =
-                self.format_assignability_type_for_message(expr_display_type, target);
-            if prefer_declared_display && annotation_display != expr_display {
-                return Some(annotation_display);
+            // Check if this is a single-call-signature callable that tsc displays in
+            // arrow syntax (e.g., `<S>() => S[]`). For these, skip annotation text
+            // and use the TypeFormatter which correctly produces arrow syntax.
+            let should_use_arrow_syntax = crate::query_boundaries::common::callable_shape_for_type(
+                self.ctx.types,
+                declared_display_type,
+            )
+            .is_some_and(|shape| {
+                shape.call_signatures.len() == 1
+                    && shape.construct_signatures.is_empty()
+                    && shape.properties.is_empty()
+                    && shape.string_index.is_none()
+                    && shape.number_index.is_none()
+            });
+            if !should_use_arrow_syntax {
+                let annotation_display =
+                    self.format_declared_annotation_for_diagnostic(&annotation_text);
+                let expr_display =
+                    self.format_assignability_type_for_message(expr_display_type, target);
+                if prefer_declared_display && annotation_display != expr_display {
+                    return Some(annotation_display);
+                }
             }
         }
         let declared_display = if declared_is_generic_callable {
