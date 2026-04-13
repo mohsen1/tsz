@@ -1227,21 +1227,25 @@ impl ParserState {
                                 *pos += 1;
                             }
                             Some(ClassAtomKind::Class)
+                        } else if strict_mode {
+                            emit(
+                                parser,
+                                start - 1,
+                                2,
+                                "'\\P' must be followed by a Unicode property value expression enclosed in braces.",
+                                diagnostic_codes::MUST_BE_FOLLOWED_BY_A_UNICODE_PROPERTY_VALUE_EXPRESSION_ENCLOSED_IN_BRACES,
+                            );
+                            Some(ClassAtomKind::Class)
                         } else {
-                            if strict_mode {
-                                emit(
-                                    parser,
-                                    start - 1,
-                                    2,
-                                    "'\\P' must be followed by a Unicode property value expression enclosed in braces.",
-                                    diagnostic_codes::MUST_BE_FOLLOWED_BY_A_UNICODE_PROPERTY_VALUE_EXPRESSION_ENCLOSED_IN_BRACES,
-                                );
-                            }
-                            if strict_mode {
-                                Some(ClassAtomKind::Class)
-                            } else {
-                                None
-                            }
+                            // Annex B: `\P` without braces is treated as the
+                            // literal character `P`. Position is already past
+                            // `P`, so emit a Character atom directly rather
+                            // than returning None and letting the caller
+                            // re-scan (which would consume the next escape).
+                            Some(ClassAtomKind::Character {
+                                value: u32::from(b'P'),
+                                utf16_len: 1,
+                            })
                         }
                     }
                     b'p' => {
@@ -1255,19 +1259,22 @@ impl ParserState {
                                 *pos += 1;
                             }
                             Some(ClassAtomKind::Class)
+                        } else if strict_mode {
+                            emit(
+                                parser,
+                                start - 1,
+                                2,
+                                "'\\p' must be followed by a Unicode property value expression enclosed in braces.",
+                                diagnostic_codes::MUST_BE_FOLLOWED_BY_A_UNICODE_PROPERTY_VALUE_EXPRESSION_ENCLOSED_IN_BRACES,
+                            );
+                            Some(ClassAtomKind::Class)
                         } else {
-                            if strict_mode {
-                                emit(
-                                    parser,
-                                    start - 1,
-                                    2,
-                                    "'\\p' must be followed by a Unicode property value expression enclosed in braces.",
-                                    diagnostic_codes::MUST_BE_FOLLOWED_BY_A_UNICODE_PROPERTY_VALUE_EXPRESSION_ENCLOSED_IN_BRACES,
-                                );
-                                Some(ClassAtomKind::Class)
-                            } else {
-                                None
-                            }
+                            // Annex B: `\p` without braces is treated as the
+                            // literal character `p`. See `\P` above.
+                            Some(ClassAtomKind::Character {
+                                value: u32::from(b'p'),
+                                utf16_len: 1,
+                            })
                         }
                     }
                     _ => None,

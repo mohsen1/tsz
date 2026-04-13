@@ -320,6 +320,26 @@ fn test_regex_character_class_escape_does_not_report_ts1517() {
 }
 
 #[test]
+fn test_regex_annexb_p_escape_does_not_consume_following_escape() {
+    // Annex B (no /u flag): `\P` without braces is the literal character `P`.
+    // Previously, scan_character_class_escape returned None for this case
+    // after advancing pos past `P`, causing the caller to over-consume the
+    // following backslash. That mis-parsed `\P\w-_` as `P`, `w`, `-`, `_`
+    // and then mis-detected `w-_` as an out-of-order range (TS1517).
+    let source = "const a = /\\P[\\P\\w-_]/;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::RANGE_OUT_OF_ORDER_IN_CHARACTER_CLASS),
+        "Annex B `\\P` should not cause TS1517 on following character class atoms: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_regex_non_bmp_inline_flags_emit_unknown_flag_diagnostics() {
     let source = r"
 const 𝘳𝘦𝘨𝘦𝘹 = /(?𝘴𝘪-𝘮:^𝘧𝘰𝘰.)/𝘨𝘮𝘶;
