@@ -266,12 +266,14 @@ impl<'a> CheckerState<'a> {
             overload_optional: bool,
             impl_optional: bool,
             visibility: Visibility,
+            declaration_order: u32,
         }
 
         struct AccessorAggregate {
             getter: Option<TypeId>,
             setter: Option<TypeId>,
             visibility: Visibility,
+            declaration_order: u32,
         }
 
         struct DeferredAccessor<'b> {
@@ -563,7 +565,7 @@ impl<'a> CheckerState<'a> {
                             is_class_prototype: false,
                             visibility,
                             parent_id: current_sym,
-                            declaration_order: 0,
+                            declaration_order: member_idx.0,
                             is_string_named: false,
                         };
                         let mut partial_props: Vec<PropertyInfo> =
@@ -663,7 +665,7 @@ impl<'a> CheckerState<'a> {
                             is_class_prototype: false,
                             visibility,
                             parent_id: current_sym,
-                            declaration_order: 0,
+                            declaration_order: member_idx.0,
                             is_string_named: false,
                         },
                     );
@@ -783,7 +785,7 @@ impl<'a> CheckerState<'a> {
                                 is_class_prototype: false,
                                 visibility,
                                 parent_id: current_sym,
-                                declaration_order: 0,
+                                declaration_order: param_idx.0,
                                 is_string_named: false,
                             },
                         );
@@ -1174,6 +1176,7 @@ impl<'a> CheckerState<'a> {
                     overload_optional: false,
                     impl_optional: false,
                     visibility,
+                    declaration_order: member_idx.0,
                 });
                 if method.body.is_none() {
                     entry.overload_signatures.push(signature);
@@ -1259,6 +1262,7 @@ impl<'a> CheckerState<'a> {
                             getter: None,
                             setter: None,
                             visibility: deferred.visibility,
+                            declaration_order: deferred.member_idx.0,
                         });
                     entry.getter = Some(getter_type);
                 } else {
@@ -1295,6 +1299,7 @@ impl<'a> CheckerState<'a> {
                             getter: None,
                             setter: None,
                             visibility: deferred.visibility,
+                            declaration_order: deferred.member_idx.0,
                         });
                     entry.setter = Some(setter_type);
                 }
@@ -1344,7 +1349,7 @@ impl<'a> CheckerState<'a> {
                     is_class_prototype: true,
                     visibility: accessor.visibility,
                     parent_id: current_sym,
-                    declaration_order: 0,
+                    declaration_order: accessor.declaration_order,
                     is_string_named: false,
                 },
             );
@@ -1392,7 +1397,7 @@ impl<'a> CheckerState<'a> {
                     is_class_prototype: true,
                     visibility: method.visibility,
                     parent_id: current_sym,
-                    declaration_order: 0,
+                    declaration_order: method.declaration_order,
                     is_string_named: false,
                 },
             );
