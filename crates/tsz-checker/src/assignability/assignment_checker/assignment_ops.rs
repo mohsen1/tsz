@@ -59,6 +59,19 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
             {
+                // import.meta is parsed as PROPERTY_ACCESS_EXPRESSION in tsz, but it is
+                // NOT a valid assignment target. In tsc it's a MetaProperty node which is
+                // rejected by isAccessExpression(). We detect it by checking whether the
+                // expression child is the ImportKeyword token.
+                if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                    if let Some(access) = self.ctx.arena.get_access_expr(node) {
+                        if let Some(expr_node) = self.ctx.arena.get(access.expression) {
+                            if expr_node.kind == SyntaxKind::ImportKeyword as u16 {
+                                return false;
+                            }
+                        }
+                    }
+                }
                 true
             }
             k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
