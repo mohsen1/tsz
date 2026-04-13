@@ -264,6 +264,22 @@ impl<'a> CheckerState<'a> {
                 .lazy(self.ctx.get_or_create_def_id(member_id));
         }
 
+        // For merged INTERFACE+VARIABLE symbols (e.g., `export interface Point { ... }`
+        // merged with `export var Point = 1`), `get_type_of_symbol` returns the interface
+        // type. But for the namespace value-side object, we need the variable's value type.
+        // Use `type_of_value_declaration_for_symbol` with the symbol's value_declaration
+        // to get the correct runtime type.
+        let is_merged_interface_value = member_flags & tsz_binder::symbol_flags::INTERFACE != 0
+            && member_flags & tsz_binder::symbol_flags::VARIABLE != 0;
+        if is_merged_interface_value {
+            if let Some(symbol) = self.ctx.binder.get_symbol(member_id) {
+                let value_decl = symbol.value_declaration;
+                if value_decl.is_some() {
+                    return self.type_of_value_declaration_for_symbol(member_id, value_decl);
+                }
+            }
+        }
+
         self.get_type_of_symbol(member_id)
     }
 
