@@ -25017,3 +25017,36 @@ var p = new Proxy(t, {});
         "new Proxy() should NOT emit TS2351 (not constructable), got: {diagnostics:?}"
     );
 }
+
+/// Generic class with self-referential return type should not prevent property access
+/// on instantiated class types. Previously, having a method that returned the same class
+/// with different type args (e.g., `fmap<B>(...): Vec2<B>`) caused the class instance
+/// type cache (symbol_instance_types) to hold ERROR, breaking property lookups on
+/// `Vec2<(a: A) => B>` in other methods.
+///
+/// See: genericClasses4.ts conformance test
+#[test]
+fn test_generic_class_self_referential_property_access() {
+    let source = r#"
+class Vec2<A> {
+    constructor(public x: A, public y: A) {}
+    fmap<B>(f: (a: A) => B): Vec2<B> {
+        var x: B = f(this.x);
+        var y: B = f(this.y);
+        var retval: Vec2<B> = new Vec2(x, y);
+        return retval;
+    }
+    apply<B>(f: Vec2<(a: A) => B>): Vec2<B> {
+        var x: B = f.x(this.x);
+        var y: B = f.y(this.y);
+        var retval: Vec2<B> = new Vec2(x, y);
+        return retval;
+    }
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Property access on generic class instance should not produce TS2339, got: {diagnostics:?}"
+    );
+}
