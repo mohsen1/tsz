@@ -826,6 +826,18 @@ impl<'a> CheckerState<'a> {
                 self.ctx.node_types = Default::default();
                 refresh_all_args(self);
 
+                // Restore const-assertion and literal-preservation context for the
+                // contextual retry pass. These flags were cleared at the end of the
+                // preinference rounds (above), but the retry still needs them so that
+                // nested array/object literals in arguments of `const` type parameter
+                // functions are correctly inferred as readonly tuples / readonly objects.
+                let prev_preserve_literals_retry = self.ctx.preserve_literal_types;
+                let prev_in_const_assertion_retry = self.ctx.in_const_assertion;
+                self.ctx.preserve_literal_types = true;
+                if has_const_type_params {
+                    self.ctx.in_const_assertion = true;
+                }
+
                 let retry_callable_ctx = CallableContext::new(func_type);
                 let refreshed_contextual_types = if !return_sub_for_retry.is_empty() {
                     (0..args.len())
@@ -858,6 +870,9 @@ impl<'a> CheckerState<'a> {
                     None,
                     retry_callable_ctx,
                 );
+
+                self.ctx.preserve_literal_types = prev_preserve_literals_retry;
+                self.ctx.in_const_assertion = prev_in_const_assertion_retry;
 
                 let (retry_result, _retry_predicate, _retry_instantiated_params) = self
                     .resolve_call_with_checker_adapter(

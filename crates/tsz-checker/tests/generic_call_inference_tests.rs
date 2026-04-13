@@ -1399,3 +1399,52 @@ const x = pipe(es, filter(exists((n) => n > 0)));
         "pipe(es, filter(exists(...))) should not produce TS2345. Got: {diags:#?}"
     );
 }
+
+// ─── Const type parameter inference ─────────────────────────────────
+
+#[test]
+fn const_type_param_nested_array_in_object_no_false_ts2322() {
+    // When a function has `const T` and multiple parameters, nested array
+    // literals inside object literal arguments must be inferred as readonly
+    // tuples, not plain arrays. Without const assertion flowing into nested
+    // expressions, [1, 2] is typed as `number[]` which is not assignable to
+    // the inferred `readonly [1, 2]`, producing a false TS2322.
+    let source = r#"
+declare function f<const T>(x: T, y?: string): T;
+const a = f({ d: [1, 2] });
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "const type param with multi-param function should not produce false TS2322. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_single_param_nested_array_no_false_ts2322() {
+    // Baseline: single-param const type param function should also work.
+    let source = r#"
+declare function f<const T>(x: T): T;
+const a = f({ d: [1, 2] });
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "const type param with single-param function should not produce TS2322. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_empty_array_in_object_no_false_ts2322() {
+    // Empty arrays inside object literals with const type params should be
+    // typed as empty readonly tuples, not `never[]`.
+    let source = r#"
+declare function f<const T>(x: T, y?: string): T;
+const a = f({ d: [] });
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "const type param with empty array should not produce false TS2322. Got: {diags:#?}"
+    );
+}
