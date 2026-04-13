@@ -673,6 +673,9 @@ impl<'a> CheckerState<'a> {
             }
 
             let (params, updates) = self.push_type_parameters(&class.type_parameters);
+            // Check cache but skip ERROR values — these can arise when
+            // class_instance_type_cache is cleared during class statement
+            // checking and re-computation hits the recursion guard.
             if let Some(&instance_type) = self
                 .ctx
                 .symbol_instance_types
@@ -690,20 +693,27 @@ impl<'a> CheckerState<'a> {
             }
 
             let instance_type = self.get_class_instance_type(decl_idx, class);
-            self.ctx.symbol_instance_types.insert(sym_id, instance_type);
-            if active_class_sym != sym_id {
-                self.ctx
-                    .symbol_instance_types
-                    .insert(active_class_sym, instance_type);
-            }
+            // Only cache and register if the result is valid. When
+            // get_class_instance_type returns ERROR (e.g. due to re-entrant
+            // class statement checking clearing class_instance_type_cache),
+            // preserve any previously computed valid instance type rather
+            // than overwriting it with ERROR.
+            if instance_type != TypeId::ERROR {
+                self.ctx.symbol_instance_types.insert(sym_id, instance_type);
+                if active_class_sym != sym_id {
+                    self.ctx
+                        .symbol_instance_types
+                        .insert(active_class_sym, instance_type);
+                }
 
-            // Register the class instance type in both type environments
-            // immediately so that Lazy(DefId) fallbacks (created by the recursion
-            // guard above) can resolve via resolve_lazy during property access
-            // checks and flow-analyzer narrowing.
-            let def_id = self.ctx.get_or_create_def_id(active_class_sym);
-            self.ctx
-                .register_class_instance_in_envs(def_id, instance_type);
+                // Register the class instance type in both type environments
+                // immediately so that Lazy(DefId) fallbacks (created by the
+                // recursion guard above) can resolve via resolve_lazy during
+                // property access checks and flow-analyzer narrowing.
+                let def_id = self.ctx.get_or_create_def_id(active_class_sym);
+                self.ctx
+                    .register_class_instance_in_envs(def_id, instance_type);
+            }
 
             self.pop_type_parameters(updates);
             return Some((instance_type, params));

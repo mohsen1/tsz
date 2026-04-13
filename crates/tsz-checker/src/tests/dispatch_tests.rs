@@ -1821,3 +1821,39 @@ var p = new MyProxy(t, {});
         ts2351.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn no_false_ts2339_on_generic_class_self_referencing_parameter() {
+    // Regression test: property access on a generic class type used as a
+    // parameter type within the same class's method should not produce false
+    // TS2339 errors. The class instance type cache must not be corrupted by
+    // ERROR values during re-entrant class checking.
+    //
+    // Matches tsc behavior for genericClasses4.ts: no errors expected.
+    let diags = check_source_diagnostics(
+        r#"
+class Vec2_T<A> {
+    constructor(public x: A, public y: A) { }
+    fmap<B>(f: (a: A) => B): Vec2_T<B> {
+        var x:B = f(this.x);
+        var y:B = f(this.y);
+        var retval: Vec2_T<B> = new Vec2_T(x, y);
+        return retval;
+    }
+    apply<B>(f: Vec2_T<(a: A) => B>): Vec2_T<B> {
+        var x:B = f.x(this.x);
+        var y:B = f.y(this.y);
+        var retval: Vec2_T<B> = new Vec2_T(x, y);
+        return retval;
+    }
+}
+"#,
+    );
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for property access on generic class self-reference, got: {:?}",
+        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
