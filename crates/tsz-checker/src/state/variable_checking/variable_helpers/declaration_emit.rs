@@ -325,7 +325,7 @@ impl<'a> CheckerState<'a> {
             let pkg_start = first_nm + 1;
             let pkg_end = second_nm;
 
-            let parent_package: Vec<String> = components[pkg_start..pkg_end]
+            let parent_parts: Vec<String> = components[pkg_start..pkg_end]
                 .iter()
                 .filter_map(|c| match c {
                     Component::Normal(part) => part.to_str().map(str::to_string),
@@ -333,12 +333,9 @@ impl<'a> CheckerState<'a> {
                 })
                 .collect();
 
-            if !parent_package.is_empty() {
-                let from_path = format!(
-                    "{}/node_modules/{}",
-                    parent_package.join("/"),
-                    import_module
-                );
+            if !parent_parts.is_empty() {
+                let from_path =
+                    format!("{}/node_modules/{}", parent_parts.join("/"), import_module);
                 return Some((type_name, from_path));
             }
         }
@@ -387,11 +384,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Case 3 (single node_modules, private subpath) is handled by the
-        // declaration emitter which has access to the printed type text and can
-        // make more accurate portability decisions.  The type-graph walk here
-        // is too aggressive: it finds types in conditional branches that may
-        // resolve away, leading to false TS2883 emissions that tsc avoids.
+        // Case 3 (single node_modules, private subpath) requires the
+        // declaration emitter's context to determine if the type actually
+        // appears in the output. The type-graph walk here is too aggressive:
+        // it finds types in conditional branches that may resolve away,
+        // leading to false TS2883 emissions that tsc avoids.
 
         None
     }

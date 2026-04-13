@@ -3142,6 +3142,120 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
         );
     }
 
+    /// TS2883: Nested node_modules types should be detected as non-portable.
+    /// When an exported variable's inferred type references a type from a
+    /// nested `node_modules` (e.g., `foo/node_modules/nested`), tsz must
+    /// emit TS2883 even when the nested package lacks a `package.json`.
+    #[test]
+    fn test_ts2883_nested_node_modules_non_portable_type() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+
+        // Create nested node_modules structure:
+        // r/node_modules/foo/node_modules/nested/index.d.ts
+        let nested_dir = dir.path().join("r/node_modules/foo/node_modules/nested");
+        std::fs::create_dir_all(&nested_dir).expect("create nested dir");
+        std::fs::write(
+            nested_dir.join("index.d.ts"),
+            "export interface NestedProps {}\n",
+        )
+        .expect("write nested/index.d.ts");
+
+        let foo_dir = dir.path().join("r/node_modules/foo");
+        std::fs::write(
+            foo_dir.join("index.d.ts"),
+            r#"import { NestedProps } from "nested";
+export interface SomeProps {}
+export function foo(): [SomeProps, NestedProps];
+"#,
+        )
+        .expect("write foo/index.d.ts");
+
+        std::fs::write(
+            dir.path().join("r/entry.ts"),
+            r#"import { foo } from "foo";
+export const x = foo();
+"#,
+        )
+        .expect("write r/entry.ts");
+
+        let mut resolved = resolved_options_for_es2015_strict_test();
+        resolved.checker.module = ModuleKind::CommonJS;
+        resolved.printer.module = ModuleKind::CommonJS;
+        resolved.checker.emit_declarations = true;
+
+        let file_paths = vec![dir.path().join("r/entry.ts")];
+        let SourceReadResult {
+            sources,
+            dependencies: _,
+            type_reference_errors,
+            resolution_mode_errors,
+        } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
+            .expect("read source files");
+
+        assert!(type_reference_errors.is_empty());
+        assert!(resolution_mode_errors.is_empty());
+
+        let disable_default_libs =
+            resolved.lib_is_default && super::sources_have_no_default_lib(&sources);
+        let lib_paths = super::resolve_effective_lib_paths(
+            &resolved,
+            &sources,
+            dir.path(),
+            disable_default_libs,
+        )
+        .expect("resolve effective lib paths");
+        let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
+        let lib_files =
+            parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
+        let lib_contexts = load_lib_files_for_contexts(&lib_files);
+        let compile_inputs: Vec<_> = sources
+            .into_iter()
+            .map(|source| {
+                (
+                    source.path.to_string_lossy().into_owned(),
+                    source.text.unwrap_or_default(),
+                )
+            })
+            .collect();
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            compile_inputs,
+            &lib_files,
+        ));
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+        let diagnostics = collect_diagnostics(
+            &program,
+            &resolved,
+            dir.path(),
+            None,
+            &lib_contexts,
+            (false, false, false),
+            &type_cache_output,
+            false,
+        )
+        .diagnostics;
+
+        let ts2883_diags: Vec<_> = diagnostics
+            .iter()
+            .filter(|diag| diag.code == 2883)
+            .collect();
+        assert!(
+            !ts2883_diags.is_empty(),
+            "Expected at least one TS2883 diagnostic for nested node_modules type reference, got: {diagnostics:?}"
+        );
+        assert!(
+            ts2883_diags[0].message_text.contains("NestedProps"),
+            "TS2883 message should reference 'NestedProps', got: {}",
+            ts2883_diags[0].message_text
+        );
+        assert!(
+            ts2883_diags[0]
+                .message_text
+                .contains("foo/node_modules/nested"),
+            "TS2883 message should reference 'foo/node_modules/nested', got: {}",
+            ts2883_diags[0].message_text
+        );
+    }
+
     #[test]
     fn test_collect_diagnostics_keeps_unimported_external_module_type_alias_unresolved() {
         let dir = tempfile::TempDir::new().expect("temp dir");
