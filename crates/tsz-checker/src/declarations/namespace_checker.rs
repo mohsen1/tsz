@@ -362,7 +362,14 @@ impl<'a> CheckerState<'a> {
             });
         }
         self.ctx.symbol_resolution_depth.set(depth);
-        let namespace_type = self.ctx.types.factory().object(props);
+        // Use object_with_flags_and_symbol to preserve the namespace's SymbolId.
+        // This enables the type formatter to detect the namespace and display
+        // it as `typeof M` instead of expanding to the structural object shape.
+        let namespace_type = self.ctx.types.factory().object_with_flags_and_symbol(
+            props,
+            tsz_solver::ObjectFlags::empty(),
+            Some(sym_id),
+        );
         self.ctx
             .symbol_instance_types
             .insert(sym_id, namespace_type);
