@@ -157,6 +157,18 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.node_types = std::mem::take(&mut original_node_types);
 
+        // Snapshot diagnostics AFTER union-contextual argument collection.
+        // The union-contextual pass can produce speculative callback body errors
+        // (e.g., TS2322 from checking `return [a]` against the union contextual
+        // return type `number | U`). These errors are from the union context, NOT
+        // from individual overload attempts. Using `overload_snap` (taken before
+        // arg collection) would cause `overload_candidate_has_callback_body_errors`
+        // to see these stale union-context diagnostics and incorrectly reject
+        // overloads that the solver successfully resolves (e.g., generic overloads
+        // like `reduce<U>`). This post-collection snapshot ensures only diagnostics
+        // from the current overload attempt are checked.
+        let post_union_arg_diag_snap = self.ctx.snapshot_diagnostics();
+
         // First pass: try each signature with union-contextual argument types.
         // When an overload succeeds but its return context substitution is empty
         // (couldn't infer type params from contextual return type), defer it as
@@ -225,8 +237,10 @@ impl<'a> CheckerState<'a> {
                     // Defer those candidates to the signature-specific pass, which can
                     // re-evaluate callbacks with per-overload parameter types.
                     if signatures.len() > 1
-                        && self
-                            .overload_candidate_has_callback_body_errors(args, &overload_snap.diag)
+                        && self.overload_candidate_has_callback_body_errors(
+                            args,
+                            &post_union_arg_diag_snap,
+                        )
                     {
                         self.prune_callback_body_diagnostics(args, &overload_snap.diag);
                         continue;

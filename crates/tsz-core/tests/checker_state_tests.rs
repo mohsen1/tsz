@@ -2212,6 +2212,45 @@ arr.reduce((a, b) => a + b, 0);
     );
 }
 
+/// Block-body callbacks with explicit param types should match generic overloads.
+/// Regression test: `raw_block_body_callback_mismatch` was incorrectly checking
+/// `is_assignable_to(actual_return, expected_return)` where `expected_return` was
+/// a type parameter (e.g., `U`), causing a false TS2769 for block-body arrows
+/// like `(acc: number[], a: number) => { return [a]; }` against `reduce<U>`.
+#[test]
+fn test_generic_overload_block_body_callback_no_false_ts2769() {
+    use crate::parser::ParserState;
+
+    let source = r#"
+const arr = [1, 2, 3];
+arr.reduce((acc: number[], a: number, index: number) => { return [a] }, []);
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2769),
+        "Should not emit TS2769 for block-body callback matching generic overload, got: {codes:?}"
+    );
+}
+
 #[test]
 fn test_class_method_overload_reports_no_overload_matches() {
     use crate::checker::diagnostics::diagnostic_codes;

@@ -458,8 +458,22 @@ impl<'a> CheckerState<'a> {
                         // The component check already handles TNext contravariantly
                         // (line: `is_assignable_to(expected_next, actual_next)`),
                         // so it is the more accurate signal for generators.
+                        // When the expected return type contains unresolved
+                        // type parameters (e.g., `U` from a generic overload
+                        // `reduce<U>(fn: (a: U) => U, init: U): U`), skip the
+                        // return type mismatch check.  The type parameter is
+                        // resolved via inference during generic call resolution,
+                        // not by direct assignability.  Checking `number[]` vs
+                        // `U` would always fail, causing a false TS2769.
+                        let expected_return_has_type_params =
+                            crate::query_boundaries::common::contains_type_parameters(
+                                self.ctx.types,
+                                expected_return,
+                            );
                         let return_type_mismatch =
                             if is_generator_callback && !generator_component_mismatch {
+                                false
+                            } else if expected_return_has_type_params {
                                 false
                             } else {
                                 generator_component_mismatch
