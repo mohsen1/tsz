@@ -888,3 +888,79 @@ type T7<S extends 'a'|'b', L extends 'a'> = {[key in AB[S]]: true}[L];
         );
     }
 }
+
+/// Tests for namespace+interface merge typeof resolution.
+///
+/// When a symbol is both a namespace and an interface (merged declaration),
+/// `typeof NS.Symbol` should resolve to the namespace VALUE type (with exported
+/// functions), not the interface TYPE. Previously, `build_namespace_object_type`
+/// short-circuited with the interface type from `symbol_instance_types` cache,
+/// causing false TS2403 when comparing `typeof NS.Point` against a structurally
+/// equivalent object literal like `{ Origin(): { x: number; y: number } }`.
+#[cfg(test)]
+mod namespace_interface_merge_typeof_tests {
+    use crate::test_utils::check_source_diagnostics;
+
+    #[test]
+    fn typeof_namespace_interface_merge_no_false_ts2403() {
+        // typeof M2.Point should resolve to the namespace value type
+        // (with Origin function), not the interface type (with x, y).
+        let source = r#"
+namespace M2 {
+    export namespace Point {
+        export function Origin(): Point {
+            return { x: 0, y: 0 };
+        }
+    }
+
+    export interface Point {
+        x: number;
+        y: number;
+    }
+}
+
+var p2: { Origin(): { x: number; y: number; } };
+var p2: typeof M2.Point;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "Expected no TS2403 for typeof namespace+interface merge: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn interface_type_reference_still_works_after_fix() {
+        // M2.Point as a type reference should still resolve to the interface.
+        let source = r#"
+namespace M2 {
+    export namespace Point {
+        export function Origin(): Point {
+            return { x: 0, y: 0 };
+        }
+    }
+
+    export interface Point {
+        x: number;
+        y: number;
+    }
+}
+
+var p: { x: number; y: number };
+var p: M2.Point;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "Expected no TS2403 for structurally identical interface: {ts2403:?}"
+        );
+    }
+}

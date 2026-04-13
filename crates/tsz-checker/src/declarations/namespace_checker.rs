@@ -282,11 +282,25 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn build_namespace_object_type(&mut self, sym_id: SymbolId) -> TypeId {
         use tsz_solver::PropertyInfo;
 
-        if let Some(&cached) = self.ctx.symbol_instance_types.get(&sym_id)
-            && cached != TypeId::ERROR
-            && cached != TypeId::UNKNOWN
-        {
-            return cached;
+        // For namespace+interface merged symbols, skip the symbol_instance_types
+        // cache. It may contain the INTERFACE type (from type-position resolution
+        // like `x: Point`) which is the wrong type for the namespace VALUE side.
+        // `typeof NS.Point` needs the namespace object (e.g., `{ Origin(): ... }`)
+        // not the interface type (`{ x: number; y: number }`).
+        let is_ns_interface_merge = self.ctx.binder.get_symbol(sym_id).is_some_and(|s| {
+            s.flags & tsz_binder::symbol_flags::INTERFACE != 0
+                && s.flags
+                    & (tsz_binder::symbol_flags::NAMESPACE_MODULE
+                        | tsz_binder::symbol_flags::VALUE_MODULE)
+                    != 0
+        });
+        if !is_ns_interface_merge {
+            if let Some(&cached) = self.ctx.symbol_instance_types.get(&sym_id)
+                && cached != TypeId::ERROR
+                && cached != TypeId::UNKNOWN
+            {
+                return cached;
+            }
         }
 
         let depth = self.ctx.symbol_resolution_depth.get();
