@@ -69,6 +69,16 @@ pub(crate) fn emit_outputs(
         })
         .collect();
 
+    // Build mapping from file index to file path for decl_file_idx-based
+    // symbol source resolution (fallback when symbol_arenas is incomplete)
+    let file_idx_to_path: rustc_hash::FxHashMap<u32, String> = context
+        .program
+        .files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| (idx as u32, file.file_name.clone()))
+        .collect();
+
     // Collect file paths that contain module augmentations.
     // The declaration emitter uses this to preserve side-effect imports for
     // files whose named bindings were all elided but whose augmentations must
@@ -343,6 +353,7 @@ pub(crate) fn emit_outputs(
                     );
                     // Set arena to path mapping for module resolution
                     emitter.set_arena_to_path(arena_to_path.clone());
+                    emitter.set_file_idx_to_path(file_idx_to_path.clone());
                     emitter.set_remove_comments(context.options.printer.remove_comments);
                     emitter.set_strip_internal(context.options.strip_internal);
                     emitter.set_strict_null_checks(context.options.checker.strict_null_checks);
@@ -355,6 +366,7 @@ pub(crate) fn emit_outputs(
                     // Still set binder even without cache for consistency
                     emitter.set_binder(Some(&binder));
                     emitter.set_arena_to_path(arena_to_path.clone());
+                    emitter.set_file_idx_to_path(file_idx_to_path.clone());
                     emitter.set_remove_comments(context.options.printer.remove_comments);
                     emitter.set_strip_internal(context.options.strip_internal);
                     emitter.set_strict_null_checks(context.options.checker.strict_null_checks);
