@@ -873,23 +873,6 @@ impl<'a> CheckerState<'a> {
         self.is_assignable_to(left, right) && self.is_assignable_to(right, left)
     }
 
-    fn is_constructor_only_object_type_for_comparison(&mut self, type_id: TypeId) -> bool {
-        let resolved = self.evaluate_type_with_resolution(type_id);
-        let Some(shape) =
-            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, resolved)
-        else {
-            return false;
-        };
-        if shape.construct_signatures.is_empty() {
-            return false;
-        }
-        if !shape.call_signatures.is_empty() {
-            return false;
-        }
-        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved)
-            .is_none_or(|obj| obj.properties.is_empty())
-    }
-
     /// Check if two object types with call/construct signatures are comparable
     /// because at least one has generic type parameters.
     ///
@@ -1162,9 +1145,15 @@ impl<'a> CheckerState<'a> {
             target
         };
 
-        // Fast path: direct bidirectional assignability (with apparent types)
-        if self.is_assignable_to(source_apparent, target_apparent)
-            || self.is_assignable_to(target_apparent, source_apparent)
+        let skip_signature_only_fast_path =
+            self.are_pure_signature_objects(source_apparent, target_apparent);
+
+        // Fast path: direct bidirectional assignability (with apparent types).
+        // Skip this for pure call/construct signature objects because TS overlap
+        // checks are stricter than general object assignability there.
+        if !skip_signature_only_fast_path
+            && (self.is_assignable_to(source_apparent, target_apparent)
+                || self.is_assignable_to(target_apparent, source_apparent))
         {
             return true;
         }
@@ -1226,9 +1215,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if self.is_constructor_only_object_type_for_comparison(source_apparent)
-            && self.is_constructor_only_object_type_for_comparison(target_apparent)
-        {
+        if self.constructor_signature_only_objects_overlap(source_apparent, target_apparent) {
             return true;
         }
 

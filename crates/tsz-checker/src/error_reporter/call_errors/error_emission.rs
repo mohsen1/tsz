@@ -69,7 +69,7 @@ impl<'a> CheckerState<'a> {
         // persists, the error is real — e.g., individual params `(a: 1|2, b: "1"|"2")`
         // vs a readonly tuple union rest parameter `(...args: readonly [1, "1"] | readonly [2, "2"])`.
         if self.arg_is_callback_with_unannotated_params(idx)
-            && self.callback_params_are_unresolved(arg_type)
+            && self.callback_type_params_are_unresolved(arg_type)
         {
             return;
         }
@@ -199,23 +199,6 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .diagnostics
             .push(diag.to_checker_diagnostic(&self.ctx.file_name));
-    }
-
-    /// Check if a callback function type has all-any/unknown parameter types,
-    /// indicating contextual typing failed to provide concrete types.
-    fn callback_params_are_unresolved(&self, arg_type: TypeId) -> bool {
-        if let Some(shape) = tsz_solver::type_queries::get_function_shape(
-            self.ctx.types.as_type_database(),
-            arg_type,
-        ) {
-            shape.params.is_empty()
-                || shape
-                    .params
-                    .iter()
-                    .all(|p| matches!(p.type_id, TypeId::ANY | TypeId::UNKNOWN))
-        } else {
-            false
-        }
     }
 
     /// TS2560 ("did you mean to call it?") in call-site weak-type comparisons

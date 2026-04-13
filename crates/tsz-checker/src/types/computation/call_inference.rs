@@ -1876,6 +1876,12 @@ impl<'a> CheckerState<'a> {
                 .collect();
             let callback_param_spans = self.callback_function_param_spans(arg_idx);
             let function_arg_span = self.callback_argument_span(arg_idx);
+            let callback_has_block_body = self
+                .callback_function_index(arg_idx)
+                .and_then(|callback_idx| self.ctx.arena.get(callback_idx))
+                .and_then(|callback_node| self.ctx.arena.get_function(callback_node))
+                .and_then(|func| self.ctx.arena.get(func.body))
+                .is_some_and(|body_node| body_node.kind == syntax_kind_ext::BLOCK);
             let diag_len = snap.diagnostics_len;
             // Build pre-existing diagnostic keys for exact dedup.
             let existing_diag_keys: Vec<_> = self
@@ -1961,6 +1967,8 @@ impl<'a> CheckerState<'a> {
                 let is_concrete_callback_assignability = is_function_arg_diag
                     && is_assignability
                     && has_concrete_expected_type;
+                let is_concrete_expression_body_callback_assignability =
+                    is_concrete_callback_assignability && !callback_has_block_body;
                 // When the callback's contextual type is fully concrete (no type
                 // parameters, no infer types), TS2339 (property does not exist)
                 // errors from inside the callback body are definitive — the
@@ -1997,7 +2005,7 @@ impl<'a> CheckerState<'a> {
                 if is_function_arg_diag
                     && !is_nullish_callback_body_diag
                     && !is_direct_callback_body_assignability
-                    && !is_concrete_callback_assignability
+                    && !is_concrete_expression_body_callback_assignability
                     && !is_concrete_callback_body_property_error
                 {
                     return false;

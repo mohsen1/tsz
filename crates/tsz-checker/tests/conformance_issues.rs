@@ -8427,6 +8427,53 @@ let eq2 = b6 === a6;
     );
 }
 
+#[test]
+fn test_constructor_only_object_signatures_with_mixed_subtype_direction_do_not_overlap() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Base {
+    a!: string;
+}
+
+class Derived extends Base {
+    b!: string;
+}
+
+declare let a6: { new (a: Derived, b: Base): Base };
+declare let b6: { new (a: Base, b: Derived): Base };
+
+let lt1 = a6 < b6;
+let lt2 = b6 < a6;
+let eq1 = a6 == b6;
+let eq2 = b6 === a6;
+        "#,
+    );
+
+    let relevant_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    let ts2365 = relevant_diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2365)
+        .count();
+    let ts2367 = relevant_diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2367)
+        .count();
+
+    assert_eq!(
+        ts2365, 2,
+        "Mixed-direction constructor subtype relations should emit TS2365 for relational comparisons. Actual errors: {relevant_diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2367, 2,
+        "Mixed-direction constructor subtype relations should emit TS2367 for equality comparisons. Actual errors: {relevant_diagnostics:#?}"
+    );
+}
+
 /// Issue: Computed property destructuring produces false TS2349
 ///
 /// From: computed-property-destructuring.md

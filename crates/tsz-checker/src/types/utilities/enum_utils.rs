@@ -1,6 +1,5 @@
 //! Enum helpers, type overlap checking, readonly properties, and class/function utility methods.
 
-use crate::query_boundaries::common;
 use crate::query_boundaries::dispatch::is_type_parameter_like;
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel};
@@ -1171,10 +1170,18 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // If either is assignable to the other, they overlap
+        let skip_signature_only_assignability =
+            self.are_pure_signature_objects(effective_left, effective_right);
+
+        // If either is assignable to the other, they overlap. Skip this shortcut
+        // for pure signature objects because the generic object relation is more
+        // permissive than tsc's overlap check for call/construct signatures.
         let trace_enabled = tracing::enabled!(tracing::Level::TRACE);
-        let left_to_right = self.is_assignable_to(effective_left, effective_right);
+        let left_to_right = !skip_signature_only_assignability
+            && self.is_assignable_to(effective_left, effective_right);
         let right_to_left = if left_to_right {
+            false
+        } else if skip_signature_only_assignability {
             false
         } else {
             self.is_assignable_to(effective_right, effective_left)
@@ -1239,6 +1246,27 @@ impl<'a> CheckerState<'a> {
         true
     }
 
+    pub(crate) fn are_pure_signature_objects(&mut self, left: TypeId, right: TypeId) -> bool {
+        self.is_pure_signature_object(left) && self.is_pure_signature_object(right)
+    }
+
+    pub(crate) fn is_pure_signature_object(&mut self, type_id: TypeId) -> bool {
+        let resolved = self.evaluate_type_with_resolution(type_id);
+        let Some(shape) = crate::query_boundaries::common::callable_shape_for_type_extended(
+            self.ctx.types,
+            resolved,
+        ) else {
+            return false;
+        };
+        let has_signatures =
+            !shape.call_signatures.is_empty() || !shape.construct_signatures.is_empty();
+        if !has_signatures {
+            return false;
+        }
+        !crate::query_boundaries::assignability::object_shape_for_type(self.ctx.types, resolved)
+            .is_some_and(|obj| !obj.properties.is_empty())
+    }
+
     /// Check if two types are both object types whose properties are ALL optional.
     /// When this is the case, the empty object `{}` satisfies both types,
     /// so they always overlap (and are comparable).
@@ -1284,66 +1312,115 @@ impl<'a> CheckerState<'a> {
         !left_shape.properties.is_empty() || !right_shape.properties.is_empty()
     }
 
-    fn constructor_signature_only_objects_overlap(&mut self, left: TypeId, right: TypeId) -> bool {
-        let is_constructor_only = |this: &mut Self, type_id| {
+    pub(crate) fn constructor_signature_only_objects_overlap(
+        &mut self,
+        left: TypeId,
+        right: TypeId,
+    ) -> bool {
+        let ctor_only_shape = |this: &mut Self, type_id| {
             let resolved = this.evaluate_type_with_resolution(type_id);
-            let Some(shape) =
-                crate::query_boundaries::common::callable_shape_for_type(this.ctx.types, resolved)
-            else {
-                return false;
-            };
+            let shape =
+                crate::query_boundaries::common::callable_shape_for_type(this.ctx.types, resolved)?;
             if shape.construct_signatures.is_empty() || !shape.call_signatures.is_empty() {
-                return false;
+                return None;
             }
-            crate::query_boundaries::assignability::object_shape_for_type(this.ctx.types, resolved)
-                .is_none_or(|obj| obj.properties.is_empty())
+            let has_props = crate::query_boundaries::assignability::object_shape_for_type(
+                this.ctx.types,
+                resolved,
+            )
+            .is_some_and(|obj| !obj.properties.is_empty());
+            if has_props {
+                return None;
+            }
+            Some(shape)
         };
 
-        is_constructor_only(self, left) && is_constructor_only(self, right)
+        let Some(left_shape) = ctor_only_shape(self, left) else {
+            return false;
+        };
+        let Some(right_shape) = ctor_only_shape(self, right) else {
+            return false;
+        };
+        self.any_signatures_comparable(
+            &left_shape.construct_signatures,
+            &right_shape.construct_signatures,
+        )
     }
 
     /// Check if both types are callable/function types that overlap.
     ///
     /// Two callable types overlap if there exists at least one (src, tgt) call-
-    /// signature pair whose shared-arity parameters are pairwise comparable and
-    /// whose return types are comparable. This preserves tsc's behavior for
+    /// signature pair related in a single direction across all shared-arity
+    /// parameters and the return type. This preserves tsc's behavior for
     /// generic callables (constraints resolve to apparent types during
     /// `is_type_comparable_to`) while correctly reporting no-overlap for
     /// callables with concretely incompatible signatures (e.g.,
     /// `(a: number, b: string) => void` vs `(a: string) => void`).
-    fn both_callable_types_overlap(&mut self, left: TypeId, right: TypeId) -> bool {
-        if !common::is_callable_type(self.ctx.types, left)
-            || !common::is_callable_type(self.ctx.types, right)
-        {
-            return false;
-        }
-
+    pub(crate) fn both_callable_types_overlap(&mut self, left: TypeId, right: TypeId) -> bool {
         let left_resolved = self.evaluate_type_with_resolution(left);
         let right_resolved = self.evaluate_type_with_resolution(right);
         let Some(left_shape) = crate::query_boundaries::common::callable_shape_for_type_extended(
             self.ctx.types,
             left_resolved,
         ) else {
-            return true;
+            return false;
         };
         let Some(right_shape) = crate::query_boundaries::common::callable_shape_for_type_extended(
             self.ctx.types,
             right_resolved,
         ) else {
-            return true;
+            return false;
         };
-        if left_shape.call_signatures.is_empty() || right_shape.call_signatures.is_empty() {
-            return true;
+        let left_calls = !left_shape.call_signatures.is_empty();
+        let right_calls = !right_shape.call_signatures.is_empty();
+        let left_ctors = !left_shape.construct_signatures.is_empty();
+        let right_ctors = !right_shape.construct_signatures.is_empty();
+        if !(left_calls && right_calls) && !(left_ctors && right_ctors) {
+            return false;
         }
+        if left_calls && right_calls {
+            if self.any_signatures_comparable(
+                &left_shape.call_signatures,
+                &right_shape.call_signatures,
+            ) {
+                return true;
+            }
+        }
+        if left_ctors && right_ctors {
+            if self.any_signatures_comparable(
+                &left_shape.construct_signatures,
+                &right_shape.construct_signatures,
+            ) {
+                return true;
+            }
+        }
+        false
+    }
 
-        for lsig in &left_shape.call_signatures {
+    /// Check if any pair of signatures (one from each side) is related in a
+    /// single direction across all shared-arity params and the return type.
+    /// Generic signatures (with non-empty type_params) are always treated as
+    /// comparable to preserve tsc's permissive behavior for constraints that
+    /// resolve via apparent types.
+    pub(crate) fn any_signatures_comparable(
+        &mut self,
+        left_sigs: &[tsz_solver::CallSignature],
+        right_sigs: &[tsz_solver::CallSignature],
+    ) -> bool {
+        for lsig in left_sigs {
             let lparams = lsig.params.clone();
             let lret = lsig.return_type;
-            for rsig in &right_shape.call_signatures {
+            let l_is_generic = !lsig.type_params.is_empty();
+            for rsig in right_sigs {
                 let rparams = rsig.params.clone();
                 let rret = rsig.return_type;
+                let r_is_generic = !rsig.type_params.is_empty();
+                if l_is_generic || r_is_generic {
+                    return true;
+                }
                 let min_pairs = lparams.len().min(rparams.len());
-                let mut sig_ok = true;
+                let mut left_to_right = true;
+                let mut right_to_left = true;
                 for i in 0..min_pairs {
                     let lp = &lparams[i];
                     let rp = &rparams[i];
@@ -1368,14 +1445,14 @@ impl<'a> CheckerState<'a> {
                     } else {
                         rp.type_id
                     };
-                    if !self.is_type_comparable_to(lt, rt) && !self.is_type_comparable_to(rt, lt) {
-                        sig_ok = false;
+                    left_to_right &= self.is_assignable_to(lt, rt);
+                    right_to_left &= self.is_assignable_to(rt, lt);
+                    if !left_to_right && !right_to_left {
                         break;
                     }
                 }
-                if sig_ok
-                    && (self.is_type_comparable_to(lret, rret)
-                        || self.is_type_comparable_to(rret, lret))
+                if (left_to_right && self.is_assignable_to(lret, rret))
+                    || (right_to_left && self.is_assignable_to(rret, lret))
                 {
                     return true;
                 }
