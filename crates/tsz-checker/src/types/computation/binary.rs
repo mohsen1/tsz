@@ -916,7 +916,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(left_node) = self.ctx.arena.get(left_idx)
                     && left_node.kind == SyntaxKind::PrivateIdentifier as u16
                 {
-                    self.check_private_identifier_in_expression(left_idx, right_type);
+                    self.check_private_identifier_in_expression(left_idx, right_idx, right_type);
                 }
 
                 // TS18046: tsc emits "'x' is of type 'unknown'" when the RHS of
