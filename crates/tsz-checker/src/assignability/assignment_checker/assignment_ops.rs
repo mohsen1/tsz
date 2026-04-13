@@ -652,11 +652,11 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let right_idx = self.ctx.arena.skip_parenthesized_and_assertions(right_idx);
-        let Some(right_node) = self.ctx.arena.get(right_idx) else {
-            return false;
-        };
-        if right_node.kind != tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION {
+        // Check if the RHS is a function or class expression, possibly wrapped
+        // in a logical OR/nullish coalescing expression (e.g., `X.Y = X.Y || function() {}`).
+        // tsc treats these "lazy constructor initialization" patterns as declarations
+        // and does not check assignability.
+        if !Self::rhs_contains_function_or_class_expression(self.ctx.arena, right_idx) {
             return false;
         }
 
@@ -762,6 +762,39 @@ impl<'a> CheckerState<'a> {
         }
 
         true
+    }
+
+    /// Check if an expression contains a FunctionExpression or ClassExpression,
+    /// looking through parentheses, type assertions, and logical OR (`||`) /
+    /// nullish coalescing (`??`) expressions.
+    ///
+    /// This handles patterns like `X.Y = X.Y || function() {}` where the
+    /// function expression is wrapped in a binary logical expression.
+    fn rhs_contains_function_or_class_expression(
+        arena: &tsz_parser::parser::node::NodeArena,
+        idx: NodeIndex,
+    ) -> bool {
+        let idx = arena.skip_parenthesized_and_assertions(idx);
+        let Some(node) = arena.get(idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+        {
+            return true;
+        }
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            if let Some(bin) = arena.get_binary_expr(node) {
+                let op = bin.operator_token;
+                if op == SyntaxKind::BarBarToken as u16
+                    || op == SyntaxKind::QuestionQuestionToken as u16
+                {
+                    return Self::rhs_contains_function_or_class_expression(arena, bin.left)
+                        || Self::rhs_contains_function_or_class_expression(arena, bin.right);
+                }
+            }
+        }
+        false
     }
 
     /// Check if an expression is rooted at `exports` or `module.exports`.

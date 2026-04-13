@@ -1069,3 +1069,45 @@ fn boundary_assignability_rejects_stricter_generic_constraints() {
         "assignability boundary unexpectedly accepts stricter generic constraints"
     );
 }
+
+#[test]
+fn js_constructor_property_with_logical_or_is_declaration() {
+    // Pattern: `X.Y = X.Y || function() {}` — tsc treats this as a
+    // declaration (AssignmentDeclarationKind.Property), not a regular
+    // assignment. No TS2322 should be emitted.
+    let diagnostics = check_js_source_diagnostics(
+        r#"
+var test = {};
+test.K = test.K ||
+    function () {}
+
+test.K.prototype = {
+    add() {}
+};
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2322),
+        "JS lazy constructor initialization `X.Y = X.Y || function() {{}}` \
+         should be treated as a declaration and not produce TS2322, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn js_constructor_property_with_nullish_coalescing_is_declaration() {
+    // Pattern: `X.Y = X.Y ?? function() {}` — same as above but with `??`.
+    let diagnostics = check_js_source_diagnostics(
+        r#"
+var test = {};
+test.K = test.K ??
+    function () {}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2322),
+        "JS lazy constructor initialization `X.Y = X.Y ?? function() {{}}` \
+         should be treated as a declaration and not produce TS2322, got: {diagnostics:?}"
+    );
+}
