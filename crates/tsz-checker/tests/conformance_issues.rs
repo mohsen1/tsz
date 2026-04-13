@@ -25048,6 +25048,9 @@ class Vec2<A> {
     assert!(
         !has_error(&diagnostics, 2339),
         "Property access on generic class instance should not produce TS2339, got: {diagnostics:?}"
+    );
+}
+
 /// typeof on a merged namespace+interface symbol should resolve to the namespace
 /// value type (the structural object with exported functions), not the interface type.
 /// Without the fix, `typeof M2.Point` would resolve to the `Point` interface type,
