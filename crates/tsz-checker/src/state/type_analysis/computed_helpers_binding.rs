@@ -489,6 +489,145 @@ impl<'a> CheckerState<'a> {
             }
             return (ctor_type, Vec::new());
         }
+
+        // Cross-file fallback: the class declaration might be in a different file's
+        // arena. This happens when a constructor function in one JS file merges with
+        // a class declaration in another JS file (SALSA mode). The merged symbol has
+        // CLASS flag but the class node is only accessible in the declaring file's arena.
+        // Search all available arenas for the class node, then build the class type
+        // using a child checker with the correct arena. We directly call
+        // get_class_instance_type/get_class_constructor_type instead of
+        // get_type_of_symbol to avoid SymbolId collisions across binders.
+        // Only attempt cross-file fallback when the current arena is among the
+        // user file arenas. This prevents lib delegation child checkers (whose
+        // arena is a lib arena, not in all_arenas) from incorrectly picking up
+        // class nodes from user files due to NodeIndex collisions.
+        let current_arena_is_user_file = self.ctx.all_arenas.as_ref().is_some_and(|arenas| {
+            arenas
+                .iter()
+                .any(|a| std::ptr::eq(a.as_ref(), self.ctx.arena))
+        });
+        let sym_name = if current_arena_is_user_file {
+            self.get_symbol_globally(sym_id)
+                .map(|s| s.escaped_name.clone())
+        } else {
+            None
+        };
+        if let Some(all_arenas) = self.ctx.all_arenas.as_ref()
+            && let Some(ref sym_name) = sym_name
+        {
+            for (file_idx, arena) in all_arenas.iter().enumerate() {
+                if std::ptr::eq(arena.as_ref(), self.ctx.arena) {
+                    continue;
+                }
+                // Find a class declaration in this arena, verifying the name matches
+                // to prevent NodeIndex collisions across arenas.
+                let cross_decl_idx = declarations
+                    .iter()
+                    .chain(std::iter::once(&value_decl))
+                    .find(|&&d| {
+                        d.is_some()
+                            && arena
+                                .get(d)
+                                .and_then(|n| arena.get_class(n))
+                                .and_then(|class| {
+                                    let name_node = arena.get(class.name)?;
+                                    let ident = arena.get_identifier(name_node)?;
+                                    Some(ident.escaped_text == *sym_name)
+                                })
+                                .unwrap_or(false)
+                    })
+                    .copied()
+                    .unwrap_or(NodeIndex::NONE);
+                if cross_decl_idx.is_none() {
+                    continue;
+                }
+                // Found class in another file's arena. Create a child checker
+                // with that arena and directly compute the class type.
+                if !Self::enter_cross_arena_delegation() {
+                    return (TypeId::ERROR, Vec::new());
+                }
+                if !self.ctx.enter_recursion() {
+                    Self::leave_cross_arena_delegation();
+                    return (TypeId::ERROR, Vec::new());
+                }
+
+                let delegate_binder = self
+                    .ctx
+                    .get_binder_for_file(file_idx)
+                    .unwrap_or(self.ctx.binder);
+                let delegate_file_name = arena
+                    .source_files
+                    .first()
+                    .map(|sf| sf.file_name.clone())
+                    .unwrap_or_else(|| self.ctx.file_name.clone());
+
+                let mut checker = Box::new(CheckerState::with_parent_cache(
+                    arena.as_ref(),
+                    delegate_binder,
+                    self.ctx.types,
+                    delegate_file_name,
+                    self.ctx.compiler_options.clone(),
+                    self,
+                ));
+                checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+                checker.ctx.copy_cross_file_state_from(&self.ctx);
+                self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+                checker.ctx.current_file_idx = file_idx;
+                for &id in &self.ctx.class_instance_resolution_set {
+                    checker.ctx.class_instance_resolution_set.insert(id);
+                }
+                for &id in &self.ctx.class_constructor_resolution_set {
+                    checker.ctx.class_constructor_resolution_set.insert(id);
+                }
+
+                // Directly compute the class type using the cross-arena class node.
+                // We must re-fetch the class reference between calls because
+                // get_class_instance_type/get_class_constructor_type take &mut self.
+                let (result, cross_instance_type) = if checker
+                    .ctx
+                    .arena
+                    .get(cross_decl_idx)
+                    .and_then(|n| checker.ctx.arena.get_class(n))
+                    .is_some()
+                {
+                    // Phase 1: compute instance type
+                    let class_ref = checker.ctx.arena.get(cross_decl_idx).unwrap();
+                    let class = checker.ctx.arena.get_class(class_ref).unwrap();
+                    let instance_type = checker.get_class_instance_type(cross_decl_idx, class);
+                    // Phase 2: compute constructor type (re-fetch class reference)
+                    let class_ref = checker.ctx.arena.get(cross_decl_idx).unwrap();
+                    let class = checker.ctx.arena.get_class(class_ref).unwrap();
+                    let ctor_type = checker.get_class_constructor_type(cross_decl_idx, class);
+                    (ctor_type, Some(instance_type))
+                } else {
+                    (TypeId::UNKNOWN, None)
+                };
+
+                // Collect child data before dropping (checker borrows from self)
+                let child_instance_types: Vec<(SymbolId, TypeId)> =
+                    checker.ctx.symbol_instance_types.iter().collect();
+                drop(checker);
+
+                // Now safe to mutate self
+                if let Some(inst) = cross_instance_type {
+                    if inst != TypeId::ANY && inst != TypeId::ERROR {
+                        self.ctx.symbol_instance_types.insert(sym_id, inst);
+                    }
+                }
+                for (k, v) in child_instance_types {
+                    self.ctx.symbol_instance_types.entry_or_insert(k, v);
+                }
+
+                Self::leave_cross_arena_delegation();
+                self.ctx.leave_recursion();
+
+                if result != TypeId::UNKNOWN && result != TypeId::ERROR {
+                    return (result, Vec::new());
+                }
+            }
+        }
+
         (TypeId::UNKNOWN, Vec::new())
     }
 
