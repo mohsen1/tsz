@@ -1478,6 +1478,64 @@ fn format_callable_single_call_signature() {
     assert!(result.contains("=> string"));
 }
 
+/// Test for conformance issue: { <S>() : S[]; } should format as <S>() => S[]
+#[test]
+fn format_callable_generic_single_call_signature_arrow_syntax() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    // Create type param S
+    let s_param = TypeParamInfo {
+        name: db.intern_string("S"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let s_type = db.type_param(s_param);
+
+    // Create S[] array type
+    let s_array = db.array(s_type);
+
+    // Create callable: { <S>() : S[]; } - single call signature, no params, returns S[]
+    let callable = db.callable(CallableShape {
+        call_signatures: vec![CallSignature {
+            type_params: vec![s_param],
+            params: vec![],
+            this_type: None,
+            return_type: s_array,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    });
+
+    let result = fmt.format(callable);
+    // Single call signature with no props/construct/index should use arrow syntax
+    // Expected: <S>() => S[]
+    // NOT: { <S>() : S[];; } (object syntax with double semicolons)
+    assert!(
+        result.contains("=>"),
+        "Expected arrow syntax for single call signature callable, got: {result}"
+    );
+    assert!(
+        !result.contains("{{"),
+        "Should NOT use object braces for single call signature callable, got: {result}"
+    );
+    assert!(
+        !result.contains(";;"),
+        "Should NOT have double semicolons, got: {result}"
+    );
+    assert_eq!(
+        result, "<S>() => S[]",
+        "Exact match for single call signature callable"
+    );
+}
+
 #[test]
 fn format_callable_single_construct_signature() {
     let db = TypeInterner::new();

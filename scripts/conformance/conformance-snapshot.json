@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-04-13T12:04:08Z",
-  "git_sha": "0135e28744678c8faab8bc314135349006236a13",
+  "timestamp": "2026-04-13T12:45:52Z",
+  "git_sha": "62d17e6a754f25b7e230e85b393ffdbdeffc06d8",
   "summary": {
     "total_tests": 12581,
-    "passed": 11822,
-    "failed": 759,
+    "passed": 11824,
+    "failed": 757,
     "pass_rate": 94.0
   },
   "areas_by_pass_rate": [
@@ -326,9 +326,9 @@
     {
       "area": "compiler",
       "total": 6519,
-      "passed": 6183,
-      "failed": 336,
-      "pass_rate": 94.85
+      "passed": 6185,
+      "failed": 334,
+      "pass_rate": 94.88
     },
     {
       "area": "es6/for-ofStatements",
@@ -998,11 +998,11 @@
       "count": 3
     },
     {
-      "code": "TS2374",
+      "code": "TS1109",
       "count": 3
     },
     {
-      "code": "TS1109",
+      "code": "TS2374",
       "count": 3
     },
     {
@@ -1422,11 +1422,11 @@
       "count": 3
     },
     {
-      "code": "TS2374",
+      "code": "TS1109",
       "count": 3
     },
     {
-      "code": "TS1109",
+      "code": "TS2374",
       "count": 3
     },
     {
@@ -1648,7 +1648,7 @@
     "false_positive": 19,
     "all_missing": 42,
     "wrong_code": 144,
-    "fingerprint_only": 532,
+    "fingerprint_only": 530,
     "close_to_passing": 84
   }
 }
