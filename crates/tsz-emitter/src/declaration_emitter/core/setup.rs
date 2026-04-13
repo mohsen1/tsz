@@ -37,6 +37,7 @@ impl<'a> DeclarationEmitter<'a> {
             current_file_path: None,
             arena_to_path: FxHashMap::default(),
             file_idx_to_path: FxHashMap::default(),
+            global_symbol_arenas: FxHashMap::default(),
             required_imports: FxHashMap::default(),
             reserved_names: FxHashSet::default(),
             import_string_aliases: FxHashMap::default(),
@@ -119,6 +120,7 @@ impl<'a> DeclarationEmitter<'a> {
             current_file_path: None,
             arena_to_path: FxHashMap::default(),
             file_idx_to_path: FxHashMap::default(),
+            global_symbol_arenas: FxHashMap::default(),
             required_imports: FxHashMap::default(),
             reserved_names: FxHashSet::default(),
             import_string_aliases: FxHashMap::default(),
@@ -242,6 +244,18 @@ impl<'a> DeclarationEmitter<'a> {
     /// references created during type checking).
     pub fn set_file_idx_to_path(&mut self, file_idx_to_path: FxHashMap<u32, String>) {
         self.file_idx_to_path = file_idx_to_path;
+    }
+
+    /// Set the global symbol-to-arena mapping from all program files.
+    ///
+    /// This enables `get_symbol_source_path` to resolve cross-file symbols
+    /// whose arenas are not in the current file's binder, which is required
+    /// for TS2883 portability checks on imported types.
+    pub fn set_global_symbol_arenas(
+        &mut self,
+        global_symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
+    ) {
+        self.global_symbol_arenas = global_symbol_arenas;
     }
 
     pub const fn set_remove_comments(&mut self, remove: bool) {
