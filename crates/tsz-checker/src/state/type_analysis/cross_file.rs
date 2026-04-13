@@ -137,6 +137,30 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+        // CLASS + cross-file merge fix: When a class declaration exists in the current
+        // arena but the merged symbol also has declarations in another file (e.g., a JS
+        // constructor function `var Foo = function(){}` in file1.js merged with
+        // `class Foo {}` in file2.js), delegating to the other file's arena would cause
+        // compute_class_symbol_type to fail to find the class node and return UNKNOWN,
+        // triggering false TS18046 errors. Handle the class locally instead.
+        {
+            let sym_found = self.get_symbol_globally(sym_id);
+            if let Some(symbol) = sym_found
+                && (symbol.flags & symbol_flags::CLASS) != 0
+            {
+                let has_class_in_current_arena = symbol.declarations.iter().any(|&d| {
+                    self.ctx
+                        .arena
+                        .get(d)
+                        .and_then(|n| self.ctx.arena.get_class(n))
+                        .is_some()
+                });
+                if has_class_in_current_arena {
+                    return None; // Handle locally, don't delegate
+                }
+            }
+        }
+
         let is_known_cross_file = self.ctx.has_symbol_file_index(sym_id);
 
         if !is_known_cross_file
