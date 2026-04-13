@@ -904,6 +904,19 @@ impl<'a> CheckerState<'a> {
             if (enum_symbol.flags & symbol_flags::ENUM) != 0
                 && (enum_symbol.flags & symbol_flags::ENUM_MEMBER) == 0
             {
+                // If the property being assigned is a declared member of this enum,
+                // this is an enum member assignment (should get TS2540), not a rebind.
+                if self.is_declared_enum_member_property(
+                    enum_sym_id,
+                    &self
+                        .ctx
+                        .arena
+                        .get_identifier_at(access.name_or_argument)
+                        .map(|ident| ident.escaped_text.clone())
+                        .unwrap_or_default(),
+                ) {
+                    return false;
+                }
                 let parent_sym_id = enum_symbol.parent;
                 if let Some(parent_symbol) = self
                     .get_cross_file_symbol(parent_sym_id)
@@ -1064,6 +1077,12 @@ impl<'a> CheckerState<'a> {
         };
 
         if self.is_js_namespace_enum_rebind_assignment_target(access.expression) {
+            // If the property being assigned is already a declared enum member,
+            // this is NOT an expando — it's an assignment to a readonly enum member.
+            // Let the normal readonly check (TS2540) handle it instead of suppressing.
+            if self.is_declared_enum_member_property(enum_sym_id, &prop_name) {
+                return false;
+            }
             return true;
         }
 
@@ -1077,6 +1096,39 @@ impl<'a> CheckerState<'a> {
                     .contains(&prop_name)
             });
         has_root_prop || has_last_segment_prop
+    }
+
+    /// Check if `prop_name` is a declared member of the enum identified by `enum_sym_id`.
+    ///
+    /// Used to distinguish genuine expando property assignments from assignments to
+    /// existing (readonly) enum members. For example, given:
+    /// ```ts
+    /// declare namespace lf { export enum Order { ASC, DESC } }
+    /// ```
+    /// `lf.Order.DESC = 0` targets the declared member `DESC`, not a new expando property.
+    fn is_declared_enum_member_property(
+        &self,
+        enum_sym_id: tsz_binder::SymbolId,
+        prop_name: &str,
+    ) -> bool {
+        use tsz_binder::symbol_flags;
+
+        let enum_symbol = self
+            .get_cross_file_symbol(enum_sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(enum_sym_id));
+        let Some(enum_symbol) = enum_symbol else {
+            return false;
+        };
+        let Some(exports) = enum_symbol.exports.as_ref() else {
+            return false;
+        };
+        let Some(member_sym_id) = exports.get(prop_name) else {
+            return false;
+        };
+        let member_symbol = self
+            .get_cross_file_symbol(member_sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(member_sym_id));
+        member_symbol.is_some_and(|sym| (sym.flags & symbol_flags::ENUM_MEMBER) != 0)
     }
 
     fn error_top_level_js_this_computed_element_assignment(

@@ -13597,8 +13597,16 @@ enum A {
     );
 }
 
+/// Verify that the expando suppression is NOT applied to declared enum members
+/// in JS files. Before the fix, both the "enum rebind" and "enum expando" checks
+/// would short-circuit, silently suppressing all diagnostics for `lf.Order.DESC = 0`.
+///
+/// After the fix, declared enum member assignments go through normal type checking.
+/// In a full project (conformance test `conformance/salsa/enumMergeWithExpando.ts`),
+/// this produces TS2540 (readonly). In the minimal unit-test harness, cross-file
+/// readonly resolution is incomplete, so we only verify assignments are NOT suppressed.
 #[test]
-fn test_js_namespace_enum_expando_assignment_skips_whole_object_ts2322() {
+fn test_js_namespace_enum_declared_member_not_suppressed_as_expando() {
     let diagnostics = compile_two_global_files_get_diagnostics_with_options(
         "lovefield-ts.d.ts",
         r#"
@@ -13620,11 +13628,18 @@ lf.Order.ASC = 1;
         },
     );
 
-    let ts2322 = diagnostics.iter().filter(|(code, _)| *code == 2322).count();
+    let codes: Vec<u32> = diagnostics.iter().map(|(code, _)| *code).collect();
 
-    assert_eq!(
-        ts2322, 0,
-        "Did not expect TS2322 on rebinding a namespace enum object in JS expando code.\nActual diagnostics: {diagnostics:#?}"
+    // Assignments to declared enum members (DESC, ASC) must NOT be silently
+    // suppressed. In a full project, TS2540 fires; in the unit test harness
+    // we may see TS2322 (type mismatch) instead because the readonly check
+    // needs deeper cross-file resolution. Either way, diagnostics must NOT
+    // be empty for the member assignments.
+    let member_errors = codes.iter().filter(|&&c| c == 2540 || c == 2322).count();
+    assert!(
+        member_errors >= 2,
+        "Expected diagnostics for declared enum member assignments (DESC, ASC) — \
+         old bug was silently suppressing them.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
