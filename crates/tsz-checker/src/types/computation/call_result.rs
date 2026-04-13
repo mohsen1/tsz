@@ -508,6 +508,7 @@ impl<'a> CheckerState<'a> {
                         .as_ref()
                         .is_some_and(|skip| index < skip.len() && skip[index]);
                     if should_try_deferred_elaboration
+                        && !prefer_argument_level_return_mismatch
                         && !skip_for_generic
                         && !prefer_argument_level_return_mismatch
                         && !self.should_suppress_weak_key_arg_mismatch(
@@ -523,6 +524,10 @@ impl<'a> CheckerState<'a> {
                             Some(actual),
                         );
                     }
+                    // When a callback has explicitly-typed parameters that conflict with the
+                    // expected parameter types, TSC reports TS2345 at the argument level
+                    // rather than elaborating with an inner TS2322. Only suppress inner
+                    // elaboration when the *parameter* types are the source of the mismatch.
                     if !elaborated
                         && !suppress_inner_elaboration
                         && !prefer_argument_level_return_mismatch
@@ -569,11 +574,15 @@ impl<'a> CheckerState<'a> {
                     // outer TS2345 is the only diagnostic at the argument site.
                     if suppress_inner_elaboration || prefer_argument_level_return_mismatch {
                         let body_spans = self.callback_body_spans(arg_idx);
+                        let arg_span = self.callback_argument_span(arg_idx);
                         self.ctx.diagnostics.retain(|d| {
                             !(d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                                && body_spans.iter().any(|(body_start, body_end)| {
+                                && (body_spans.iter().any(|(body_start, body_end)| {
                                     d.start >= *body_start && d.start < *body_end
-                                }))
+                                }) || (prefer_argument_level_return_mismatch
+                                    && arg_span.is_some_and(|(arg_start, arg_end)| {
+                                        d.start >= arg_start && d.start < arg_end
+                                    }))))
                         });
                         self.ctx.rebuild_emitted_diagnostics_from_current();
                     }

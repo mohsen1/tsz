@@ -2258,6 +2258,9 @@ impl<'a> CheckerState<'a> {
                 }
             })
             .is_some();
+        if forced_block_body_callback_mismatch {
+            allow_contextual_mismatch_deferral = false;
+        }
         let forced_binding_pattern_unknown_context_mismatch = self
             .current_binding_pattern_callback_unknown_context_arg(args, |checker, index| {
                 finalized_contextual_param_types

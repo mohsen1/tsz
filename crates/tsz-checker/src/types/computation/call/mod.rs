@@ -487,6 +487,9 @@ impl<'a> CheckerState<'a> {
                 }
             })
             .is_some();
+        if forced_block_body_callback_mismatch {
+            allow_contextual_mismatch_deferral = false;
+        }
         if let crate::query_boundaries::common::CallResult::ArgumentTypeMismatch {
             actual: _,
             expected: _,

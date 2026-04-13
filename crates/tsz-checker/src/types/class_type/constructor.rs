@@ -1187,6 +1187,29 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
+                let prototype_name = self.ctx.types.intern_string("prototype");
+                if !partial_ctor_props
+                    .iter()
+                    .any(|prop| prop.name == prototype_name)
+                {
+                    let prototype_type = current_sym
+                        .map(|sym_id| self.ctx.create_lazy_type_ref(sym_id))
+                        .unwrap_or(TypeId::ANY);
+                    partial_ctor_props.push(PropertyInfo {
+                        name: prototype_name,
+                        type_id: prototype_type,
+                        write_type: prototype_type,
+                        optional: false,
+                        readonly: false,
+                        is_method: false,
+                        is_class_prototype: false,
+                        visibility: Visibility::Public,
+                        parent_id: current_sym,
+                        declaration_order: 0,
+                        is_string_named: false,
+                    });
+                }
+
                 let partial_ctor = factory.callable(CallableShape {
                     call_signatures: Vec::new(),
                     construct_signatures: Vec::new(),

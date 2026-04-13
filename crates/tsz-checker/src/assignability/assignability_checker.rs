@@ -126,6 +126,24 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Returns true when a callback-like function type still has unresolved
+    /// `any`/`unknown` parameter types, meaning contextual typing did not
+    /// concretely bind its parameters yet.
+    pub(crate) fn callback_type_params_are_unresolved(&self, arg_type: TypeId) -> bool {
+        if let Some(shape) = tsz_solver::type_queries::get_function_shape(
+            self.ctx.types.as_type_database(),
+            arg_type,
+        ) {
+            shape.params.is_empty()
+                || shape
+                    .params
+                    .iter()
+                    .all(|p| matches!(p.type_id, TypeId::ANY | TypeId::UNKNOWN))
+        } else {
+            false
+        }
+    }
+
     fn normalize_nested_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
         // Depth guard: prevents stack overflow from mutually recursive types
         // (e.g., Foo<T> ↔ Bar<T>) where each fresh visited set misses cross-function cycles.

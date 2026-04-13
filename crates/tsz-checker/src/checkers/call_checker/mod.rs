@@ -304,18 +304,20 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             let callback_idx = self.callback_function_index(arg_idx)?;
-            if self
+            let callback_relies_on_contextual_param_types = self
                 .ctx
                 .implicit_any_contextual_closures
-                .contains(&callback_idx)
-            {
-                return None;
-            }
+                .contains(&callback_idx);
             let func = self
                 .ctx
                 .arena
                 .get(callback_idx)
                 .and_then(|node| self.ctx.arena.get_function(node))?;
+            let callback_span = self
+                .ctx
+                .arena
+                .get(callback_idx)
+                .map(|node| (node.pos, node.end))?;
             let body = self.ctx.arena.get(func.body)?;
             if body.kind != syntax_kind_ext::BLOCK {
                 return None;
@@ -338,6 +340,7 @@ impl<'a> CheckerState<'a> {
             // overwrite a contextually-typed cached value with an
             // uncontextualized one.
             let saved_node_type = self.ctx.node_types.get(&arg_idx.0).copied();
+            let original_actual = saved_node_type.unwrap_or_else(|| self.get_type_of_node(arg_idx));
             self.invalidate_expression_for_contextual_retry(arg_idx);
             self.ctx.daa_error_nodes.remove(&arg_idx.0);
             self.ctx.flow_narrowed_nodes.remove(&arg_idx.0);
@@ -365,15 +368,20 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.instantiate_generic_function_argument_against_target_params(actual, expected)
             };
-            let has_callback_body_diagnostic =
+            let speculative = self.ctx.speculative_diagnostics_since(&diag_snap);
+            let has_callback_assignability_diag = |diag: &crate::diagnostics::Diagnostic| {
                 self.callback_body_spans(arg_idx)
                     .iter()
-                    .any(|(start, end)| {
-                        self.ctx
-                            .speculative_diagnostics_since(&diag_snap)
-                            .iter()
-                            .any(|diag| diag.start >= *start && diag.start < *end)
-                    });
+                    .any(|(start, end)| diag.start >= *start && diag.start < *end)
+                    || ((diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                        || diag.code
+                            == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE)
+                        && diag.start >= callback_span.0
+                        && diag.start < callback_span.1)
+            };
+            let has_callback_body_diagnostic = self.ctx.diagnostics.iter().any(
+                has_callback_assignability_diag,
+            ) || speculative.iter().any(has_callback_assignability_diag);
             self.ctx.rollback_full(&snap);
             // Restore the node_types entry so the contextually-typed result
             // is preserved for subsequent lookups.
@@ -382,9 +390,22 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.ctx.node_types.remove(&arg_idx.0);
             }
+            if callback_relies_on_contextual_param_types
+                && self.callback_type_params_are_unresolved(actual)
+                && self.callback_type_params_are_unresolved(original_actual)
+            {
+                return None;
+            }
+            let recovery_actual = if stable_call_recovery_return_type(self.ctx.types, refined_actual)
+                .is_some()
+            {
+                refined_actual
+            } else {
+                original_actual
+            };
             let is_generator_callback = func.asterisk_token;
             let (has_return_type_mismatch, has_generator_component_mismatch) =
-                stable_call_recovery_return_type(self.ctx.types, refined_actual)
+                stable_call_recovery_return_type(self.ctx.types, recovery_actual)
                     .zip(stable_call_recovery_return_type(self.ctx.types, expected))
                     .map(|(actual_return, expected_return)| {
                         // For yield and return components, the actual type was computed
@@ -448,12 +469,14 @@ impl<'a> CheckerState<'a> {
                         (return_type_mismatch, generator_component_mismatch)
                     })
                     .unwrap_or((false, false));
-            ((has_callback_body_diagnostic
-                || (is_generator_callback
-                    && expected_is_concrete
-                    && has_generator_component_mismatch))
-                && has_return_type_mismatch)
-                .then_some((index, refined_actual, expected))
+            let should_force_argument_mismatch = if is_generator_callback {
+                (has_callback_body_diagnostic
+                    || (expected_is_concrete && has_generator_component_mismatch))
+                    && has_return_type_mismatch
+            } else {
+                has_return_type_mismatch
+            };
+            should_force_argument_mismatch.then_some((index, recovery_actual, expected))
         })
     }
 
