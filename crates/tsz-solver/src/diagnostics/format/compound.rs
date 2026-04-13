@@ -1635,7 +1635,7 @@ impl<'a> TypeFormatter<'a> {
 
     /// Returns a sort key for intrinsic/builtin types to match tsc's display ordering.
     /// tsc orders builtins as: string(8), number(9), bigint(10), boolean(11), etc.
-    fn builtin_sort_key(id: TypeId) -> Option<u32> {
+    const fn builtin_sort_key(id: TypeId) -> Option<u32> {
         match id {
             TypeId::NUMBER => Some(9),
             TypeId::STRING => Some(8),
@@ -1653,7 +1653,7 @@ impl<'a> TypeFormatter<'a> {
         }
     }
 
-    /// Returns (tier, file_id, span_start) for a type, used for source-order sorting.
+    /// Returns (tier, `file_id`, `span_start`) for a type, used for source-order sorting.
     /// - Tier 0: Builtins/intrinsics (always first)
     /// - Tier 1: User-defined types with source info (sorted by file, then position)
     /// - Tier 2: Types without source info (preserve original order by returning sentinel)
@@ -1670,12 +1670,11 @@ impl<'a> TypeFormatter<'a> {
         let data = self.interner.lookup(type_id);
 
         // Try Lazy(DefId) - type aliases, interfaces, classes
-        if let Some(TypeData::Lazy(def_id)) = &data {
-            if let Some(def) = def_store.get(*def_id) {
-                if let (Some(file_id), Some((span_start, _))) = (def.file_id, def.span) {
-                    return (1, file_id, span_start);
-                }
-            }
+        if let Some(TypeData::Lazy(def_id)) = &data
+            && let Some(def) = def_store.get(*def_id)
+            && let (Some(file_id), Some((span_start, _))) = (def.file_id, def.span)
+        {
+            return (1, file_id, span_start);
         }
 
         // Try Application - generic instantiation, get base type's position
@@ -1685,39 +1684,34 @@ impl<'a> TypeFormatter<'a> {
         }
 
         // Try Enum
-        if let Some(TypeData::Enum(def_id, _)) = &data {
-            if let Some(def) = def_store.get(*def_id) {
-                if let (Some(file_id), Some((span_start, _))) = (def.file_id, def.span) {
-                    return (1, file_id, span_start);
-                }
-            }
+        if let Some(TypeData::Enum(def_id, _)) = &data
+            && let Some(def) = def_store.get(*def_id)
+            && let (Some(file_id), Some((span_start, _))) = (def.file_id, def.span)
+        {
+            return (1, file_id, span_start);
         }
 
         // Try Object/ObjectWithIndex with symbol
         if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) = &data {
             let shape = self.interner.object_shape(*shape_id);
-            if let Some(sym_id) = shape.symbol {
-                if let Some(def_id) = def_store.find_def_by_symbol(sym_id.0) {
-                    if let Some(def) = def_store.get(def_id) {
-                        if let (Some(file_id), Some((span_start, _))) = (def.file_id, def.span) {
-                            return (1, file_id, span_start);
-                        }
-                    }
-                }
+            if let Some(sym_id) = shape.symbol
+                && let Some(def_id) = def_store.find_def_by_symbol(sym_id.0)
+                && let Some(def) = def_store.get(def_id)
+                && let (Some(file_id), Some((span_start, _))) = (def.file_id, def.span)
+            {
+                return (1, file_id, span_start);
             }
         }
 
         // Try Callable with symbol
         if let Some(TypeData::Callable(shape_id)) = &data {
             let shape = self.interner.callable_shape(*shape_id);
-            if let Some(sym_id) = shape.symbol {
-                if let Some(def_id) = def_store.find_def_by_symbol(sym_id.0) {
-                    if let Some(def) = def_store.get(def_id) {
-                        if let (Some(file_id), Some((span_start, _))) = (def.file_id, def.span) {
-                            return (1, file_id, span_start);
-                        }
-                    }
-                }
+            if let Some(sym_id) = shape.symbol
+                && let Some(def_id) = def_store.find_def_by_symbol(sym_id.0)
+                && let Some(def) = def_store.get(def_id)
+                && let (Some(file_id), Some((span_start, _))) = (def.file_id, def.span)
+            {
+                return (1, file_id, span_start);
             }
         }
 

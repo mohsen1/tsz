@@ -56,7 +56,7 @@ pub struct DeclarationEmitter<'a> {
     pub(super) current_file_path: Option<String>,
     /// Map of arena address -> file path (for resolving foreign symbol locations)
     pub(super) arena_to_path: FxHashMap<usize, String>,
-    /// Map of file index -> file path (fallback for resolving symbol source via decl_file_idx)
+    /// Map of file index -> file path (fallback for resolving symbol source via `decl_file_idx`)
     pub(super) file_idx_to_path: FxHashMap<u32, String>,
     /// Map of module → symbol names to auto-generate imports for
     /// Pre-calculated in driver where `MergedProgram` is available

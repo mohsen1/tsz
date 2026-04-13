@@ -25042,13 +25042,13 @@ function f(x: numerics.DiagnosticCategory, y: strings.DiagnosticCategory) {
 
 /// `new Proxy(t, {})` should not emit TS2351 ("This expression is not constructable").
 ///
-/// ProxyConstructor is an interface with a construct signature:
+/// `ProxyConstructor` is an interface with a construct signature:
 ///   `new <T extends object>(target: T, handler: ProxyHandler<T>): T`
 ///
 /// The type of `Proxy` is `ProxyConstructor` (from `declare var Proxy: ProxyConstructor`).
-/// When the ProxyConstructor type stays as a Lazy(DefId) reference (common for lib types
-/// whose DefId→SymbolId mapping isn't established during cross-file resolution), the
-/// solver's resolve_new can't find construct signatures and incorrectly returns NotCallable.
+/// When the `ProxyConstructor` type stays as a `Lazy(DefId)` reference (common for lib types
+/// whose `DefId`→`SymbolId` mapping isn't established during cross-file resolution), the
+/// solver's `resolve_new` can't find construct signatures and incorrectly returns `NotCallable`.
 ///
 /// The fix resolves Lazy constructor types through lib type resolution by name before
 /// passing them to the solver.
@@ -25068,7 +25068,7 @@ var p = new Proxy(t, {});
 /// Generic class with self-referential return type should not prevent property access
 /// on instantiated class types. Previously, having a method that returned the same class
 /// with different type args (e.g., `fmap<B>(...): Vec2<B>`) caused the class instance
-/// type cache (symbol_instance_types) to hold ERROR, breaking property lookups on
+/// type cache (`symbol_instance_types`) to hold ERROR, breaking property lookups on
 /// `Vec2<(a: A) => B>` in other methods.
 ///
 /// See: genericClasses4.ts conformance test
