@@ -964,3 +964,103 @@ var p: M2.Point;
         );
     }
 }
+
+/// Tests for namespace exported variable resolution in merged symbols.
+///
+/// When a namespace exports both an interface and a variable with the same name
+/// (e.g., `export interface Point { ... }` and `export var Point = 1`), accessing
+/// the property on the namespace value object should return the VARIABLE type,
+/// not the interface type. Previously, `symbol_has_exported_value_declaration` didn't
+/// check the `export` modifier on the grandparent VariableStatement (it only checked
+/// for EXPORT_DECLARATION wrapper and declare context), so the exported variable
+/// was excluded from the namespace object type, resulting in `{}` instead of
+/// `{ Point: number }`.
+#[cfg(test)]
+mod namespace_exported_var_in_merged_symbol_tests {
+    use crate::test_utils::check_source_diagnostics;
+
+    #[test]
+    fn namespace_with_exported_interface_and_var_no_false_ts2339() {
+        // When namespace M has both `export interface Point` and `export var Point = 1`,
+        // `M.Point` and `m.Point` (where m = M) should resolve to `number`, not fail
+        // with TS2339 "Property 'Point' does not exist on type '{}'".
+        let source = r#"
+namespace M {
+    export interface Point { x: number; y: number }
+    export var Point = 1;
+}
+
+var m: typeof M;
+var m = M;
+
+var a1: number;
+var a1 = M.Point;
+var a1 = m.Point;
+"#;
+        let ts2339 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2339)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2339.len(),
+            0,
+            "Expected no TS2339 for namespace with exported interface+var merge: {ts2339:?}"
+        );
+    }
+
+    #[test]
+    fn nested_namespace_with_dotted_merge_no_false_ts2339() {
+        // Dotted namespace `M2.X` merged with nested `M2 { X }` should produce
+        // a namespace object with the exported variable `Point: number`.
+        let source = r#"
+namespace M2.X {
+    export interface Point {
+        x: number; y: number;
+    }
+}
+
+namespace M2 {
+    export namespace X {
+        export var Point: number;
+    }
+}
+
+var m = M2.X;
+var point: number;
+var point = m.Point;
+"#;
+        let ts2339 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2339)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2339.len(),
+            0,
+            "Expected no TS2339 for dotted+nested namespace merge: {ts2339:?}"
+        );
+    }
+
+    #[test]
+    fn merged_interface_var_value_type_is_correct() {
+        // The value type of `M.Point` should be `number` (from the var), not the
+        // interface type. This verifies no TS2403 for subsequent declarations.
+        let source = r#"
+namespace M {
+    export interface Point { x: number; y: number }
+    export var Point = 1;
+}
+
+var a: number;
+var a = M.Point;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "Expected no TS2403 — M.Point value should be number: {ts2403:?}"
+        );
+    }
+}
