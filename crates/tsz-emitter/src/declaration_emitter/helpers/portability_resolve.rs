@@ -2046,39 +2046,8 @@ impl<'a> DeclarationEmitter<'a> {
         sym_id: SymbolId,
         binder: &BinderState,
     ) -> Option<String> {
-        // Primary path: look up the symbol's arena in the pre-built mapping.
-        if let Some(source_arena) = binder.symbol_arenas.get(&sym_id) {
-            let arena_addr = Arc::as_ptr(source_arena) as usize;
-            if let Some(path) = self.arena_to_path.get(&arena_addr) {
-                return Some(path.clone());
-            }
-        }
-
-        // Fallback: the checker may create symbols (e.g., for resolved imports)
-        // whose IDs are not in the merge-phase symbol_arenas map.  Walk the
-        // symbol's declarations and check each declaration's arena against the
-        // program's arena-to-path mapping.
-        let symbol = binder.symbols.get(sym_id)?;
-        for &decl_idx in &symbol.declarations {
-            if let Some(decl_arenas) = binder.declaration_arenas.get(&(sym_id, decl_idx)) {
-                for arena in decl_arenas {
-                    let arena_addr = Arc::as_ptr(arena) as usize;
-                    if let Some(path) = self.arena_to_path.get(&arena_addr) {
-                        return Some(path.clone());
-                    }
-                }
-            }
-        }
-
-        // Last resort: use the symbol's decl_file_idx which was set during
-        // the multi-file merge phase.  This covers interface/type symbols from
-        // foreign files that lack both symbol_arenas and declaration_arenas entries.
-        if symbol.decl_file_idx != u32::MAX {
-            if let Some(path) = self.file_idx_to_path.get(&symbol.decl_file_idx) {
-                return Some(path.clone());
-            }
-        }
-
-        None
+        let source_arena = binder.symbol_arenas.get(&sym_id)?;
+        let arena_addr = Arc::as_ptr(source_arena) as usize;
+        self.arena_to_path.get(&arena_addr).cloned()
     }
 }
