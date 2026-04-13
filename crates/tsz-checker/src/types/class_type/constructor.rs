@@ -1262,7 +1262,19 @@ impl<'a> CheckerState<'a> {
                 if let Some(prev) = prev_inst_cached {
                     self.ctx.symbol_instance_types.insert(sym_id, prev);
                 } else {
-                    self.ctx.symbol_instance_types.remove(&sym_id);
+                    // Only remove if the current value is a partial/provisional type
+                    // from this block's inst_props insertion. Don't remove a fully
+                    // computed instance type that was populated by
+                    // get_class_instance_type during this block's execution.
+                    // A valid instance type (non-ERROR) should be preserved.
+                    if self
+                        .ctx
+                        .symbol_instance_types
+                        .get(&sym_id)
+                        .is_some_and(|&t| t == TypeId::ERROR)
+                    {
+                        self.ctx.symbol_instance_types.remove(&sym_id);
+                    }
                 }
             }
             result
