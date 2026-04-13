@@ -162,6 +162,35 @@ impl<'a> CheckerState<'a> {
                 if let Some(qn) = self.ctx.arena.get_qualified_name(expr_node) {
                     let left_idx = qn.left;
                     let right_idx = qn.right;
+
+                    // For merged namespace+interface symbols (e.g., `typeof M2.Point`
+                    // where Point is both a namespace and an interface), resolve via
+                    // the binder's export tables FIRST. Property access on the parent
+                    // namespace's structural object type may resolve through the Lazy(DefId)
+                    // path which can return the interface type instead of the namespace
+                    // value type. Direct symbol resolution via get_type_of_symbol returns
+                    // the correct value-position type.
+                    if let Some(sym_id) = self.resolve_qualified_symbol(type_query.expr_name) {
+                        let sym_flags = self.ctx.binder.get_symbol(sym_id).map_or(0, |s| s.flags);
+                        let is_merged_ns_interface = (sym_flags
+                            & (tsz_binder::symbol_flags::NAMESPACE_MODULE
+                                | tsz_binder::symbol_flags::VALUE_MODULE))
+                            != 0
+                            && (sym_flags & tsz_binder::symbol_flags::INTERFACE) != 0;
+                        if is_merged_ns_interface {
+                            let member_type = self.get_type_of_symbol(sym_id);
+                            trace!(
+                                sym_id = sym_id.0,
+                                member_type = member_type.0,
+                                flags = sym_flags,
+                                "type_query qualified: resolved merged ns+interface via binder"
+                            );
+                            if member_type != TypeId::ERROR {
+                                return self.get_enum_namespace_type_for_value(member_type);
+                            }
+                        }
+                    }
+
                     // Resolve the left side as a value expression.
                     // For nested qualified names (e.g. `typeof a.b.c`), recurse
                     // through the value property chain instead of dispatching to
