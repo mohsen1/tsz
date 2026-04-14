@@ -1809,14 +1809,12 @@ pub(super) fn collect_diagnostics(
         base_dir,
         &file_is_esm_map,
     ));
-    diagnostics.extend(
-        collect_type_root_ambient_module_import_conflict_diagnostics(
-            program,
-            options,
-            base_dir,
-            &resolved_module_paths,
-        ),
-    );
+    // NOTE: collect_type_root_ambient_module_import_conflict_diagnostics was
+    // disabled because it produces false TS2451 ("Cannot redeclare block-scoped
+    // variable") for every exported value declaration in type-root ambient
+    // modules when the module is imported by another file. Importing a module
+    // is NOT a redeclaration — tsc does not emit TS2451 in this scenario.
+    // See conformance test: moduleResolutionAsTypeReferenceDirectiveAmbient.ts
 
     // Use the aggregated query-cache statistics. In the parallel path, these
     // are merged from all per-file caches. In the sequential path, they come
