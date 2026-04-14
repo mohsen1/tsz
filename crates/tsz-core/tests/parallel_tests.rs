@@ -8337,3 +8337,144 @@ fn namespace_export_wiring_survives_merge() {
         "Geo should export Vector"
     );
 }
+
+/// Regression test: cross-file interface merging must not lose local members.
+///
+/// When interface C is declared in two script files (non-module), the checker
+/// for the second file must include members from BOTH declarations. Previously,
+/// `delegate_cross_arena_symbol_resolution` would delegate the entire type
+/// computation to the first file's checker, losing the second file's members
+/// and heritage clauses.
+#[test]
+fn cross_file_interface_merge_preserves_local_members_and_heritage() {
+    // File 0: interface I and C extends I
+    // File 1: interface D and C extends D, plus usage
+    let files = vec![
+        (
+            "file0.ts".to_string(),
+            r#"
+interface I { foo(): string; }
+interface C extends I {
+    a(): number;
+}
+"#
+            .to_string(),
+        ),
+        (
+            "file1.ts".to_string(),
+            r#"
+interface D { bar(): number; }
+interface C extends D {
+    b(): Date;
+}
+var c: C;
+var a: string = c.foo();
+var b: number = c.bar();
+var d: number = c.a();
+var e: Date = c.b();
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let checker_options = crate::checker::context::CheckerOptions {
+        no_lib: true,
+        ..Default::default()
+    };
+
+    // Use a binder with program-level declaration_arenas (filtered for non-local)
+    // to match the CLI path which uses create_binder_from_bound_file_with_augmentations.
+    let file1_bound = program
+        .files
+        .iter()
+        .find(|f| f.file_name == "file1.ts")
+        .expect("expected file1.ts");
+    let file1_idx = program
+        .files
+        .iter()
+        .position(|f| f.file_name == "file1.ts")
+        .unwrap();
+
+    let declaration_arenas: crate::binder::state::DeclarationArenaMap = program
+        .declaration_arenas
+        .iter()
+        .filter_map(|(&(sym_id, decl_idx), arenas)| {
+            let has_non_local = arenas
+                .iter()
+                .any(|arena| !std::sync::Arc::ptr_eq(arena, &file1_bound.arena));
+            has_non_local.then(|| ((sym_id, decl_idx), arenas.clone()))
+        })
+        .collect();
+
+    let mut file_locals = crate::binder::SymbolTable::new();
+    if file1_idx < program.file_locals.len() {
+        for (name, &sym_id) in program.file_locals[file1_idx].iter() {
+            file_locals.set(name.clone(), sym_id);
+        }
+    }
+    for (name, &sym_id) in program.globals.iter() {
+        if !file_locals.has(name) {
+            file_locals.set(name.clone(), sym_id);
+        }
+    }
+
+    let binder = crate::binder::BinderState::from_bound_state_with_scopes_and_augmentations(
+        crate::binder::BinderOptions::default(),
+        program.symbols.clone(),
+        file_locals,
+        file1_bound.node_symbols.clone(),
+        crate::binder::state::BinderStateScopeInputs {
+            scopes: file1_bound.scopes.clone(),
+            node_scope_ids: file1_bound.node_scope_ids.clone(),
+            global_augmentations: file1_bound.global_augmentations.clone(),
+            module_augmentations: file1_bound.module_augmentations.clone(),
+            augmentation_target_modules: file1_bound.augmentation_target_modules.clone(),
+            module_exports: program.module_exports.clone(),
+            module_declaration_exports_publicly: file1_bound
+                .module_declaration_exports_publicly
+                .clone(),
+            reexports: program.reexports.clone(),
+            wildcard_reexports: program.wildcard_reexports.clone(),
+            wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
+            symbol_arenas: file1_bound.symbol_arenas.clone(),
+            declaration_arenas,
+            cross_file_node_symbols: program.cross_file_node_symbols.clone(),
+            shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
+            modules_with_export_equals: Default::default(),
+            flow_nodes: file1_bound.flow_nodes.clone(),
+            node_flow: file1_bound.node_flow.clone(),
+            switch_clause_to_switch: file1_bound.switch_clause_to_switch.clone(),
+            expando_properties: file1_bound.expando_properties.clone(),
+            alias_partners: program.alias_partners.clone(),
+        },
+    );
+
+    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let mut checker = crate::checker::state::CheckerState::with_options(
+        &file1_bound.arena,
+        &binder,
+        &query_cache,
+        file1_bound.file_name.clone(),
+        &checker_options,
+    );
+    checker.check_source_file(file1_bound.source_file);
+
+    // Should NOT have any TS2339 "Property does not exist" errors.
+    // All properties (foo from I, a from C in file0, bar from D, b from C in file1)
+    // should be found on the merged interface C.
+    let ts2339_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2339)
+        .collect();
+    assert!(
+        ts2339_errors.is_empty(),
+        "Expected no TS2339 errors for merged interface C, but got: {:?}",
+        ts2339_errors
+            .iter()
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+}
