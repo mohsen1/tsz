@@ -25263,7 +25263,10 @@ fn test_ts2536_with_lib_mismatched_keyof_source() {
     // (undefined), V extends HTMLElementTagNameMap[T][P].
     // HTMLElementTagNameMap is defined in lib.dom.d.ts.
     if !lib_files_available() {
-        eprintln!("Skipping: lib files not available");
+        #[allow(clippy::print_stderr)]
+        {
+            eprintln!("Skipping: lib files not available");
+        }
         return;
     }
     let source = r#"
