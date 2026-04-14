@@ -3420,3 +3420,21 @@ const r1: number = x;
          (BuiltinIteratorReturn=any). Got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_ts2322_no_false_positive_const_type_param_multi() {
+    // When a function has multiple type params and the first is `const`,
+    // the solver's full inference path (used for >1 type params) must not
+    // produce a false TS2322 on the argument. Previously, the final argument
+    // check compared the checker's const-asserted arg type against the
+    // solver's independently const-inferred type (different TypeIds for
+    // semantically identical readonly types).
+    let source = r#"
+function f<const T, U>(x: T): T { return x; }
+const t = f({ a: 1, b: "c", d: ["e", 2] });
+"#;
+    assert!(
+        !has_error_with_code(source, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Should not emit TS2322 for const type parameter with multiple type params"
+    );
+}

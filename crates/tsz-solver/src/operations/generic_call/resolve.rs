@@ -1968,6 +1968,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         );
                         return CallResult::Success(return_type);
                     }
+                    // When the original parameter type is a bare const type parameter
+                    // (e.g., `x: T` where T has `const` modifier), skip the argument
+                    // mismatch. Const type parameters are inferred directly FROM the
+                    // argument type, so the argument is always assignable by construction.
+                    // The mismatch arises because the checker computes the arg type with
+                    // `in_const_assertion = true` (producing one TypeId) while the solver's
+                    // inference engine applies `apply_const_assertion` separately (producing
+                    // a different TypeId). Both represent the same readonly/literal type.
+                    let is_bare_const_type_param = func.type_params.iter().any(|tp| {
+                        tp.is_const
+                            && matches!(
+                                self.interner.lookup(param_type),
+                                Some(TypeData::TypeParameter(info)) if info.name == tp.name
+                            )
+                    });
+                    if is_bare_const_type_param {
+                        tracing::debug!(
+                            "Skipping argument mismatch at index {} - bare const type parameter",
+                            index
+                        );
+                        return CallResult::Success(return_type);
+                    }
 
                     let expected = self
                         .param_type_for_arg_index(&func.params, index, final_args.len())

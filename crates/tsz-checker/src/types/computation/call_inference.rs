@@ -1252,6 +1252,19 @@ impl<'a> CheckerState<'a> {
                 break;
             };
 
+            // When the expected type has readonly members (from const type parameter
+            // inference), skip the recheck for this argument. The argument was already
+            // validated against the const-inferred type during the solver's
+            // resolve_generic_call. Re-checking here would re-compute the argument
+            // type without in_const_assertion, producing a mutable type that fails
+            // assignability against the readonly expected type.
+            if tsz_solver::type_queries::type_has_readonly_members(
+                self.ctx.types.as_type_database(),
+                expected,
+            ) {
+                continue;
+            }
+
             // When the argument is a variadic tuple spread marker `[...U]`
             // (created by the call checker for generic type parameter spreads),
             // unwrap the marker to get U and compare it against the full rest
