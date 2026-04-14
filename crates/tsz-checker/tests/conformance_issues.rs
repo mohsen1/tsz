@@ -25397,3 +25397,46 @@ enum ENUM1 { A, B, C }
         "Should NOT emit TS2356 for valid enum member type. Got: {diagnostics:?}"
     );
 }
+
+/// TS2344 false positive: when a type parameter `K extends object` is used
+/// in a class member type annotation (not a `new` expression) referencing a
+/// generic with an indexed-access-type constraint like `WeakKey`, the Lazy
+/// refs inside the constraint (e.g., `WeakKeyTypes[keyof WeakKeyTypes]`) must
+/// be resolved before the assignability check. Without resolving them,
+/// `evaluate_type_for_assignability` returns the unevaluated IndexAccess and
+/// the check incorrectly fails.
+///
+/// Regression test for esNextWeakRefs_IterableWeakMap conformance failure.
+#[test]
+fn test_ts2344_indexed_access_constraint_lazy_refs_resolved_in_class_member() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface MyWeakKeyTypes {
+    object: object;
+    symbol: symbol;
+}
+type MyWeakKey = MyWeakKeyTypes[keyof MyWeakKeyTypes];
+
+declare class MyWeakRef<T extends MyWeakKey> { deref(): T | undefined; }
+declare class MyWeakMap<K extends MyWeakKey, V> { }
+
+class Foo<K extends object, V> {
+    // Type references in class member positions (field type annotation,
+    // method return type) go through validate_type_reference_type_arguments,
+    // NOT validate_new_expression_type_arguments. This path must also
+    // resolve Lazy refs in constraints.
+    weakMap: MyWeakMap<K, V> = null as any;
+    ref: MyWeakRef<K> = null as any;
+    getRef(): MyWeakRef<K> { return null as any; }
+}
+        "#,
+    );
+
+    let ts2344: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2344).collect();
+    assert!(
+        ts2344.is_empty(),
+        "Should NOT get TS2344: K extends object satisfies MyWeakKey (= object | symbol).\n\
+         The indexed access constraint must be fully evaluated before the check.\n\
+         Got: {ts2344:#?}"
+    );
+}
