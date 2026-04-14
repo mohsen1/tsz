@@ -1190,6 +1190,104 @@ impl<'a> CheckerState<'a> {
     /// // Normalized to Union(STRING, NUMBER, BOOLEAN)
     /// ```
     #[allow(dead_code)]
+    /// Decide whether a `typeof <name>` query is positioned in the signature
+    /// (type-annotation) region of a function and the name resolves only
+    /// because of body-local hoisting. tsc treats such references as
+    /// unresolved — the signature scope is logically outside the body, even
+    /// though we bind parameters, type parameters, and body `var`/function
+    /// declarations into a single function scope.
+    ///
+    /// Returns true when:
+    ///   * `idx` is inside a function/method/arrow and its enclosing chain
+    ///     stays inside the function's **signature** (i.e. we reach the
+    ///     function's `body` edge, or the `type`/parameter/return-type edge,
+    ///     before reaching the function itself), AND
+    ///   * `name` resolves to a symbol whose declaration is inside that
+    ///     function's body.
+    pub(super) fn is_typeof_in_function_signature_of_body_local(
+        &self,
+        idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        // Walk up to find the enclosing function-like node, tracking whether we
+        // ever entered its body subtree. If we entered the body, this typeof is
+        // inside the body — body-scope visibility is fine there.
+        let mut current = idx;
+        let mut enclosing_fn: Option<NodeIndex> = None;
+        let mut saw_body = false;
+        let mut entered_from: NodeIndex = idx;
+
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent = ext.parent;
+            if parent.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                break;
+            };
+            match parent_node.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION
+                    || k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::GET_ACCESSOR
+                    || k == syntax_kind_ext::SET_ACCESSOR =>
+                {
+                    if let Some(func) = self.ctx.arena.get_function(parent_node)
+                        && func.body == entered_from
+                    {
+                        saw_body = true;
+                    }
+                    enclosing_fn = Some(parent);
+                    break;
+                }
+                _ => {}
+            }
+            entered_from = parent;
+            current = parent;
+        }
+
+        let Some(fn_idx) = enclosing_fn else {
+            return false;
+        };
+        if saw_body {
+            return false;
+        }
+
+        let Some(fn_node) = self.ctx.arena.get(fn_idx) else {
+            return false;
+        };
+        let Some(func) = self.ctx.arena.get_function(fn_node) else {
+            return false;
+        };
+        if func.body.is_none() {
+            return false;
+        }
+        let Some(body_node) = self.ctx.arena.get(func.body) else {
+            return false;
+        };
+        let (body_pos, body_end) = (body_node.pos, body_node.end);
+
+        // Ask every scope whose container is lexically inside the function
+        // body: does it declare `name`? If yes, the symbol is body-only and
+        // tsc treats the signature-position `typeof name` as unresolved.
+        // We intentionally don't call `resolve_identifier` here — that resolver
+        // sees body-hoisted vars from the function scope and would always
+        // succeed, hiding the signature/body boundary we're trying to recover.
+        for scope in self.ctx.binder.scopes.iter() {
+            let Some(cnode) = self.ctx.arena.get(scope.container_node) else {
+                continue;
+            };
+            if cnode.pos < body_pos || cnode.end > body_end {
+                continue;
+            }
+            if scope.table.get(name).is_some() {
+                return true;
+            }
+        }
+        false
+    }
+
     pub(super) fn is_type_query_in_non_flow_sensitive_signature_parameter(
         &self,
         idx: NodeIndex,
