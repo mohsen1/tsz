@@ -635,9 +635,22 @@ impl<'a> CheckerState<'a> {
 
         if !types_compatible {
             let shadowed = symbols.iter().skip(1).any(|sym_id| {
+                // The first symbol (symbols[0]) is the *closest* private identifier
+                // in scope — the one that shadows the outer access. Each outer
+                // symbol must be evaluated with its own static-ness, not the
+                // closest symbol's static-ness, since an instance #x in a nested
+                // class can shadow an outer *static* #x. Without this, outer
+                // static members fail the subsequent access-compat check and
+                // the shadowing diagnostic is dropped, producing a confusing
+                // "does not exist" (TS2339) instead of TS18014.
+                let outer_is_static = self.ctx.binder.get_symbol(*sym_id).is_some_and(|sym| {
+                    sym.declarations
+                        .iter()
+                        .any(|&decl_idx| self.class_member_is_static(decl_idx))
+                });
                 self.private_member_declaring_type(*sym_id)
                     .is_some_and(|ty| {
-                        if member_is_static {
+                        if outer_is_static {
                             self.static_private_member_access_compatible(
                                 object_type_for_check,
                                 ty,
