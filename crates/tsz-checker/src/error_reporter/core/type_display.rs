@@ -42,6 +42,14 @@ impl<'a> CheckerState<'a> {
             }
             parts.push(current.trim().to_string());
 
+            // Only wrap intersection parts in parens when there are multiple union
+            // alternatives. A standalone intersection like `T & (0 | 1 | 2)` should
+            // not get extra outer parens, but in a union like `A & B | C & D`, both
+            // intersection parts need parens: `(A & B) | (C & D)`.
+            if parts.len() == 1 {
+                return parts.into_iter().next().unwrap_or_default();
+            }
+
             parts
                 .into_iter()
                 .map(|part| {
