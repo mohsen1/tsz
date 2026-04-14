@@ -1910,3 +1910,42 @@ r2.y;
         ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn getter_returning_this_after_constructor_resolves_to_this_type() {
+    // When a getter that returns `this` is declared after the constructor,
+    // the inferred return type might not match the Phase 3 partial type by
+    // TypeId equality. The syntactic `method_body_returns_only_this` fallback
+    // ensures the getter still gets polymorphic `ThisType`, so that accessing
+    // getter properties on the result works correctly.
+    let diags = check_source_diagnostics(
+        r#"
+class C<T> {
+    foo() { return this; }
+    constructor(x: T) {
+        this.z = x;
+    }
+    get y() { return this; }
+    z: T;
+}
+
+var c: C<string> = new C("hello");
+// Getter result should have all class members including y itself
+var result = c.y;
+result.y;
+result.foo;
+result.z;
+
+// Method result should also have getter y
+var r2 = c.foo();
+r2.y;
+"#,
+    );
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for getter `this` return type on class with getter after constructor, got: {:?}",
+        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
