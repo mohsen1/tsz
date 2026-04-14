@@ -1848,3 +1848,58 @@ test({
         ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+/// Suppress spurious TS2339 for property access on a type parameter whose
+/// constraint failed to resolve (e.g., `T extends typeof a` where `a` is a
+/// destructured parameter not in scope for type parameter constraints).
+///
+/// The two-pass type parameter resolution creates an initial unconstrained
+/// TypeId and a refined constrained one. Destructured object binding elements
+/// can cache the stale unconstrained TypeId, which then triggers a false
+/// TS2339 "Property does not exist on type 'T'" even though the constraint
+/// error (TS2552) already covers the diagnostic.
+#[test]
+fn no_false_ts2339_for_destructured_param_with_error_type_param_constraint() {
+    let diags = check_source_diagnostics(
+        r#"
+function f0<T extends typeof a>(a: T) {
+    a.b;
+}
+function f1<T extends typeof a>({a}: {a:T}) {
+    a.b;
+}
+function f2<T extends typeof a>([a]: T[]) {
+    a.b;
+}
+class A {
+    m0<T extends typeof a>(a: T) {
+        a.b
+    }
+    m1<T extends typeof a>({a}: {a:T}) {
+        a.b
+    }
+    m2<T extends typeof a>([a]: T[]) {
+        a.b
+    }
+}
+"#,
+    );
+
+    // tsc emits only TS2552 for each `typeof a` in the type parameter constraint.
+    // No TS2339 should be emitted for `a.b` in the body.
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for property access on type param with error constraint, got: {:?}",
+        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+
+    // TS2552 should be emitted for each `typeof a` in the constraints.
+    let ts2552: Vec<_> = diags.iter().filter(|d| d.code == 2552).collect();
+    assert!(
+        ts2552.len() >= 6,
+        "Expected at least 6 TS2552 for unresolved typeof in constraints, got {}",
+        ts2552.len()
+    );
+}

@@ -477,7 +477,9 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 type_id,
             );
-            if constraint == Some(TypeId::ERROR) {
+            if constraint.is_some_and(|constraint| {
+                constraint == TypeId::ERROR || tsz_solver::is_error_type(self.ctx.types, constraint)
+            }) {
                 return;
             }
             // Check for circular/self-referential constraint: if this type_id has
