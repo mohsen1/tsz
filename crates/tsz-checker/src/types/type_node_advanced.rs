@@ -506,6 +506,36 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return TypeId::ERROR;
         }
 
+        // Type parameter constraints cannot reference function parameters of the
+        // same function via `typeof`. Emit TS2304/TS2552 instead of silently resolving.
+        // This check MUST come before the node_types cache lookup, because
+        // destructured parameter bindings (e.g., `{a}` in `({a}: {a:T})`) may
+        // have their type cached during binding pattern processing. Without this
+        // priority, `typeof a` would return the cached type instead of ERROR,
+        // causing the type parameter constraint to be self-referential instead
+        // of ERROR, which then leads to cascading TS2339 diagnostics.
+        if let Some(expr_node) = self.ctx.arena.get(type_query.expr_name)
+            && expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+            && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
+            && self
+                .ctx
+                .type_param_constraint_excluded_params
+                .contains(ident.escaped_text.as_str())
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let msg = format_message(
+                diagnostic_messages::CANNOT_FIND_NAME,
+                &[&ident.escaped_text],
+            );
+            self.ctx.error(
+                expr_node.pos,
+                expr_node.end - expr_node.pos,
+                msg,
+                diagnostic_codes::CANNOT_FIND_NAME,
+            );
+            return TypeId::ERROR;
+        }
+
         // Prefer the already-computed value-space type at this query site when available.
         // This preserves flow-sensitive narrowing for `typeof expr` in type positions.
         if let Some(&expr_type) = self.ctx.node_types.get(&type_query.expr_name.0)
@@ -543,30 +573,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 .arena
                 .get(type_query.expr_name)
                 .expect("type_query.expr_name node exists");
-            self.ctx.error(
-                expr_node.pos,
-                expr_node.end - expr_node.pos,
-                msg,
-                diagnostic_codes::CANNOT_FIND_NAME,
-            );
-            return TypeId::ERROR;
-        }
-
-        // Type parameter constraints cannot reference function parameters of the
-        // same function via `typeof`. Emit TS2304/TS2552 instead of silently resolving.
-        if let Some(expr_node) = self.ctx.arena.get(type_query.expr_name)
-            && expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-            && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
-            && self
-                .ctx
-                .type_param_constraint_excluded_params
-                .contains(ident.escaped_text.as_str())
-        {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-            let msg = format_message(
-                diagnostic_messages::CANNOT_FIND_NAME,
-                &[&ident.escaped_text],
-            );
             self.ctx.error(
                 expr_node.pos,
                 expr_node.end - expr_node.pos,

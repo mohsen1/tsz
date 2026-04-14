@@ -25280,3 +25280,70 @@ export function assertNodeProperty<
         "Expected TS2536 for HTMLElementTagNameMap[T] where T extends keyof (undefined) ElementTagNameMap.\nGot: {diagnostics:#?}"
     );
 }
+
+/// Suppress cascading TS2339 when `typeof a` in a type parameter constraint
+/// references a destructured parameter name.
+///
+/// When `<T extends typeof a>` is used with a destructured parameter
+/// `({a}: {a:T})`, the `typeof a` fails to resolve (emitting TS2552/TS2304)
+/// because parameter names are excluded from type parameter constraints.
+/// The property access `a.b` should NOT additionally emit TS2339, as the
+/// constraint failure already reports the root cause.
+///
+/// This tests the fix for: parameterNamesInTypeParameterList.ts conformance
+#[test]
+fn test_no_cascading_ts2339_for_typeof_constraint_with_destructured_param() {
+    let source = r#"
+class A {
+    m1<T extends typeof a>({a}: {a:T}) {
+        a.b
+    }
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    // TS2552 should be emitted for the failed `typeof a` constraint
+    assert!(
+        has_error(&diagnostics, 2552),
+        "Should emit TS2552 for unresolvable typeof constraint. Got: {diagnostics:?}"
+    );
+    // TS2339 should NOT be emitted — it's a cascading error from the constraint failure
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Should suppress cascading TS2339 on destructured param with failed constraint. Got: {diagnostics:?}"
+    );
+}
+
+/// Same as above but for standalone functions (not class methods).
+#[test]
+fn test_no_cascading_ts2339_for_typeof_constraint_with_destructured_param_function() {
+    let source = r#"
+class A {}
+function f1<T extends typeof a>({a}: {a:T}) {
+    a.b;
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        has_error(&diagnostics, 2552),
+        "Should emit TS2552 for unresolvable typeof constraint. Got: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Should suppress cascading TS2339 on destructured param with failed constraint. Got: {diagnostics:?}"
+    );
+}
+
+/// Truly unconstrained type parameters should still emit TS2339.
+#[test]
+fn test_ts2339_still_emitted_for_unconstrained_type_parameter() {
+    let source = r#"
+function g<T>(a: T) {
+    a.b;
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        has_error(&diagnostics, 2339),
+        "Unconstrained type parameter should emit TS2339. Got: {diagnostics:?}"
+    );
+}
