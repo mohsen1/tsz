@@ -413,6 +413,43 @@ impl BinderState {
         (symbols, saw_class_scope)
     }
 
+    /// Check whether any class scope (not just those enclosing `node_idx`)
+    /// declares a private identifier with the given escaped text. Used to
+    /// downgrade TS18016 "private identifiers are not allowed outside class
+    /// bodies" to TS18013-style diagnostics when the name is declared
+    /// elsewhere in the file — matching tsc, which emits TS18016 only when
+    /// the name is truly absent from every class.
+    #[must_use]
+    pub fn private_identifier_declared_in_any_class(&self, name: &str) -> bool {
+        self.scopes
+            .iter()
+            .any(|scope| scope.kind == ContainerKind::Class && scope.table.get(name).is_some())
+    }
+
+    /// Find the name of a class that declares the given private identifier.
+    /// Returns the first match in scope order — used to format TS18013 diagnostics.
+    #[must_use]
+    pub fn find_class_declaring_private_identifier(
+        &self,
+        arena: &NodeArena,
+        name: &str,
+    ) -> Option<String> {
+        for scope in &self.scopes {
+            if scope.kind != ContainerKind::Class || scope.table.get(name).is_none() {
+                continue;
+            }
+            let node = arena.get(scope.container_node)?;
+            if let Some(cls) = arena.get_class(node)
+                && let Some(name_node) = arena.get(cls.name)
+                && let Some(ident) = arena.get_identifier(name_node)
+            {
+                return Some(ident.escaped_text.to_string());
+            }
+            return Some(String::new());
+        }
+        None
+    }
+
     // =========================================================================
     // Import Resolution
     // =========================================================================

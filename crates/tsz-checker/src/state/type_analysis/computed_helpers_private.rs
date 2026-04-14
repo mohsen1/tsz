@@ -321,14 +321,51 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
                 // TSC special case: for any-like types, private names can't be looked up
-                // dynamically. If we're outside any class body, emit TS18016. If inside a class
-                // body (but the private name isn't declared there), emit TS2339.
-                if !saw_class_scope {
+                // dynamically. If we're outside any class body, emit TS18016 — but only
+                // when the private identifier is NOT declared in any class in the file.
+                // If it IS declared somewhere, tsc instead routes through the
+                // "property exists but not accessible" path (TS18013), so we fall
+                // through to the else-branch that emits TS2339 here.
+                let declared_in_some_class = self
+                    .ctx
+                    .arena
+                    .get(name_idx)
+                    .and_then(|n| self.ctx.arena.get_identifier(n))
+                    .is_some_and(|ident| {
+                        self.ctx
+                            .binder
+                            .private_identifier_declared_in_any_class(&ident.escaped_text)
+                    });
+                if !saw_class_scope && !declared_in_some_class {
                     use crate::diagnostics::diagnostic_codes;
                     self.error_at_node(
                         name_idx,
                         "Private identifiers are not allowed outside class bodies.",
                         diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES,
+                    );
+                } else if !saw_class_scope && declared_in_some_class {
+                    // Private name declared in another class in this file but accessed
+                    // outside any class body. tsc emits TS18013 "Property '#x' is not
+                    // accessible outside class '...' because it has a private identifier."
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    let class_name = self
+                        .ctx
+                        .arena
+                        .get(name_idx)
+                        .and_then(|n| self.ctx.arena.get_identifier(n))
+                        .and_then(|ident| {
+                            self.ctx.binder.find_class_declaring_private_identifier(
+                                self.ctx.arena,
+                                &ident.escaped_text,
+                            )
+                        })
+                        .unwrap_or_default();
+                    self.error_at_node(
+                        name_idx,
+                        &diagnostic_messages::PROPERTY_IS_NOT_ACCESSIBLE_OUTSIDE_CLASS_BECAUSE_IT_HAS_A_PRIVATE_IDENTIFIER
+                            .replace("{0}", &property_name)
+                            .replace("{1}", &class_name),
+                        diagnostic_codes::PROPERTY_IS_NOT_ACCESSIBLE_OUTSIDE_CLASS_BECAUSE_IT_HAS_A_PRIVATE_IDENTIFIER,
                     );
                 } else if self.is_js_file() && !self.ctx.should_resolve_jsdoc() {
                     // In unchecked JS files (allowJs without checkJs/@ts-check), tsc emits
