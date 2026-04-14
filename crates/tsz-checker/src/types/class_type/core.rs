@@ -1085,6 +1085,13 @@ impl<'a> CheckerState<'a> {
                 .class_instance_type_cache
                 .insert(class_idx, partial_type);
 
+            // Keep enclosing_class.cached_instance_this_type in sync with the
+            // partial type so that class_member_this_type returns the current
+            // construction state (not the stale Phase 0 prescan type).
+            if let Some(ref mut info) = self.ctx.enclosing_class {
+                info.cached_instance_this_type = Some(partial_type);
+            }
+
             // Check if the class constructor is currently being resolved.
             // When it is, method body inference can trigger a cycle:
             //   instance type → method body inference → Bar.instance → constructor type → CYCLE
@@ -1234,6 +1241,17 @@ impl<'a> CheckerState<'a> {
                 ..ObjectShape::default()
             });
             self.ctx.this_type_stack.push(partial_type);
+
+            // Update enclosing_class.cached_instance_this_type to the current
+            // partial type so that `this` evaluation inside getter/setter bodies
+            // (via class_member_this_type → cached_instance_this) sees the
+            // up-to-date type including properties and methods — not the stale
+            // prescan type from Phase 0.  Without this, `get y() { return this; }`
+            // infers a return type that doesn't match partial_type, preventing the
+            // ThisType rewrite and causing false TS2339 on the accessor property.
+            if let Some(ref mut info) = self.ctx.enclosing_class {
+                info.cached_instance_this_type = Some(partial_type);
+            }
 
             for deferred in &deferred_accessors {
                 if deferred.is_getter {
