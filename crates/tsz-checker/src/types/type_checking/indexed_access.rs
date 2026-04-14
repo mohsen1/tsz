@@ -1601,12 +1601,20 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if self.try_emit_concrete_index_access_error(
-                concrete_error_anchor,
-                object_type_for_check,
-                index_type_for_check,
-                self.type_node_refers_to_type_parameter(data.object_type),
-            ) {
+            // When the original index type is a type parameter (e.g., T extends keyof A
+            // used to index B where A != B), don't decompose its constraint into concrete
+            // members — emit TS2536 for the type parameter itself. tsc reports
+            // "Type 'T' cannot be used to index type 'B'" rather than per-member TS2339.
+            let original_index_is_type_param =
+                crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type);
+            if !original_index_is_type_param
+                && self.try_emit_concrete_index_access_error(
+                    concrete_error_anchor,
+                    object_type_for_check,
+                    index_type_for_check,
+                    self.type_node_refers_to_type_parameter(data.object_type),
+                )
+            {
                 return;
             }
 
