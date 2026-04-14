@@ -25200,3 +25200,83 @@ namespace A {
         "C.Point should be accessible within namespace A.B. Got: {diagnostics:?}"
     );
 }
+
+#[test]
+#[ignore] // TODO: check_type_node for param types causes Partial<T>[K] false positives
+fn test_ts2536_mismatched_keyof_source_in_param_type() {
+    // B[T] as parameter type where T extends keyof A, but B != A
+    // Currently not checked: adding check_type_node for param types
+    // causes false positives for Partial<T>[K] patterns.
+    let source = r"
+interface A { x: number; y: string; }
+interface B { x: number; }
+function foo<T extends keyof A>(value: B[T]) {}
+";
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2536_count = diagnostics.iter().filter(|(code, _)| *code == 2536).count();
+    assert!(
+        ts2536_count >= 1,
+        "Expected TS2536 for B[T] where T extends keyof A but A != B.\nGot: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2536_mismatched_keyof_source_in_tp_constraint() {
+    // B[T] as type parameter constraint where T extends keyof A, but B != A
+    let source = r"
+interface A { x: number; y: string; }
+interface B { x: number; }
+function foo<T extends keyof A, V extends B[T]>(value: V) {}
+";
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2536_count = diagnostics.iter().filter(|(code, _)| *code == 2536).count();
+    assert!(
+        ts2536_count >= 1,
+        "Expected TS2536 for B[T] in constraint where T extends keyof A but A != B.\nGot: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2536_undefined_source_type_in_constraint() {
+    // Like intersectionsOfLargeUnions: T extends keyof UndefinedType,
+    // V extends KnownType[T][P] — tsc emits TS2536 even though UndefinedType
+    // is unresolvable because T's constraint (keyof any = string|number|symbol)
+    // is not assignable to keyof KnownType.
+    let source = r"
+interface KnownType { x: number; y: string; }
+function foo<
+    T extends keyof UndefinedType,
+    P extends keyof UndefinedType,
+    V extends KnownType[T][P]>(value: V) {}
+";
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2536_count = diagnostics.iter().filter(|(code, _)| *code == 2536).count();
+    assert!(
+        ts2536_count >= 1,
+        "Expected TS2536 for KnownType[T] where T extends keyof of undefined type.\nGot: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2536_with_lib_mismatched_keyof_source() {
+    // Matches intersectionsOfLargeUnions.ts: T extends keyof ElementTagNameMap
+    // (undefined), V extends HTMLElementTagNameMap[T][P].
+    // HTMLElementTagNameMap is defined in lib.dom.d.ts.
+    if !lib_files_available() {
+        eprintln!("Skipping: lib files not available");
+        return;
+    }
+    let source = r#"
+export function assertNodeProperty<
+    T extends keyof ElementTagNameMap,
+    P extends keyof ElementTagNameMap[T],
+    V extends HTMLElementTagNameMap[T][P]>(value: V) {}
+"#;
+    let diagnostics =
+        without_missing_global_type_errors(compile_and_get_diagnostics_with_lib(source));
+    let ts2536_count = diagnostics.iter().filter(|(code, _)| *code == 2536).count();
+    assert!(
+        ts2536_count >= 1,
+        "Expected TS2536 for HTMLElementTagNameMap[T] where T extends keyof (undefined) ElementTagNameMap.\nGot: {diagnostics:#?}"
+    );
+}
