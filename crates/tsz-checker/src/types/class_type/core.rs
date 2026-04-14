@@ -1250,7 +1250,20 @@ impl<'a> CheckerState<'a> {
                         // infers its return type from the body and the result is the
                         // partial class instance type (i.e. the body does `return this;`),
                         // replace with polymorphic `ThisType` — same as for methods.
-                        if deferred.accessor.type_annotation.is_none() && t == partial_type {
+                        //
+                        // Two checks mirror the method logic (Phase 2):
+                        // (1) type-based — the inferred return matches partial_type,
+                        // (2) syntactic — every return statement returns `this`.
+                        // The syntactic check is needed because type interning or
+                        // flow analysis may produce a TypeId that doesn't equal
+                        // partial_type even though it represents the same class
+                        // instance (e.g. when the getter is declared after the
+                        // constructor and the partial type changes between phases).
+                        let type_match =
+                            deferred.accessor.type_annotation.is_none() && t == partial_type;
+                        let syntactic_match =
+                            self.method_body_returns_only_this(deferred.accessor.body);
+                        if type_match || syntactic_match {
                             self.ctx.types.this_type()
                         } else {
                             t
