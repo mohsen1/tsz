@@ -495,9 +495,6 @@ impl<'a> CheckerState<'a> {
                     || self.has_multi_signature_overloads(resolved_component_type)
                     || self.has_multi_construct_overloads(resolved_component_type));
 
-            // Extract props type from the component and check attributes.
-            // TS2607/TS2608 are emitted within props extraction when applicable.
-            // Build display target with IntrinsicAttributes intersection for TS2322 messages.
             if let Some((props_type, raw_has_type_params)) = recovered_props {
                 // TS2786: component return type must be valid JSX element
                 self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
