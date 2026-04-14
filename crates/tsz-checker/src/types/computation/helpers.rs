@@ -960,6 +960,31 @@ impl<'a> CheckerState<'a> {
 
             // Type-check the expression - this will emit TS2304 if name is unresolved
             let part_type = self.get_type_of_node_with_request(span.expression, &span_request);
+            // TS2731: Implicit conversion of a 'symbol' to a 'string' will fail
+            // at runtime. The runtime concatenation in a template literal calls
+            // Symbol.prototype[@@toPrimitive]("string") which throws. Emit the
+            // diagnostic on the span expression for any symbol-typed sub-part.
+            // Constraint-resolved type parameters (e.g. `<S extends symbol>`)
+            // are also caught via the solver's BinaryOpEvaluator helper.
+            {
+                let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                use tsz_solver::TypeId as SolverTypeId;
+                let resolve_tp = |t: SolverTypeId| -> SolverTypeId {
+                    crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, t)
+                        .filter(|&c| c != SolverTypeId::UNKNOWN && c != t)
+                        .unwrap_or(t)
+                };
+                let is_sym = evaluator.is_symbol_like(part_type)
+                    || evaluator.is_symbol_like(resolve_tp(part_type));
+                if is_sym {
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node(
+                        span.expression,
+                        "Implicit conversion of a 'symbol' to a 'string' will fail at runtime. Consider wrapping this expression in 'String(...)'.",
+                        diagnostic_codes::IMPLICIT_CONVERSION_OF_A_SYMBOL_TO_A_STRING_WILL_FAIL_AT_RUNTIME_CONSIDER_WRAPPI,
+                    );
+                }
+            }
             part_types.push(part_type);
 
             // Extract the text after this expression (middle or tail)
