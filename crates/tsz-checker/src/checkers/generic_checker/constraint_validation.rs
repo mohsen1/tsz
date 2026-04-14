@@ -797,6 +797,14 @@ impl<'a> CheckerState<'a> {
                         // before checking. E.g., `WeakKeyTypes[keyof WeakKeyTypes]`
                         // must be reduced to `object | symbol` for the assignability
                         // check to work correctly.
+                        //
+                        // Ensure lazy refs inside the constraint are resolved in the
+                        // type environment BEFORE evaluation. Without this, constraints
+                        // like `WeakKeyTypes[keyof WeakKeyTypes]` (where WeakKeyTypes is
+                        // a Lazy(DefId) from a lib file) remain unevaluated because the
+                        // evaluator's `ensure_relation_input_ready` may be skipped due
+                        // to depth guards during nested evaluation.
+                        self.ensure_refs_resolved(inst_constraint);
                         let inst_constraint = self.evaluate_type_for_assignability(inst_constraint);
                         let mut is_satisfied = self.is_assignable_to(base, inst_constraint)
                             || self.satisfies_array_like_constraint(base, inst_constraint);
