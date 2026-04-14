@@ -1882,6 +1882,36 @@ class Foo<A> {
 }
 
 #[test]
+fn getter_returning_this_no_false_ts2339() {
+    // When a class getter returns `this` without an explicit type annotation,
+    // the inferred return type must be the polymorphic `ThisType` — not the
+    // partial class instance type. Without the syntactic `returns_only_this`
+    // fallback, return-type widening (ObjectWithIndex → Object) can produce
+    // a TypeId mismatch, causing the getter property to be omitted from the
+    // final class instance type and triggering false TS2339 errors.
+    let diags = check_source_diagnostics(
+        r#"
+class C<T> {
+    constructor() {}
+    get y() { return this; }
+    z: T;
+}
+declare var c: C<string>;
+var r = c.y;
+r.y;
+r.z;
+"#,
+    );
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for getter returning this, got: {:?}",
+        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn no_false_ts2339_for_getter_this_type_after_constructor() {
     // Getter returning `this` declared after constructor should not produce
     // false TS2339 when the getter's return type is accessed through a variable.
