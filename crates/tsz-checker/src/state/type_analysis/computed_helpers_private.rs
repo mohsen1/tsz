@@ -372,14 +372,21 @@ impl<'a> CheckerState<'a> {
                     // TS1111 for undeclared private names inside a class (via
                     // checkGrammarPrivateIdentifierExpression). TS2339 would be filtered
                     // out by the JS error filter, so we emit the grammar error instead.
-                    use crate::diagnostics::diagnostic_codes;
-                    self.error_at_node(
-                        name_idx,
-                        &format!(
-                            "Private field '{property_name}' must be declared in an enclosing class.",
-                        ),
-                        diagnostic_codes::PRIVATE_FIELD_MUST_BE_DECLARED_IN_AN_ENCLOSING_CLASS,
-                    );
+                    //
+                    // Exception: when the access is an optional chain (`this?.#x`), the
+                    // parser already emits TS18030 ("optional chain cannot contain private
+                    // identifiers"). tsc suppresses TS1111 in that case so we shouldn't
+                    // stack a second grammar diagnostic on the same node.
+                    if !access.question_dot_token {
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node(
+                            name_idx,
+                            &format!(
+                                "Private field '{property_name}' must be declared in an enclosing class.",
+                            ),
+                            diagnostic_codes::PRIVATE_FIELD_MUST_BE_DECLARED_IN_AN_ENCLOSING_CLASS,
+                        );
+                    }
                 } else {
                     // For private identifiers on any-like types inside a class, tsc emits
                     // TS2339 directly (unlike regular properties which are suppressed on `any`).
@@ -476,14 +483,19 @@ impl<'a> CheckerState<'a> {
                     // TS1111 for undeclared private names inside a class (via
                     // checkGrammarPrivateIdentifierExpression). TS2339 would be filtered
                     // out by the JS error filter, so we emit the grammar error instead.
-                    use crate::diagnostics::diagnostic_codes;
-                    self.error_at_node(
-                        name_idx,
-                        &format!(
-                            "Private field '{property_name}' must be declared in an enclosing class.",
-                        ),
-                        diagnostic_codes::PRIVATE_FIELD_MUST_BE_DECLARED_IN_AN_ENCLOSING_CLASS,
-                    );
+                    //
+                    // Exception: optional-chain private access (`this?.#x`) is already
+                    // flagged by the parser with TS18030; tsc suppresses TS1111 there.
+                    if !access.question_dot_token {
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node(
+                            name_idx,
+                            &format!(
+                                "Private field '{property_name}' must be declared in an enclosing class.",
+                            ),
+                            diagnostic_codes::PRIVATE_FIELD_MUST_BE_DECLARED_IN_AN_ENCLOSING_CLASS,
+                        );
+                    }
                 } else if saw_class_scope {
                     // In TS files, tsc emits TS2339 (property does not exist) when accessing
                     // an undeclared private name inside a class.

@@ -1424,6 +1424,7 @@ pub(super) const fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
         | 17002 // Expected corresponding JSX closing tag for '{0}'
         | 2657 // JSX expressions must have one parent element
         | 17008 // JSX element '{0}' has no corresponding closing tag
+        | 18030 // An optional chain cannot contain private identifiers
     )
 }
 
