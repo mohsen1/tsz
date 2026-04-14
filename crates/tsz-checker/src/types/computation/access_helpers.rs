@@ -114,6 +114,33 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Resolve index signature value type when the index expression is error-typed.
+    ///
+    /// tsc resolves element access through index signatures even when the index
+    /// expression evaluates to an error type (e.g., `ENUM1[undeclaredIdentifier]`).
+    /// The error type is assignable to both `number` and `string`, so it can match
+    /// any index signature. Returns the first matching index signature's value type.
+    pub(crate) fn resolve_index_signature_for_error_index(
+        &mut self,
+        object_type: TypeId,
+    ) -> Option<TypeId> {
+        if matches!(
+            object_type,
+            TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
+        ) {
+            return None;
+        }
+
+        // Try number index first (for arrays, tuples, enums), then string
+        for &candidate in &[TypeId::NUMBER, TypeId::STRING] {
+            let result = self.get_element_access_type(object_type, candidate, None);
+            if result != TypeId::ERROR {
+                return Some(result);
+            }
+        }
+        None
+    }
+
     pub(crate) fn union_has_missing_concrete_element_access(
         &mut self,
         object_type: TypeId,

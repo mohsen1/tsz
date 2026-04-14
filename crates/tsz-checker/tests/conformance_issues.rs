@@ -25347,3 +25347,54 @@ function g<T>(a: T) {
         "Unconstrained type parameter should emit TS2339. Got: {diagnostics:?}"
     );
 }
+
+// =========================================================================
+// Decrement/increment operator on enum with error-typed element access
+// =========================================================================
+
+#[test]
+fn test_decrement_enum_element_access_with_undeclared_index_emits_ts2356_and_ts2542() {
+    // When using `ENUM1[A]--` where `A` is an undeclared identifier,
+    // tsc emits TS2304 (can't find name), TS2356 (arithmetic operand type),
+    // and TS2542 (readonly index signature). The element access resolves
+    // through the enum's number index signature (which returns `string`),
+    // so the operand type is `string` (not arithmetic). The index signature
+    // is also readonly, producing TS2542.
+    let source = r#"
+enum ENUM1 { A, B, C }
+ENUM1[A]--;
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        has_error(&diagnostics, 2304),
+        "Expected TS2304 for undeclared identifier 'A'. Got: {diagnostics:?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2356),
+        "Expected TS2356 (arithmetic operand type) for ENUM1[undeclared]--. Got: {diagnostics:?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2542),
+        "Expected TS2542 (readonly index signature) for ENUM1[undeclared]--. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_prefix_decrement_enum_literal_access_emits_ts2540_not_ts2356() {
+    // For `--ENUM1["A"]` where "A" is a string literal accessing a named
+    // enum member, tsc emits TS2540 (readonly property) but NOT TS2356
+    // (the operand type is the enum member type, which is arithmetic).
+    let source = r#"
+enum ENUM1 { A, B, C }
+--ENUM1["A"];
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        has_error(&diagnostics, 2540),
+        "Expected TS2540 for readonly enum property. Got: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2356),
+        "Should NOT emit TS2356 for valid enum member type. Got: {diagnostics:?}"
+    );
+}
