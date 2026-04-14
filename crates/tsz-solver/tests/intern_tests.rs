@@ -1524,3 +1524,28 @@ fn test_intersection_of_many_unions_sets_too_complex_flag() {
         "Intersection of 18 two-member unions should set union_too_complex flag (cross-product = 2^18 = 262,144)"
     );
 }
+
+#[test]
+fn test_interner_intersection_literal_subsumed_by_primitive() {
+    // string & "hello" should reduce to "hello" because "hello" <: string
+    let interner = TypeInterner::new();
+    
+    let hello = interner.literal_string("hello");
+    let intersection = interner.intersection(vec![TypeId::STRING, hello]);
+    
+    // The intersection should reduce to just the literal
+    assert_eq!(intersection, hello, "string & 'hello' should reduce to 'hello'");
+}
+
+#[test]
+fn test_interner_intersection_with_union_distributes_and_reduces() {
+    // string & ("hello" | number) should distribute and reduce to "hello"
+    let interner = TypeInterner::new();
+    
+    let hello = interner.literal_string("hello");
+    let hello_or_number = interner.union(vec![hello, TypeId::NUMBER]);
+    let intersection = interner.intersection(vec![TypeId::STRING, hello_or_number]);
+    
+    // After distribution: (string & "hello") | (string & number) = "hello" | never = "hello"
+    assert_eq!(intersection, hello, "string & ('hello' | number) should distribute and reduce to 'hello'");
+}
