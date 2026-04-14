@@ -534,6 +534,19 @@ impl<'a> CheckerState<'a> {
             {
                 return recovered_type;
             }
+            // In read context, try to resolve through index signatures even
+            // when the index expression is error-typed. tsc resolves element
+            // access through index signatures regardless of the index
+            // expression's validity, returning the index signature's value
+            // type. This is important for downstream checks (e.g., TS2356
+            // arithmetic operand type check on `ENUM1[undeclared]--`).
+            if !skip_flow_narrowing {
+                if let Some(index_sig_type) =
+                    self.resolve_index_signature_for_error_index(object_type_for_access)
+                {
+                    return index_sig_type;
+                }
+            }
             return TypeId::ERROR;
         }
 
