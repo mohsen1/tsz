@@ -199,7 +199,17 @@ impl<'a> CheckerState<'a> {
                 // Function declarations merge across files via module augmentation.
                 let is_function_merge = (symbol.flags & symbol_flags::FUNCTION) != 0
                     && !module_augmentation_declarations.is_empty();
-                if !is_interface_merge && !is_var_merge && !is_function_merge {
+                // Import aliases referencing remote declarations are valid merges.
+                let is_alias_import_merge = (symbol.flags & symbol_flags::ALIAS) != 0
+                    && symbol
+                        .declarations
+                        .iter()
+                        .any(|&d| self.is_import_alias_node(d));
+                if !is_interface_merge
+                    && !is_var_merge
+                    && !is_function_merge
+                    && !is_alias_import_merge
+                {
                     cross_file_conflicts.push(symbol.escaped_name.clone());
                 }
             }
@@ -1065,6 +1075,20 @@ impl<'a> CheckerState<'a> {
                         let decl_is_reexport = self.is_reexport_specifier(decl_idx);
                         let other_is_reexport = self.is_reexport_specifier(other_idx);
                         if decl_is_reexport || other_is_reexport {
+                            continue;
+                        }
+                    }
+
+                    // Import alias referencing a remote non-alias declaration
+                    // is not a conflict — suppress the false duplicate.
+                    if !same_source_file {
+                        let decl_is_import_alias = (decl_flags & symbol_flags::ALIAS) != 0
+                            && self.is_import_alias_node(decl_idx);
+                        let other_is_import_alias = (other_flags & symbol_flags::ALIAS) != 0
+                            && self.is_import_alias_node(other_idx);
+                        if (decl_is_import_alias && (other_flags & symbol_flags::ALIAS) == 0)
+                            || (other_is_import_alias && (decl_flags & symbol_flags::ALIAS) == 0)
+                        {
                             continue;
                         }
                     }

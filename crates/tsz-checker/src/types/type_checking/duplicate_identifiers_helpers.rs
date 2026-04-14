@@ -1553,6 +1553,23 @@ impl<'a> CheckerState<'a> {
             .get_export_decl(export_decl_node)
             .is_some_and(|data| data.module_specifier.is_some())
     }
+
+    /// Check if a declaration node is an import alias (import specifier,
+    /// import clause, or namespace import). These create ALIAS symbols
+    /// that reference a declaration in another file. In tsc, import
+    /// aliases are separate symbols and never conflict with the original
+    /// declaration. Our binder sometimes merges them, so we use this
+    /// check to suppress false duplicate diagnostics.
+    pub(super) fn is_import_alias_node(&self, decl_idx: NodeIndex) -> bool {
+        self.ctx.arena.get(decl_idx).is_some_and(|node| {
+            matches!(
+                node.kind,
+                syntax_kind_ext::IMPORT_SPECIFIER
+                    | syntax_kind_ext::IMPORT_CLAUSE
+                    | syntax_kind_ext::NAMESPACE_IMPORT
+            )
+        })
+    }
 }
 
 #[cfg(test)]
