@@ -1986,6 +1986,11 @@ impl<'a> CheckerState<'a> {
                 PropertyAccessResult::PropertyNotFound { .. } => {
                     // Special case: unconstrained type parameters should emit TS2339
                     // because they have no properties by definition.
+                    // However, suppress TS2339 when this is a stale unconstrained
+                    // type parameter from the initial two-pass resolution, and the
+                    // current type_parameter_scope holds an updated version whose
+                    // constraint resolved to ERROR (e.g., `T extends typeof a` where
+                    // `a` is a destructured parameter not in scope for constraints).
                     if crate::query_boundaries::state::checking::is_type_parameter_like(
                         self.ctx.types,
                         object_type_for_access,
@@ -1995,7 +2000,36 @@ impl<'a> CheckerState<'a> {
                     )
                     .is_none()
                     {
-                        // Unconstrained type parameter - emit TS2339
+                        // Check if the current scope has an updated version of the
+                        // same-named type parameter with an ERROR constraint, which
+                        // indicates the unconstrained version is stale.
+                        let is_stale_unconstrained = tsz_solver::type_queries::get_type_parameter_name(
+                            self.ctx.types,
+                            object_type_for_access,
+                        )
+                        .is_some_and(|name_atom| {
+                            let name = self.ctx.types.resolve_atom(name_atom);
+                            self.ctx
+                                .type_parameter_scope
+                                .get(&name)
+                                .is_some_and(|&scope_type_id| {
+                                    scope_type_id != object_type_for_access
+                                        && crate::query_boundaries::common::type_parameter_constraint(
+                                            self.ctx.types,
+                                            scope_type_id,
+                                        )
+                                        .is_some()
+                                })
+                        });
+
+                        if is_stale_unconstrained {
+                            // Stale type parameter from two-pass resolution.
+                            // The updated version in scope has a constraint (likely ERROR),
+                            // so suppress the cascading TS2339.
+                            return TypeId::ERROR;
+                        }
+
+                        // Genuinely unconstrained type parameter - emit TS2339
                         if !property_name.starts_with('#') && !accessibility_error_emitted {
                             self.error_property_not_exist_at(
                                 property_name,

@@ -64,6 +64,16 @@ pub fn get_type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> 
     }
 }
 
+/// Get the name atom of a type parameter.
+///
+/// Returns None if the type is not a type parameter.
+pub fn get_type_parameter_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Atom> {
+    match db.lookup(type_id) {
+        Some(TypeData::TypeParameter(info)) => Some(info.name),
+        _ => None,
+    }
+}
+
 /// Resolve a type parameter to its base constraint for TS2344 checking.
 ///
 /// If the type IS a `TypeParameter` with a constraint, returns the constraint.
