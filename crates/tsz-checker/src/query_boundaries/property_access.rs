@@ -1,3 +1,4 @@
+use tsz_common::Atom;
 use tsz_solver::{FunctionShape, QueryDatabase, TypeDatabase, TypeId};
 
 pub(crate) use super::common::PropertyAccessResult;
@@ -71,6 +72,10 @@ pub(crate) fn def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<tsz_solve
 
 pub(crate) fn type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     tsz_solver::type_queries::get_type_parameter_constraint(db, type_id)
+}
+
+pub(crate) fn type_parameter_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Atom> {
+    tsz_solver::type_queries::get_type_parameter_name(db, type_id)
 }
 
 pub(crate) fn enum_def_id(
