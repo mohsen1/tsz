@@ -186,8 +186,10 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn is_stale_unconstrained_type_parameter(&self, type_id: TypeId) -> bool {
-        if !crate::query_boundaries::state::checking::is_type_parameter_like(self.ctx.types, type_id)
-            || access_query::type_parameter_constraint(self.ctx.types, type_id).is_some()
+        if !crate::query_boundaries::state::checking::is_type_parameter_like(
+            self.ctx.types,
+            type_id,
+        ) || access_query::type_parameter_constraint(self.ctx.types, type_id).is_some()
         {
             return false;
         }

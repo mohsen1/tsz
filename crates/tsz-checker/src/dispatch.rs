@@ -3,8 +3,8 @@
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::generic as generic_query;
 use crate::query_boundaries::dispatch as query;
-use crate::query_boundaries::type_computation::core as type_comp_query;
 use crate::query_boundaries::type_checking_utilities as query_utils;
+use crate::query_boundaries::type_computation::core as type_comp_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -672,9 +672,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             type_comp_query::is_arithmetic_operand(
                                 self.checker.ctx.types,
                                 evaluated,
-                            )
-                                || (self.checker.is_enum_like_type(ty)
-                                    && self.checker.is_unresolved_lazy_type(evaluated))
+                            ) || (self.checker.is_enum_like_type(ty)
+                                && self.checker.is_unresolved_lazy_type(evaluated))
                         });
                         if self.checker.ctx.strict_null_checks()
                             && let Some(cause) = nullish_cause
@@ -697,8 +696,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         let is_valid = type_comp_query::is_arithmetic_operand(
                             self.checker.ctx.types,
                             resolved_type,
-                        )
-                            || self.checker.is_enum_like_type(operand_type)
+                        ) || self.checker.is_enum_like_type(operand_type)
                             || self.checker.is_enum_like_type(resolved_type);
                         if arithmetic_ok && !is_valid {
                             arithmetic_ok = false;
