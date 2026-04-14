@@ -473,6 +473,14 @@ pub fn get_index_access_types(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
     }
 }
 
+/// Get the operand of a `KeyOf` type. Returns `Some(inner)` for `keyof T`.
+pub fn get_keyof_operand(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    match db.lookup(type_id) {
+        Some(TypeData::KeyOf(inner)) => Some(inner),
+        _ => None,
+    }
+}
+
 /// Instantiate a mapped type template for a specific property key, handling
 /// name collisions between the mapped key parameter and outer type parameters.
 ///
