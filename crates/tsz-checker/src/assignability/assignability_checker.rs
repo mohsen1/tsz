@@ -1770,21 +1770,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(keyof_operand) = get_keyof_type(self.ctx.types, index_type) {
-            // Only treat as deferred when the object type is actually generic
-            // (a type parameter or contains type parameters). For concrete types
-            // like `Foo[keyof Foo]` where Foo is a resolved type alias/interface,
-            // the indexed access can be fully evaluated and should NOT be deferred.
-            // Without this guard, `number` would be incorrectly rejected as not
-            // assignable to `{ a: number; b: string }[keyof { a: number; b: string }]`
-            // (which evaluates to `number | string`).
-            return keyof_operand == object_type
-                && (crate::query_boundaries::common::is_type_parameter_like(
-                    self.ctx.types,
-                    object_type,
-                ) || crate::query_boundaries::assignability::contains_type_parameters(
-                    self.ctx.types,
-                    object_type,
-                ));
+            return keyof_operand == object_type;
         }
 
         if let Some(param_info) = tsz_solver::visitor::type_param_info(self.ctx.types, index_type)
