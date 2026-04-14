@@ -64,12 +64,12 @@ pub fn get_type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> 
     }
 }
 
-/// Get the name atom of a type parameter.
+/// Get the interned name of a type parameter.
 ///
-/// Returns None if the type is not a type parameter.
+/// Returns `Some(Atom)` for `TypeParameter` and `Infer` types, `None` otherwise.
 pub fn get_type_parameter_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Atom> {
     match db.lookup(type_id) {
-        Some(TypeData::TypeParameter(info)) => Some(info.name),
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => Some(info.name),
         _ => None,
     }
 }

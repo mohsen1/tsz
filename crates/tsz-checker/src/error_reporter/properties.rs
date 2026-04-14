@@ -482,21 +482,52 @@ impl<'a> CheckerState<'a> {
             }) {
                 return;
             }
-            // Check for circular/self-referential constraint: if this type_id has
-            // constraint=None but the scope has a refined version whose constraint
-            // points back to this same type_id, the constraint chain is circular.
-            if constraint.is_none() {
+            if let Some(name) =
+                crate::query_boundaries::property_access::type_parameter_name(self.ctx.types, type_id)
+            {
+                let is_self_ref = |c: TypeId| -> bool {
+                    crate::query_boundaries::state::checking::is_type_parameter_like(
+                        self.ctx.types,
+                        c,
+                    ) && crate::query_boundaries::property_access::type_parameter_name(
+                        self.ctx.types,
+                        c,
+                    ) == Some(name)
+                };
+                if constraint.is_some_and(&is_self_ref) {
+                    return;
+                }
+                let name_str = self.ctx.types.resolve_atom(name);
+                if let Some(&scope_id) = self.ctx.type_parameter_scope.get(&*name_str)
+                    && scope_id != type_id
+                {
+                    let scope_constraint =
+                        crate::query_boundaries::state::checking::type_parameter_constraint(
+                            self.ctx.types,
+                            scope_id,
+                        );
+                    if scope_constraint.is_some_and(|constraint| {
+                        constraint == TypeId::ERROR
+                            || tsz_solver::is_error_type(self.ctx.types, constraint)
+                            || is_self_ref(constraint)
+                            || constraint == type_id
+                    }) {
+                        return;
+                    }
+                }
+            } else if constraint.is_none() {
+                // Fall back to the display-keyed scope lookup for stale placeholder copies.
                 let type_display = self.format_type(type_id);
-                if let Some(&scope_id) = self.ctx.type_parameter_scope.get(&type_display) {
-                    if scope_id != type_id {
-                        let scope_constraint =
-                            crate::query_boundaries::state::checking::type_parameter_constraint(
-                                self.ctx.types,
-                                scope_id,
-                            );
-                        if scope_constraint == Some(type_id) {
-                            return;
-                        }
+                if let Some(&scope_id) = self.ctx.type_parameter_scope.get(&type_display)
+                    && scope_id != type_id
+                {
+                    let scope_constraint =
+                        crate::query_boundaries::state::checking::type_parameter_constraint(
+                            self.ctx.types,
+                            scope_id,
+                        );
+                    if scope_constraint == Some(type_id) {
+                        return;
                     }
                 }
             }
