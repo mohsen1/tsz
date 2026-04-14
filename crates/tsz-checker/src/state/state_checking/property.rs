@@ -755,24 +755,20 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        // Try to get the original (possibly Lazy) union members for type name display.
-        // If the target resolves through a type alias, the original members preserve
-        // their Lazy wrappers and format as named types (e.g., "Square" instead of
-        // "{ size: number; kind: \"sq\" }").
-        let original_members = query::union_members(self.ctx.types, target);
-
         // Collect resolved shapes for each union member, along with the original
         // TypeId (for error message formatting) which preserves type alias names.
+        //
+        // IMPORTANT: Use `member` directly as display_id, not `original_members[i]`.
+        // Resolution can change the order of union members (e.g., during normalization),
+        // so index-based lookup into original_members would cause misalignment between
+        // display names and shapes. Using `member` preserves the Lazy reference if the
+        // union member is a type alias, giving proper display names like "Int" vs "{ type: ... }".
         let mut member_shapes: Vec<(TypeId, std::sync::Arc<tsz_solver::ObjectShape>)> = Vec::new();
-        for (i, &member) in members.iter().enumerate() {
+        for &member in members.iter() {
             let resolved = self.resolve_type_for_property_access(member);
             if let Some(shape) = query::object_shape(self.ctx.types, resolved) {
-                // Prefer the original (Lazy) member for display, fall back to resolved
-                let display_id = original_members
-                    .as_ref()
-                    .and_then(|orig| orig.get(i).copied())
-                    .unwrap_or(member);
-                member_shapes.push((display_id, shape));
+                // Use member directly - it preserves Lazy wrappers for named types
+                member_shapes.push((member, shape));
             }
         }
 
