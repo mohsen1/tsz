@@ -439,7 +439,19 @@ impl<'a> NarrowingContext<'a> {
                             let resolved_body =
                                 resolver.resolve_lazy(def_id, self.db.as_type_database());
                             let type_params = resolver.get_lazy_type_params(def_id);
-                            if let (Some(body), Some(params)) = (resolved_body, type_params) {
+                            // A placeholder body of `unknown` / `error` indicates
+                            // the Checker registered the DefId but never bound a
+                            // real body for it (often happens for cross-file
+                            // DefId aliases, e.g. a lib type alias like
+                            // `NonNullable` referenced from a namespace-imported
+                            // signature). Treat such bodies as unresolved so we
+                            // fall through to `db.evaluate_type` instead of
+                            // substituting `unknown` into the generic body.
+                            let is_placeholder =
+                                |t: TypeId| t == TypeId::UNKNOWN || t == TypeId::ERROR;
+                            if let (Some(body), Some(params)) = (resolved_body, type_params)
+                                && !is_placeholder(body)
+                            {
                                 // Resolve type args so Lazy aliases become their
                                 // structural forms (e.g. Union) for distribution.
                                 let resolved_args: Vec<TypeId> =
