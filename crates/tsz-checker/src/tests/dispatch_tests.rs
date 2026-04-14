@@ -1880,3 +1880,33 @@ class Foo<A> {
         ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn no_false_ts2339_for_getter_this_type_after_constructor() {
+    // Getter returning `this` declared after constructor should not produce
+    // false TS2339 when the getter's return type is accessed through a variable.
+    // Previously, the cached_instance_this_type in enclosing_class was stale
+    // (set to the Phase 0 prescan type), causing `this` in the getter body to
+    // resolve to a partial type missing the getter property itself.
+    let diags = check_source_diagnostics(
+        r#"
+class C<T> {
+    x = this;
+    constructor(x: T) {}
+    get y() { return this; }
+    z: T;
+}
+
+declare var c: C<string>;
+var r2 = c.y;
+r2.y;
+"#,
+    );
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for r2.y where r2 = c.y, got: {:?}",
+        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
