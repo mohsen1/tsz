@@ -482,6 +482,51 @@ fn jsx_overload_mismatch_reports_ts2769_before_ts2786() {
     );
 }
 
+/// Class components with multi-construct overloads (like React.Component with
+/// `constructor(props: Readonly<P>)` and `constructor(props: P, context?: any)`)
+/// must emit TS2769 when the overload props type evaluates to `unknown` due to
+/// mapped type application failure. The evaluation fallback prevents the overload
+/// from matching vacuously against `unknown`.
+#[test]
+fn jsx_class_component_multi_construct_overload_children_tuple_mismatch() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        declare namespace JSX {
+            interface Element { __brand: 'element'; }
+            interface ElementClass { render(): any; }
+            interface ElementAttributesProperty { props: {}; }
+            interface ElementChildrenAttribute { children: {}; }
+            interface IntrinsicElements { div: {}; }
+        }
+        type ReactNode = string | number | boolean | null | undefined | Element;
+
+        type Readonly<T> = { readonly [P in keyof T]: T[P]; };
+
+        declare class Component<P> {
+            constructor(props: Readonly<P>);
+            constructor(props: P, context?: any);
+            props: Readonly<P> & Readonly<{ children?: ReactNode }>;
+            render(): any;
+        }
+
+        interface PanelProps {
+            children: [ReactNode, ReactNode];
+        }
+
+        class Panel extends Component<PanelProps> {}
+
+        // 2 children — should match the 2-tuple, no error
+        <Panel><div /><div /></Panel>;
+        // 3 children — should NOT match any overload, emit TS2769
+        <Panel><div /><div /><div /></Panel>;
+        "#,
+    );
+    assert!(
+        diagnostics.contains(&2769),
+        "3 children should not match 2-tuple overload, expected TS2769, got: {diagnostics:?}"
+    );
+}
+
 #[test]
 fn jsx_generic_sfc_defaulted_props_contextually_type_function_attributes() {
     let diagnostics = check_jsx_codes(

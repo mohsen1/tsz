@@ -131,7 +131,17 @@ impl<'a> CheckerState<'a> {
                 props_type
             };
 
+            // Evaluate the props type to resolve type aliases and mapped types.
+            // When evaluation degrades to `unknown` (e.g., for `Readonly<Props>` where
+            // the mapped type application can't be fully evaluated), fall back to the
+            // unevaluated type. This prevents false overload matches where `unknown`
+            // would make `is_assignable_to` vacuously true.
             let evaluated = self.evaluate_type_with_env(props_type);
+            let evaluated = if evaluated == TypeId::UNKNOWN && props_type != TypeId::UNKNOWN {
+                props_type
+            } else {
+                evaluated
+            };
             let props_resolved = self.resolve_type_for_property_access(evaluated);
 
             if self.jsx_attrs_match_overload(&attrs_info, props_resolved) {
