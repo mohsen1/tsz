@@ -1529,23 +1529,56 @@ fn test_intersection_of_many_unions_sets_too_complex_flag() {
 fn test_interner_intersection_literal_subsumed_by_primitive() {
     // string & "hello" should reduce to "hello" because "hello" <: string
     let interner = TypeInterner::new();
-    
+
     let hello = interner.literal_string("hello");
     let intersection = interner.intersection(vec![TypeId::STRING, hello]);
-    
+
     // The intersection should reduce to just the literal
-    assert_eq!(intersection, hello, "string & 'hello' should reduce to 'hello'");
+    assert_eq!(
+        intersection, hello,
+        "string & 'hello' should reduce to 'hello'"
+    );
 }
 
 #[test]
 fn test_interner_intersection_with_union_distributes_and_reduces() {
     // string & ("hello" | number) should distribute and reduce to "hello"
     let interner = TypeInterner::new();
-    
+
     let hello = interner.literal_string("hello");
     let hello_or_number = interner.union(vec![hello, TypeId::NUMBER]);
     let intersection = interner.intersection(vec![TypeId::STRING, hello_or_number]);
-    
+
     // After distribution: (string & "hello") | (string & number) = "hello" | never = "hello"
-    assert_eq!(intersection, hello, "string & ('hello' | number) should distribute and reduce to 'hello'");
+    assert_eq!(
+        intersection, hello,
+        "string & ('hello' | number) should distribute and reduce to 'hello'"
+    );
+}
+
+#[test]
+fn test_interner_intersection_three_unions_divergent_accessors() {
+    // This is the exact scenario from divergentAccessorsTypes8:
+    // (string | number) & ("hello" | number) & ("hello" | boolean) should reduce to "hello"
+    let interner = TypeInterner::new();
+
+    let hello = interner.literal_string("hello");
+
+    // Three's prop1 setter type: string | number
+    let union1 = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    // Four's prop1 setter type: "hello" | number
+    let union2 = interner.union(vec![hello, TypeId::NUMBER]);
+    // Five's prop1 setter type: "hello" | boolean
+    let union3 = interner.union(vec![hello, TypeId::BOOLEAN]);
+
+    let intersection = interner.intersection(vec![union1, union2, union3]);
+
+    // After distribution and reduction:
+    // The only surviving member is "hello" since:
+    // - string from union1 can only match "hello" from union2/3
+    // - number from union1/2 doesn't match boolean from union3
+    assert_eq!(
+        intersection, hello,
+        "(string|number) & (\"hello\"|number) & (\"hello\"|boolean) should reduce to \"hello\""
+    );
 }

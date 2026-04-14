@@ -618,15 +618,21 @@ impl TypeInterner {
                     // { readonly a: number } & { a: number } = { a: number } (writable)
                     // This matches tsc: if any member says writable, the intersection is writable
                     existing.readonly = existing.readonly && prop.readonly;
-                    // Write type: if the merged property is writable, use the merged read
-                    // type as write_type to avoid NONE sentinels from readonly members
-                    // polluting the result (e.g., intersecting NONE & number = "error & number").
-                    // When writable, write_type == type_id (no divergent getter/setter).
-                    if !existing.readonly {
-                        existing.write_type = existing.type_id;
-                    } else if existing.write_type != prop.write_type {
-                        existing.write_type =
-                            self.intersect_types_raw2(existing.write_type, prop.write_type);
+                    // Write type: handle readonly vs writable merging and divergent accessors.
+                    // - NONE sentinel means "readonly, no setter". Skip it when merging.
+                    // - If both have real write_types, intersect them for divergent accessor support.
+                    // - Use normalizing `intersection2` to distribute over unions and reduce subtypes.
+                    if existing.write_type != prop.write_type {
+                        if prop.write_type == TypeId::NONE {
+                            // prop is readonly, keep existing.write_type unchanged
+                        } else if existing.write_type == TypeId::NONE {
+                            // existing was readonly, use prop's write_type
+                            existing.write_type = prop.write_type;
+                        } else {
+                            // Both have real write_types, intersect them
+                            existing.write_type =
+                                self.intersection2(existing.write_type, prop.write_type);
+                        }
                     }
                     // For visibility: most restrictive wins (Private > Protected > Public)
                     // { private a: number } & { public a: number } = { private a: number }
