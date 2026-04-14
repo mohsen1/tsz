@@ -464,14 +464,55 @@ impl<'a> CheckerState<'a> {
         // constraint → TS2552). Emitting TS2339 on `.b` on top of that is a
         // cascading error tsc also suppresses.
         if crate::query_boundaries::state::checking::is_type_parameter_like(self.ctx.types, type_id)
-            && let Some(constraint) =
-                crate::query_boundaries::state::checking::type_parameter_constraint(
-                    self.ctx.types,
-                    type_id,
-                )
-            && constraint == TypeId::ERROR
         {
-            return;
+            let constraint = crate::query_boundaries::state::checking::type_parameter_constraint(
+                self.ctx.types,
+                type_id,
+            );
+            if constraint == Some(TypeId::ERROR) {
+                return;
+            }
+            // Suppress cascading TS2339 when a type parameter's constraint
+            // failed to resolve (e.g., `<T extends typeof a>` where `a` is a
+            // parameter of the same function). Due to multi-pass type parameter
+            // processing, the constraint may not be ERROR on the specific
+            // TypeId in use — it can be None (stale unconstrained copy) or
+            // self-referential (T extends T from unexcluded typeof resolution).
+            // Check both the direct constraint and the scope's version.
+            if let Some(name) = tsz_solver::type_queries::get_type_parameter_name(
+                self.ctx.types.as_type_database(),
+                type_id,
+            ) {
+                // Helper: check if a constraint is self-referential (same name)
+                let is_self_ref = |c: TypeId| -> bool {
+                    crate::query_boundaries::state::checking::is_type_parameter_like(
+                        self.ctx.types,
+                        c,
+                    ) && tsz_solver::type_queries::get_type_parameter_name(
+                        self.ctx.types.as_type_database(),
+                        c,
+                    ) == Some(name)
+                };
+                // Check direct constraint: T extends T (self-referential)
+                if constraint.is_some_and(&is_self_ref) {
+                    return;
+                }
+                // Check scope's version: the scope may hold a different TypeId
+                // whose constraint is ERROR or self-referential
+                let name_str = self.ctx.types.resolve_atom(name);
+                if let Some(&scope_id) = self.ctx.type_parameter_scope.get(&*name_str) {
+                    if scope_id != type_id {
+                        let sc =
+                            crate::query_boundaries::state::checking::type_parameter_constraint(
+                                self.ctx.types,
+                                scope_id,
+                            );
+                        if sc == Some(TypeId::ERROR) || sc.is_some_and(&is_self_ref) {
+                            return;
+                        }
+                    }
+                }
+            }
         }
 
         // Suppress TS2339 when the file has syntax parse errors.
