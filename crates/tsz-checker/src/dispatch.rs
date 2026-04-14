@@ -722,6 +722,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 self.checker.check_readonly_assignment(unary.operand, idx);
                             }
                         }
+                    } else {
+                        // Even when arithmetic fails, check readonly (TS2540/TS2542).
+                        // tsc emits both TS2356 and TS2542 for e.g. `ENUM1[undeclared]--`
+                        // where the element access resolves through a readonly index
+                        // signature but the result type is not arithmetic.
+                        self.checker.check_readonly_assignment(unary.operand, idx);
                     }
                     return result_type;
                 }

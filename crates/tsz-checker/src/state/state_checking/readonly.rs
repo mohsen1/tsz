@@ -1058,6 +1058,17 @@ impl<'a> CheckerState<'a> {
             return Some("index signature".to_string());
         }
 
+        // When the index expression is error-typed (e.g., undeclared identifier),
+        // check if the object has ANY readonly index signature. In tsc, error type
+        // is assignable to both `number` and `string`, so it matches any index
+        // signature. This ensures TS2542 fires for `ENUM1[undeclared]--`.
+        if index_type == TypeId::ERROR
+            && (self.is_readonly_index_signature(object_type, true, false)
+                || self.is_readonly_index_signature(object_type, false, true))
+        {
+            return Some("index signature".to_string());
+        }
+
         // Note: Mapped types with explicit readonly modifier (e.g., Readonly<T>)
         // are checked separately in check_readonly_assignment because they require
         // mutable access to evaluate through the TypeEnvironment.
