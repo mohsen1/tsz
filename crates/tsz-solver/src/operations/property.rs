@@ -456,6 +456,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 let mut results = Vec::new();
+                let mut write_results = Vec::new();
                 let mut any_from_index = false;
                 let mut saw_deferred_any_fallback = false;
                 let mut nullable_causes = Vec::new();
@@ -473,8 +474,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     match self.resolve_property_access_inner(member, prop_name, Some(prop_atom)) {
                         PropertyAccessResult::Success {
                             type_id,
+                            write_type,
                             from_index_signature,
-                            ..
                         } => {
                             if type_id == TypeId::ANY
                                 && !from_index_signature
@@ -484,6 +485,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                                 continue;
                             }
                             results.push(type_id);
+                            // For write types, use the explicit write_type if present, otherwise
+                            // use type_id (non-divergent accessor).
+                            write_results.push(write_type.unwrap_or(type_id));
                             if from_index_signature {
                                 any_from_index = true;
                             }
@@ -518,13 +522,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         && apparent != TypeId::ANY
                         && let PropertyAccessResult::Success {
                             type_id,
+                            write_type,
                             from_index_signature,
-                            ..
                         } =
                             self.resolve_property_access_inner(apparent, prop_name, Some(prop_atom))
                         && type_id != TypeId::ANY
                     {
                         results.push(type_id);
+                        write_results.push(write_type.unwrap_or(type_id));
                         if from_index_signature {
                             any_from_index = true;
                         }
@@ -606,6 +611,17 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     self.interner().intersection(results)
                 };
 
+                // Compute write type as intersection of member write types.
+                // This handles divergent accessor intersections like `(A & B)['prop']`
+                // where A's setter accepts `string | number` and B's setter accepts `"hello" | number`.
+                // The resulting write type should be the intersection, which normalizes
+                // (e.g., `string & "hello"` → `"hello"`).
+                let computed_write_type = if write_results.len() == 1 {
+                    write_results[0]
+                } else {
+                    self.interner().intersection(write_results)
+                };
+
                 // Do NOT bind `this` here. When a method like `self(): this`
                 // is on an intersection member, `this` must resolve to the
                 // receiver's nominal type (e.g., Thing5, not just {a,b,c}).
@@ -616,9 +632,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     type_id = self.add_undefined_if_unchecked(type_id);
                 }
 
+                // Only store write_type if it differs from read type
+                let write_type = (computed_write_type != type_id).then_some(computed_write_type);
+
                 PropertyAccessResult::Success {
                     type_id,
-                    write_type: None,
+                    write_type,
                     from_index_signature: any_from_index,
                 }
             }
