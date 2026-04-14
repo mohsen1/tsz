@@ -469,7 +469,8 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     type_id,
                 )
-            && constraint == TypeId::ERROR
+            && (constraint == TypeId::ERROR
+                || tsz_solver::is_error_type(self.ctx.types, constraint))
         {
             return;
         }
