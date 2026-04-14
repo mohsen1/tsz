@@ -1052,6 +1052,16 @@ impl<'a> CheckerState<'a> {
             // not the source, the anchor is the assignment target — skip
             // node-based resolution to avoid confusing "Type 'X' is not
             // assignable to type 'X'" messages.
+            //
+            // Also skip when the node type is an array/iterable whose element equals
+            // the passed source — this happens for yield* where we check the element
+            // type but anchor at the array literal. Use the passed source directly.
+            let node_is_array_of_source =
+                tsz_solver::type_queries::get_array_element_type(self.ctx.types, expr_display_type)
+                    .is_some_and(|elem| elem == source);
+            if node_is_array_of_source {
+                return self.format_assignability_type_for_message(source, target);
+            }
             let node_is_target_not_source =
                 expr_display_type == target && expr_display_type != source;
             let node_type_matches_source =
