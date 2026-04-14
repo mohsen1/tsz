@@ -21,6 +21,14 @@ pub(crate) fn evaluate_plus_chain(
     tsz_solver::BinaryOpEvaluator::new(db).evaluate_plus_chain(operand_types)
 }
 
+pub(crate) fn is_arithmetic_operand(db: &dyn tsz_solver::QueryDatabase, type_id: TypeId) -> bool {
+    tsz_solver::BinaryOpEvaluator::new(db).is_arithmetic_operand(type_id)
+}
+
+pub(crate) fn is_bigint_like(db: &dyn tsz_solver::QueryDatabase, type_id: TypeId) -> bool {
+    tsz_solver::BinaryOpEvaluator::new(db).is_bigint_like(type_id)
+}
+
 // ---------------------------------------------------------------------------
 // Expression operation boundary wrappers
 // ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::generic as generic_query;
 use crate::query_boundaries::dispatch as query;
+use crate::query_boundaries::type_computation::core as type_comp_query;
 use crate::query_boundaries::type_checking_utilities as query_utils;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -655,9 +656,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
 
                     // Determine result type: bigint for bigint operands, number otherwise.
                     let result_type = {
-                        let evaluator = tsz_solver::BinaryOpEvaluator::new(self.checker.ctx.types);
                         let resolved = self.checker.evaluate_type_with_env(operand_type);
-                        if evaluator.is_bigint_like(resolved) {
+                        if type_comp_query::is_bigint_like(self.checker.ctx.types, resolved) {
                             TypeId::BIGINT
                         } else {
                             TypeId::NUMBER
@@ -665,13 +665,14 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     };
                     let mut arithmetic_ok = true;
                     {
-                        use tsz_solver::BinaryOpEvaluator;
-                        let evaluator = BinaryOpEvaluator::new(self.checker.ctx.types);
                         let (non_nullish, nullish_cause) =
                             self.checker.split_nullish_type(operand_type);
                         let nullish_can_flow_to_number = non_nullish.is_none_or(|ty| {
                             let evaluated = self.checker.evaluate_type_with_env(ty);
-                            evaluator.is_arithmetic_operand(evaluated)
+                            type_comp_query::is_arithmetic_operand(
+                                self.checker.ctx.types,
+                                evaluated,
+                            )
                                 || (self.checker.is_enum_like_type(ty)
                                     && self.checker.is_unresolved_lazy_type(evaluated))
                         });
@@ -693,7 +694,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         // types: the original may be a Lazy(DefId) for an enum, and the
                         // resolved may be a union of Lazy enum member refs that
                         // is_arithmetic_operand can't handle (solver can't resolve Lazy).
-                        let is_valid = evaluator.is_arithmetic_operand(resolved_type)
+                        let is_valid = type_comp_query::is_arithmetic_operand(
+                            self.checker.ctx.types,
+                            resolved_type,
+                        )
                             || self.checker.is_enum_like_type(operand_type)
                             || self.checker.is_enum_like_type(resolved_type);
                         if arithmetic_ok && !is_valid {
