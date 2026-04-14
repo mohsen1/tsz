@@ -589,7 +589,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: README.md
+          sparse-checkout: |
+            scripts/conformance/conformance-snapshot.json
           sparse-checkout-cone-mode: false
 
       - name: Download all shard results
@@ -635,18 +636,17 @@ jobs:
           echo "total=${TOTAL_TESTS}" >> "$GITHUB_OUTPUT"
           echo "Aggregate: ${TOTAL_PASSED}/${TOTAL_TESTS} passed (${RATE}%)"
 
-          # Check against README baseline
-          BASELINE=$(sed -n '/CONFORMANCE_START/,/CONFORMANCE_END/p' README.md | grep -oE '[0-9]+\.[0-9]+%' | head -1 | tr -d '%')
-          if [ -n "$BASELINE" ]; then
-            echo "Actual: ${RATE}% | Baseline: ${BASELINE}%"
-            if echo "$RATE $BASELINE" | awk '{exit !($1 < $2)}'; then
-              echo "::error::Conformance regression: ${RATE}% < ${BASELINE}% (README baseline)"
+          BASELINE=$(jq -r '.summary.passed // 0' scripts/conformance/conformance-snapshot.json)
+          if [ -n "$BASELINE" ] && [ "$BASELINE" -gt 0 ]; then
+            echo "Actual: ${TOTAL_PASSED} passed | Baseline: ${BASELINE} passed"
+            if [ "$TOTAL_PASSED" -lt "$BASELINE" ]; then
+              echo "::error::Conformance regression: ${TOTAL_PASSED} < ${BASELINE} passing tests"
               exit 1
             else
-              echo "::notice::Conformance OK: ${RATE}% >= ${BASELINE}% baseline"
+              echo "::notice::Conformance OK: ${TOTAL_PASSED} >= ${BASELINE} passing tests"
             fi
           else
-            echo "::warning::Could not extract baseline from README, skipping regression check"
+            echo "::warning::Could not extract conformance snapshot baseline, skipping regression check"
           fi
 
       - name: Report conformance pass rate
@@ -809,7 +809,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: README.md
+          sparse-checkout: |
+            scripts/emit/emit-snapshot.json
           sparse-checkout-cone-mode: false
 
       - name: Download all shard results
@@ -852,16 +853,16 @@ jobs:
           echo "dts_total=${DTS_TOTAL}" >> "$GITHUB_OUTPUT"
           echo "Aggregate: JS ${JS_PASSED}/${JS_TOTAL} (${JS_RATE}%), DTS ${DTS_PASSED}/${DTS_TOTAL} (${DTS_RATE}%)"
 
-          BASE_JS=$(sed -n '/EMIT_START/,/EMIT_END/p' README.md | grep -oE '[0-9]+\.[0-9]+%' | sed -n '1p' | tr -d '%' || true)
-          BASE_DTS=$(sed -n '/EMIT_START/,/EMIT_END/p' README.md | grep -oE '[0-9]+\.[0-9]+%' | sed -n '2p' | tr -d '%' || true)
+          BASE_JS=$(jq -r '.summary.jsPass // 0' scripts/emit/emit-snapshot.json)
+          BASE_DTS=$(jq -r '.summary.dtsPass // 0' scripts/emit/emit-snapshot.json)
 
           REGRESSION=0
-          if [ -n "$BASE_JS" ] && echo "$JS_RATE $BASE_JS" | awk '{exit !($1 < $2)}'; then
-            echo "::error::Emit JS regression: ${JS_RATE}% < ${BASE_JS}%"
+          if [ -n "$BASE_JS" ] && [ "$BASE_JS" -gt 0 ] && [ "$JS_PASSED" -lt "$BASE_JS" ]; then
+            echo "::error::Emit JS regression: ${JS_PASSED} < ${BASE_JS} passing tests"
             REGRESSION=1
           fi
-          if [ -n "$BASE_DTS" ] && echo "$DTS_RATE $BASE_DTS" | awk '{exit !($1 < $2)}'; then
-            echo "::error::Emit DTS regression: ${DTS_RATE}% < ${BASE_DTS}%"
+          if [ -n "$BASE_DTS" ] && [ "$BASE_DTS" -gt 0 ] && [ "$DTS_PASSED" -lt "$BASE_DTS" ]; then
+            echo "::error::Emit DTS regression: ${DTS_PASSED} < ${BASE_DTS} passing tests"
             REGRESSION=1
           fi
           [ "$REGRESSION" -eq 0 ] || exit 1
@@ -1019,7 +1020,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: README.md
+          sparse-checkout: |
+            scripts/fourslash/fourslash-snapshot.json
           sparse-checkout-cone-mode: false
 
       - name: Download all shard results
@@ -1056,13 +1058,13 @@ jobs:
           echo "total=${TOTAL_TESTS}" >> "$GITHUB_OUTPUT"
           echo "Aggregate: ${TOTAL_PASSED}/${TOTAL_TESTS} passed (${RATE}%)"
 
-          BASELINE=$(sed -n '/FOURSLASH_START/,/FOURSLASH_END/p' README.md | grep -oE '[0-9]+\.[0-9]+%' | head -1 | tr -d '%')
-          if [ -n "$BASELINE" ]; then
-            if echo "$RATE $BASELINE" | awk '{exit !($1 < $2)}'; then
-              echo "::error::Fourslash regression: ${RATE}% < ${BASELINE}%"
+          BASELINE=$(jq -r '.summary.passed // .passed // 0' scripts/fourslash/fourslash-snapshot.json)
+          if [ -n "$BASELINE" ] && [ "$BASELINE" -gt 0 ]; then
+            if [ "$TOTAL_PASSED" -lt "$BASELINE" ]; then
+              echo "::error::Fourslash regression: ${TOTAL_PASSED} < ${BASELINE} passing tests"
               exit 1
             else
-              echo "::notice::Fourslash OK: ${RATE}% >= ${BASELINE}%"
+              echo "::notice::Fourslash OK: ${TOTAL_PASSED} >= ${BASELINE} passing tests"
             fi
           fi
 
