@@ -459,19 +459,45 @@ impl<'a> CheckerState<'a> {
         }
 
         // Suppress TS2339 when the object is a type parameter whose constraint
-        // resolved to ERROR. The constraint itself already produced a diagnostic
-        // (e.g., `typeof a` where `a` is out of scope in a type-parameter
-        // constraint → TS2552). Emitting TS2339 on `.b` on top of that is a
-        // cascading error tsc also suppresses.
+        // resolved to ERROR or is self-referential/circular.
+        //
+        // Case 1: constraint == ERROR — the constraint itself already produced a
+        // diagnostic (e.g., `typeof a` where `a` is out of scope → TS2552).
+        //
+        // Case 2: circular constraint — `T extends typeof a` where `a: T` creates
+        // a self-referential chain. During two-pass type parameter resolution, the
+        // placeholder T (constraint=None) is created first, then the refined T gets
+        // constraint=placeholder_T. When a destructured binding `{a}: {a:T}` uses
+        // the placeholder T, property access sees constraint=None but the scope has
+        // a refined version whose constraint points back to this same placeholder.
+        // tsc suppresses TS2339 in this case because the constraint is unresolvable.
         if crate::query_boundaries::state::checking::is_type_parameter_like(self.ctx.types, type_id)
-            && let Some(constraint) =
-                crate::query_boundaries::state::checking::type_parameter_constraint(
-                    self.ctx.types,
-                    type_id,
-                )
-            && constraint == TypeId::ERROR
         {
-            return;
+            let constraint = crate::query_boundaries::state::checking::type_parameter_constraint(
+                self.ctx.types,
+                type_id,
+            );
+            if constraint == Some(TypeId::ERROR) {
+                return;
+            }
+            // Check for circular/self-referential constraint: if this type_id has
+            // constraint=None but the scope has a refined version whose constraint
+            // points back to this same type_id, the constraint chain is circular.
+            if constraint.is_none() {
+                let type_display = self.format_type(type_id);
+                if let Some(&scope_id) = self.ctx.type_parameter_scope.get(&type_display) {
+                    if scope_id != type_id {
+                        let scope_constraint =
+                            crate::query_boundaries::state::checking::type_parameter_constraint(
+                                self.ctx.types,
+                                scope_id,
+                            );
+                        if scope_constraint == Some(type_id) {
+                            return;
+                        }
+                    }
+                }
+            }
         }
 
         // Suppress TS2339 when the file has syntax parse errors.
@@ -2061,4 +2087,56 @@ fn is_dom_element_like_name(name: &str) -> bool {
         return true;
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::diagnostics::diagnostic_codes;
+
+    fn diagnostics_for_source(source: &str) -> Vec<u32> {
+        crate::test_utils::check_source_codes(source)
+    }
+
+    /// TS2339 must be suppressed for property access on type parameters with
+    /// circular `typeof` constraints (`T extends typeof a` where `a: T`).
+    /// This applies to both direct parameters and destructured bindings.
+    #[test]
+    fn ts2339_suppressed_for_circular_typeof_constraint_direct_param() {
+        // Direct parameter: `a: T` where `T extends typeof a`
+        let diags = diagnostics_for_source("function f<T extends typeof a>(a: T) { a.b; }");
+        assert!(
+            !diags.contains(&diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+            "TS2339 should be suppressed for direct param with circular typeof constraint, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn ts2339_suppressed_for_circular_typeof_constraint_destructured_param() {
+        // Destructured parameter: `{a}: {a:T}` where `T extends typeof a`
+        let diags = diagnostics_for_source("function f<T extends typeof a>({a}: {a:T}) { a.b; }");
+        assert!(
+            !diags.contains(&diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+            "TS2339 should be suppressed for destructured param with circular typeof constraint, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn ts2339_suppressed_for_circular_typeof_constraint_array_destructured_param() {
+        // Array destructured parameter: `[a]: T[]` where `T extends typeof a`
+        let diags = diagnostics_for_source("function f<T extends typeof a>([a]: T[]) { a.b; }");
+        assert!(
+            !diags.contains(&diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+            "TS2339 should be suppressed for array-destructured param with circular typeof constraint, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn ts2339_not_suppressed_for_unconstrained_type_param() {
+        // Unconstrained type parameter should still emit TS2339
+        let diags = diagnostics_for_source("function f<T>(a: T) { a.b; }");
+        assert!(
+            diags.contains(&diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+            "TS2339 should be emitted for unconstrained type param, got: {diags:?}"
+        );
+    }
 }
