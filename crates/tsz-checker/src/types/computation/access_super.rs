@@ -106,4 +106,107 @@ impl<'a> CheckerState<'a> {
 
         self.get_class_instance_type(base_class_idx, base_class)
     }
+
+    /// Returns true when `super_idx` is the `super` keyword inside a class whose
+    /// `extends` clause references a class declared *after* it in source order
+    /// (i.e. TS2449 "Class 'X' used before its declaration" already fires on
+    /// the extends clause).  In this situation tsc suppresses the secondary
+    /// TS2346 ("Call target does not contain any signatures.") on `super()`
+    /// because the forward-reference is the real root cause and will be
+    /// resolved at runtime via hoisting.
+    pub(crate) fn is_super_call_in_forward_referenced_extends(&self, super_idx: NodeIndex) -> bool {
+        use tsz_binder::symbol_flags;
+
+        let _ = super_idx; // super_idx currently unused; reserved for future precision
+        let Some(class_info) = self.ctx.enclosing_class.as_ref() else {
+            return false;
+        };
+        let Some(current_class) = self.ctx.arena.get_class_at(class_info.class_idx) else {
+            return false;
+        };
+        let Some(heritage_clauses) = &current_class.heritage_clauses else {
+            return false;
+        };
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(heritage) = self.ctx.arena.get_heritage_clause_at(clause_idx) else {
+                continue;
+            };
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            let Some(&type_idx) = heritage.types.nodes.first() else {
+                continue;
+            };
+            // Walk through `Foo<T>` expression-with-type-arguments.
+            let expr_idx =
+                if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args_at(type_idx) {
+                    expr_type_args.expression
+                } else {
+                    type_idx
+                };
+            // Only simple identifier bases can trigger TS2449.  Anything else
+            // (qualified name, call expression, member access) does not match
+            // the tsc suppression rule.
+            let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+                continue;
+            };
+            if expr_node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(expr_idx) else {
+                continue;
+            };
+            let Some(symbol) = self.ctx.binder.symbols.get(sym_id) else {
+                continue;
+            };
+            if symbol.flags & symbol_flags::CLASS == 0 {
+                continue;
+            }
+            // Same-file classes only — cross-file references have no runtime
+            // ordering relationship worth TDZ-checking here.
+            if symbol.import_module.is_some() {
+                continue;
+            }
+            if symbol.decl_file_idx != u32::MAX
+                && symbol.decl_file_idx != self.ctx.current_file_idx as u32
+            {
+                continue;
+            }
+            let decl_idx = symbol
+                .declarations
+                .iter()
+                .copied()
+                .find(|&d| {
+                    self.ctx.arena.get(d).is_some_and(|n| {
+                        n.kind == syntax_kind_ext::CLASS_DECLARATION
+                            || n.kind == syntax_kind_ext::CLASS_EXPRESSION
+                    })
+                })
+                .or_else(|| {
+                    if symbol.value_declaration.is_some() {
+                        Some(symbol.value_declaration)
+                    } else {
+                        symbol.declarations.first().copied()
+                    }
+                });
+            let Some(decl_idx) = decl_idx else {
+                continue;
+            };
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            // Ambient classes are hoisted with no TDZ semantics.
+            if self.is_ambient_declaration(decl_idx) {
+                continue;
+            }
+            let Some(usage_node) = self.ctx.arena.get(expr_idx) else {
+                continue;
+            };
+            // TS2449 fires when usage precedes declaration in source order.
+            if usage_node.pos < decl_node.pos {
+                return true;
+            }
+        }
+        false
+    }
 }
