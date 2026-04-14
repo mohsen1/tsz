@@ -372,7 +372,6 @@ FAIL TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsWithO
 FAIL TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsWithOverloadResolution1_ES6.ts | expected:[TS2345,TS2554,TS2769] actual:[TS2345,TS2554,TS2769]
 FAIL TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsWithOverloadResolution3.ts | expected:[TS2322,TS2339,TS2394,TS2551,TS2554,TS2722,TS2769,TS7010] actual:[TS2322,TS2339,TS2349,TS2394,TS2403,TS7006,TS7010]
 FAIL TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsWithOverloadResolution3_ES6.ts | expected:[TS2322,TS2339,TS2394,TS2551,TS2554,TS2722,TS2769,TS7010] actual:[TS2322,TS2339,TS2349,TS2394,TS2403,TS7006,TS7010]
-FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck20.ts | expected:[TS2322,TS2564,TS2741] actual:[TS2322,TS2564,TS2741]
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck25.ts | expected:[TS2322,TS2564] actual:[TS2322,TS2564]
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck6.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck62.ts | expected:[TS2345] actual:[TS2345]
@@ -8876,6 +8875,7 @@ PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck1
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck18.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck19.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck2.ts
+PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck20.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck21.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck22.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck23.ts
