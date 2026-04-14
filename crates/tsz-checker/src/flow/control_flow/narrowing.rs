@@ -826,7 +826,59 @@ impl<'a> FlowAnalyzer<'a> {
                 type_id: Some(predicate_type),
                 asserts: predicate.asserts,
             };
-            return narrowing.narrow_type(type_id, &guard, GuardSense::from(effective_true_branch));
+            let narrowed =
+                narrowing.narrow_type(type_id, &guard, GuardSense::from(effective_true_branch));
+
+            // Fallback for cross-file asserted predicates whose target is an
+            // unresolved `Application(NonNullable-like, T)`. The solver's
+            // `TypeEnvironment` for the calling file may not resolve the
+            // imported alias's body, leaving `NonNullable<T>` as an opaque
+            // Application. Its evaluation then collapses to `undefined` or
+            // similar, preventing `narrow_to_type` from filtering the source
+            // union. When an asserts-predicate returns the source unchanged on
+            // a nullable union, interpret it semantically as `NonNullable` —
+            // remove `null` and `undefined`. This mirrors tsc's observable
+            // behavior for `asserts x is NonNullable<T>` and fixes
+            // `assertionFunctionWildcardImport2.ts` without changing behavior
+            // for predicates that DO narrow.
+            if predicate.asserts
+                && effective_true_branch
+                && narrowed == type_id
+                && let Some(env) = &self.type_environment
+            {
+                let env_borrow = env.borrow();
+                let evaluated = flow_query::evaluate_application_type(
+                    self.interner,
+                    &env_borrow,
+                    predicate_type,
+                );
+                // Detect unresolved / nullish-shaped evaluation. When an
+                // asserted predicate target like `Application(NonNullable, T)`
+                // cannot be reduced in the calling file's TypeEnvironment (the
+                // alias body isn't bound cross-file), evaluation collapses to
+                // `unknown`/`undefined`/`null`/`never` — none of which can
+                // correctly filter a nullable union. tsc's observable behavior
+                // for `asserts x is NonNullable<T>` is to strip `null`/`undefined`
+                // from the source, so apply that semantically.
+                let is_nonnullable_shaped = evaluated == TypeId::UNDEFINED
+                    || evaluated == TypeId::NULL
+                    || evaluated == TypeId::NEVER
+                    || evaluated == TypeId::UNKNOWN;
+                let source_is_nullable = matches!(
+                    union_members_for_type(self.interner, type_id),
+                    Some(members) if members
+                        .iter()
+                        .any(|m| *m == TypeId::NULL || *m == TypeId::UNDEFINED)
+                );
+                if is_nonnullable_shaped && source_is_nullable {
+                    let excluded = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
+                    let excluded = narrowing.narrow_excluding_type(excluded, TypeId::UNDEFINED);
+                    if excluded != type_id && excluded != TypeId::NEVER {
+                        return excluded;
+                    }
+                }
+            }
+            return narrowed;
         }
 
         // Assertion guards without type predicate (asserts x) narrow to truthy
