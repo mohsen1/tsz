@@ -230,7 +230,7 @@ impl UnsoundnessAudit {
             implementation_files: vec!["src/solver/subtype.rs", "src/solver/subtype_rules/functions.rs"],
             test_coverage: 0.80,
             dependencies: vec![],
-            notes: "Implemented via type_contains_this_type() detection. When `this` is in method parameters, covariance is used.",
+            notes: "Function parameters always use contravariant checking under strict function types. The `this` type does not change parameter variance. Methods remain bivariant per TS spec.",
         });
 
         rules.insert(14, RuleImplementation {
