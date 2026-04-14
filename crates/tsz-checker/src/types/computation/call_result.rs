@@ -298,6 +298,9 @@ impl<'a> CheckerState<'a> {
                     // - callee type is NULL (class extends null; TS17005 covers this)
                     // - callee is a completely empty callable (no sigs, no props) which
                     //   indicates a forward-reference resolution failure (TS2449 covers this)
+                    // - the enclosing class extends a forward-referenced class in the
+                    //   same file (TS2449 already reported on the heritage clause; tsc
+                    //   suppresses the secondary TS2346 in this case).
                     let should_suppress = callee_type == TypeId::ERROR
                         || callee_type == TypeId::NULL
                         || tsz_solver::type_queries::get_callable_shape_for_type(
@@ -310,7 +313,8 @@ impl<'a> CheckerState<'a> {
                                 && shape.properties.is_empty()
                                 && shape.string_index.is_none()
                                 && shape.number_index.is_none()
-                        });
+                        })
+                        || self.is_super_call_in_forward_referenced_extends(callee_expr);
                     if !should_suppress {
                         self.error_at_node(
                             callee_expr,
