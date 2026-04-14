@@ -1,26 +1,26 @@
 {
-  "timestamp": "2026-04-14T04:48:35Z",
-  "git_sha": "07c51b64b5d833c741289be8af8303083a7aeaeb",
+  "timestamp": "2026-04-14T05:04:38Z",
+  "git_sha": "a0d64b39bef33c7d356355cf1796b6da81286b72",
   "summary": {
     "total_tests": 12581,
-    "passed": 11858,
-    "failed": 723,
+    "passed": 11859,
+    "failed": 722,
     "pass_rate": 94.3
   },
   "areas_by_pass_rate": [
+    {
+      "area": "types/intersection",
+      "total": 24,
+      "passed": 16,
+      "failed": 8,
+      "pass_rate": 66.67
+    },
     {
       "area": "types/conditional",
       "total": 10,
       "passed": 7,
       "failed": 3,
       "pass_rate": 70.0
-    },
-    {
-      "area": "types/intersection",
-      "total": 24,
-      "passed": 17,
-      "failed": 7,
-      "pass_rate": 70.83
     },
     {
       "area": "es2019",
@@ -310,13 +310,6 @@
       "pass_rate": 93.94
     },
     {
-      "area": "jsdoc/declarations",
-      "total": 92,
-      "passed": 87,
-      "failed": 5,
-      "pass_rate": 94.57
-    },
-    {
       "area": "expressions/unaryOperators",
       "total": 58,
       "passed": 55,
@@ -333,9 +326,9 @@
     {
       "area": "compiler",
       "total": 6519,
-      "passed": 6201,
-      "failed": 318,
-      "pass_rate": 95.12
+      "passed": 6202,
+      "failed": 317,
+      "pass_rate": 95.14
     },
     {
       "area": "externalModules",
@@ -357,6 +350,13 @@
       "passed": 21,
       "failed": 1,
       "pass_rate": 95.45
+    },
+    {
+      "area": "jsdoc/declarations",
+      "total": 92,
+      "passed": 88,
+      "failed": 4,
+      "pass_rate": 95.65
     },
     {
       "area": "es6/arrowFunction",
@@ -1178,12 +1178,12 @@
   ],
   "one_extra_zero_missing": [
     {
-      "code": "TS2339",
-      "count": 4
+      "code": "TS2322",
+      "count": 3
     },
     {
-      "code": "TS2322",
-      "count": 4
+      "code": "TS2339",
+      "count": 3
     },
     {
       "code": "TS2345",
@@ -1268,11 +1268,15 @@
       "count": 1
     },
     {
+      "code": "TS2507",
+      "count": 1
+    },
+    {
       "code": "TS2708",
       "count": 1
     },
     {
-      "code": "TS2507",
+      "code": "TS2747",
       "count": 1
     },
     {
@@ -1457,7 +1461,7 @@
     },
     {
       "code": "TS2339",
-      "count": 13
+      "count": 12
     },
     {
       "code": "TS2345",
@@ -1615,8 +1619,8 @@
   "categories": {
     "false_positive": 12,
     "all_missing": 39,
-    "wrong_code": 141,
+    "wrong_code": 140,
     "fingerprint_only": 509,
-    "close_to_passing": 81
+    "close_to_passing": 80
   }
 }

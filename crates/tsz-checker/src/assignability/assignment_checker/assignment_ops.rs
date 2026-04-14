@@ -59,21 +59,17 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
             {
-                // `import.meta` is parsed as a PROPERTY_ACCESS_EXPRESSION in tsz, but it
-                // is not a valid assignment target. In tsc it is a MetaProperty node and
-                // is rejected by the assignment-target validation. Detect it by checking
-                // whether the access expression's base is the `import` keyword.
-                //
-                // `import.meta.foo` stays valid because its base expression is the
-                // nested `import.meta` access node, not the `ImportKeyword` token.
-                if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                    if let Some(access) = self.ctx.arena.get_access_expr(node) {
-                        if let Some(expr_node) = self.ctx.arena.get(access.expression) {
-                            if expr_node.kind == SyntaxKind::ImportKeyword as u16 {
-                                return false;
-                            }
-                        }
-                    }
+                // `import.meta` is parsed as PROPERTY_ACCESS_EXPRESSION with
+                // ImportKeyword as the expression. It is NOT a valid assignment
+                // target — assigning to `import.meta` itself must emit TS2364.
+                // (Assigning to `import.meta.foo` is fine — that's a real
+                // property access on the meta object, not `import.meta` itself.)
+                if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && let Some(access) = self.ctx.arena.get_access_expr(node)
+                    && let Some(expr_node) = self.ctx.arena.get(access.expression)
+                    && expr_node.kind == SyntaxKind::ImportKeyword as u16
+                {
+                    return false;
                 }
                 true
             }

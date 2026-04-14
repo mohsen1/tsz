@@ -27,12 +27,7 @@ fn get_error_codes(source: &str) -> Vec<u32> {
 
     checker.check_source_file(root);
 
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| d.code)
-        .collect()
+    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
 }
 
 fn has_error_with_code(source: &str, code: u32) -> bool {
