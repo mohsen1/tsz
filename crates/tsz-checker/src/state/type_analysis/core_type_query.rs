@@ -100,6 +100,29 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        // tsc treats the type-position of a function signature (type parameter
+        // constraints, parameter types, return type annotation) as outside the
+        // function's body scope: body-local `var`/`let`/`const`/`function`
+        // declarations are NOT visible to `typeof X` within those annotations
+        // even though hoisting makes them function-scope-resident.
+        //
+        // Example:
+        //   function bar(): typeof b { var b = 1; return undefined; }
+        // tsc emits TS2304 for `b` in the return type; without this guard we
+        // silently resolve `b` to `number` and then mis-report TS2322 on the
+        // `return undefined` statement.
+        if is_identifier
+            && let Some(ref name) = name_text
+            && self.is_typeof_in_function_signature_of_body_local(idx, name.as_str())
+        {
+            self.report_not_found_at_boundary(
+                name,
+                type_query.expr_name,
+                crate::query_boundaries::name_resolution::NameLookupKind::Value,
+            );
+            return TypeId::ERROR;
+        }
+
         // Type parameter constraints cannot reference function parameters of the
         // same function via `typeof`. Emit TS2304/TS2552 instead of silently resolving.
         if is_identifier
