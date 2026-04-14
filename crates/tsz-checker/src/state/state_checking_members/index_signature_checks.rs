@@ -962,6 +962,29 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::diagnostics::diagnostic_codes;
 
+        // When index signatures are inherited (not declared on this
+        // interface/class), TSC reports TS2411 at the declaration *name* rather
+        // than the full declaration span. Compute that fallback here.
+        let name_fallback_node = self
+            .ctx
+            .arena
+            .get(iface_node)
+            .and_then(|node| {
+                if node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                    self.ctx.arena.get_interface(node).map(|d| d.name)
+                } else if node.kind == syntax_kind_ext::CLASS_DECLARATION {
+                    let name = self.ctx.arena.get_class(node).map(|d| d.name)?;
+                    if self.ctx.arena.get(name).is_some() {
+                        Some(name)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(iface_node);
+
         let mut own_names = std::collections::HashSet::new();
         // Find index signature nodes to use as error positions (matching TSC behavior).
         // TSC reports TS2411 for inherited properties on the index signature member,
@@ -1055,7 +1078,7 @@ impl<'a> CheckerState<'a> {
                 {
                     let prop_type_str = self.format_type(prop_type);
                     let index_type_str = self.format_type(sym_value_type);
-                    let error_node = symbol_index_sig_node.unwrap_or(iface_node);
+                    let error_node = symbol_index_sig_node.unwrap_or(name_fallback_node);
 
                     self.error_at_node_msg(
                         error_node,
@@ -1074,7 +1097,7 @@ impl<'a> CheckerState<'a> {
             {
                 let prop_type_str = self.format_type(prop_type);
                 let index_type_str = self.format_type(number_idx.value_type);
-                let error_node = number_index_sig_node.unwrap_or(iface_node);
+                let error_node = number_index_sig_node.unwrap_or(name_fallback_node);
 
                 self.error_at_node_msg(
                     error_node,
@@ -1088,7 +1111,7 @@ impl<'a> CheckerState<'a> {
             {
                 let prop_type_str = self.format_type(prop_type);
                 let index_type_str = self.format_type(string_idx.value_type);
-                let error_node = string_index_sig_node.unwrap_or(iface_node);
+                let error_node = string_index_sig_node.unwrap_or(name_fallback_node);
 
                 self.error_at_node_msg(
                     error_node,
