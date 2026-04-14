@@ -17,7 +17,6 @@ use crate::types::{
     CallSignature, FunctionShape, InferencePriority, ParamInfo, TypeData, TypeId, TypeParamInfo,
     TypePredicate,
 };
-use crate::visitor::contains_this_type;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
@@ -384,9 +383,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // Fall through to structural check for unsound any parameters
         }
 
-        let contains_this =
-            self.type_contains_this_type(source_type) || self.type_contains_this_type(target_type);
-
         // Methods are bivariant regardless of strict_function_types setting
         // UNLESS disable_method_bivariance is set.
         // NOTE: North Star V1.2 prioritizes soundness. Bivariance is enabled for methods
@@ -395,10 +391,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let use_bivariance = method_should_be_bivariant || !self.strict_function_types;
 
         if !use_bivariance {
-            if contains_this {
-                return self.check_subtype(source_type, target_type).is_true();
-            }
             // Contravariant check: Target <: Source
+            // This applies even when parameter types contain `this` types.
+            // The `this` type is polymorphic but does not change parameter variance.
             self.check_subtype(target_type, source_type).is_true()
         } else {
             // Bivariant: either direction works (Unsound, Legacy TS behavior)
@@ -409,11 +404,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // If contravariant fails, try covariant: Source <: Target
             self.check_subtype(source_type, target_type).is_true()
         }
-    }
-
-    /// Check if a type contains the `this` type anywhere in its structure.
-    pub(crate) fn type_contains_this_type(&self, type_id: TypeId) -> bool {
-        contains_this_type(self.interner, type_id)
     }
 
     /// Check if `this` parameters are compatible.

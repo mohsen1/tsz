@@ -5147,7 +5147,7 @@ fn test_this_parameter_function_source_bivariant_against_method_property() {
 }
 
 #[test]
-fn test_this_type_in_param_covariant() {
+fn test_this_type_in_param_contravariant() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
     let func_name = interner.intern_string("compare");
@@ -5188,12 +5188,16 @@ fn test_this_type_in_param_covariant() {
     let narrow_obj = interner.object(vec![PropertyInfo::new(func_name, narrow_fn)]);
     let wide_obj = interner.object(vec![PropertyInfo::new(func_name, wide_fn)]);
 
-    assert!(checker.is_subtype_of(narrow_obj, wide_obj));
-    assert!(!checker.is_subtype_of(wide_obj, narrow_obj));
+    // Under strict function types (non-method), parameter checking is contravariant.
+    // narrow_fn param `this` vs wide_fn param `this | number`:
+    //   narrow ≤ wide: contravariant check `this | number ≤ this`? NO → FALSE
+    //   wide ≤ narrow: contravariant check `this ≤ this | number`? YES → TRUE
+    assert!(!checker.is_subtype_of(narrow_obj, wide_obj));
+    assert!(checker.is_subtype_of(wide_obj, narrow_obj));
 }
 
 #[test]
-fn test_class_like_subtyping_this_param_covariant() {
+fn test_class_like_subtyping_this_param_contravariant() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -5245,8 +5249,106 @@ fn test_class_like_subtyping_this_param_covariant() {
         PropertyInfo::new(compare, derived_compare),
     ]);
 
-    assert!(checker.is_subtype_of(derived, base));
+    // Under strict function types (non-method), parameter checking is contravariant.
+    // derived.compare param `this` vs base.compare param `this | number`:
+    //   derived ≤ base: contravariant check `this | number ≤ this`? NO → FALSE
+    //   (derived has extra props, but the compare method fails contravariance)
+    assert!(!checker.is_subtype_of(derived, base));
     assert!(!checker.is_subtype_of(base, derived));
+}
+
+/// Regression test: function parameter contravariance must not be broken by
+/// `this` type presence. When a class has a method returning `this`, function
+/// parameters typed with that class should still use correct contravariant
+/// checking under strict function types.
+///
+/// Reproduces: `(x: A | B) => void` should be assignable to `(x: B) => void`
+/// because B (target param) ≤ A | B (source param) via contravariance.
+#[test]
+fn test_this_type_does_not_break_union_function_contravariance() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let this_type = interner.intern(TypeData::ThisType);
+
+    // Class A: { a: number, m(): this }
+    let a_m = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: this_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+    let a_type = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("m"), a_m),
+    ]);
+
+    // Class B: { b: number, m(): this }
+    let b_m = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: this_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+    let b_type = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("m"), b_m),
+    ]);
+
+    let a_or_b = interner.union(vec![a_type, b_type]);
+
+    // (x: A | B) => void
+    let fn_wide = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: a_or_b,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // (x: B) => void
+    let fn_narrow = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: b_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // (x: A | B) => void should be assignable to (x: B) => void
+    // because B ≤ A | B (B is a member of the union), and
+    // function parameters are contravariant under strict function types.
+    assert!(
+        checker.is_subtype_of(fn_wide, fn_narrow),
+        "(x: A | B) => void should be assignable to (x: B) => void via contravariance"
+    );
+
+    // (x: B) => void should NOT be assignable to (x: A | B) => void
+    // because A | B is NOT a subtype of B.
+    assert!(
+        !checker.is_subtype_of(fn_narrow, fn_wide),
+        "(x: B) => void should NOT be assignable to (x: A | B) => void"
+    );
 }
 
 #[test]
