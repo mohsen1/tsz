@@ -64,12 +64,12 @@ impl<'a> CheckerState<'a> {
                 // target — assigning to `import.meta` itself must emit TS2364.
                 // (Assigning to `import.meta.foo` is fine — that's a real
                 // property access on the meta object, not `import.meta` itself.)
-                if let Some(access) = self.ctx.arena.get_access_expr(node) {
-                    if let Some(expr_node) = self.ctx.arena.get(access.expression) {
-                        if expr_node.kind == SyntaxKind::ImportKeyword as u16 {
-                            return false;
-                        }
-                    }
+                if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && let Some(access) = self.ctx.arena.get_access_expr(node)
+                    && let Some(expr_node) = self.ctx.arena.get(access.expression)
+                    && expr_node.kind == SyntaxKind::ImportKeyword as u16
+                {
+                    return false;
                 }
                 true
             }
