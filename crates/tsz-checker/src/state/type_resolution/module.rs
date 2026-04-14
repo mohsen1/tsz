@@ -630,12 +630,28 @@ impl<'a> CheckerState<'a> {
         let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
         let target_file_name = target_arena.source_files.first()?.file_name.clone();
 
+        // Files with an unambiguous ESM extension (.mjs/.mts/.d.mts) never
+        // synthesize a `default` export from `export =` — `export =` is a
+        // syntax error in ESM (TS1203). Skip the synthesis when resolving
+        // the `default` export for these files so consumers see TS1192.
+        let target_is_explicit_esm = {
+            let n = target_file_name.as_str();
+            n.ends_with(".mjs") || n.ends_with(".mts")
+        };
+        let default_skips_export_equals = export_name == "default" && target_is_explicit_esm;
+
         // Check direct exports (module_exports)
-        if let Some(exports) = self.module_exports_for_file(target_binder, &target_file_name)
-            && let Some(sym_id) =
+        if let Some(exports) = self.module_exports_for_file(target_binder, &target_file_name) {
+            let sym_id = if default_skips_export_equals {
+                exports
+                    .get("default")
+                    .filter(|id| target_binder.get_symbol(*id).is_some())
+            } else {
                 self.resolve_export_from_table(target_binder, exports, export_name)
-        {
-            return Some((sym_id, file_idx));
+            };
+            if let Some(sym_id) = sym_id {
+                return Some((sym_id, file_idx));
+            }
         }
 
         // Check named re-exports before file_locals so that
@@ -684,8 +700,10 @@ impl<'a> CheckerState<'a> {
         // Last resort: check file_locals (for script files or binding edge cases
         // where module_exports wasn't populated).
         // When looking for "default" and the module has `export =`, prefer the
-        // `export =` target over a static member named "default".
+        // `export =` target over a static member named "default". ESM-extension
+        // files never synthesize this fallback (see note above).
         if export_name == "default"
+            && !default_skips_export_equals
             && let Some(sym_id) = target_binder.file_locals.get("export=")
         {
             return Some((sym_id, file_idx));
@@ -1572,8 +1590,12 @@ impl<'a> CheckerState<'a> {
             // compiler mode". We additionally check if the file is in node_modules
             // to identify genuine package ESM.
             if self.ctx.compiler_options.es_module_interop {
+                // Treat files with unambiguous ESM extensions (.mjs/.mts/.d.mts) as
+                // genuine ESM regardless of location — they're ESM because of the
+                // extension, not because the compiler module is ES2015+.
                 let is_package_esm = self.module_is_esm(module_specifier)
-                    && self.module_file_is_in_node_modules(module_specifier);
+                    && (self.module_file_is_in_node_modules(module_specifier)
+                        || self.module_has_explicit_esm_extension(module_specifier));
                 if !is_package_esm {
                     return;
                 }
@@ -1605,7 +1627,13 @@ impl<'a> CheckerState<'a> {
         let has_export_equals = self.module_has_export_equals(module_specifier)
             || self.module_has_export_assignment_declaration(module_specifier);
 
-        if has_export_equals {
+        // `export =` inside an ESM-extension module (.mts/.mjs/.d.mts) is a
+        // syntax error (TS1203) and does not provide a default export. Fall
+        // through to TS1192 so the default-import side is also diagnosed.
+        let export_equals_provides_default =
+            has_export_equals && !self.module_has_explicit_esm_extension(module_specifier);
+
+        if export_equals_provides_default {
             // TS1259: "Module X can only be default-imported using the 'allowSyntheticDefaultImports' flag"
             // Only emitted for export= modules when allowSyntheticDefaultImports is false.
             if !self.ctx.allow_synthetic_default_imports() {
@@ -1653,6 +1681,13 @@ impl<'a> CheckerState<'a> {
         &mut self,
         module_specifier: &str,
     ) -> bool {
+        // Files with unambiguous ESM extensions (.mjs/.mts/.d.mts) never provide
+        // a synthetic default. An `export =` in such a file is a syntax error
+        // (TS1203) and does not synthesize a default export for consumers.
+        if self.module_has_explicit_esm_extension(module_specifier) {
+            return false;
+        }
+
         if self.module_has_export_equals(module_specifier)
             || self.module_has_export_assignment_declaration(module_specifier)
         {
@@ -1701,6 +1736,23 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         source_file.file_name.contains("node_modules")
+    }
+
+    /// Check if the target module's resolved file has an unambiguously ESM
+    /// extension (`.mjs`, `.mts`, or `.d.mts`). Such files are genuine ESM
+    /// regardless of compiler module mode or package location, so callers can
+    /// distinguish "ESM because of extension" from "ESM because of compiler
+    /// module: ES2015+".
+    fn module_has_explicit_esm_extension(&self, module_specifier: &str) -> bool {
+        let Some(target_idx) = self.ctx.resolve_import_target(module_specifier) else {
+            return false;
+        };
+        let arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+        let name = source_file.file_name.as_str();
+        name.ends_with(".mjs") || name.ends_with(".mts")
     }
 
     /// Check if the target module is a pure ESM module (from a package with
