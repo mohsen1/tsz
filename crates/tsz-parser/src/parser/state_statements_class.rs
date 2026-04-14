@@ -216,9 +216,6 @@ impl ParserState {
             }
 
             if !has_comma {
-                if self.is_token(SyntaxKind::ColonToken) {
-                    continue;
-                }
                 // Recovery: in malformed parameter initializers like
                 // `function* f(a = yield => yield) {}` or
                 // `async function f(a = await => await) {}`
