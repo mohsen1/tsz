@@ -299,10 +299,34 @@ impl<'a> CheckerState<'a> {
                 .filter(|&c| c != TypeId::UNKNOWN && c != type_id)
                 .unwrap_or(type_id)
         };
-        let left_is_symbol = evaluator.is_symbol_like(left_type)
-            || evaluator.is_symbol_like(resolve_tp_constraint(left_type));
-        let right_is_symbol = evaluator.is_symbol_like(right_type)
-            || evaluator.is_symbol_like(resolve_tp_constraint(right_type));
+        // A type is "symbol-like" for TS2469 purposes if it is directly the
+        // `symbol` primitive (or a unique symbol), if it is a type parameter
+        // whose constraint resolves to one of those, or if it is a union that
+        // includes such a member (e.g. `S | symbol` where `S extends string`).
+        // tsc emits TS2469 in all of these cases when the other operand is
+        // string-like, so we mirror that behavior here.
+        let includes_symbol = |type_id: TypeId| -> bool {
+            if evaluator.is_symbol_like(type_id)
+                || evaluator.is_symbol_like(resolve_tp_constraint(type_id))
+            {
+                return true;
+            }
+            let check_union = |t: TypeId| -> bool {
+                if let Some(members) =
+                    tsz_solver::type_queries::get_union_members(self.ctx.types, t)
+                {
+                    members.iter().any(|&m| {
+                        evaluator.is_symbol_like(m)
+                            || evaluator.is_symbol_like(resolve_tp_constraint(m))
+                    })
+                } else {
+                    false
+                }
+            };
+            check_union(type_id) || check_union(resolve_tp_constraint(type_id))
+        };
+        let left_is_symbol = includes_symbol(left_type);
+        let right_is_symbol = includes_symbol(right_type);
 
         if left_is_symbol || right_is_symbol {
             let is_relational = matches!(op, "<" | ">" | "<=" | ">=");
