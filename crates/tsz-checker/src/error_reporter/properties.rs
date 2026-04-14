@@ -482,9 +482,10 @@ impl<'a> CheckerState<'a> {
             }) {
                 return;
             }
-            if let Some(name) =
-                crate::query_boundaries::property_access::type_parameter_name(self.ctx.types, type_id)
-            {
+            if let Some(name) = crate::query_boundaries::property_access::type_parameter_name(
+                self.ctx.types,
+                type_id,
+            ) {
                 let is_self_ref = |c: TypeId| -> bool {
                     crate::query_boundaries::state::checking::is_type_parameter_like(
                         self.ctx.types,

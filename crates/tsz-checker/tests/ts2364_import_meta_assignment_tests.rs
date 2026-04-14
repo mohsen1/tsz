@@ -58,8 +58,7 @@ import.meta.foo = 42;
     let codes = get_error_codes(source);
     assert!(
         !codes.contains(&2364),
-        "Should NOT emit TS2364 for assignment to import.meta.foo; got codes: {:?}",
-        codes
+        "Should NOT emit TS2364 for assignment to import.meta.foo; got codes: {codes:?}",
     );
 }
 

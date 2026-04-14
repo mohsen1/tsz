@@ -231,7 +231,7 @@ pub fn is_readonly_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::ReadonlyType(_)))
 }
 
-/// Check if a type has readonly members (properties or is a ReadonlyType wrapper).
+/// Check if a type has readonly members (properties or is a `ReadonlyType` wrapper).
 ///
 /// Returns true if the type is a `ReadonlyType` wrapper, or an object type
 /// with at least one readonly property. Used to detect types derived from
