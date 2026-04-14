@@ -206,7 +206,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
     }
 
     /// Returns the current state of the `skip_this_binding` flag.
-    pub(crate) fn is_skip_this_binding(&self) -> bool {
+    pub(crate) const fn is_skip_this_binding(&self) -> bool {
         self.skip_this_binding.get()
     }
 

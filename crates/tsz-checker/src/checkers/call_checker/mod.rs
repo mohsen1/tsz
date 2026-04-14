@@ -471,9 +471,9 @@ impl<'a> CheckerState<'a> {
                                 expected_return,
                             );
                         let return_type_mismatch =
-                            if is_generator_callback && !generator_component_mismatch {
-                                false
-                            } else if expected_return_has_type_params {
+                            if (is_generator_callback && !generator_component_mismatch)
+                                || expected_return_has_type_params
+                            {
                                 false
                             } else {
                                 generator_component_mismatch
