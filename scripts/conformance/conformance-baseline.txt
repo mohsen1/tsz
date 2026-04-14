@@ -27,7 +27,6 @@ FAIL TypeScript/tests/cases/compiler/controlFlowFunctionLikeCircular1.ts | expec
 FAIL TypeScript/tests/cases/compiler/convertKeywordsYes.ts | expected:[TS1212,TS1213,TS5024,TS18006] actual:[TS1139,TS1212,TS2300,TS2749,TS5024,TS18006]
 FAIL TypeScript/tests/cases/compiler/crashDeclareGlobalTypeofExport.ts | expected:[TS2451,TS2502] actual:[TS2440,TS2451]
 FAIL TypeScript/tests/cases/compiler/declarationEmitExpressionInExtends6.ts | expected:[TS2451] actual:[]
-FAIL TypeScript/tests/cases/compiler/declarationEmitIsolatedDeclarationErrorNotEmittedForNonEmittedFile.ts | expected:[TS9010] actual:[TS2339,TS9010]
 FAIL TypeScript/tests/cases/compiler/declarationEmitMixinPrivateProtected.ts | expected:[TS4094] actual:[TS4094]
 FAIL TypeScript/tests/cases/compiler/declarationEmitObjectAssignedDefaultExport.ts | expected:[TS2883] actual:[TS2883]
 FAIL TypeScript/tests/cases/compiler/declarationEmitPrivatePromiseLikeInterface.ts | expected:[TS7056] actual:[]
@@ -133,6 +132,7 @@ FAIL TypeScript/tests/cases/compiler/jsxExcessPropsAndAssignability.tsx | expect
 FAIL TypeScript/tests/cases/compiler/jsxFragmentFactoryNoUnusedLocals.tsx | expected:[TS7006] actual:[TS6133]
 FAIL TypeScript/tests/cases/compiler/jsxFragmentWrongType.tsx | expected:[TS2304,TS2874,TS2879] actual:[TS2304,TS2874,TS2879]
 FAIL TypeScript/tests/cases/compiler/jsxIntrinsicElementsTypeArgumentErrors.tsx | expected:[TS1009,TS1099,TS2304,TS2344,TS2558] actual:[TS1099]
+FAIL TypeScript/tests/cases/compiler/jsxRuntimePragma.ts | expected:[] actual:[TS2322,TS2747]
 FAIL TypeScript/tests/cases/compiler/keyRemappingKeyofResult.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/keyofIsLiteralContexualType.ts | expected:[TS2322,TS2339] actual:[TS2322,TS2339]
 FAIL TypeScript/tests/cases/compiler/lambdaArgCrash.ts | expected:[TS2304,TS2345] actual:[TS2304,TS2345]
@@ -152,7 +152,6 @@ FAIL TypeScript/tests/cases/compiler/mappedTypeUnionConstrainTupleTreatedAsArray
 FAIL TypeScript/tests/cases/compiler/mappedTypeWithAsClauseAndLateBoundProperty.ts | expected:[TS2741] actual:[TS2741]
 FAIL TypeScript/tests/cases/compiler/maxConstraints.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/maxNodeModuleJsDepthDefaultsToZero.ts | expected:[TS2339] actual:[TS2339]
-FAIL TypeScript/tests/cases/compiler/mergeMultipleInterfacesReexported.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/mergeSymbolReexportInterface.ts | expected:[TS2300,TS2741] actual:[TS2300,TS2741]
 FAIL TypeScript/tests/cases/compiler/mergeSymbolReexportedTypeAliasInstantiation.ts | expected:[TS2300] actual:[TS2300]
 FAIL TypeScript/tests/cases/compiler/mergeSymbolRexportFunction.ts | expected:[TS2451] actual:[TS1362,TS2300]
@@ -2315,6 +2314,7 @@ PASS TypeScript/tests/cases/compiler/declarationEmitInvalidExport.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitInvalidReference.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitInvalidReference2.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitInvalidReferenceAllowJs.ts
+PASS TypeScript/tests/cases/compiler/declarationEmitIsolatedDeclarationErrorNotEmittedForNonEmittedFile.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitJsReExportDefault.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitKeywordDestructuring.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitLambdaWithMissingTypeParameterNoCrash.ts
@@ -4484,7 +4484,6 @@ PASS TypeScript/tests/cases/compiler/jsxNestedWithinTernaryParsesCorrectly.tsx
 PASS TypeScript/tests/cases/compiler/jsxPartialSpread.tsx
 PASS TypeScript/tests/cases/compiler/jsxPreserveWithJsInput.ts
 PASS TypeScript/tests/cases/compiler/jsxPropsAsIdentifierNames.tsx
-PASS TypeScript/tests/cases/compiler/jsxRuntimePragma.ts
 PASS TypeScript/tests/cases/compiler/jsxSpreadFirstUnionNoErrors.tsx
 PASS TypeScript/tests/cases/compiler/jsxSpreadTag.ts
 PASS TypeScript/tests/cases/compiler/jsxViaImport.2.tsx
@@ -4624,6 +4623,7 @@ PASS TypeScript/tests/cases/compiler/memberAccessOnConstructorType.ts
 PASS TypeScript/tests/cases/compiler/memberOverride.ts
 PASS TypeScript/tests/cases/compiler/memberScope.ts
 PASS TypeScript/tests/cases/compiler/memberVariableDeclarations1.ts
+PASS TypeScript/tests/cases/compiler/mergeMultipleInterfacesReexported.ts
 PASS TypeScript/tests/cases/compiler/mergeWithImportedNamespace.ts
 PASS TypeScript/tests/cases/compiler/mergeWithImportedType.ts
 PASS TypeScript/tests/cases/compiler/mergedClassNamespaceRecordCast.ts
@@ -9948,6 +9948,7 @@ PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsPackage
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsParameterTagReusesInputNodeInEmit1.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsParameterTagReusesInputNodeInEmit2.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsPrivateFields01.ts
+PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReactComponents.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReexportAliases.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReexportAliasesEsModuleInterop.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsReexportedCjsAlias.ts
@@ -11710,7 +11711,6 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionOfUnionOf
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionReduction.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
-PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
