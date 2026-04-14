@@ -182,6 +182,10 @@ impl<'a> CheckerState<'a> {
         // must be merged with the lib type, and delegating would lose the user's
         // members (e.g., `interface Node { forEachChild(...) }` augments lib Node).
         // The INTERFACE block in compute_type_of_symbol handles multi-arena merging.
+        //
+        // Also used below to prevent cross-file delegation fallback from overriding
+        // this decision for merged interfaces across user files.
+        let mut interface_has_local_decl = false;
         if delegate_arena.is_some_and(|arena| !std::ptr::eq(arena, self.ctx.arena))
             && let Some(symbol) = self.get_symbol_globally(sym_id)
             && (symbol.flags & symbol_flags::INTERFACE) != 0
@@ -195,6 +199,7 @@ impl<'a> CheckerState<'a> {
             });
             if has_local_interface {
                 delegate_arena = None; // Handle locally with merge
+                interface_has_local_decl = true;
             }
         }
 
@@ -235,9 +240,14 @@ impl<'a> CheckerState<'a> {
         // Check cross-file symbol target mapping as fallback.
         // When resolve_cross_file_export returns a SymbolId from another file's binder,
         // it records the target file index. Use that to find the correct arena AND binder.
+        //
+        // IMPORTANT: Skip this fallback for INTERFACE symbols that have local interface
+        // declarations. These need local handling so that compute_type_of_symbol can
+        // merge members from both the local and cross-file declarations. Delegating
+        // to the other file would lose the local declaration's members and heritage.
         let mut cross_file_idx: Option<usize> = None;
-        let needs_cross_file_delegation = delegate_arena
-            .is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
+        let needs_cross_file_delegation = !interface_has_local_decl
+            && delegate_arena.is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
             && self
                 .ctx
                 .resolve_symbol_file_index(sym_id)
