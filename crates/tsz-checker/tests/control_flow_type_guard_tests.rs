@@ -1069,3 +1069,80 @@ const check: 'B' = result;
         "Generic inference from type predicate should preserve literal 'B', not widen to string: {ts2322:?}"
     );
 }
+
+/// Regression test: `this is DatafulFoo<T>` type predicate narrows `this` so
+/// that property accesses use the narrowed interface members.
+///
+/// From conformance test `spreadObjectOrFalsy.ts`:
+/// ```ts
+/// interface DatafulFoo<T> { data: T; }
+/// class Foo<T extends string> {
+///     data: T | undefined;
+///     bar() {
+///         if (this.hasData()) {
+///             this.data.toLocaleLowerCase(); // NO TS2532
+///         }
+///     }
+///     hasData(): this is DatafulFoo<T> { return true; }
+/// }
+/// ```
+///
+/// After narrowing, `this.data` should be `T` (from `DatafulFoo<T>`),
+/// not `T | undefined` (from `Foo<T>`). TS2532 must not be emitted.
+#[test]
+fn test_this_type_predicate_narrows_property_type() {
+    let source = r#"
+interface DatafulFoo<T> {
+    data: T;
+}
+
+class Foo<T extends string> {
+    data: T | undefined;
+    bar() {
+        if (this.hasData()) {
+            this.data.toLocaleLowerCase();
+        }
+    }
+    hasData(): this is DatafulFoo<T> {
+        return true;
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let ts2532: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2532)
+        .collect();
+
+    assert!(
+        ts2532.is_empty(),
+        "Expected no TS2532 after `this is DatafulFoo<T>` narrows `this`. \
+         `this.data` should be `T`, not `T | undefined`. Got: {ts2532:#?}"
+    );
+}

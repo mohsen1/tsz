@@ -976,8 +976,19 @@ impl<'a> CheckerState<'a> {
                 )
                 .is_some()
             {
-                object_type = class_this_type;
-                display_object_type = class_this_type;
+                // When `this` has been narrowed by flow analysis (e.g., via a
+                // `this is DatafulFoo<T>` type predicate), the narrowed type is
+                // an intersection that lacks a direct object shape. Do NOT
+                // override it with the class instance type — that would discard
+                // the narrowing and cause false TS2532/TS2339 diagnostics on
+                // properties that differ between the original class and the
+                // predicate target interface.
+                let was_narrowed_by_flow =
+                    object_type != class_this_type && original_object_type != class_this_type;
+                if !was_narrowed_by_flow {
+                    object_type = class_this_type;
+                    display_object_type = class_this_type;
+                }
             }
         }
 
