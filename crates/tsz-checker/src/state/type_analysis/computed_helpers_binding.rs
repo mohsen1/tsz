@@ -592,12 +592,28 @@ impl<'a> CheckerState<'a> {
                     .is_some()
                 {
                     // Phase 1: compute instance type
-                    let class_ref = checker.ctx.arena.get(cross_decl_idx).unwrap();
-                    let class = checker.ctx.arena.get_class(class_ref).unwrap();
+                    let class_ref = checker
+                        .ctx
+                        .arena
+                        .get(cross_decl_idx)
+                        .expect("cross_decl_idx presence was verified by is_some() above");
+                    let class = checker
+                        .ctx
+                        .arena
+                        .get_class(class_ref)
+                        .expect("cross_decl class shape verified by is_some() above");
                     let instance_type = checker.get_class_instance_type(cross_decl_idx, class);
                     // Phase 2: compute constructor type (re-fetch class reference)
-                    let class_ref = checker.ctx.arena.get(cross_decl_idx).unwrap();
-                    let class = checker.ctx.arena.get_class(class_ref).unwrap();
+                    let class_ref = checker
+                        .ctx
+                        .arena
+                        .get(cross_decl_idx)
+                        .expect("cross_decl_idx presence was verified by is_some() above");
+                    let class = checker
+                        .ctx
+                        .arena
+                        .get_class(class_ref)
+                        .expect("cross_decl class shape verified by is_some() above");
                     let ctor_type = checker.get_class_constructor_type(cross_decl_idx, class);
                     (ctor_type, Some(instance_type))
                 } else {
