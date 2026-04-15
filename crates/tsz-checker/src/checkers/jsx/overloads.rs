@@ -131,8 +131,19 @@ impl<'a> CheckerState<'a> {
                 props_type
             };
 
-            let evaluated = self.evaluate_type_with_env(props_type);
-            let props_resolved = self.resolve_type_for_property_access(evaluated);
+            // Evaluate the props type, including generic applications like Readonly<Props>.
+            // evaluate_application_type handles mapped/utility types (e.g. Readonly<P>)
+            // that evaluate_type_with_env alone may not fully resolve.
+            let evaluated = self.evaluate_application_type(props_type);
+            let evaluated = self.evaluate_type_with_env(evaluated);
+            let resolved = self.resolve_type_for_property_access(evaluated);
+            // If resolution produces UNKNOWN (e.g. type not yet resolved),
+            // fall back to the evaluated type which preserves structural information.
+            let props_resolved = if resolved == TypeId::UNKNOWN {
+                evaluated
+            } else {
+                resolved
+            };
 
             if self.jsx_attrs_match_overload(&attrs_info, props_resolved) {
                 // Found a matching overload — done.

@@ -490,38 +490,57 @@ impl<'a> CheckerState<'a> {
                     request,
                 )
             };
-            let uses_jsx_overload_resolution = recovered_props.is_none()
-                && (self.is_overloaded_sfc(resolved_component_type)
-                    || self.has_multi_signature_overloads(resolved_component_type)
-                    || self.has_multi_construct_overloads(resolved_component_type));
+            // Class components with multiple construct signatures (e.g. React.Component
+            // in react16.d.ts has 2 constructors) must go through overload resolution
+            // even when props extraction succeeds. tsc treats JSX elements as calls to
+            // the constructor overloads, emitting TS2769 when all overloads fail rather
+            // than TS2322 on individual attributes.
+            let has_multi_construct = self.has_multi_construct_overloads(resolved_component_type)
+                || self.has_multi_construct_overloads(component_type)
+                || self.has_multi_construct_overloads(component_metadata_type);
+            let uses_jsx_overload_resolution = has_multi_construct
+                || (recovered_props.is_none()
+                    && (self.is_overloaded_sfc(resolved_component_type)
+                        || self.has_multi_signature_overloads(resolved_component_type)));
 
             // Extract props type from the component and check attributes.
             // TS2607/TS2608 are emitted within props extraction when applicable.
             // Build display target with IntrinsicAttributes intersection for TS2322 messages.
             if let Some((props_type, raw_has_type_params)) = recovered_props {
-                // TS2786: component return type must be valid JSX element
-                self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
-                let props_type =
-                    self.narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props_type);
-                let preferred_props_display =
-                    self.get_jsx_component_props_display_text(tag_name_idx);
-                let display_target = self.build_jsx_display_target_with_preferred_props(
-                    props_type,
-                    Some(resolved_component_type),
-                    preferred_props_display.as_deref(),
-                );
-                self.check_jsx_attributes_against_props(
-                    jsx_opening.attributes,
-                    props_type,
-                    jsx_opening.tag_name,
-                    Some(component_metadata_type),
-                    Some(component_type),
-                    raw_has_type_params,
-                    display_target,
-                    preferred_props_display.as_deref(),
-                    request,
-                    children_ctx,
-                );
+                if has_multi_construct {
+                    // Class component with overloaded constructors: use overload
+                    // resolution to match tsc's TS2769 behavior.
+                    self.check_jsx_overloaded_sfc(
+                        resolved_component_type,
+                        jsx_opening.attributes,
+                        jsx_opening.tag_name,
+                        children_ctx,
+                    );
+                } else {
+                    // TS2786: component return type must be valid JSX element
+                    self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
+                    let props_type = self
+                        .narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props_type);
+                    let preferred_props_display =
+                        self.get_jsx_component_props_display_text(tag_name_idx);
+                    let display_target = self.build_jsx_display_target_with_preferred_props(
+                        props_type,
+                        Some(resolved_component_type),
+                        preferred_props_display.as_deref(),
+                    );
+                    self.check_jsx_attributes_against_props(
+                        jsx_opening.attributes,
+                        props_type,
+                        jsx_opening.tag_name,
+                        Some(component_metadata_type),
+                        Some(component_type),
+                        raw_has_type_params,
+                        display_target,
+                        preferred_props_display.as_deref(),
+                        request,
+                        children_ctx,
+                    );
+                }
             } else if uses_jsx_overload_resolution {
                 // JSX overload resolution: try each call signature (including generic
                 // ones) against the provided attributes. If no overload matches, emit
