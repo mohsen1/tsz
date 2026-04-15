@@ -170,7 +170,6 @@ FAIL TypeScript/tests/cases/compiler/narrowingMutualSubtypes.ts | expected:[TS70
 FAIL TypeScript/tests/cases/compiler/narrowingPastLastAssignment.ts | expected:[TS7005,TS7034,TS18048] actual:[TS7005,TS7034,TS18048]
 FAIL TypeScript/tests/cases/compiler/narrowingUnionToNeverAssigment.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/nestedExcessPropertyChecking.ts | expected:[TS2322,TS2559] actual:[TS2322,TS2559]
-FAIL TypeScript/tests/cases/compiler/noCrashOnMixin2.ts | expected:[TS1047,TS2370,TS2545,TS2674] actual:[TS1047,TS2370,TS2674]
 FAIL TypeScript/tests/cases/compiler/noCrashOnNoLib.ts
 FAIL TypeScript/tests/cases/compiler/noImplicitAnyParametersInAmbientClass.ts | expected:[TS7006,TS7019] actual:[TS7006,TS7019]
 FAIL TypeScript/tests/cases/compiler/noImplicitSymbolToString.ts | expected:[TS2469,TS2731] actual:[TS2469,TS2731]
@@ -278,7 +277,7 @@ FAIL TypeScript/tests/cases/compiler/typeReferenceDirectives7.ts | expected:[TS2
 FAIL TypeScript/tests/cases/compiler/typeRootsFromNodeModulesInParentDirectory.ts | expected:[TS2307] actual:[]
 FAIL TypeScript/tests/cases/compiler/typedArraysCrossAssignability01.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/typeofAmbientExternalModules.ts | expected:[TS2564,TS2741] actual:[TS2322,TS2564]
-FAIL TypeScript/tests/cases/compiler/typeofInternalModules.ts | expected:[TS2708,TS2709,TS2741] actual:[TS2708,TS2709,TS2739,TS2741]
+FAIL TypeScript/tests/cases/compiler/typeofInternalModules.ts | expected:[TS2708,TS2709,TS2741] actual:[TS2708,TS2709,TS2741]
 FAIL TypeScript/tests/cases/compiler/undeclaredModuleError.ts | expected:[TS2304,TS2345,TS2591] actual:[TS2304,TS2345,TS2591]
 FAIL TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts | expected:[TS1005,TS1068,TS1127,TS1128,TS1134,TS1351,TS1389,TS1434,TS2809] actual:[TS1127,TS1128,TS1434]
 FAIL TypeScript/tests/cases/compiler/unionErrorMessageOnMatchingDiscriminant.ts | expected:[TS2322] actual:[TS2322]
@@ -478,7 +477,6 @@ FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution3.tsx | expect
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution5.tsx | expected:[TS2322,TS2741] actual:[TS2322,TS2741]
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution6.tsx | expected:[TS2322,TS2741] actual:[TS2322,TS2741]
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution7.tsx | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/conformance/jsx/tsxDynamicTagName7.tsx | expected:[TS2604] actual:[]
 FAIL TypeScript/tests/cases/conformance/jsx/tsxElementResolution10.tsx | expected:[TS2322,TS2786] actual:[TS2322,TS2786]
 FAIL TypeScript/tests/cases/conformance/jsx/tsxElementResolution11.tsx | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/jsx/tsxElementResolution12.tsx | expected:[TS2322,TS2607] actual:[TS2322,TS2607]
@@ -634,7 +632,7 @@ FAIL TypeScript/tests/cases/conformance/types/tuple/contextualTypeWithTuple.ts |
 FAIL TypeScript/tests/cases/conformance/types/tuple/optionalTupleElements1.ts | expected:[TS1257,TS2322] actual:[TS1257,TS2322]
 FAIL TypeScript/tests/cases/conformance/types/tuple/restTupleElements1.ts | expected:[TS1257,TS2344,TS2345,TS2574,TS17019] actual:[TS1005,TS1257]
 FAIL TypeScript/tests/cases/conformance/types/tuple/typeInferenceWithTupleType.ts | expected:[TS2322,TS2352,TS2454] actual:[TS2322,TS2352,TS2454]
-FAIL TypeScript/tests/cases/conformance/types/tuple/variadicTuples1.ts | expected:[TS2322,TS2344,TS2345,TS2555,TS4104] actual:[TS2322,TS2344,TS2345,TS2555]
+FAIL TypeScript/tests/cases/conformance/types/tuple/variadicTuples1.ts | expected:[TS2322,TS2344,TS2345,TS2555,TS4104] actual:[TS2322,TS2344,TS2345,TS2555,TS4104]
 FAIL TypeScript/tests/cases/conformance/types/tuple/variadicTuples2.ts | expected:[TS1257,TS1265,TS1266,TS2322,TS2345] actual:[TS1257,TS1265,TS1266,TS2322,TS2345]
 FAIL TypeScript/tests/cases/conformance/types/typeAliases/directDependenceBetweenTypeAliases.ts | expected:[TS2456,TS2502] actual:[TS2456,TS2502]
 FAIL TypeScript/tests/cases/conformance/types/typeAliases/intrinsicTypes.ts | expected:[TS2322,TS2344,TS2795] actual:[TS2322,TS2344,TS2795]
@@ -5032,6 +5030,7 @@ PASS TypeScript/tests/cases/compiler/noCollisionThisExpressionInFunctionAndVarIn
 PASS TypeScript/tests/cases/compiler/noConstraintInReturnType1.ts
 PASS TypeScript/tests/cases/compiler/noCrashOnImportShadowing.ts
 PASS TypeScript/tests/cases/compiler/noCrashOnMixin.ts
+PASS TypeScript/tests/cases/compiler/noCrashOnMixin2.ts
 PASS TypeScript/tests/cases/compiler/noCrashOnParameterNamedRequire.ts
 PASS TypeScript/tests/cases/compiler/noCrashOnThisTypeUsage.ts
 PASS TypeScript/tests/cases/compiler/noCrashUMDMergedWithGlobalValue.ts
@@ -10206,6 +10205,7 @@ PASS TypeScript/tests/cases/conformance/jsx/tsxDynamicTagName3.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxDynamicTagName4.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxDynamicTagName5.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxDynamicTagName6.tsx
+PASS TypeScript/tests/cases/conformance/jsx/tsxDynamicTagName7.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxDynamicTagName8.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxDynamicTagName9.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxElementResolution.tsx
@@ -11710,7 +11710,6 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionOfUnionOf
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionReduction.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
-PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
