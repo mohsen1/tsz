@@ -2040,8 +2040,22 @@ impl<'a> CheckerState<'a> {
                 let is_nested_call_arg_error = is_object_literal_diag
                     && diag.code
                         == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE;
+                // TS18046/TS2571 ("is of type 'unknown'") from within object
+                // literal arguments are provisional during speculative passes.
+                // During generic inference, callback parameters in nested objects
+                // may get their type from an unresolved type parameter constraint
+                // (e.g., Record<string, unknown>) that will be replaced by the
+                // actual inferred type in the final contextual pass.
+                let is_provisional_unknown_in_object_literal = is_object_literal_diag
+                    && matches!(
+                        diag.code,
+                        diagnostic_codes::IS_OF_TYPE_UNKNOWN
+                            | diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN
+                    );
                 let keep = is_nested_call_arg_error
-                    || (!is_assignability && !is_provisional_implicit_any)
+                    || (!is_assignability
+                        && !is_provisional_implicit_any
+                        && !is_provisional_unknown_in_object_literal)
                     || (implicit_any_in_object_literal
                         && !implicit_any_in_object_literal_method)
                     || is_nullish_callback_body_diag

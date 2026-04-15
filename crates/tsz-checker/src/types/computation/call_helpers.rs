@@ -1780,11 +1780,25 @@ impl<'a> CheckerState<'a> {
                                 arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN),
                                 Some(param.type_id),
                             );
+                            // Snapshot diagnostics before the excess property check.
+                            // The re-evaluation may produce spurious TS18046 ("is of
+                            // type 'unknown'") from expression-body callbacks in nested
+                            // object literals when the contextual parameter type uses
+                            // a constraint (e.g., Record<string, unknown>) rather than
+                            // the final inferred type. Filter these out after the check.
+                            let epc_snap = self.ctx.snapshot_diagnostics();
                             self.check_object_literal_excess_properties(
                                 arg_type,
                                 evaluated_param,
                                 arg_idx,
                             );
+                            self.ctx.rollback_diagnostics_filtered(&epc_snap, |diag| {
+                                !matches!(
+                                    diag.code,
+                                    crate::diagnostics::diagnostic_codes::IS_OF_TYPE_UNKNOWN
+                                        | crate::diagnostics::diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN
+                                )
+                            });
                         }
                     }
                 }
