@@ -3029,8 +3029,15 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     .source_files
                     .first()
                     .is_some_and(|sf| sf.is_declaration_file);
-                let has_value =
-                    sym_info.is_some_and(|s| s.flags & crate::binder::symbol_flags::VALUE != 0);
+                // Only top-level VALUE declarations that are actually exported
+                // from the module should remain globally visible. Otherwise a
+                // module-private const/let/var/function leaks into other files'
+                // scopes via `program.globals` seeding of `file_locals`,
+                // causing missing TS2304 ("Cannot find name") diagnostics for
+                // references that should be unresolved.
+                let has_value = sym_info.is_some_and(|s| {
+                    s.flags & crate::binder::symbol_flags::VALUE != 0 && s.is_exported
+                });
                 let is_module_decl = sym_info.is_some_and(|s| {
                     s.flags
                         & (crate::binder::symbol_flags::VALUE_MODULE

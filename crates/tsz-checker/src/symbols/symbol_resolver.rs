@@ -524,13 +524,19 @@ impl<'a> CheckerState<'a> {
                     if should_skip_lib_symbol(sym_id) {
                         return false;
                     }
-                    let is_private_external_module_type = identifier_is_type_position
-                        && self.ctx.binder.is_external_module()
-                        && !self.ctx.symbol_is_from_lib(sym_id)
+                    // A symbol declared in another external module is
+                    // only reachable via explicit import. Reject cross-file
+                    // fallback resolutions to such symbols, except where:
+                    //  * the owning file is a declaration/script/global
+                    //    augmentation source (legitimate global), or
+                    //  * the symbol is exported from its module (downstream
+                    //    diagnostic paths such as the class initializer
+                    //    TS2663 detector rely on resolving these here so
+                    //    they can emit a more specific diagnostic).
+                    let is_cross_module_private = !self.ctx.symbol_is_from_lib(sym_id)
                         && !symbol.is_umd_export
                         && symbol.decl_file_idx != u32::MAX
                         && symbol.decl_file_idx != self.ctx.current_file_idx as u32
-                        && (symbol.flags & symbol_flags::VALUE) == 0
                         && self
                             .ctx
                             .get_binder_for_file(symbol.decl_file_idx as usize)
@@ -544,7 +550,19 @@ impl<'a> CheckerState<'a> {
                             .source_files
                             .first()
                             .is_some_and(|sf| sf.is_declaration_file);
-                    if is_private_external_module_type {
+                    let is_private_external_module_type = identifier_is_type_position
+                        && (symbol.flags & symbol_flags::VALUE) == 0
+                        && is_cross_module_private;
+                    // For value position, downstream diagnostic paths (e.g. the
+                    // class initializer TS2663 detector) rely on resolving
+                    // exported cross-module values here so they can emit a
+                    // more specific diagnostic. Only reject truly private
+                    // (non-exported) cross-module values.
+                    let is_private_external_module_value = !identifier_is_type_position
+                        && (symbol.flags & symbol_flags::VALUE) != 0
+                        && !symbol.is_exported
+                        && is_cross_module_private;
+                    if is_private_external_module_type || is_private_external_module_value {
                         return false;
                     }
                     // NOTE: We intentionally skip the decorator_owner check here.
