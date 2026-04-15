@@ -1779,11 +1779,14 @@ impl<'a> CheckerState<'a> {
             // Check if any construct signature with parameters has invalid mixin form.
             // tsc skips signatures with 0 parameters (they are not problematic).
             let has_invalid_sig = construct_sigs.iter().any(|sig| {
-                !sig.params.is_empty()
-                    && !(sig.params.len() == 1
-                        && sig.params[0].rest
-                        && !sig.params[0].optional
-                        && self.is_valid_mixin_rest_param_type(sig.params[0].type_id))
+                if sig.params.is_empty() {
+                    return false;
+                }
+                let valid = sig.params.len() == 1
+                    && sig.params[0].rest
+                    && !sig.params[0].optional
+                    && self.is_valid_mixin_rest_param_type(sig.params[0].type_id);
+                !valid
             });
 
             if has_invalid_sig {
