@@ -1,7 +1,7 @@
 use tsz_solver::{TypeDatabase, TypeId};
 
 pub(crate) use super::common::{
-    callable_shape_for_type, construct_signatures_for_type, has_function_shape,
+    array_element_type, callable_shape_for_type, construct_signatures_for_type, has_function_shape,
     intersection_members, is_generic_mapped_type, is_generic_type, object_shape_for_type,
 };
 

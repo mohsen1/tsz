@@ -1834,7 +1834,7 @@ impl<'a> CheckerState<'a> {
         }
         // `any[]` or `readonly any[]`
         matches!(
-            tsz_solver::type_queries::get_array_element_type(self.ctx.types, type_id),
+            class_query::array_element_type(self.ctx.types, type_id),
             Some(elem) if elem == TypeId::ANY
         )
     }
