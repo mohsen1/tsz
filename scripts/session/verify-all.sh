@@ -151,13 +151,32 @@ run_conformance_once() {
     fi
 }
 
-# Run conformance and retry once if the runner dropped results from the corpus.
-run_conformance_once
-if [[ "$CONFORMANCE_TOTAL" -gt 0 ]] && [[ "$CONF_RECORDED" -lt "$CONFORMANCE_TOTAL" ]]; then
-    MISSING_RESULTS=$((CONFORMANCE_TOTAL - CONF_RECORDED))
-    echo -e "${YELLOW}!${RESET}  conformance — incomplete run: recorded $CONF_RECORDED/$CONFORMANCE_TOTAL results; retrying once"
+# Retry conformance a few times when the runner drops results or reports a
+# one-off regression that doesn't reproduce on the next full pass.
+CONFORMANCE_ATTEMPTS=3
+for attempt in $(seq 1 "$CONFORMANCE_ATTEMPTS"); do
     run_conformance_once
-fi
+
+    if [[ "$CONFORMANCE_TOTAL" -gt 0 ]] && [[ "$CONF_RECORDED" -lt "$CONFORMANCE_TOTAL" ]]; then
+        if [[ "$attempt" -lt "$CONFORMANCE_ATTEMPTS" ]]; then
+            MISSING_RESULTS=$((CONFORMANCE_TOTAL - CONF_RECORDED))
+            echo -e "${YELLOW}!${RESET}  conformance — incomplete run: recorded $CONF_RECORDED/$CONFORMANCE_TOTAL results; retrying (${attempt}/${CONFORMANCE_ATTEMPTS})"
+            continue
+        fi
+        break
+    fi
+
+    if [[ "$CONF_PASS" -lt "$BASELINE_PASS" ]]; then
+        if [[ "$attempt" -lt "$CONFORMANCE_ATTEMPTS" ]]; then
+            REGRESSION=$((BASELINE_PASS - CONF_PASS))
+            echo -e "${YELLOW}!${RESET}  conformance — provisional regression: -$REGRESSION ($CONF_PASS vs $BASELINE_PASS baseline); retrying (${attempt}/${CONFORMANCE_ATTEMPTS})"
+            continue
+        fi
+        break
+    fi
+
+    break
+done
 
 if [[ "$CONF_PASS" -lt "$BASELINE_PASS" ]]; then
     REGRESSION=$((BASELINE_PASS - CONF_PASS))

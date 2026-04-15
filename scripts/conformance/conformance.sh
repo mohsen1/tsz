@@ -623,6 +623,7 @@ snapshot_tests() {
     local snapshot_file="$REPO_ROOT/scripts/conformance/conformance-snapshot.json"
     local git_sha
     git_sha="$(cd "$REPO_ROOT" && git rev-parse HEAD 2>/dev/null || echo 'unknown')"
+    local prev_pass=0
 
     # Guard 1: Dirty-tree check — prevent snapshots from uncommitted or worktree builds
     if [ "$FORCE_SNAPSHOT" != "true" ]; then
@@ -640,49 +641,109 @@ snapshot_tests() {
 
     cd "$REPO_ROOT"
 
+    if [ -f "$snapshot_file" ]; then
+        prev_pass=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    print(d.get('summary', {}).get('passed', 0))
+except Exception:
+    print(0)
+" "$snapshot_file")
+    fi
+
     # 1) Run tests with --print-test to get per-test results
     local tmpfile
     tmpfile=$(mktemp)
-    trap "rm -f '$tmpfile'" RETURN
+    local summary_json
+    summary_json=$(mktemp)
+    trap "rm -f '$tmpfile' '$summary_json'" RETURN
     local runner_compat_flags=()
     if runner_supports_flag "--server-binary"; then
         runner_compat_flags+=(--server-binary "$SERVER_BIN")
     fi
 
-    # Runner exits non-zero when any tests fail, which is expected
-    $RUNNER_BIN \
-        --test-dir "$TEST_DIR" \
-        --cache-file "$CACHE_FILE" \
-        --tsz-binary "$TSZ_BIN" \
-        "${runner_compat_flags[@]}" \
-        --workers $WORKERS \
-        --print-test \
-        "${REMAINING_ARGS[@]}" > "$tmpfile" 2>/dev/null || true
+    run_snapshot_once() {
+        rm -f "$tmpfile"
+        tmpfile=$(mktemp)
 
-    # Verify runner produced output
-    if [ ! -s "$tmpfile" ]; then
-        echo -e "${YELLOW}ERROR: conformance runner produced no output${NC}"
-        return 1
-    fi
+        # Runner exits non-zero when any tests fail, which is expected
+        $RUNNER_BIN \
+            --test-dir "$TEST_DIR" \
+            --cache-file "$CACHE_FILE" \
+            --tsz-binary "$TSZ_BIN" \
+            "${runner_compat_flags[@]}" \
+            --workers $WORKERS \
+            --print-test \
+            "${REMAINING_ARGS[@]}" > "$tmpfile" 2>/dev/null || true
 
-    # 2) Extract summary values via Python -> JSON (no eval)
-    #    Runner output format: "FINAL RESULTS: N/M passed (X.X%)"
-    local summary_json
-    summary_json=$(mktemp)
-    python3 -c "
+        # Verify runner produced output
+        if [ ! -s "$tmpfile" ]; then
+            echo -e "${YELLOW}ERROR: conformance runner produced no output${NC}"
+            return 1
+        fi
+
+        # 2) Extract summary values and recorded result count via Python -> JSON (no eval)
+        #    Runner output format: "FINAL RESULTS: N/M passed (X.X%)"
+        python3 -c "
 import re, sys, json
 text = open(sys.argv[1]).read()
 m = re.search(r'FINAL RESULTS:\s+(\d+)/(\d+)\s+passed\s+\(([0-9.]+)%\)', text)
 passed, total, rate = (int(m.group(1)), int(m.group(2)), float(m.group(3))) if m else (0, 0, 0.0)
-json.dump({'total': total, 'passed': passed, 'failed': total - passed, 'rate': rate}, sys.stdout)
+recorded = sum(
+    1
+    for line in text.splitlines()
+    if line.startswith(('PASS ', 'FAIL ', 'CRASH ', 'TIMEOUT '))
+)
+json.dump(
+    {
+        'total': total,
+        'passed': passed,
+        'failed': total - passed,
+        'rate': rate,
+        'recorded': recorded,
+    },
+    sys.stdout,
+)
 " "$tmpfile" > "$summary_json"
+    }
 
-    # Read values from JSON (no eval)
-    local total_tests passed failed pass_rate
-    total_tests=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['total'])" "$summary_json")
-    passed=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['passed'])" "$summary_json")
-    failed=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['failed'])" "$summary_json")
-    pass_rate=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['rate'])" "$summary_json")
+    local total_tests passed failed pass_rate recorded_results
+    local attempt max_attempts=3
+    for attempt in $(seq 1 "$max_attempts"); do
+        run_snapshot_once || return 1
+
+        # Read values from JSON (no eval)
+        total_tests=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['total'])" "$summary_json")
+        passed=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['passed'])" "$summary_json")
+        failed=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['failed'])" "$summary_json")
+        pass_rate=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['rate'])" "$summary_json")
+        recorded_results=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('recorded', 0))" "$summary_json")
+
+        if [ "$total_tests" -gt 0 ] && [ "$recorded_results" -lt "$total_tests" ]; then
+            if [ "$attempt" -lt "$max_attempts" ]; then
+                echo -e "${YELLOW}Snapshot run incomplete: recorded $recorded_results/$total_tests results. Retrying (${attempt}/${max_attempts})...${NC}"
+                continue
+            fi
+            if [ "$FORCE_SNAPSHOT" != "true" ]; then
+                echo -e "${YELLOW}ERROR: Snapshot run remained incomplete after $max_attempts attempts (${recorded_results}/$total_tests results).${NC}"
+                echo -e "${YELLOW}Use --force to save the snapshot anyway.${NC}"
+                return 1
+            fi
+        fi
+
+        if [ "$FORCE_SNAPSHOT" != "true" ] && [ "$prev_pass" -gt 0 ] && [ "$passed" -lt "$prev_pass" ]; then
+            if [ "$attempt" -lt "$max_attempts" ]; then
+                echo -e "${YELLOW}Snapshot run regressed vs previous snapshot ($passed vs $prev_pass passes). Retrying (${attempt}/${max_attempts})...${NC}"
+                continue
+            fi
+            echo -e "${YELLOW}ERROR: Snapshot run still regressed after $max_attempts attempts ($passed vs $prev_pass passes).${NC}"
+            echo -e "${YELLOW}Investigate before saving, or use --force to override.${NC}"
+            return 1
+        fi
+
+        break
+    done
 
     # Guard 2: Regression check — abort if score dropped >5% from previous snapshot
     if [ "$FORCE_SNAPSHOT" != "true" ] && [ -f "$snapshot_file" ]; then

@@ -1,19 +1,19 @@
 {
-  "timestamp": "2026-04-15T12:49:49Z",
-  "git_sha": "ac61e11c29038e1ce9c34ef3df48d025cf802392",
+  "timestamp": "2026-04-15T13:16:25Z",
+  "git_sha": "cd9a42ae906f2df6e9b152ae832a8ecef525e214",
   "summary": {
     "total_tests": 12581,
-    "passed": 11887,
-    "failed": 694,
+    "passed": 11888,
+    "failed": 693,
     "pass_rate": 94.5
   },
   "areas_by_pass_rate": [
     {
       "area": "types/intersection",
       "total": 24,
-      "passed": 16,
-      "failed": 8,
-      "pass_rate": 66.67
+      "passed": 17,
+      "failed": 7,
+      "pass_rate": 70.83
     },
     {
       "area": "es2019",
@@ -1030,11 +1030,11 @@
       "count": 2
     },
     {
-      "code": "TS2502",
+      "code": "TS1213",
       "count": 2
     },
     {
-      "code": "TS1213",
+      "code": "TS2502",
       "count": 2
     }
   ],
@@ -1096,11 +1096,11 @@
       "count": 1
     },
     {
-      "code": "TS1062",
+      "code": "TS2344",
       "count": 1
     },
     {
-      "code": "TS2344",
+      "code": "TS1062",
       "count": 1
     },
     {
@@ -1220,11 +1220,11 @@
       "count": 2
     },
     {
-      "code": "TS2708",
+      "code": "TS2507",
       "count": 1
     },
     {
-      "code": "TS2507",
+      "code": "TS2708",
       "count": 1
     },
     {
@@ -1370,11 +1370,11 @@
       "count": 2
     },
     {
-      "code": "TS2502",
+      "code": "TS1213",
       "count": 2
     },
     {
-      "code": "TS1213",
+      "code": "TS2502",
       "count": 2
     },
     {
@@ -1520,11 +1520,11 @@
       "count": 1
     },
     {
-      "code": "TS2440",
+      "code": "TS2749",
       "count": 1
     },
     {
-      "code": "TS2749",
+      "code": "TS2440",
       "count": 1
     },
     {
