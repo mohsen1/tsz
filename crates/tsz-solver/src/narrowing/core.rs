@@ -1359,6 +1359,55 @@ impl<'a> NarrowingContext<'a> {
         ) || matches!(self.db.lookup(type_id), Some(TypeData::Literal(_)))
     }
 
+    /// Check if `target` is a distributive conditional type whose result is
+    /// always a subtype of `source`.
+    ///
+    /// This handles the common `Extract<T, U>` pattern where the conditional is
+    /// `T extends U ? T : never`. Since the true branch equals the check type
+    /// and the false branch is `never`, the result is always `<: T`. When the
+    /// check type matches `source`, this means `target <: source`, so the
+    /// narrowed type should be `target` directly (not `source & target`).
+    ///
+    /// This matches tsc's `narrowType` behavior: `isTypeSubtypeOf(candidate, type)`
+    /// returns true for `Extract<T, U>` when narrowing type parameter `T`.
+    fn is_conditional_subtype_of_source(&self, target: TypeId, source: TypeId) -> bool {
+        // Direct match: target is Conditional(check_type, extends, true_type, false_type)
+        if let Some(TypeData::Conditional(cond_id)) = self.db.lookup(target) {
+            let cond = self.db.get_conditional(cond_id);
+            // Pattern: check_type == source, true_type == check_type, false_type == never
+            // This is the Extract<T, U> = (T extends U ? T : never) pattern.
+            if cond.check_type == source
+                && cond.true_type == cond.check_type
+                && cond.false_type == TypeId::NEVER
+            {
+                return true;
+            }
+            // More general: true_type <: source AND false_type <: source
+            // (both branches produce subtypes of source). This covers patterns
+            // where the true branch is a narrower type that's still <: source.
+            if (cond.true_type == source || cond.true_type == TypeId::NEVER)
+                && (cond.false_type == source || cond.false_type == TypeId::NEVER)
+            {
+                return true;
+            }
+        }
+        // Application wrapping a conditional (e.g., Extract<T, U> as a type alias)
+        // Resolve through evaluation and check again.
+        let resolved = self.resolve_type(target);
+        if resolved != target {
+            if let Some(TypeData::Conditional(cond_id)) = self.db.lookup(resolved) {
+                let cond = self.db.get_conditional(cond_id);
+                if cond.check_type == source
+                    && cond.true_type == cond.check_type
+                    && cond.false_type == TypeId::NEVER
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Simple assignability check for narrowing purposes.
     pub(super) fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
         if source == target {
@@ -1816,10 +1865,22 @@ impl<'a> NarrowingContext<'a> {
                                     narrowed
                                 }
                             } else {
-                                // Non-union source: use narrow_to_type first.
-                                // If it returns source unchanged (assignable but
-                                // possibly losing structural info) or NEVER (no
-                                // overlap), fall back to intersection.
+                                // Non-union source: following tsc's narrowType logic:
+                                //   1. target <: source → return target (narrowing down)
+                                //   2. source <: target → return source (already specific)
+                                //   3. otherwise → intersection
+                                //
+                                // Check if target is a distributive conditional type
+                                // whose result is always <: source. This covers
+                                // Extract<T, U> = (T extends U ? T : never) where the
+                                // true branch is the check type and false branch is never.
+                                // The result is always a subset of the check type T, so
+                                // if source IS that check type, return target directly.
+                                if self.is_conditional_subtype_of_source(*target_type, source_type)
+                                {
+                                    return *target_type;
+                                }
+
                                 let narrowed = self.narrow_to_type(source_type, *target_type);
                                 if narrowed == source_type && narrowed != *target_type {
                                     // Source was unchanged — intersect to preserve
