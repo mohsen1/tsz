@@ -469,6 +469,16 @@ impl TypeEnvironment {
         if self.boxed_types.get(&kind).is_some_and(|&t| t == type_id) {
             return true;
         }
+        // Guard: if the type_id is registered as the direct boxed type for a
+        // DIFFERENT kind, it cannot also be this kind's boxed type. This prevents
+        // false matches when a DefId resolution points to a type that belongs to
+        // another intrinsic kind (e.g., String DefId resolving to Function's
+        // Object shape due to stale def_types entries).
+        for (&other_kind, &other_ty) in &self.boxed_types {
+            if other_kind != kind && other_ty == type_id {
+                return false;
+            }
+        }
         // Check if any registered boxed DefId resolves to this TypeId
         if let Some(def_ids) = self.boxed_def_ids.get(&kind) {
             for &def_id in def_ids {
@@ -870,5 +880,54 @@ impl TypeResolver for TypeEnvironment {
 
     fn class_def_for_instance_type(&self, type_id: TypeId) -> Option<DefId> {
         self.class_def_for_instance(type_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::IntrinsicKind;
+
+    /// Regression test: is_boxed_type_id must not match a TypeId that is
+    /// registered as the direct boxed type for a DIFFERENT kind.
+    ///
+    /// Previously, a String DefId's resolved type in def_types could match
+    /// Function's Object TypeId, causing is_boxed_type_id(Function_TypeId, String)
+    /// to return true. This made `string` incorrectly assignable to `Function`.
+    #[test]
+    fn test_is_boxed_type_id_cross_kind_guard() {
+        let mut env = TypeEnvironment::new();
+
+        let string_type = TypeId(100);
+        let function_type = TypeId(200);
+        let string_def = DefId(50);
+
+        // Register String boxed type (direct)
+        env.set_boxed_type(IntrinsicKind::String, string_type);
+        // Register Function boxed type (direct)
+        env.set_boxed_type(IntrinsicKind::Function, function_type);
+        // Register String DefId
+        env.register_boxed_def_id(IntrinsicKind::String, string_def);
+        // Simulate the bug: String DefId resolves to Function's TypeId
+        env.insert_def(string_def, function_type);
+
+        // Without the guard, this would return true (String DefId resolves to function_type)
+        // With the guard, it should return false (function_type is registered for Function kind)
+        assert!(
+            !env.is_boxed_type_id(function_type, IntrinsicKind::String),
+            "Function TypeId should NOT be identified as String's boxed type"
+        );
+
+        // Function TypeId should still match its own kind
+        assert!(
+            env.is_boxed_type_id(function_type, IntrinsicKind::Function),
+            "Function TypeId should match Function kind"
+        );
+
+        // String TypeId should match its own kind
+        assert!(
+            env.is_boxed_type_id(string_type, IntrinsicKind::String),
+            "String TypeId should match String kind"
+        );
     }
 }
