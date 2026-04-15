@@ -112,10 +112,18 @@ echo -e "${CYAN}━━━ [conformance] ━━━${RESET}"
 echo -e "${CYAN}→${RESET}  scripts/safe-run.sh ./scripts/conformance/conformance.sh run"
 echo ""
 
-# Capture stdout only (stderr flows to terminal naturally)
 CONF_PASS=0
-CONF_OUTPUT=$(scripts/safe-run.sh ./scripts/conformance/conformance.sh run 2>/dev/null) || true
-CONF_PASS=$(echo "$CONF_OUTPUT" | sed 's/\x1b\[[0-9;]*m//g' | grep -Eo '[0-9]+/[0-9]+ passed' | grep -Eo '^[0-9]+' || echo "0")
+CONF_LAST_RUN="$REPO_ROOT/scripts/conformance/conformance-last-run.txt"
+
+# Run conformance normally and read the authoritative per-test results file it writes.
+scripts/safe-run.sh ./scripts/conformance/conformance.sh run || true
+if [[ -f "$CONF_LAST_RUN" ]]; then
+    CONF_PASS=$(python3 -c "
+import sys
+with open(sys.argv[1], encoding='utf-8', errors='replace') as f:
+    print(sum(1 for line in f if line.startswith('PASS ')))
+" "$CONF_LAST_RUN" 2>/dev/null || echo "0")
+fi
 
 # Validate it's a number
 if ! [[ "$CONF_PASS" =~ ^[0-9]+$ ]]; then

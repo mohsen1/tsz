@@ -1100,24 +1100,23 @@ impl<'a> CheckerState<'a> {
     /// type alias (like Extract, Exclude, NonNullable). These types arise from type
     /// predicate narrowing and should not be treated as constructor types.
     fn is_intersection_with_conditional_application(&self, type_id: TypeId) -> bool {
-        use tsz_solver::types::TypeData;
-        let Some(TypeData::Intersection(list_id)) = self.ctx.types.lookup(type_id) else {
+        let Some(members) = common::intersection_members(self.ctx.types, type_id) else {
             return false;
         };
-        let members = self.ctx.types.type_list(list_id);
+
         members.iter().any(|&member| {
-            if let Some(TypeData::Application(app_id)) = self.ctx.types.lookup(member) {
-                let app = self.ctx.types.type_application(app_id);
-                if let Some(TypeData::Lazy(def_id)) = self.ctx.types.lookup(app.base) {
-                    if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
-                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                        && (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0
-                    {
-                        return true;
-                    }
-                }
-            }
-            false
+            let Some(app_id) = common::application_id(self.ctx.types, member) else {
+                return false;
+            };
+            let app = self.ctx.types.type_application(app_id);
+            let Some(def_id) = common::lazy_def_id(self.ctx.types, app.base) else {
+                return false;
+            };
+
+            self.ctx
+                .def_to_symbol_id(def_id)
+                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                .is_some_and(|symbol| (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0)
         })
     }
 }
