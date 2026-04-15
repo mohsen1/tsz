@@ -583,8 +583,95 @@ pub fn compute_best_common_type<R: TypeResolver>(
         }
     }
 
+    // Step 3.5: Remove subtypes before creating the fallback union.
+    //
+    // This matches tsc's UnionReduction.Subtype behavior used when computing
+    // array literal element types: if A <: B, then A is redundant in A | B.
+    // Example: [new C(), new C2(), new D<string>()] where C2 extends C
+    //   → C2 <: C, so C2 is removed → union becomes C | D<string>.
+    //
+    // The interner's normalize_union/reduce_union_subtypes uses only a shallow
+    // subtype check that cannot resolve Lazy types (class instances). Here we
+    // use the full SubtypeChecker which handles class inheritance, generic
+    // instantiations, and other relationships that require type resolution.
+    let reduced = remove_subtypes_for_bct(interner, &widened, resolver);
+
     // Step 4: Default to union of all types
-    interner.union(widened)
+    interner.union(reduced)
+}
+
+/// Remove subtypes from a type list using the full SubtypeChecker.
+///
+/// For each pair (i, j), if types[i] <: types[j] and i != j, types[i] is
+/// redundant in the union and is removed. This matches tsc's `removeSubtypes`
+/// used with `UnionReduction.Subtype` for array literal element types.
+///
+/// The interner's `reduce_union_subtypes` uses a shallow subtype check that
+/// cannot handle class inheritance (it requires exact symbol equality for
+/// nominal types). This function uses the full `SubtypeChecker` which correctly
+/// resolves class hierarchies (e.g., C2 extends C → C2 <: C).
+///
+/// Uses O(N²) pairwise checks but N is typically small (array literal element count).
+fn remove_subtypes_for_bct<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    types: &[TypeId],
+    resolver: Option<&R>,
+) -> Vec<TypeId> {
+    if types.len() <= 1 {
+        return types.to_vec();
+    }
+
+    // Guard: skip reduction for very large type lists to avoid O(N²) blowup.
+    // tsc's removeSubtypes caps at 1,000,000 pairwise iterations.
+    let len = types.len();
+    if (len as u64) * (len as u64 - 1) >= 1_000_000 {
+        return types.to_vec();
+    }
+    let mut keep = vec![true; len];
+
+    if let Some(res) = resolver {
+        let mut checker = SubtypeChecker::with_resolver(interner, res);
+        for i in 0..len {
+            if !keep[i] {
+                continue;
+            }
+            for j in 0..len {
+                if i == j || !keep[j] {
+                    continue;
+                }
+                checker.guard.reset();
+                if checker.is_subtype_of(types[i], types[j]) {
+                    // types[i] <: types[j], so types[i] is redundant
+                    keep[i] = false;
+                    break;
+                }
+            }
+        }
+    } else {
+        let mut checker = SubtypeChecker::new(interner);
+        for i in 0..len {
+            if !keep[i] {
+                continue;
+            }
+            for j in 0..len {
+                if i == j || !keep[j] {
+                    continue;
+                }
+                checker.guard.reset();
+                if checker.is_subtype_of(types[i], types[j]) {
+                    keep[i] = false;
+                    break;
+                }
+            }
+        }
+    }
+
+    types
+        .iter()
+        .zip(keep.iter())
+        .filter(|&(_, &k)| k)
+        .map(|(&t, _)| t)
+        .collect()
 }
 
 fn is_constructor_like<R: TypeResolver>(
