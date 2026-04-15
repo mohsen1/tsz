@@ -328,6 +328,54 @@ fn test_bct_preserves_null_in_mixed_nullable_candidates() {
 }
 
 // =========================================================================
+// Subtype Reduction in BCT Fallback
+// =========================================================================
+
+#[test]
+fn test_bct_removes_structural_subtypes_in_fallback_union() {
+    // When 3 types exist and no single type is supertype of all, BCT falls back
+    // to a union. But before creating the union, it should remove subtypes.
+    //
+    // Given: base = { x: number }, derived = { x: number, y: string }, unrelated = { z: boolean }
+    // derived <: base, but unrelated is not related to either.
+    // No single type is supertype of all → falls back to union.
+    // Expected: base | unrelated (derived is removed as subtype of base).
+    use crate::types::PropertyInfo;
+
+    let interner = TypeInterner::new();
+    let name_x = interner.intern_string("x");
+    let name_y = interner.intern_string("y");
+    let name_z = interner.intern_string("z");
+
+    let base = interner.object(vec![PropertyInfo::new(name_x, TypeId::NUMBER)]);
+    let derived = interner.object(vec![
+        PropertyInfo::new(name_x, TypeId::NUMBER),
+        PropertyInfo::new(name_y, TypeId::STRING),
+    ]);
+    let unrelated = interner.object(vec![PropertyInfo::new(name_z, TypeId::BOOLEAN)]);
+
+    let result =
+        compute_best_common_type::<NoopResolver>(&interner, &[base, derived, unrelated], None);
+
+    // Result should be a union of base and unrelated (derived removed as subtype of base)
+    let members =
+        crate::type_queries::get_union_members(&interner, result).expect("expected a union type");
+    assert_eq!(
+        members.len(),
+        2,
+        "expected 2 members after subtype reduction, got {}: {:?}",
+        members.len(),
+        members
+    );
+    assert!(members.contains(&base), "expected base in union");
+    assert!(members.contains(&unrelated), "expected unrelated in union");
+    assert!(
+        !members.contains(&derived),
+        "derived should be removed (it's a subtype of base)"
+    );
+}
+
+// =========================================================================
 // Template Literal Expression Tests
 // =========================================================================
 
