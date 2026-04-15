@@ -1979,3 +1979,43 @@ r2.y;
         ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn enum_in_namespace_typeof_property_access() {
+    // When accessing an enum export through a typeof namespace variable,
+    // the enum should resolve to its namespace type (with member properties)
+    // not the enum instance type (the union of enum values).
+    // This is the pattern from conformance test `instantiatedModule.ts`.
+    let diags = check_source_diagnostics(
+        r#"
+namespace M3 {
+    export enum Color { Blue, Red }
+}
+var m3: typeof M3;
+var m3 = M3;
+var a3: typeof M3.Color;
+var a3 = m3.Color;
+var a3 = M3.Color;
+var blue: M3.Color = a3.Blue;
+var p3: M3.Color;
+var p3 = M3.Color.Red;
+var p3 = m3.Color.Blue;
+"#,
+    );
+    // TS2339: Property does not exist on type
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for enum member access through typeof namespace, got: {:?}",
+        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+    // TS2403: Subsequent variable declarations must have the same type
+    let ts2403: Vec<_> = diags.iter().filter(|d| d.code == 2403).collect();
+    assert_eq!(
+        ts2403.len(),
+        0,
+        "Expected no TS2403 for enum typeof mismatch, got: {:?}",
+        ts2403.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
