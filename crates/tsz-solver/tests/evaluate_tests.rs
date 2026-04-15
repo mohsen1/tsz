@@ -42519,3 +42519,37 @@ fn test_tuple_preserves_concrete_elements() {
     // Should be the same tuple — no evaluation needed
     assert_eq!(result, tuple, "Concrete tuple should be unchanged");
 }
+
+#[test]
+fn test_index_access_with_keyof_type_as_index() {
+    let interner = TypeInterner::new();
+
+    // Pattern: T[keyof T] where T = { a: number, b: string }
+    // keyof T = "a" | "b"
+    // T[keyof T] = T["a" | "b"] = number | string
+    let a_prop = interner.intern_string("a");
+    let b_prop = interner.intern_string("b");
+
+    let obj = interner.object(vec![
+        PropertyInfo::new(a_prop, TypeId::NUMBER),
+        PropertyInfo::new(b_prop, TypeId::STRING),
+    ]);
+
+    // Create keyof T as the index
+    let keyof_obj = interner.keyof(obj);
+
+    // Create IndexAccess(T, keyof T)
+    let index_access = interner.index_access(obj, keyof_obj);
+
+    // Evaluate should resolve to number | string
+    let result = evaluate_type(&interner, index_access);
+
+    // The result should be a union of number and string
+    let expected = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
+    assert_eq!(
+        result,
+        expected,
+        "T[keyof T] should evaluate to number | string, got {:?}",
+        interner.lookup(result)
+    );
+}
