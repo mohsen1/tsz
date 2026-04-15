@@ -367,6 +367,7 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/tests/architecture_contract_tests.rs",
             "crates/tsz-checker/src/types/type_checking/core.rs",
             "crates/tsz-checker/src/dispatch.rs",
+            "crates/tsz-checker/src/tests/dispatch_tests.rs",
             "crates/tsz-checker/src/checkers/call_checker.rs",
             "crates/tsz-checker/src/checkers/jsx/props.rs",
             "crates/tsz-checker/src/error_reporter/assignability.rs",

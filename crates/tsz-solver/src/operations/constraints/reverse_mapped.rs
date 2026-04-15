@@ -725,8 +725,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
                 let source_obj = self.interner.object_shape(source_shape_id);
                 let source_props = source_obj.properties.clone();
-                let source_string_idx = source_obj.string_index.clone();
-                let source_number_idx = source_obj.number_index.clone();
+                let source_string_idx = source_obj.string_index;
+                let source_number_idx = source_obj.number_index;
                 let mut reverse_properties = Vec::new();
                 let mut any_reversed = false;
 
@@ -790,45 +790,45 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let mut reverse_string_index = None;
                 let mut reverse_number_index = None;
 
-                if let Some(ref sig) = source_string_idx {
-                    if let Some(reversed_value) = self.reverse_infer_through_template(
+                if let Some(ref sig) = source_string_idx
+                    && let Some(reversed_value) = self.reverse_infer_through_template(
                         sig.value_type,
                         mapped.template,
                         inner_placeholder,
-                    ) {
-                        any_reversed = true;
-                        let readonly = match mapped.readonly_modifier {
-                            Some(MappedModifier::Add) => false,
-                            Some(MappedModifier::Remove) => true,
-                            None => sig.readonly,
-                        };
-                        reverse_string_index = Some(crate::types::IndexSignature {
-                            key_type: sig.key_type,
-                            value_type: reversed_value,
-                            readonly,
-                            param_name: sig.param_name,
-                        });
-                    }
+                    )
+                {
+                    any_reversed = true;
+                    let readonly = match mapped.readonly_modifier {
+                        Some(MappedModifier::Add) => false,
+                        Some(MappedModifier::Remove) => true,
+                        None => sig.readonly,
+                    };
+                    reverse_string_index = Some(crate::types::IndexSignature {
+                        key_type: sig.key_type,
+                        value_type: reversed_value,
+                        readonly,
+                        param_name: sig.param_name,
+                    });
                 }
-                if let Some(ref sig) = source_number_idx {
-                    if let Some(reversed_value) = self.reverse_infer_through_template(
+                if let Some(ref sig) = source_number_idx
+                    && let Some(reversed_value) = self.reverse_infer_through_template(
                         sig.value_type,
                         mapped.template,
                         inner_placeholder,
-                    ) {
-                        any_reversed = true;
-                        let readonly = match mapped.readonly_modifier {
-                            Some(MappedModifier::Add) => false,
-                            Some(MappedModifier::Remove) => true,
-                            None => sig.readonly,
-                        };
-                        reverse_number_index = Some(crate::types::IndexSignature {
-                            key_type: sig.key_type,
-                            value_type: reversed_value,
-                            readonly,
-                            param_name: sig.param_name,
-                        });
-                    }
+                    )
+                {
+                    any_reversed = true;
+                    let readonly = match mapped.readonly_modifier {
+                        Some(MappedModifier::Add) => false,
+                        Some(MappedModifier::Remove) => true,
+                        None => sig.readonly,
+                    };
+                    reverse_number_index = Some(crate::types::IndexSignature {
+                        key_type: sig.key_type,
+                        value_type: reversed_value,
+                        readonly,
+                        param_name: sig.param_name,
+                    });
                 }
 
                 self.reverse_mapped_depth.set(depth);

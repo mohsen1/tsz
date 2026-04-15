@@ -135,13 +135,12 @@ impl<'a> CheckerState<'a> {
             // the richer pre-resolution type to avoid false overload matches.
             let application_evaluated = self.evaluate_application_type(props_type);
             let evaluated = self.evaluate_type_with_env(application_evaluated);
-            let evaluated = if evaluated == TypeId::UNKNOWN
-                && application_evaluated != TypeId::UNKNOWN
-            {
-                application_evaluated
-            } else {
-                evaluated
-            };
+            let evaluated =
+                if evaluated == TypeId::UNKNOWN && application_evaluated != TypeId::UNKNOWN {
+                    application_evaluated
+                } else {
+                    evaluated
+                };
             let resolved = self.resolve_type_for_property_access(evaluated);
             // If resolution still produces UNKNOWN (e.g. type not yet resolved),
             // keep the evaluated type which preserves more structural information.

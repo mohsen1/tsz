@@ -600,7 +600,7 @@ pub fn compute_best_common_type<R: TypeResolver>(
     interner.union(reduced)
 }
 
-/// Remove subtypes from a type list using the full SubtypeChecker.
+/// Remove subtypes from a type list using the full `SubtypeChecker`.
 ///
 /// For each pair (i, j), if types[i] <: types[j] and i != j, types[i] is
 /// redundant in the union and is removed. This matches tsc's `removeSubtypes`
