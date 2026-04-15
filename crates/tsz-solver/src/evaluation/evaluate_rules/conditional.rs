@@ -602,6 +602,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // conditional when instantiation depth is exceeded.
                     CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
                     false
+                } else if Self::is_primitive_vs_function(self.interner(), check_type, extends_type)
+                {
+                    // Fast-path: primitive types (string, number, boolean, bigint,
+                    // symbol) are never subtypes of Function. The structural subtype
+                    // checker may incorrectly autobox the primitive to its wrapper
+                    // type (String, Number, etc.) and find structural compatibility
+                    // with the evaluated Function interface. This fast-path prevents
+                    // `string extends Function` from incorrectly taking the true
+                    // branch, matching tsc's behavior where primitives never extend
+                    // Function.
+                    CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                    false
                 } else {
                     let mut strict_checker =
                         SubtypeChecker::with_resolver(self.interner(), self.resolver());
@@ -731,6 +743,63 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             _ => None,
         }
+    }
+
+    /// Check if this is a primitive type vs Function/callable target.
+    ///
+    /// Primitive types (string, number, boolean, bigint, symbol) are never
+    /// subtypes of `Function` in TypeScript. However, the structural subtype
+    /// checker may incorrectly find compatibility when it autoboxes the
+    /// primitive to its wrapper type (e.g., `String` has `toString()` and
+    /// `length` which partially overlap with `Function`'s structural shape).
+    ///
+    /// This fast-path prevents false positives like `string extends Function`
+    /// evaluating to true in conditional types.
+    fn is_primitive_vs_function(
+        interner: &dyn crate::TypeDatabase,
+        check_type: TypeId,
+        extends_type: TypeId,
+    ) -> bool {
+        use crate::types::IntrinsicKind;
+        // Check if source is a primitive type
+        let is_primitive = matches!(
+            check_type,
+            TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL
+        );
+        if !is_primitive {
+            return false;
+        }
+        // Check if target is the Function intrinsic or resolved Function interface
+        if extends_type == TypeId::FUNCTION {
+            return true;
+        }
+        if let Some(crate::types::TypeData::Intrinsic(IntrinsicKind::Function)) =
+            interner.lookup(extends_type)
+        {
+            return true;
+        }
+        // Check if the evaluated target is structurally the Function interface
+        // (has apply, call, bind properties) — this catches cases where the
+        // Function type was resolved from a Lazy(DefId) to its ObjectShape form.
+        if let Some(
+            crate::types::TypeData::Object(shape_id)
+            | crate::types::TypeData::ObjectWithIndex(shape_id),
+        ) = interner.lookup(extends_type)
+        {
+            let shape = interner.object_shape(shape_id);
+            if shape.properties.len() <= 20 {
+                let apply = interner.intern_string("apply");
+                let call = interner.intern_string("call");
+                let bind = interner.intern_string("bind");
+                let has_apply = shape.properties.iter().any(|p| p.name == apply);
+                let has_call = shape.properties.iter().any(|p| p.name == call);
+                let has_bind = shape.properties.iter().any(|p| p.name == bind);
+                if has_apply && has_call && has_bind {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Distribute a conditional type over a union.
@@ -1561,5 +1630,109 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::intern::TypeInterner;
+    use crate::types::TypeId;
+
+    #[test]
+    fn test_is_primitive_vs_function_intrinsic() {
+        let interner = TypeInterner::new();
+        // Primitives should match against TypeId::FUNCTION
+        assert!(
+            TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_primitive_vs_function(
+                &interner,
+                TypeId::STRING,
+                TypeId::FUNCTION
+            )
+        );
+        assert!(
+            TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_primitive_vs_function(
+                &interner,
+                TypeId::NUMBER,
+                TypeId::FUNCTION
+            )
+        );
+        assert!(
+            TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_primitive_vs_function(
+                &interner,
+                TypeId::BOOLEAN,
+                TypeId::FUNCTION
+            )
+        );
+        // Non-primitives should not match
+        assert!(
+            !TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_primitive_vs_function(
+                &interner,
+                TypeId::OBJECT,
+                TypeId::FUNCTION
+            )
+        );
+        assert!(
+            !TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_primitive_vs_function(
+                &interner,
+                TypeId::ANY,
+                TypeId::FUNCTION
+            )
+        );
+        // Primitives against non-Function target should not match
+        assert!(
+            !TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_primitive_vs_function(
+                &interner,
+                TypeId::STRING,
+                TypeId::OBJECT
+            )
+        );
+    }
+
+    #[test]
+    fn test_is_primitive_vs_function_structural() {
+        let interner = TypeInterner::new();
+        // Create an ObjectShape that looks like Function (has apply, call, bind)
+        let apply = interner.intern_string("apply");
+        let call = interner.intern_string("call");
+        let bind = interner.intern_string("bind");
+        let function_shape = interner.object(vec![
+            crate::types::PropertyInfo {
+                name: apply,
+                type_id: TypeId::ANY,
+                ..Default::default()
+            },
+            crate::types::PropertyInfo {
+                name: call,
+                type_id: TypeId::ANY,
+                ..Default::default()
+            },
+            crate::types::PropertyInfo {
+                name: bind,
+                type_id: TypeId::ANY,
+                ..Default::default()
+            },
+        ]);
+        // string vs structural Function → should match
+        assert!(
+            TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_primitive_vs_function(
+                &interner,
+                TypeId::STRING,
+                function_shape
+            )
+        );
+        // Non-Function object → should not match
+        let non_fn = interner.object(vec![crate::types::PropertyInfo {
+            name: apply,
+            type_id: TypeId::ANY,
+            ..Default::default()
+        }]);
+        assert!(
+            !TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_primitive_vs_function(
+                &interner,
+                TypeId::STRING,
+                non_fn
+            )
+        );
     }
 }
