@@ -130,8 +130,6 @@ impl<'a> CheckerState<'a> {
             } else {
                 props_type
             };
-
-<<<<<<< HEAD
             // Evaluate the props type, including generic applications like
             // `Readonly<Props>`. If evaluation degrades to `unknown`, fall back to
             // the richer pre-resolution type to avoid false overload matches.
