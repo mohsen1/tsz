@@ -392,6 +392,22 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
                         );
                     }
+                    // TS2315: Type parameters are not generic — they cannot be
+                    // used with type arguments (e.g., `U<string>` where U is a
+                    // type parameter).
+                    if has_type_args {
+                        if let Some(args) = &type_ref.type_arguments {
+                            self.error_at_node_msg(
+                                type_name_idx,
+                                crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
+                                &[name],
+                            );
+                            // Still resolve type arguments for noUnusedLocals (TS6133)
+                            for &arg_idx in &args.nodes {
+                                let _ = self.get_type_from_type_node(arg_idx);
+                            }
+                        }
+                    }
                 }
                 let type_resolution =
                     self.resolve_identifier_symbol_in_type_position(type_name_idx);
