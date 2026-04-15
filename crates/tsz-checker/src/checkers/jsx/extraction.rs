@@ -311,10 +311,11 @@ impl<'a> CheckerState<'a> {
     ) {
         let tag_text = self.get_jsx_tag_name_text(tag_name_idx);
         let is_this_tag = tag_text == "this";
-        if tag_text
-            .chars()
-            .next()
-            .is_some_and(|ch| ch.is_ascii_lowercase())
+        if !is_this_tag
+            && tag_text
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_lowercase())
         {
             return;
         }
