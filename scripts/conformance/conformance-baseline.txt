@@ -141,7 +141,7 @@ FAIL TypeScript/tests/cases/compiler/longObjectInstantiationChain3.ts | expected
 FAIL TypeScript/tests/cases/compiler/mapUpsert.ts | expected:[TS2322,TS2339,TS2345,TS2554] actual:[TS2339,TS2550]
 FAIL TypeScript/tests/cases/compiler/mappedTypeIndexedAccess.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/mappedTypeInferenceFromApparentType.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/mappedTypeRecursiveInference.ts | expected:[TS2345] actual:[TS2345,TS18046]
+FAIL TypeScript/tests/cases/compiler/mappedTypeRecursiveInference.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/mappedTypeUnionConstrainTupleTreatedAsArrayLike.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/mappedTypeWithAsClauseAndLateBoundProperty.ts | expected:[TS2741] actual:[TS2741]
 FAIL TypeScript/tests/cases/compiler/maxConstraints.ts | expected:[TS2345] actual:[TS2345]
@@ -692,7 +692,6 @@ FAIL TypeScript/tests/cases/projects/ReferenceResolution/src/ts/foo/foo.ts | exp
 FAIL TypeScript/tests/cases/projects/declarations_MultipleTimesImport/useModule.ts | expected:[TS1202,TS2307] actual:[TS1202,TS2307]
 FAIL TypeScript/tests/cases/projects/privacyCheck-SimpleReference/test.ts | expected:[TS1202,TS2307] actual:[TS1202,TS2307]
 FAIL TypeScript/tests/cases/transpile/declarationComputedPropertyNames.ts | expected:[TS1166,TS1169,TS1170,TS2304] actual:[TS1166,TS1169,TS1170,TS2304]
-FAIL TypeScript/tests/cases/transpile/jsWithSourceMapBasic.ts | expected:[TS2564,TS2854,TS5024] actual:[TS2554,TS2564,TS2854,TS5024]
 FAIL TypeScript/tests/cases/unittests/matchFiles.ts | expected:[TS2304,TS2339,TS2593,TS2694,TS6053,TS7006] actual:[TS2304,TS2339,TS2593,TS2694,TS6053,TS7006]
 PASS TypeScript/tests/cases/compiler/2dArrays.ts
 PASS TypeScript/tests/cases/compiler/ArrowFunctionExpression1.ts
@@ -12578,3 +12577,4 @@ PASS TypeScript/tests/cases/transpile/declarationUnresolvedTypeReference.ts
 PASS TypeScript/tests/cases/transpile/declarationUnresolvedTypeReference2.ts
 PASS TypeScript/tests/cases/transpile/declarationsSimple.ts
 PASS TypeScript/tests/cases/transpile/jsWithInlineSourceMapBasic.ts
+PASS TypeScript/tests/cases/transpile/jsWithSourceMapBasic.ts
