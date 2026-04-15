@@ -897,3 +897,34 @@ f12<number>("a");  // U = T = number; "a" is string -> TS2345
         "Expected TS2345: 'string' not assignable to 'number' when U defaults to T=number. Got: {codes:?}"
     );
 }
+
+/// TS2315: Type parameters used with type arguments should error.
+/// A type parameter like `U` is not generic — it cannot accept type arguments.
+/// For example, `U<string>` is invalid when `U` is a type parameter.
+#[test]
+fn test_ts2315_type_parameter_with_type_arguments() {
+    let source = r#"
+function f<U>() {
+    var v: U<string>;
+}
+"#;
+    let codes = crate::test_utils::check_source_codes(source);
+    assert!(
+        codes.contains(&2315),
+        "Expected TS2315 for type parameter 'U' used with type arguments. Got: {codes:?}"
+    );
+}
+
+/// TS2315 should NOT be emitted for actual generic types.
+#[test]
+fn test_no_ts2315_for_generic_type() {
+    let source = r#"
+interface Box<T> { value: T; }
+var v: Box<string>;
+"#;
+    let codes = crate::test_utils::check_source_codes(source);
+    assert!(
+        !codes.contains(&2315),
+        "Should NOT emit TS2315 for generic type 'Box<string>'. Got: {codes:?}"
+    );
+}

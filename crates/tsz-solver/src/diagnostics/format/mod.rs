@@ -756,7 +756,20 @@ impl<'a> TypeFormatter<'a> {
                 self.format_mapped(mapped.as_ref()).into()
             }
             TypeData::IndexAccess(obj, idx) => {
-                format!("{}[{}]", self.format(*obj), self.format(*idx)).into()
+                let obj_str = self.format(*obj);
+                // Parenthesize the object when it's a union or intersection AND
+                // the formatted string actually shows the compound form (contains
+                // ` & ` or ` | `). Named type aliases like `Errors<T>` may be
+                // stored as intersections internally but display as a single name.
+                let needs_parens = matches!(
+                    self.interner.lookup(*obj),
+                    Some(TypeData::Union(_) | TypeData::Intersection(_))
+                ) && (obj_str.contains(" & ") || obj_str.contains(" | "));
+                if needs_parens {
+                    format!("({obj_str})[{}]", self.format(*idx)).into()
+                } else {
+                    format!("{obj_str}[{}]", self.format(*idx)).into()
+                }
             }
             TypeData::TemplateLiteral(spans) => {
                 let spans = self.interner.template_list(*spans);
