@@ -230,7 +230,7 @@ impl<'a> CheckerState<'a> {
         evaluated_type: TypeId,
         original_type: TypeId,
     ) -> TypeId {
-        use tsz_solver::types::TypeData;
+        use crate::query_boundaries::common;
 
         // Try display properties on both the evaluated and original type IDs.
         let display_props = self
@@ -245,9 +245,9 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check if the evaluated type is an object with properties we can patch.
-        let shape = match self.ctx.types.lookup(evaluated_type) {
-            Some(TypeData::Object(shape_id)) => self.ctx.types.object_shape(shape_id),
-            _ => return evaluated_type,
+        let shape = match common::object_shape_for_type(self.ctx.types, evaluated_type) {
+            Some(shape) => shape,
+            None => return evaluated_type,
         };
 
         // Build a map of boolean literal display properties keyed by property name.
