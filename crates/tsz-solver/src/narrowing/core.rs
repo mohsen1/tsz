@@ -1240,7 +1240,69 @@ impl<'a> NarrowingContext<'a> {
             return None;
         }
 
+        // When the target is a conditional type utility Application that uses
+        // the source type parameter as its check type (e.g., Extract<T, Function>),
+        // return the target directly instead of T & target. Distributive conditional
+        // types like Extract<T, U> = T extends U ? T : never are always subtypes
+        // of their check parameter T, so the intersection is redundant. More
+        // importantly, keeping the intersection prevents proper evaluation of the
+        // conditional type during instantiation and call resolution, which can
+        // cause false TS2348/TS2349 errors when the narrowed type is later called.
+        if self.is_conditional_utility_of_source(source, target) {
+            return Some(target);
+        }
+
         Some(self.db.intersection2(source, narrowed_constraint))
+    }
+
+    /// Check if `target` is a conditional type utility Application (like Extract, Exclude,
+    /// NonNullable) whose first type argument is `source`.
+    ///
+    /// Distributive conditional type aliases like `Extract<T, U> = T extends U ? T : never`
+    /// always produce a subtype of their check parameter T. When narrowing T by a type
+    /// predicate `x is Extract<T, Function>`, we return the target directly instead of
+    /// creating an intersection `T & Extract<T, Function>`.
+    fn is_conditional_utility_of_source(&self, source: TypeId, target: TypeId) -> bool {
+        use crate::types::TypeData;
+
+        // Check if target is Application(Base, [source, ...])
+        let Some(TypeData::Application(app_id)) = self.db.lookup(target) else {
+            return false;
+        };
+        let app = self.db.type_application(app_id);
+
+        // First arg must be the source type parameter
+        if app.args.is_empty() || app.args[0] != source {
+            return false;
+        }
+
+        // Source must be a type parameter (this pattern only applies to generic narrowing)
+        if !matches!(self.db.lookup(source), Some(TypeData::TypeParameter(_))) {
+            return false;
+        }
+
+        // Check if the base resolves to a conditional type (distributive).
+        let base_body = if let Some(resolver) = self.resolver {
+            resolver.resolve_lazy(
+                match self.db.lookup(app.base) {
+                    Some(TypeData::Lazy(def_id)) => def_id,
+                    _ => return false,
+                },
+                self.db,
+            )
+        } else {
+            let eval = self.db.evaluate_type(app.base);
+            if eval != app.base { Some(eval) } else { None }
+        };
+
+        if let Some(body) = base_body {
+            matches!(self.db.lookup(body), Some(TypeData::Conditional(_)))
+        } else {
+            // Can't resolve the base — heuristic: if the Application has exactly
+            // 2 type args and the base is Lazy, it's likely a utility type like
+            // Extract<T, U> or Exclude<T, U>.
+            matches!(self.db.lookup(app.base), Some(TypeData::Lazy(_))) && app.args.len() == 2
+        }
     }
 
     fn narrow_type_param_to_function(&self, source: TypeId) -> Option<TypeId> {
