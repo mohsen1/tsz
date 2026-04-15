@@ -3046,7 +3046,16 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     || is_umd
                     || is_global_augmentation;
                 if is_truly_global {
-                    globals.set(name.clone(), new_sym_id);
+                    // UMD namespace exports (`export as namespace Foo`) use
+                    // "first in wins" semantics: when multiple modules declare
+                    // the same UMD global name, the first one encountered is
+                    // kept and subsequent ones are ignored. This matches tsc
+                    // behavior. Non-UMD globals can safely overwrite because
+                    // they are already merged to a single SymbolId by the
+                    // merge phase.
+                    if !is_umd || !globals.has(name) {
+                        globals.set(name.clone(), new_sym_id);
+                    }
                 }
             } else {
                 let name_atom = name_interner.intern(name);
