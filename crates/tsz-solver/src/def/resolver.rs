@@ -888,11 +888,11 @@ mod tests {
     use super::*;
     use crate::types::IntrinsicKind;
 
-    /// Regression test: is_boxed_type_id must not match a TypeId that is
+    /// Regression test: `is_boxed_type_id` must not match a TypeId that is
     /// registered as the direct boxed type for a DIFFERENT kind.
     ///
-    /// Previously, a String DefId's resolved type in def_types could match
-    /// Function's Object TypeId, causing is_boxed_type_id(Function_TypeId, String)
+    /// Previously, a String DefId's resolved type in `def_types` could match
+    /// Function's Object TypeId, causing `is_boxed_type_id(Function_TypeId`, String)
     /// to return true. This made `string` incorrectly assignable to `Function`.
     #[test]
     fn test_is_boxed_type_id_cross_kind_guard() {

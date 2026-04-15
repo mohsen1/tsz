@@ -1256,7 +1256,7 @@ impl<'a> NarrowingContext<'a> {
     }
 
     /// Check if `target` is a conditional type utility Application (like Extract, Exclude,
-    /// NonNullable) whose first type argument is `source`.
+    /// `NonNullable`) whose first type argument is `source`.
     ///
     /// Distributive conditional type aliases like `Extract<T, U> = T extends U ? T : never`
     /// always produce a subtype of their check parameter T. When narrowing T by a type
@@ -1456,15 +1456,15 @@ impl<'a> NarrowingContext<'a> {
         // Application wrapping a conditional (e.g., Extract<T, U> as a type alias)
         // Resolve through evaluation and check again.
         let resolved = self.resolve_type(target);
-        if resolved != target {
-            if let Some(TypeData::Conditional(cond_id)) = self.db.lookup(resolved) {
-                let cond = self.db.get_conditional(cond_id);
-                if cond.check_type == source
-                    && cond.true_type == cond.check_type
-                    && cond.false_type == TypeId::NEVER
-                {
-                    return true;
-                }
+        if resolved != target
+            && let Some(TypeData::Conditional(cond_id)) = self.db.lookup(resolved)
+        {
+            let cond = self.db.get_conditional(cond_id);
+            if cond.check_type == source
+                && cond.true_type == cond.check_type
+                && cond.false_type == TypeId::NEVER
+            {
+                return true;
             }
         }
         false
