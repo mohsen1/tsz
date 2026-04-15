@@ -8478,3 +8478,65 @@ var e: Date = c.b();
             .collect::<Vec<_>>()
     );
 }
+
+/// UMD global conflict: when two modules both `export as namespace Alpha`,
+/// the first one encountered in file order should win (matching tsc behavior).
+/// Previously, `globals.set()` overwrote with the last file, causing false
+/// TS2322 when accessing properties from the first namespace.
+#[test]
+fn test_umd_global_conflict_first_in_wins() {
+    let files = vec![
+        (
+            "v1/index.d.ts".to_string(),
+            r#"
+export as namespace Alpha;
+export var x: string;
+"#
+            .to_string(),
+        ),
+        (
+            "v2/index.d.ts".to_string(),
+            r#"
+export as namespace Alpha;
+export var y: number;
+"#
+            .to_string(),
+        ),
+        (
+            "global.ts".to_string(),
+            r#"
+const p: string = Alpha.x;
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let file = result
+        .file_results
+        .iter()
+        .find(|f| f.file_name == "global.ts")
+        .expect("expected global.ts result");
+    let errors: Vec<(u32, &str)> = file
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text.as_str()))
+        .collect();
+
+    assert!(
+        errors.is_empty(),
+        "Expected no errors for UMD global conflict (first in wins). Got: {errors:#?}"
+    );
+}
