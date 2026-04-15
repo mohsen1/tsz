@@ -266,6 +266,7 @@ impl<'a> CheckerContext<'a> {
             suppress_definite_assignment_errors: false,
             js_body_uses_arguments: false,
             emitted_ts2454_errors: FxHashSet::default(),
+            emitted_ts2411_for_iface_prop: FxHashSet::default(),
             type_resolution_fuel: Cell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
         }
