@@ -345,7 +345,17 @@ impl<'a> CheckerState<'a> {
             if !self.symbol_has_exported_value_declaration(member_id) {
                 continue;
             }
-            let member_type = self.namespace_export_member_type(member_id, member_flags);
+            let mut member_type = self.namespace_export_member_type(member_id, member_flags);
+            // For enum exports, use the enum namespace type (typeof Color)
+            // which represents the enum object value with member properties,
+            // not the enum instance type (Color = union of member values).
+            // This ensures `m3.Color` resolves to `typeof Color` when
+            // `m3: typeof M3` and M3 is a namespace exporting enum Color.
+            if member_flags & tsz_binder::symbol_flags::ENUM != 0
+                && (member_flags & tsz_binder::symbol_flags::ENUM_MEMBER) == 0
+            {
+                member_type = self.get_enum_namespace_type_for_value(member_type);
+            }
             let name_atom = self.ctx.types.intern_string(name);
             props.push(PropertyInfo {
                 name: name_atom,
