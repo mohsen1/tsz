@@ -4554,3 +4554,40 @@ function A() {
         "String-literal DOM generic inference should stay narrow enough to avoid TS2741, got: {diags:?}"
     );
 }
+
+/// Class components with multiple construct signatures (like React.Component in
+/// react16.d.ts) should go through JSX overload resolution. When all overloads
+/// fail (e.g. wrong attribute type), TS2769 should be emitted.
+#[test]
+fn jsx_class_with_multi_construct_overloads_emits_ts2769() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare class Component<P> {{
+    constructor(props: P);
+    constructor(props: P, context: any);
+    props: P;
+    render(): JSX.Element;
+}}
+
+interface PanelProps {{
+    name: string;
+}}
+
+declare class Panel extends Component<PanelProps> {{}}
+
+// Correct usage: name is a string
+let ok = <Panel name="hello" />;
+
+// Wrong type: name should be string, not number.
+// Both constructor overloads fail → TS2769
+let err = <Panel name={{42}} />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(&diags, 2769),
+        "Expected TS2769 (No overload matches this call) for prop type mismatch \
+         on class component with overloaded constructors, got: {diags:?}"
+    );
+}
