@@ -5339,6 +5339,73 @@ fn test_mutable_to_readonly_no_ts4104() {
 }
 
 #[test]
+fn test_readonly_to_type_param_with_array_constraint_ts4104() {
+    // readonly [...T] → T (where T extends unknown[]) should produce
+    // ReadonlyToMutableAssignment (TS4104), matching tsc behavior.
+    // This is the case from variadicTuples1.ts:
+    //   function f11<T extends unknown[]>(t: T, m: [...T], r: readonly [...T]) {
+    //     t = r;  // Error TS4104
+    //   }
+    let interner = TypeInterner::new();
+
+    // Create T extends unknown[] (type parameter with array constraint)
+    let unknown_array = interner.array(TypeId::UNKNOWN);
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(unknown_array),
+        default: None,
+        is_const: false,
+    }));
+
+    // readonly [...T] — for simplicity, use readonly array of unknown
+    // (the key is source is readonly, target is type param with array constraint)
+    let readonly_source = interner.readonly_array(TypeId::UNKNOWN);
+
+    let mut checker = CompatChecker::new(&interner);
+    checker.strict_null_checks = true;
+    assert!(
+        !checker.is_assignable(readonly_source, t_param),
+        "readonly unknown[] should not be assignable to T extends unknown[]"
+    );
+    let reason = checker.explain_failure(readonly_source, t_param);
+    assert!(
+        matches!(
+            reason,
+            Some(SubtypeFailureReason::ReadonlyToMutableAssignment { .. })
+        ),
+        "Expected ReadonlyToMutableAssignment for type param with array constraint, got {reason:?}"
+    );
+}
+
+#[test]
+fn test_readonly_to_unconstrained_type_param_no_ts4104() {
+    // readonly number[] → T (unconstrained) should NOT produce
+    // ReadonlyToMutableAssignment. Without an array/tuple constraint,
+    // tsc emits a generic TypeMismatch, not TS4104.
+    let interner = TypeInterner::new();
+
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let readonly_source = interner.readonly_array(TypeId::NUMBER);
+
+    let mut checker = CompatChecker::new(&interner);
+    checker.strict_null_checks = true;
+    let reason = checker.explain_failure(readonly_source, t_param);
+    assert!(
+        !matches!(
+            reason,
+            Some(SubtypeFailureReason::ReadonlyToMutableAssignment { .. })
+        ),
+        "Should NOT be ReadonlyToMutableAssignment for unconstrained type param, got {reason:?}"
+    );
+}
+
+#[test]
 fn test_explain_intersection_source_missing_properties() {
     // Intersection source (like `number & { __brand: T }`) assigned to an object
     // target should produce MissingProperties, not TypeMismatch.
