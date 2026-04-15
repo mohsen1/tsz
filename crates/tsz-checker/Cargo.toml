@@ -267,5 +267,9 @@ path = "tests/intersection_signatures.rs"
 name = "ts2364_import_meta_assignment_tests"
 path = "tests/ts2364_import_meta_assignment_tests.rs"
 
+[[test]]
+name = "cross_module_nested_interface_tests"
+path = "tests/cross_module_nested_interface_tests.rs"
+
 [lints]
 workspace = true
