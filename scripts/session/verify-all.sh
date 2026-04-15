@@ -66,12 +66,14 @@ run_suite() {
 
 # --- Get conformance baseline ---
 BASELINE_PASS=0
+CONFORMANCE_TOTAL=0
 if [[ -f "$REPO_ROOT/scripts/conformance/conformance-snapshot.json" ]]; then
-    BASELINE_PASS=$(python3 -c "
+    read -r BASELINE_PASS CONFORMANCE_TOTAL < <(python3 -c "
 import json
 with open('$REPO_ROOT/scripts/conformance/conformance-snapshot.json') as f:
-    print(json.load(f).get('summary', {}).get('passed', 0))
-" 2>/dev/null || echo "0")
+    summary = json.load(f).get('summary', {})
+    print(summary.get('passed', 0), summary.get('total_tests', summary.get('total', 0)))
+" 2>/dev/null || echo "0 0")
 fi
 
 EMIT_BASELINE_JS=0
@@ -113,21 +115,48 @@ echo -e "${CYAN}→${RESET}  scripts/safe-run.sh ./scripts/conformance/conforman
 echo ""
 
 CONF_PASS=0
+CONF_RECORDED=0
 CONF_LAST_RUN="$REPO_ROOT/scripts/conformance/conformance-last-run.txt"
 
-# Run conformance normally and read the authoritative per-test results file it writes.
-scripts/safe-run.sh ./scripts/conformance/conformance.sh run || true
-if [[ -f "$CONF_LAST_RUN" ]]; then
-    CONF_PASS=$(python3 -c "
+read_conformance_results() {
+    local last_run_path="$1"
+    python3 -c "
 import sys
+pass_count = 0
+recorded = 0
 with open(sys.argv[1], encoding='utf-8', errors='replace') as f:
-    print(sum(1 for line in f if line.startswith('PASS ')))
-" "$CONF_LAST_RUN" 2>/dev/null || echo "0")
-fi
+    for line in f:
+        if line.startswith(('PASS ', 'FAIL ', 'CRASH ', 'TIMEOUT ')):
+            recorded += 1
+        if line.startswith('PASS '):
+            pass_count += 1
+print(pass_count, recorded)
+" "$last_run_path" 2>/dev/null || echo "0 0"
+}
 
-# Validate it's a number
-if ! [[ "$CONF_PASS" =~ ^[0-9]+$ ]]; then
-    CONF_PASS=0
+run_conformance_once() {
+    scripts/safe-run.sh ./scripts/conformance/conformance.sh run || true
+    if [[ -f "$CONF_LAST_RUN" ]]; then
+        read -r CONF_PASS CONF_RECORDED < <(read_conformance_results "$CONF_LAST_RUN")
+    else
+        CONF_PASS=0
+        CONF_RECORDED=0
+    fi
+
+    if ! [[ "$CONF_PASS" =~ ^[0-9]+$ ]]; then
+        CONF_PASS=0
+    fi
+    if ! [[ "$CONF_RECORDED" =~ ^[0-9]+$ ]]; then
+        CONF_RECORDED=0
+    fi
+}
+
+# Run conformance and retry once if the runner dropped results from the corpus.
+run_conformance_once
+if [[ "$CONFORMANCE_TOTAL" -gt 0 ]] && [[ "$CONF_RECORDED" -lt "$CONFORMANCE_TOTAL" ]]; then
+    MISSING_RESULTS=$((CONFORMANCE_TOTAL - CONF_RECORDED))
+    echo -e "${YELLOW}!${RESET}  conformance — incomplete run: recorded $CONF_RECORDED/$CONFORMANCE_TOTAL results; retrying once"
+    run_conformance_once
 fi
 
 if [[ "$CONF_PASS" -lt "$BASELINE_PASS" ]]; then
