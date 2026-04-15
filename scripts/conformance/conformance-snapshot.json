@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-04-15T11:18:39Z",
-  "git_sha": "991d73031983182ab0883b5b6348b64cb80eb689",
+  "timestamp": "2026-04-15T12:49:49Z",
+  "git_sha": "ac61e11c29038e1ce9c34ef3df48d025cf802392",
   "summary": {
     "total_tests": 12581,
     "passed": 11887,
@@ -11,9 +11,9 @@
     {
       "area": "types/intersection",
       "total": 24,
-      "passed": 17,
-      "failed": 7,
-      "pass_rate": 70.83
+      "passed": 16,
+      "failed": 8,
+      "pass_rate": 66.67
     },
     {
       "area": "es2019",
@@ -305,9 +305,9 @@
     {
       "area": "compiler",
       "total": 6519,
-      "passed": 6211,
-      "failed": 308,
-      "pass_rate": 95.28
+      "passed": 6212,
+      "failed": 307,
+      "pass_rate": 95.29
     },
     {
       "area": "classes/members",
@@ -1030,11 +1030,11 @@
       "count": 2
     },
     {
-      "code": "TS1213",
+      "code": "TS2502",
       "count": 2
     },
     {
-      "code": "TS2502",
+      "code": "TS1213",
       "count": 2
     }
   ],
@@ -1204,11 +1204,11 @@
   ],
   "false_positive_codes": [
     {
-      "code": "TS2536",
+      "code": "TS2883",
       "count": 2
     },
     {
-      "code": "TS2883",
+      "code": "TS2536",
       "count": 2
     },
     {
@@ -1220,11 +1220,11 @@
       "count": 2
     },
     {
-      "code": "TS2507",
+      "code": "TS2708",
       "count": 1
     },
     {
-      "code": "TS2708",
+      "code": "TS2507",
       "count": 1
     },
     {
@@ -1370,11 +1370,11 @@
       "count": 2
     },
     {
-      "code": "TS1213",
+      "code": "TS2502",
       "count": 2
     },
     {
-      "code": "TS2502",
+      "code": "TS1213",
       "count": 2
     },
     {
@@ -1520,11 +1520,11 @@
       "count": 1
     },
     {
-      "code": "TS2749",
+      "code": "TS2440",
       "count": 1
     },
     {
-      "code": "TS2440",
+      "code": "TS2749",
       "count": 1
     },
     {
@@ -1560,7 +1560,7 @@
     "false_positive": 7,
     "all_missing": 38,
     "wrong_code": 122,
-    "fingerprint_only": 506,
+    "fingerprint_only": 505,
     "close_to_passing": 62
   }
 }
