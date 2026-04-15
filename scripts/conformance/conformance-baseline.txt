@@ -420,7 +420,6 @@ FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/circular2.ts | 
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/exportDefault.ts | expected:[TS1361,TS2339] actual:[TS1361,TS2339]
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace9.ts | expected:[TS2308,TS2749] actual:[TS2308,TS2749]
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/typeOnlyESMImportFromCJS.ts | expected:[TS1541,TS1542] actual:[]
-FAIL TypeScript/tests/cases/conformance/externalModules/umd-errors.ts | expected:[TS1389] actual:[TS1005,TS1389]
 FAIL TypeScript/tests/cases/conformance/externalModules/umd2.ts | expected:[TS2694] actual:[TS2503]
 FAIL TypeScript/tests/cases/conformance/externalModules/verbatimModuleSyntaxAmbientConstEnum.ts | expected:[TS2300,TS2432,TS2748] actual:[TS2748]
 FAIL TypeScript/tests/cases/conformance/externalModules/verbatimModuleSyntaxCompat3.ts | expected:[TS5102] actual:[TS5102]
@@ -9616,6 +9615,7 @@ PASS TypeScript/tests/cases/conformance/externalModules/umd-augmentation-1.ts
 PASS TypeScript/tests/cases/conformance/externalModules/umd-augmentation-2.ts
 PASS TypeScript/tests/cases/conformance/externalModules/umd-augmentation-3.ts
 PASS TypeScript/tests/cases/conformance/externalModules/umd-augmentation-4.ts
+PASS TypeScript/tests/cases/conformance/externalModules/umd-errors.ts
 PASS TypeScript/tests/cases/conformance/externalModules/umd1.ts
 PASS TypeScript/tests/cases/conformance/externalModules/umd3.ts
 PASS TypeScript/tests/cases/conformance/externalModules/umd4.ts
@@ -11710,6 +11710,7 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionOfUnionOf
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionReduction.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
+PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
