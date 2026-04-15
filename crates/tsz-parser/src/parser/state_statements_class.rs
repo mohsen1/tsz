@@ -502,6 +502,15 @@ impl ParserState {
         let parameter_name_is_reserved_word =
             self.is_reserved_word() && !self.is_token(SyntaxKind::DefaultKeyword);
         let is_this_parameter = self.is_token(SyntaxKind::ThisKeyword);
+        // Literal reserved words (`null`, `true`, `false`) cannot form parameter
+        // names at all. tsc still parses the type annotation but anchors a
+        // TS1138 `Parameter declaration expected.` diagnostic at the following
+        // colon (see `reservedWords2.ts`). Track this so we can replicate the
+        // extra diagnostic below without emitting a cascading TS1005.
+        let parameter_name_is_literal_reserved_word = matches!(
+            self.token(),
+            SyntaxKind::NullKeyword | SyntaxKind::TrueKeyword | SyntaxKind::FalseKeyword
+        );
 
         // Parse parameter name - can be an identifier, keyword, or binding pattern
         let name = if self.is_token(SyntaxKind::OpenBraceToken) {
@@ -563,18 +572,29 @@ impl ParserState {
         let question_pos = self.token_pos();
         let question_token = self.parse_optional(SyntaxKind::QuestionToken);
 
-        let type_annotation = if parameter_name_is_reserved_word && !is_this_parameter {
-            NodeIndex::NONE
-        } else if self.parse_optional(SyntaxKind::ColonToken) {
-            // Parameter type annotations do NOT allow type predicates (matching tsc).
-            // In tsc, parseParameterType() calls parseType(), not parseTypeOrTypePredicate().
-            // Type predicates are only valid in return type positions.
-            // `this is T` is still parsed as a type predicate here because
-            // parse_type() always allows `this is T` (tsc: parseThisTypeOrThisTypePredicate).
-            self.parse_type()
-        } else {
-            NodeIndex::NONE
-        };
+        let type_annotation =
+            if parameter_name_is_literal_reserved_word && self.is_token(SyntaxKind::ColonToken) {
+                // Emit TS1138 at the colon to match tsc's reserved-literal recovery,
+                // then still consume `: <type>` so we don't cascade into TS1005.
+                use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.parse_error_at_current_token(
+                    diagnostic_messages::PARAMETER_DECLARATION_EXPECTED,
+                    diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
+                );
+                self.next_token();
+                self.parse_type()
+            } else if parameter_name_is_reserved_word && !is_this_parameter {
+                NodeIndex::NONE
+            } else if self.parse_optional(SyntaxKind::ColonToken) {
+                // Parameter type annotations do NOT allow type predicates (matching tsc).
+                // In tsc, parseParameterType() calls parseType(), not parseTypeOrTypePredicate().
+                // Type predicates are only valid in return type positions.
+                // `this is T` is still parsed as a type predicate here because
+                // parse_type() always allows `this is T` (tsc: parseThisTypeOrThisTypePredicate).
+                self.parse_type()
+            } else {
+                NodeIndex::NONE
+            };
 
         let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
             // NOTE: TS1015 (Parameter cannot have question mark and initializer)
