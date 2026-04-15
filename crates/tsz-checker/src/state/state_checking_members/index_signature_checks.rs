@@ -926,28 +926,42 @@ impl<'a> CheckerState<'a> {
                 && is_numeric_property
                 && !self.is_assignable_to(prop_type, number_value_type)
             {
-                let prop_type_str = self.format_type(prop_type);
-                let index_type_str = self.format_type(number_value_type);
+                // Deduplicate TS2411 across merged interface bodies.
+                // Property names like `1` (numeric) and `'1'` (string) are semantically
+                // the same, so we only report once per (interface, normalized_name, index_kind).
+                let dedup_key = (iface_type.0, prop_name.clone(), true);
+                if !self.ctx.emitted_ts2411_for_iface_prop.contains(&dedup_key) {
+                    self.ctx.emitted_ts2411_for_iface_prop.insert(dedup_key);
 
-                self.error_at_node_msg(
-                    name_idx,
-                    diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                    &[&diag_prop_name, &prop_type_str, "number", &index_type_str],
-                );
+                    let prop_type_str = self.format_type(prop_type);
+                    let index_type_str = self.format_type(number_value_type);
+
+                    self.error_at_node_msg(
+                        name_idx,
+                        diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                        &[&diag_prop_name, &prop_type_str, "number", &index_type_str],
+                    );
+                }
             }
 
             // Check against string index signature
             if let Some(string_value_type) = applicable_string_value
                 && !self.is_assignable_to(prop_type, string_value_type)
             {
-                let prop_type_str = self.format_type(prop_type);
-                let index_type_str = self.format_type(string_value_type);
+                // Deduplicate TS2411 across merged interface bodies (same as above).
+                let dedup_key = (iface_type.0, prop_name.clone(), false);
+                if !self.ctx.emitted_ts2411_for_iface_prop.contains(&dedup_key) {
+                    self.ctx.emitted_ts2411_for_iface_prop.insert(dedup_key);
 
-                self.error_at_node_msg(
-                    name_idx,
-                    diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                    &[&diag_prop_name, &prop_type_str, "string", &index_type_str],
-                );
+                    let prop_type_str = self.format_type(prop_type);
+                    let index_type_str = self.format_type(string_value_type);
+
+                    self.error_at_node_msg(
+                        name_idx,
+                        diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                        &[&diag_prop_name, &prop_type_str, "string", &index_type_str],
+                    );
+                }
             }
         }
     }

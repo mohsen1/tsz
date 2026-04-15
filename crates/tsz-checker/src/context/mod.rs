@@ -1546,6 +1546,13 @@ pub struct CheckerContext<'a> {
     /// Key: (`node_position`, `symbol_id`)
     pub emitted_ts2454_errors: FxHashSet<(u32, SymbolId)>,
 
+    /// Track which (interface_type, property_name, is_number_index) combinations
+    /// have already emitted TS2411 errors for merged interface declarations.
+    /// When the same property appears in multiple declaration bodies (e.g., `1` in one
+    /// body and `'1'` in another), we only report the error once.
+    /// Key: (`interface_type_id.0`, `normalized_prop_name`, `is_number_index`)
+    pub emitted_ts2411_for_iface_prop: FxHashSet<(u32, String, bool)>,
+
     /// Fuel counter for type resolution operations.
     /// Decremented on each type resolution to prevent timeout on pathological types.
     /// When exhausted, type resolution returns ERROR to prevent infinite loops.
