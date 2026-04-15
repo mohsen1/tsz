@@ -22231,6 +22231,46 @@ repro({
 }
 
 #[test]
+fn test_thisless_method_not_context_sensitive_for_inference() {
+    // Block-bodied methods with no parameters should NOT be considered context-sensitive
+    // even when they return an object literal. This matches tsc's behavior where
+    // hasContextSensitiveReturnExpression returns false for block bodies.
+    //
+    // Without this, state() is flagged as context-sensitive because it returns an object
+    // literal, and gets deferred to Round 2. This prevents State type parameter from
+    // being inferred from state()'s return type in Round 1, leaving mutations callback
+    // with unknown parameter type.
+    let source = r#"
+// @strict: true
+type StateFunction<State> = (s: State, ...args: any[]) => any;
+
+type StoreOptions<State> = {
+  state?: State | (() => State) | { (): State };
+  mutations?: Record<string, StateFunction<State>>;
+};
+
+declare function createStore<State extends Record<string, unknown>>(
+  options: StoreOptions<State>,
+): void;
+
+createStore({
+  state() {
+    return { bar2: 1 };
+  },
+  mutations: { inc: (state123) => state123.bar2++ },
+});
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts18046: Vec<_> = diagnostics.iter().filter(|d| d.0 == 18046).collect();
+    assert!(
+        ts18046.is_empty(),
+        "state() method with block body returning object literal should not be context-sensitive. \
+         state123 should be inferred as {{ bar2: number }}, not unknown. \
+         Got false TS18046: {ts18046:#?}"
+    );
+}
+
+#[test]
 fn test_jsdoc_constructor_overload_tags_emit_ts2394_for_incompatible_overload() {
     let diagnostics = compile_and_get_diagnostics_named(
         "overloadTag2.js",
