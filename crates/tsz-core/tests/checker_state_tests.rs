@@ -35883,3 +35883,70 @@ class TextBase implements IText {
         "Should still emit TS2449 for class used before its declaration"
     );
 }
+
+#[test]
+fn test_type_predicate_narrowing_no_redundant_intersection() {
+    use crate::parser::ParserState;
+
+    // Regression test: type predicate narrowing with conditional type utilities
+    // like Extract<T, Function> should produce Extract<T, Function> directly,
+    // not the redundant intersection T & Extract<T, Function>.
+    //
+    // The redundant intersection prevents proper evaluation of the conditional
+    // type during call resolution, which can cause false TS2348/TS2349 errors.
+    //
+    // This test verifies that calling a function whose return type is inferred
+    // from a type predicate with Extract<T, Function> doesn't produce false
+    // "not callable" errors.
+    let code = r#"
+declare function isFunction<T>(value: T): value is Extract<T, Function>;
+
+function getFunction<T>(item: T) {
+    if (isFunction(item)) {
+        return item;
+    }
+    throw new Error();
+}
+
+// When f12 calls getFunction(x), the return type should be
+// Extract<string | (() => string) | undefined, Function> which
+// evaluates to () => string. Calling f() should be valid.
+function f12(x: string | (() => string) | undefined) {
+    const f = getFunction(x);
+    f();
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let all_codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    // Should NOT have TS2348 (value not callable, did you mean new?)
+    // The is_constructor_type check should not falsely detect the type as constructable.
+    assert!(
+        !all_codes.contains(&2348),
+        "Should not emit TS2348 for Extract-narrowed function call. Diagnostics: {:?}",
+        all_codes
+    );
+}

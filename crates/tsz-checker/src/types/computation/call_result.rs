@@ -324,7 +324,9 @@ impl<'a> CheckerState<'a> {
                     }
                     return TypeId::VOID;
                 }
-                if self.is_constructor_type(callee_type) {
+                if self.is_constructor_type(callee_type)
+                    && !self.is_intersection_with_conditional_application(callee_type)
+                {
                     self.error_class_constructor_without_new_at(callee_type, callee_expr);
                 } else if self.is_get_accessor_call(callee_expr) {
                     self.error_get_accessor_not_callable_at(callee_expr);
@@ -1092,5 +1094,30 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// Check if a type is an intersection containing an Application of a conditional
+    /// type alias (like Extract, Exclude, NonNullable). These types arise from type
+    /// predicate narrowing and should not be treated as constructor types.
+    fn is_intersection_with_conditional_application(&self, type_id: TypeId) -> bool {
+        use tsz_solver::types::TypeData;
+        let Some(TypeData::Intersection(list_id)) = self.ctx.types.lookup(type_id) else {
+            return false;
+        };
+        let members = self.ctx.types.type_list(list_id);
+        members.iter().any(|&member| {
+            if let Some(TypeData::Application(app_id)) = self.ctx.types.lookup(member) {
+                let app = self.ctx.types.type_application(app_id);
+                if let Some(TypeData::Lazy(def_id)) = self.ctx.types.lookup(app.base) {
+                    if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                        && (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0
+                    {
+                        return true;
+                    }
+                }
+            }
+            false
+        })
     }
 }
