@@ -171,20 +171,34 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             resolved_target = self.resolve_lazy_type(expanded);
         }
 
-        // TSC emits TS4104 when a readonly array/tuple is assigned to a concrete
-        // mutable array/tuple target. This check must happen before structural analysis —
+        // TSC emits TS4104 when a readonly array/tuple is assigned to a mutable
+        // array/tuple target. This check must happen before structural analysis —
         // readonly-to-mutable is the primary failure reason and short-circuits further
-        // elaboration. TS4104 is NOT emitted when the target is a type parameter (just T),
-        // only when it's a concrete array/tuple like `number[]`, `[1]`, or `[...T]`.
+        // elaboration. When the target is a type parameter constrained to an array/tuple
+        // (e.g. `T extends unknown[]`), tsc also emits TS4104.
         if readonly_inner_type(self.interner, resolved_source).is_some()
             && readonly_inner_type(self.interner, resolved_target).is_none()
-            && (array_element_type(self.interner, resolved_target).is_some()
-                || tuple_list_id(self.interner, resolved_target).is_some())
         {
-            return Some(SubtypeFailureReason::ReadonlyToMutableAssignment {
-                source_type: source,
-                target_type: target,
-            });
+            let is_mutable_array_or_tuple = array_element_type(self.interner, resolved_target)
+                .is_some()
+                || tuple_list_id(self.interner, resolved_target).is_some();
+            // For type parameters (e.g. T extends unknown[]), check if the constraint
+            // is a mutable array/tuple — tsc emits TS4104 in that case too.
+            let is_type_param_with_array_constraint = !is_mutable_array_or_tuple
+                && is_type_parameter(self.interner, resolved_target)
+                && crate::visitor::type_param_info(self.interner, resolved_target)
+                    .and_then(|info| info.constraint)
+                    .is_some_and(|constraint| {
+                        let resolved_constraint = self.resolve_lazy_type(constraint);
+                        array_element_type(self.interner, resolved_constraint).is_some()
+                            || tuple_list_id(self.interner, resolved_constraint).is_some()
+                    });
+            if is_mutable_array_or_tuple || is_type_param_with_array_constraint {
+                return Some(SubtypeFailureReason::ReadonlyToMutableAssignment {
+                    source_type: source,
+                    target_type: target,
+                });
+            }
         }
 
         // TSC emits TS2322 (generic "not assignable") instead of TS2741/TS2739
