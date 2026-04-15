@@ -482,6 +482,20 @@ impl<'a> CheckerState<'a> {
             .iter()
             .position(|&n| n == arg_idx)?;
 
+        // When explicit type arguments are provided (e.g., `_.map<number, string, Date>(...)`),
+        // the annotation-based display cannot fully substitute type parameters that are only
+        // determined by the explicit type args (not inferable from call arguments). For example,
+        // in `map<T, U, V>(c: Collection<T, U>, f: (x: T, y: U) => V)`, V is only known from
+        // the explicit type arg `Date`, not from any call argument. Returning None lets the
+        // general type display format the correctly instantiated param_type TypeId directly.
+        if call
+            .type_arguments
+            .as_ref()
+            .is_some_and(|ta| !ta.nodes.is_empty())
+        {
+            return None;
+        }
+
         let raw_callee_type = self
             .resolve_qualified_symbol(call.expression)
             .or_else(|| self.resolve_identifier_symbol(call.expression))

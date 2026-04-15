@@ -733,3 +733,47 @@ foo({ e: 1, m: 1 });
         diag.message_text
     );
 }
+
+#[test]
+fn ts2345_explicit_type_args_display_uses_correct_overload() {
+    // When calling an overloaded method with explicit type arguments, the error
+    // message should display the parameter type from the overload whose type
+    // parameter count matches the explicit type arguments, not the first overload.
+    // Bug: `_.map<number, string, Date>(c2, rf1)` showed `=> any` (from the 2-param
+    // overload) instead of `=> Date` (from the 3-param overload).
+    let source = r#"
+interface Pair<A, B> { first: A; second: B; }
+
+interface Combinators {
+    map<T, U>(c: Pair<T, U>, f: (x: T, y: U) => any): Pair<any, any>;
+    map<T, U, V>(c: Pair<T, U>, f: (x: T, y: U) => V): Pair<T, V>;
+}
+
+declare var _: Combinators;
+declare var c2: Pair<number, string>;
+var rf1 = (x: number, y: string): string => { return "hello" };
+var r5b = _.map<number, string, boolean>(c2, rf1);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let codes: Vec<(u32, &str)> = diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.as_str()))
+        .collect();
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .unwrap_or_else(|| panic!("expected TS2345, got: {:?}", codes));
+
+    assert!(
+        diag.message_text
+            .contains("parameter of type '(x: number, y: string) => boolean'"),
+        "Expected the 3-param overload's parameter type with boolean, got: {}",
+        diag.message_text
+    );
+    assert!(
+        !diag.message_text.contains("=> any"),
+        "Should not show => any from the wrong overload, got: {}",
+        diag.message_text
+    );
+}
