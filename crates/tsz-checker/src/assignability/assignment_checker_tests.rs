@@ -336,6 +336,53 @@ var a: string, b: boolean[];
     );
 }
 
+/// TS2488 in variable declarations widens boolean literals, matching tsc.
+/// Regression test for conformance/es6/destructuring/iterableArrayPattern21.ts
+#[test]
+fn destructuring_declaration_widens_boolean_literals_for_ts2488() {
+    let diagnostics = diagnostics_for(
+        r#"
+// @target: es2015
+var [a, b] = { 0: "", 1: true };
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2488)
+        .expect("expected TS2488 for non-iterable destructuring declaration");
+
+    assert!(
+        diag.message_text.contains("1: boolean"),
+        "Expected TS2488 to widen boolean in var declaration, got: {:?}",
+        diag.message_text
+    );
+}
+
+/// TS2488 in assignment expressions preserves boolean literals, matching tsc.
+/// Regression test for conformance/es6/destructuring/iterableArrayPattern23.ts
+#[test]
+fn destructuring_assignment_preserves_boolean_literals_for_ts2488() {
+    let diagnostics = diagnostics_for(
+        r#"
+// @target: es2015
+var a: string, b: boolean;
+[a, b] = { 0: "", 1: true };
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2488)
+        .expect("expected TS2488 for non-iterable destructuring assignment");
+
+    assert!(
+        diag.message_text.contains("1: true"),
+        "Expected TS2488 to preserve boolean literal 'true' in assignment, got: {:?}",
+        diag.message_text
+    );
+}
+
 #[test]
 fn nested_object_literal_assignability_keeps_exact_property_anchor() {
     let source = r#"
