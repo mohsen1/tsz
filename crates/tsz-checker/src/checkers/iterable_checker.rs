@@ -1309,29 +1309,19 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
         error_node: NodeIndex,
-        preserve_boolean_literals: bool,
+        is_assignment_target: bool,
     ) {
         if let Some((start, end)) = self.get_node_span(error_node) {
             let evaluated_type = self.evaluate_type_for_assignability(type_id);
-            let has_rest_element = self
-                .ctx
-                .arena
-                .get(error_node)
-                .and_then(|node| self.ctx.arena.get_literal_expr(node))
-                .is_some_and(|array_lit| {
-                    array_lit.elements.nodes.iter().any(|&element_idx| {
-                        self.ctx.arena.get(element_idx).is_some_and(|element_node| {
-                            element_node.kind == tsz_parser::parser::syntax_kind_ext::SPREAD_ELEMENT
-                        })
-                    })
-                });
-            let preserve_boolean_literals = preserve_boolean_literals
-                && has_rest_element
-                && crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, type_id);
-            let display_type = if preserve_boolean_literals {
-                self.widen_type_for_display(evaluated_type)
+            // tsc preserves boolean literals in TS2488 messages for assignment
+            // targets (where variables are already declared with types), but
+            // widens them in variable declarations:
+            //   `[a, b] = { 0: "", 1: true }`  → `{ 0: string; 1: true; }`
+            //   `var [a, b] = { 0: "", 1: true }` → `{ 0: string; 1: boolean; }`
+            let display_type = if is_assignment_target {
+                self.restore_boolean_display_properties(evaluated_type, type_id)
             } else {
-                self.widen_literal_type(evaluated_type)
+                evaluated_type
             };
             let type_str = self.format_type_diagnostic_widened(display_type);
             let message = format_message(

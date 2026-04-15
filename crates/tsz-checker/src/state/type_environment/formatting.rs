@@ -213,4 +213,70 @@ impl<'a> CheckerState<'a> {
             formatter.format(type_b).into_owned(),
         )
     }
+
+    /// Restore boolean literal types from display properties onto an
+    /// already-widened object type.
+    ///
+    /// tsc preserves boolean literals (`true`/`false`) in error messages while
+    /// widening other literal types (`""` → `string`, `42` → `number`). When
+    /// the internal object type has already been widened (properties are
+    /// `boolean` not `true`), we look up the display-property side table to
+    /// find the original boolean literal and rebuild the object with it.
+    ///
+    /// Falls back to the `evaluated_type` if no display properties exist or
+    /// no boolean restoration is needed.
+    pub fn restore_boolean_display_properties(
+        &self,
+        evaluated_type: TypeId,
+        original_type: TypeId,
+    ) -> TypeId {
+        use tsz_solver::types::TypeData;
+
+        // Try display properties on both the evaluated and original type IDs.
+        let display_props = self
+            .ctx
+            .types
+            .get_display_properties(evaluated_type)
+            .or_else(|| self.ctx.types.get_display_properties(original_type));
+
+        let display_props = match display_props {
+            Some(props) => props,
+            None => return evaluated_type,
+        };
+
+        // Check if the evaluated type is an object with properties we can patch.
+        let shape = match self.ctx.types.lookup(evaluated_type) {
+            Some(TypeData::Object(shape_id)) => self.ctx.types.object_shape(shape_id),
+            _ => return evaluated_type,
+        };
+
+        // Build a map of boolean literal display properties keyed by property name.
+        let mut bool_overrides = rustc_hash::FxHashMap::default();
+        for dp in display_props.iter() {
+            if dp.type_id == TypeId::BOOLEAN_TRUE || dp.type_id == TypeId::BOOLEAN_FALSE {
+                bool_overrides.insert(dp.name, dp.type_id);
+            }
+        }
+
+        if bool_overrides.is_empty() {
+            return evaluated_type;
+        }
+
+        // Rebuild properties with boolean literals restored.
+        let mut new_props: Vec<tsz_solver::PropertyInfo> = shape
+            .properties
+            .iter()
+            .map(|prop| {
+                if let Some(&bool_type) = bool_overrides.get(&prop.name) {
+                    let mut p = prop.clone();
+                    p.type_id = bool_type;
+                    p
+                } else {
+                    prop.clone()
+                }
+            })
+            .collect();
+        new_props.sort_by_key(|p| p.name);
+        self.ctx.types.factory().object(new_props)
+    }
 }
