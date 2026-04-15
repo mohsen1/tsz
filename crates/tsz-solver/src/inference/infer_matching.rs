@@ -505,6 +505,32 @@ impl<'a> InferenceContext<'a> {
         let mapped = self.interner.mapped_type(mapped_id);
         let source = self.interner.object_shape(source_shape);
 
+        // Detect homomorphic mapped type: constraint is `keyof T` where T
+        // is an inference parameter. For these, we use reverse-mapped inference
+        // to construct a candidate for T from the source type's structure.
+        // This detection is shared across named-property and index-signature paths.
+        let homomorphic_var = if let Some(TypeData::KeyOf(inner)) =
+            self.interner.lookup(mapped.constraint)
+        {
+            // Resolve Lazy wrappers — type parameters may be stored as
+            // Lazy(DefId) rather than TypeParameter directly.
+            let resolved_inner = if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(inner) {
+                self.resolve_lazy_for_inference(def_id, inner)
+                    .unwrap_or(inner)
+            } else {
+                inner
+            };
+            if let Some(TypeData::TypeParameter(ref param_info)) =
+                self.interner.lookup(resolved_inner)
+            {
+                self.find_type_param(param_info.name)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         if !source.properties.is_empty() {
             // Infer the constraint type (K) from the union of source property names
             // e.g., for { foo: string, bar: number }, K = "foo" | "bar"
@@ -526,32 +552,6 @@ impl<'a> InferenceContext<'a> {
             // which includes MappedTypeConstraint: when multiple properties each
             // contribute a different type for T, the result should be their union
             // (e.g., Box<number> | Box<string> | Box<boolean>), not a single "best" type.
-            // Detect homomorphic mapped type: constraint is `keyof T` where T
-            // is an inference parameter. For these, we collect reverse-mapped
-            // properties during template inference and add a single object
-            // candidate for T after the loop.
-            let homomorphic_var =
-                if let Some(TypeData::KeyOf(inner)) = self.interner.lookup(mapped.constraint) {
-                    // Resolve Lazy wrappers — type parameters may be stored as
-                    // Lazy(DefId) rather than TypeParameter directly.
-                    let resolved_inner =
-                        if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(inner) {
-                            self.resolve_lazy_for_inference(def_id, inner)
-                                .unwrap_or(inner)
-                        } else {
-                            inner
-                        };
-                    if let Some(TypeData::TypeParameter(ref param_info)) =
-                        self.interner.lookup(resolved_inner)
-                    {
-                        self.find_type_param(param_info.name)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
             let template_priority = InferencePriority::MappedType;
             for prop in &source.properties {
                 let key_literal = self.interner.literal_string_atom(prop.name);
@@ -596,6 +596,21 @@ impl<'a> InferenceContext<'a> {
                 mapped.template,
                 InferencePriority::MappedType,
             )?;
+
+            // For homomorphic mapped types (constraint is `keyof T`), the source
+            // type with its index signature structure is the reverse-mapped candidate
+            // for T. This matches tsc's getReverseMappedType which, for sources with
+            // only index signatures matched against `{ [K in keyof T]: Template<T[K]> }`,
+            // produces a type structurally equivalent to the source as the candidate.
+            // This is critical for recursive mapped types like `Deep<T>` where the
+            // template wraps `T[K]` — the coinductive equivalence between the source
+            // and the mapped result means the source itself is a valid candidate for T.
+            if let Some(var) = homomorphic_var {
+                let source_type = self
+                    .interner
+                    .object_with_index_type_from_shape(source_shape);
+                self.add_candidate(var, source_type, InferencePriority::HomomorphicMappedType);
+            }
         } else if let Some(ref number_index) = source.number_index {
             // Source has a number index signature (e.g., `{ [index: number]: V }`).
             self.infer_from_types(TypeId::NUMBER, mapped.constraint, priority)?;
@@ -604,6 +619,14 @@ impl<'a> InferenceContext<'a> {
                 mapped.template,
                 InferencePriority::MappedType,
             )?;
+
+            // Same homomorphic reverse-mapping for number index signatures.
+            if let Some(var) = homomorphic_var {
+                let source_type = self
+                    .interner
+                    .object_with_index_type_from_shape(source_shape);
+                self.add_candidate(var, source_type, InferencePriority::HomomorphicMappedType);
+            }
         }
 
         Ok(())

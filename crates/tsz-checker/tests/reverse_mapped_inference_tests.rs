@@ -212,3 +212,28 @@ const store2 = configureStore({
         "Expected no TS2322 for reducer-pattern reverse mapped inference, got: {codes:?}"
     );
 }
+
+#[test]
+fn reverse_mapped_recursive_with_index_signature() {
+    // Regression test: recursive mapped type `Deep<T> = { [K in keyof T]: Deep<T[K]> }`
+    // inferred against an interface with only an index signature `{ [s: string]: B }`
+    // should produce T = B (coinductively), NOT T = unknown.
+    //
+    // Before the fix, reverse_infer_through_template's Case 6 (Mapped template)
+    // only iterated named properties, skipping index signatures entirely.
+    // For `interface B { [s: string]: B }` with no named properties, the
+    // reversal loop never ran, producing no candidate for T → T = unknown.
+    let code = r#"
+interface B { [s: string]: B }
+declare let b: B;
+type Deep<T> = { [K in keyof T]: Deep<T[K]> }
+declare function foo<T>(deep: Deep<T>): T;
+const oub = foo(b);
+oub.b;
+"#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&18046),
+        "Expected no TS18046 ('is of type unknown') for index-signature reverse mapped inference, got: {codes:?}"
+    );
+}
