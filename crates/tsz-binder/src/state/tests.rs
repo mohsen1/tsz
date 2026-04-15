@@ -3064,6 +3064,17 @@ const { a, b: { c, d }, e: [f, g] } = obj;
     assert!(binder.symbols.find_by_name("d").is_some(), "should bind d");
     assert!(binder.symbols.find_by_name("f").is_some(), "should bind f");
     assert!(binder.symbols.find_by_name("g").is_some(), "should bind g");
+
+    // Property-name keys (b, e) must NOT create bindings — they are only
+    // property selectors, not variable declarations.
+    assert!(
+        binder.file_locals.get("b").is_none(),
+        "property name 'b' must not be bound"
+    );
+    assert!(
+        binder.file_locals.get("e").is_none(),
+        "property name 'e' must not be bound"
+    );
 }
 
 #[test]
