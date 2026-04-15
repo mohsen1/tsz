@@ -1252,16 +1252,21 @@ impl<'a> CheckerState<'a> {
                     // (package) imports where Node's runtime resolution would fail loading
                     // an ESM module via require(). Relative imports within the project are
                     // handled by tsc's output processing, not Node's runtime loader.
-                    let is_explicit_cjs_file = self.ctx.file_name.ends_with(".cjs")
-                        || self.ctx.file_name.ends_with(".cts");
+                    // For .cjs (JavaScript) source files, this suppression applies to
+                    // ALL relative imports (including explicit .mjs targets) because tsc
+                    // does not run the CJS→ESM boundary check on JS source files beyond
+                    // package (non-relative) specifiers. For .cts (TypeScript) sources,
+                    // relative imports of explicit .mjs/.mts targets still emit TS1479.
+                    let is_explicit_cjs_js_file = self.ctx.file_name.ends_with(".cjs");
+                    let is_explicit_cjs_ts_file = self.ctx.file_name.ends_with(".cts");
                     let is_relative_import =
                         module_name.starts_with("./") || module_name.starts_with("../");
                     let relative_import_is_explicit_esm = module_name.ends_with(".mjs")
                         || module_name.ends_with(".mts")
                         || module_name.ends_with(".d.mts");
-                    let suppress_for_cjs_relative = is_explicit_cjs_file
-                        && is_relative_import
-                        && !relative_import_is_explicit_esm;
+                    let suppress_for_cjs_relative = is_relative_import
+                        && (is_explicit_cjs_js_file
+                            || (is_explicit_cjs_ts_file && !relative_import_is_explicit_esm));
 
                     // TS1479 only applies under Node16/Node18 module kinds where
                     // CJS/ESM interop boundaries exist at runtime. Node20/NodeNext,
