@@ -701,6 +701,10 @@ impl<'a> CheckerState<'a> {
             self.check_mixin_abstract_construct_constraint(stmt_idx, class);
         }
 
+        // TS2545: A mixin class must have a constructor with a single rest parameter
+        // of type 'any[]'.
+        self.check_mixin_constructor_rest_parameter(stmt_idx, class);
+
         // Check that non-abstract class implements all abstract members from base class (error 2654)
         self.check_abstract_member_implementations(stmt_idx, class);
 
@@ -969,6 +973,10 @@ impl<'a> CheckerState<'a> {
         // Check for property type compatibility with base class (error 2416)
         // Property type in derived class must be assignable to same property in base class
         self.check_property_inheritance_compatibility(class_idx, class);
+
+        // TS2545: A mixin class must have a constructor with a single rest parameter
+        // of type 'any[]'.
+        self.check_mixin_constructor_rest_parameter(class_idx, class);
 
         // Check that non-abstract class implements all abstract members from base class (error 2653, 2656)
         self.check_abstract_member_implementations(class_idx, class);
@@ -1704,6 +1712,133 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// TS2545: A mixin class must have a constructor with a single rest parameter
+    /// of type 'any[]'.
+    ///
+    /// When a class extends a type variable (type parameter), the construct
+    /// signatures of the constraint must each have a single rest parameter whose
+    /// type is `any[]` or `readonly any[]`.  If not, emit TS2545.
+    fn check_mixin_constructor_rest_parameter(
+        &mut self,
+        class_idx: NodeIndex,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_scanner::SyntaxKind;
+
+        let Some(ref heritage_clauses) = class_data.heritage_clauses else {
+            return;
+        };
+
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                continue;
+            };
+            let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                continue;
+            };
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+
+            let Some(&type_idx) = heritage.types.nodes.first() else {
+                continue;
+            };
+            let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                continue;
+            };
+
+            let expr_idx =
+                if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
+                    expr_type_args.expression
+                } else {
+                    type_idx
+                };
+
+            let base_type = self.resolve_heritage_expr_declared_type(expr_idx);
+            if base_type == TypeId::ERROR {
+                return;
+            }
+
+            // Only applies when the base type is a type parameter (mixin pattern)
+            let Some(constraint_type) =
+                class_query::type_parameter_constraint(self.ctx.types, base_type)
+            else {
+                return;
+            };
+
+            // Evaluate the constraint type (may be a Lazy type alias or Application)
+            let evaluated = self.evaluate_type_for_assignability(constraint_type);
+
+            // Get construct signatures from the evaluated constraint
+            let construct_sigs = self.collect_construct_signatures_from_evaluated(evaluated);
+            if construct_sigs.is_empty() {
+                return;
+            }
+
+            // Check if any construct signature with parameters has invalid mixin form.
+            // tsc skips signatures with 0 parameters (they are not problematic).
+            let has_invalid_sig = construct_sigs.iter().any(|sig| {
+                !sig.params.is_empty()
+                    && !(sig.params.len() == 1
+                        && sig.params[0].rest
+                        && !sig.params[0].optional
+                        && self.is_valid_mixin_rest_param_type(sig.params[0].type_id))
+            });
+
+            if has_invalid_sig {
+                self.error_at_node(
+                    class_idx,
+                    diagnostic_messages::A_MIXIN_CLASS_MUST_HAVE_A_CONSTRUCTOR_WITH_A_SINGLE_REST_PARAMETER_OF_TYPE_ANY,
+                    diagnostic_codes::A_MIXIN_CLASS_MUST_HAVE_A_CONSTRUCTOR_WITH_A_SINGLE_REST_PARAMETER_OF_TYPE_ANY,
+                );
+            }
+
+            return;
+        }
+    }
+
+    /// Collect construct signatures from an already-evaluated type.
+    fn collect_construct_signatures_from_evaluated(
+        &self,
+        type_id: TypeId,
+    ) -> Vec<tsz_solver::CallSignature> {
+        if let Some(sigs) = class_query::construct_signatures_for_type(self.ctx.types, type_id) {
+            if !sigs.is_empty() {
+                return sigs;
+            }
+        }
+
+        // Intersection: collect from all members
+        if let Some(members) = class_query::intersection_members(self.ctx.types, type_id) {
+            let mut all_sigs = Vec::new();
+            for &member in members.iter() {
+                if let Some(sigs) =
+                    class_query::construct_signatures_for_type(self.ctx.types, member)
+                {
+                    all_sigs.extend(sigs);
+                }
+            }
+            return all_sigs;
+        }
+
+        Vec::new()
+    }
+
+    /// Check if a rest parameter type is valid for a mixin constructor.
+    /// Accepts `any`, `any[]`, or `readonly any[]`.
+    fn is_valid_mixin_rest_param_type(&self, type_id: TypeId) -> bool {
+        // `any` is valid for mixin rest parameters (e.g., `...args: any`)
+        if type_id == TypeId::ANY {
+            return true;
+        }
+        // `any[]` or `readonly any[]`
+        matches!(
+            tsz_solver::type_queries::get_array_element_type(self.ctx.types, type_id),
+            Some(elem) if elem == TypeId::ANY
+        )
+    }
+
     /// Resolve the declared type for a heritage expression identifier.
     /// First tries `get_type_of_node`. If that returns ANY (which can happen
     /// due to symbol name merging), falls back to resolving the identifier's
@@ -2100,6 +2235,66 @@ class C extends Mixin2(Mixin1(Object)) {}
         assert!(
             !codes.contains(&2345),
             "Expected no TS2345 for double mixin conditional base class, got codes: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ts2545_mixin_with_optional_rest_parameter() {
+        // TS2545: A mixin class must have a constructor with a single rest
+        // parameter of type 'any[]'. Optional rest parameters are invalid.
+        let diags = check_source_diagnostics(
+            r#"
+type Constructor<T = {}> = new (...args?: any[]) => T;
+
+function Mixin<TBase extends Constructor>(Base: TBase) {
+    return class extends Base {
+    };
+}
+"#,
+        );
+        let all_codes: Vec<_> = diags.iter().map(|d| d.code).collect();
+        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2545).collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "Expected 1 TS2545 for optional rest param in mixin constructor, got codes: {all_codes:?}"
+        );
+    }
+
+    #[test]
+    fn ts2545_no_error_for_valid_mixin_constructor() {
+        // Valid mixin pattern: `...args: any[]` without optional should NOT emit TS2545.
+        let diags = check_source_diagnostics(
+            r#"
+type Constructor = new (...args: any[]) => {};
+
+function Mixin<TBase extends Constructor>(Base: TBase) {
+    return class extends Base {};
+}
+"#,
+        );
+        let all_codes: Vec<_> = diags.iter().map(|d| d.code).collect();
+        assert!(
+            !all_codes.contains(&2545),
+            "Should NOT emit TS2545 for valid mixin constructor pattern, got codes: {all_codes:?}"
+        );
+    }
+
+    #[test]
+    fn ts2545_no_error_for_bare_any_rest_parameter() {
+        // `...args: any` (bare any, not any[]) is also valid for mixin constructors.
+        let diags = check_source_diagnostics(
+            r#"
+function Mixin<TBase extends abstract new (...args: any) => any>(baseClass: TBase) {
+    abstract class MixinClass extends baseClass {}
+    return MixinClass;
+}
+"#,
+        );
+        let all_codes: Vec<_> = diags.iter().map(|d| d.code).collect();
+        assert!(
+            !all_codes.contains(&2545),
+            "Should NOT emit TS2545 for bare `any` rest param type, got codes: {all_codes:?}"
         );
     }
 }
