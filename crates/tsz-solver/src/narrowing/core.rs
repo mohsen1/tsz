@@ -1815,15 +1815,35 @@ impl<'a> NarrowingContext<'a> {
                                 } else {
                                     narrowed
                                 }
+                            } else if crate::type_param_info(self.db, resolved_source).is_some()
+                                && crate::visitors::visitor_predicates::contains_type_parameters(
+                                    self.db,
+                                    *target_type,
+                                )
+                            {
+                                // When the source is a bare type parameter (T)
+                                // AND the predicate type itself references type
+                                // parameters (e.g., `Extract<T, Function>` =
+                                // `T extends Function ? T : never`), the
+                                // predicate type is already a refinement of T.
+                                // Creating `T & Extract<T, U>` is redundant and
+                                // prevents the solver from recognising the
+                                // result as callable after instantiation (fixes
+                                // TS2348 false positive in conditionalTypes2).
+                                //
+                                // When the predicate is a concrete type like
+                                // `Pet` (no type params), we MUST keep the
+                                // intersection `TPet & Pet` to preserve the type
+                                // parameter identity (narrowingConstrainedTypeParameter).
+                                *target_type
                             } else {
-                                // Non-union source: use narrow_to_type first.
-                                // If it returns source unchanged (assignable but
-                                // possibly losing structural info) or NEVER (no
-                                // overlap), fall back to intersection.
+                                // Non-union, non-type-parameter source: use
+                                // narrow_to_type first.  If it returns source
+                                // unchanged (assignable but possibly losing
+                                // structural info) or NEVER (no overlap), fall
+                                // back to intersection.
                                 let narrowed = self.narrow_to_type(source_type, *target_type);
                                 if narrowed == source_type && narrowed != *target_type {
-                                    // Source was unchanged — intersect to preserve
-                                    // target's structural info (index sigs, etc.)
                                     self.db.intersection2(source_type, *target_type)
                                 } else if narrowed == TypeId::NEVER && source_type != TypeId::NEVER
                                 {

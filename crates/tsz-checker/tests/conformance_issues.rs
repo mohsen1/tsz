@@ -25440,3 +25440,42 @@ class Foo<K extends object, V> {
          Got: {ts2344:#?}"
     );
 }
+
+/// When a type parameter T is narrowed by a type predicate like
+/// `value is Extract<T, Function>`, the narrowed type should be
+/// `Extract<T, Function>`, not `T & Extract<T, Function>`.
+/// The intersection is redundant because `Extract<T, U>` is always
+/// a subset of T.  Keeping the intersection prevents the solver from
+/// recognising the result as callable after instantiation.
+#[test]
+fn test_type_predicate_extract_narrowing_no_redundant_intersection() {
+    let source = r#"
+function isFunction<T>(value: T): value is Extract<T, Function> {
+    return typeof value === "function";
+}
+
+function getFunction<T>(item: T) {
+    if (isFunction(item)) {
+        return item;
+    }
+    throw new Error();
+}
+
+function test(x: string | (() => string) | undefined) {
+    if (isFunction(x)) {
+        x();  // x is narrowed to Extract<...>, which is () => string
+    }
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    let call_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2348 || *c == 2349)
+        .collect();
+    assert!(
+        call_errors.is_empty(),
+        "Should NOT get TS2348/TS2349 for calling Extract<T, Function> narrowed value.\n\
+         The narrowed type should be callable after instantiation.\n\
+         Got: {call_errors:#?}"
+    );
+}
