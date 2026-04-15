@@ -1685,6 +1685,19 @@ impl ParserState {
         // directly, then consume the reserved word so the declaration parser can move on.
         if keyword == SyntaxKind::ClassKeyword && self.is_token(SyntaxKind::SemicolonToken) {
             self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
+        } else if keyword == SyntaxKind::ExportKeyword && self.is_token(SyntaxKind::AsKeyword) {
+            // `const export as namespace oo4;` — tsc recovers by re-parsing the
+            // trailing `as namespace <id>` as the export-as-namespace syntax and
+            // emits no further diagnostic beyond TS1389 on `export`.  Silently
+            // consume the `as namespace <id>` tail so we don't cascade into
+            // "';' expected." at `as`.
+            self.next_token(); // consume `as`
+            if self.is_token(SyntaxKind::NamespaceKeyword) {
+                self.next_token(); // consume `namespace`
+                if self.is_identifier_or_keyword() {
+                    self.next_token();
+                }
+            }
         } else if keyword == SyntaxKind::TypeOfKeyword {
             if !self.is_expression_start() {
                 // `var typeof;` → TS1109 because `;` can't start an expression.
