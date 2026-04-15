@@ -877,12 +877,44 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a declaration node is a parameter declaration.
+    ///
+    /// Also returns true for binding elements nested inside a PARAMETER node
+    /// (e.g. `function f({ a, b: [c] }) {}` — `a`, `b`, and `c` are all
+    /// parameters in tsc's accounting and are exempt from `noUnusedLocals`).
     fn is_parameter_declaration(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
         };
-        node.kind == syntax_kind_ext::PARAMETER
+        if node.kind == syntax_kind_ext::PARAMETER {
+            return true;
+        }
+        // Walk up through BINDING_ELEMENT / OBJECT_BINDING_PATTERN / ARRAY_BINDING_PATTERN
+        // ancestors — if the enclosing declaration is a PARAMETER, this is a destructured
+        // parameter binding.
+        let mut current = idx;
+        for _ in 0..20 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            match parent_node.kind {
+                syntax_kind_ext::PARAMETER => return true,
+                syntax_kind_ext::BINDING_ELEMENT
+                | syntax_kind_ext::OBJECT_BINDING_PATTERN
+                | syntax_kind_ext::ARRAY_BINDING_PATTERN => {
+                    current = parent;
+                }
+                _ => return false,
+            }
+        }
+        false
     }
 
     /// Check if a declaration is a `using` or `await using` variable.
