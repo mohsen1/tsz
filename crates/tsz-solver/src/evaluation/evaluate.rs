@@ -890,9 +890,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // IndexAccess type. These types are structurally unique per alias
             // (unlike Mapped/Object types which can collide with built-in aliases
             // like Record, Partial, Pick, Omit due to interning dedup).
+            // Note: We use contains_generic_type_parameters_db which excludes
+            // `this` types, since `this` is context-dependent and shouldn't
+            // cause conflation issues like generic type parameters can.
             if result != original_type_id {
                 let has_param_args = app.args.iter().any(|&arg| {
-                    crate::type_queries::contains_type_parameters_db(self.interner, arg)
+                    crate::type_queries::contains_generic_type_parameters_db(self.interner, arg)
                 });
                 if !has_param_args
                     || matches!(
