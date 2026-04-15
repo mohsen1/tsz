@@ -507,7 +507,6 @@ FAIL TypeScript/tests/cases/conformance/moduleResolution/node10Alternateresult_n
 FAIL TypeScript/tests/cases/conformance/moduleResolution/nodeModulesAtTypesPriority.ts
 FAIL TypeScript/tests/cases/conformance/moduleResolution/resolvesWithoutExportsDiagnostic1.ts
 FAIL TypeScript/tests/cases/conformance/moduleResolution/untypedModuleImport_noImplicitAny_relativePath.ts | expected:[TS7016] actual:[TS7016]
-FAIL TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJs1.ts | expected:[TS8002] actual:[TS1479,TS8002]
 FAIL TypeScript/tests/cases/conformance/node/esmModuleExports1.ts | expected:[TS2614] actual:[TS2351,TS2614]
 FAIL TypeScript/tests/cases/conformance/node/esmModuleExports2.ts | expected:[TS2351,TS2614,TS5024] actual:[TS2351,TS2614,TS5024]
 FAIL TypeScript/tests/cases/conformance/node/esmModuleExports3.ts | expected:[TS1362,TS2614] actual:[TS2351,TS2614]
@@ -10354,6 +10353,7 @@ PASS TypeScript/tests/cases/conformance/moduleResolution/untypedModuleImport_vsA
 PASS TypeScript/tests/cases/conformance/moduleResolution/untypedModuleImport_withAugmentation.ts
 PASS TypeScript/tests/cases/conformance/node/allowJs/nodeAllowJsPackageSelfName.ts
 PASS TypeScript/tests/cases/conformance/node/allowJs/nodeAllowJsPackageSelfName2.ts
+PASS TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJs1.ts
 PASS TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsCjsFromJs.ts
 PASS TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsConditionalPackageExports.ts
 PASS TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsDynamicImport.ts

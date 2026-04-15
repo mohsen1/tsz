@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-04-15T19:12:40Z",
-  "git_sha": "3321653d732cc502956e5cb41b51da9865b596cf",
+  "timestamp": "2026-04-15T19:28:59Z",
+  "git_sha": "27776272f896ea155e3c8daa5ffebe71d309eefa",
   "summary": {
     "total_tests": 12581,
-    "passed": 11890,
-    "failed": 691,
+    "passed": 11891,
+    "failed": 690,
     "pass_rate": 94.5
   },
   "areas_by_pass_rate": [
@@ -294,13 +294,6 @@
       "passed": 94,
       "failed": 5,
       "pass_rate": 94.95
-    },
-    {
-      "area": "node/allowJs",
-      "total": 21,
-      "passed": 20,
-      "failed": 1,
-      "pass_rate": 95.24
     },
     {
       "area": "compiler",
@@ -663,6 +656,13 @@
       "area": "internalModules/moduleDeclarations",
       "total": 12,
       "passed": 12,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
+      "area": "node/allowJs",
+      "total": 21,
+      "passed": 21,
       "failed": 0,
       "pass_rate": 100.0
     },
