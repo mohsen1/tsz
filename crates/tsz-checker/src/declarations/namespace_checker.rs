@@ -345,6 +345,29 @@ impl<'a> CheckerState<'a> {
             if !self.symbol_has_exported_value_declaration(member_id) {
                 continue;
             }
+            // Skip uninstantiated namespace members (type-only namespaces).
+            // The binder sets VALUE_MODULE | NAMESPACE_MODULE on ALL namespaces,
+            // but only instantiated ones (containing value declarations like classes,
+            // functions, variables) produce runtime properties. For example:
+            //   namespace Outer {
+            //     export namespace uninstantiated { export interface P {} }
+            //   }
+            // `uninstantiated` should NOT appear as a property on `typeof Outer`
+            // because it only contains type declarations.
+            if (member_flags & tsz_binder::symbol_flags::NAMESPACE_MODULE) != 0 {
+                let value_flags_except_module =
+                    tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE;
+                if (member_flags & value_flags_except_module) == 0 {
+                    let is_instantiated = member_symbol.map_or(false, |ms| {
+                        ms.declarations
+                            .iter()
+                            .any(|&decl_idx| self.is_namespace_declaration_instantiated(decl_idx))
+                    });
+                    if !is_instantiated {
+                        continue;
+                    }
+                }
+            }
             let mut member_type = self.namespace_export_member_type(member_id, member_flags);
             // For enum exports, use the enum namespace type (typeof Color)
             // which represents the enum object value with member properties,

@@ -25495,3 +25495,60 @@ class Foo<K extends object, V> {
          Got: {ts2344:#?}"
     );
 }
+
+/// Uninstantiated namespace members (containing only type declarations like
+/// interfaces) should NOT appear as value-level properties on `typeof Namespace`.
+///
+/// In TypeScript, `typeof Outer` only includes instantiated sub-namespaces
+/// (those with value declarations like classes, functions, variables) as properties.
+/// A sub-namespace that only exports interfaces is uninstantiated and should be
+/// excluded from the value type.
+///
+/// Regression test for: typeofInternalModules.ts conformance failure.
+/// Before this fix, we emitted TS2739 (multiple missing properties: instantiated,
+/// uninstantiated) instead of TS2741 (single missing property: instantiated).
+#[test]
+fn test_typeof_namespace_excludes_uninstantiated_sub_namespaces() {
+    let source = r#"
+namespace Outer {
+    export namespace instantiated {
+        export class C { }
+    }
+    export namespace uninstantiated {
+        export interface P { }
+    }
+}
+
+import importInst = Outer.instantiated;
+var x7: typeof Outer = Outer;
+x7 = importInst;
+    "#;
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    // We should NOT get TS2739 (multiple missing properties) because
+    // `uninstantiated` is a type-only namespace and shouldn't be counted.
+    let ts2739: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2739).collect();
+    assert!(
+        ts2739.is_empty(),
+        "Should NOT emit TS2739 for uninstantiated namespace member. \
+         `typeof Outer` should only include `instantiated` as a property, \
+         not `uninstantiated` (which only contains interface P). \
+         Got: {ts2739:#?}"
+    );
+
+    // We SHOULD get TS2741 (single missing property: 'instantiated')
+    // because `typeof importInst` doesn't have an `instantiated` property
+    // (it IS `typeof Outer.instantiated`).
+    let ts2741: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2741).collect();
+    assert!(
+        !ts2741.is_empty(),
+        "Expected TS2741 (single missing property) for assigning \
+         `typeof instantiated` to `typeof Outer`. Got diagnostics: {diagnostics:#?}"
+    );
+}
