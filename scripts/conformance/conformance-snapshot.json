@@ -1,19 +1,19 @@
 {
-  "timestamp": "2026-04-15T10:35:32Z",
-  "git_sha": "d1c0d1df2475e7b711c3c3eed00cf844da8ee03e",
+  "timestamp": "2026-04-15T11:18:39Z",
+  "git_sha": "991d73031983182ab0883b5b6348b64cb80eb689",
   "summary": {
     "total_tests": 12581,
-    "passed": 11885,
-    "failed": 696,
+    "passed": 11887,
+    "failed": 694,
     "pass_rate": 94.5
   },
   "areas_by_pass_rate": [
     {
       "area": "types/intersection",
       "total": 24,
-      "passed": 16,
-      "failed": 8,
-      "pass_rate": 66.67
+      "passed": 17,
+      "failed": 7,
+      "pass_rate": 70.83
     },
     {
       "area": "es2019",
@@ -219,13 +219,6 @@
       "pass_rate": 89.66
     },
     {
-      "area": "interfaces/interfaceDeclarations",
-      "total": 31,
-      "passed": 28,
-      "failed": 3,
-      "pass_rate": 90.32
-    },
-    {
       "area": "expressions/assignmentOperator",
       "total": 11,
       "passed": 10,
@@ -273,6 +266,13 @@
       "passed": 13,
       "failed": 1,
       "pass_rate": 92.86
+    },
+    {
+      "area": "interfaces/interfaceDeclarations",
+      "total": 31,
+      "passed": 29,
+      "failed": 2,
+      "pass_rate": 93.55
     },
     {
       "area": "types/nonPrimitive",
@@ -1560,7 +1560,7 @@
     "false_positive": 7,
     "all_missing": 38,
     "wrong_code": 122,
-    "fingerprint_only": 507,
+    "fingerprint_only": 506,
     "close_to_passing": 62
   }
 }

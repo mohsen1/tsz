@@ -424,7 +424,6 @@ FAIL TypeScript/tests/cases/conformance/generators/generatorReturnContextualType
 FAIL TypeScript/tests/cases/conformance/generators/generatorReturnTypeInferenceNonStrict.ts | expected:[TS7025,TS7055,TS7057] actual:[TS7025,TS7055,TS7057]
 FAIL TypeScript/tests/cases/conformance/importDefer/importDeferTypeConflict1.ts | expected:[TS1005,TS1434] actual:[TS1005,TS1434]
 FAIL TypeScript/tests/cases/conformance/importDefer/importDeferTypeConflict2.ts | expected:[TS1005,TS1434] actual:[TS1005,TS1434]
-FAIL TypeScript/tests/cases/conformance/interfaces/interfaceDeclarations/derivedInterfaceIncompatibleWithBaseIndexer.ts | expected:[TS2411] actual:[TS2411]
 FAIL TypeScript/tests/cases/conformance/interfaces/interfaceDeclarations/interfaceExtendsObjectIntersectionErrors.ts | expected:[TS2312,TS2411,TS2413,TS2416,TS2430] actual:[TS2312,TS2411,TS2413,TS2416,TS2430]
 FAIL TypeScript/tests/cases/conformance/interfaces/interfaceDeclarations/interfacesWithPredefinedTypesAsNames.ts | expected:[TS2427] actual:[TS2427]
 FAIL TypeScript/tests/cases/conformance/interfaces/interfacesExtendingClasses/implementingAnInterfaceExtendingClassWithPrivates2.ts | expected:[TS2339,TS2341,TS2415,TS2420] actual:[TS2339,TS2341,TS2415,TS2420]
@@ -9727,6 +9726,7 @@ PASS TypeScript/tests/cases/conformance/interfaces/interfaceDeclarations/asiPrev
 PASS TypeScript/tests/cases/conformance/interfaces/interfaceDeclarations/asiPreventsParsingAsInterface04.ts
 PASS TypeScript/tests/cases/conformance/interfaces/interfaceDeclarations/asiPreventsParsingAsInterface05.ts
 PASS TypeScript/tests/cases/conformance/interfaces/interfaceDeclarations/derivedInterfaceDoesNotHideBaseSignatures.ts
+PASS TypeScript/tests/cases/conformance/interfaces/interfaceDeclarations/derivedInterfaceIncompatibleWithBaseIndexer.ts
 PASS TypeScript/tests/cases/conformance/interfaces/interfaceDeclarations/interfaceExtendingOptionalChain.ts
 PASS TypeScript/tests/cases/conformance/interfaces/interfaceDeclarations/interfaceExtendsObjectIntersection.ts
 PASS TypeScript/tests/cases/conformance/interfaces/interfaceDeclarations/interfaceThatHidesBaseProperty.ts
@@ -11710,6 +11710,7 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionOfUnionOf
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionReduction.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
+PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
