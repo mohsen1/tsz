@@ -25403,10 +25403,10 @@ enum ENUM1 { A, B, C }
 /// generic with an indexed-access-type constraint like `WeakKey`, the Lazy
 /// refs inside the constraint (e.g., `WeakKeyTypes[keyof WeakKeyTypes]`) must
 /// be resolved before the assignability check. Without resolving them,
-/// `evaluate_type_for_assignability` returns the unevaluated IndexAccess and
+/// `evaluate_type_for_assignability` returns the unevaluated `IndexAccess` and
 /// the check incorrectly fails.
 ///
-/// Regression test for esNextWeakRefs_IterableWeakMap conformance failure.
+/// Regression test for `esNextWeakRefs_IterableWeakMap` conformance failure.
 #[test]
 fn test_ts2344_indexed_access_constraint_lazy_refs_resolved_in_class_member() {
     let diagnostics = compile_and_get_diagnostics(
