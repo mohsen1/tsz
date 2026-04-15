@@ -131,14 +131,22 @@ impl<'a> CheckerState<'a> {
                 props_type
             };
 
-            // Evaluate the props type, including generic applications like Readonly<Props>.
-            // evaluate_application_type handles mapped/utility types (e.g. Readonly<P>)
-            // that evaluate_type_with_env alone may not fully resolve.
-            let evaluated = self.evaluate_application_type(props_type);
-            let evaluated = self.evaluate_type_with_env(evaluated);
+<<<<<<< HEAD
+            // Evaluate the props type, including generic applications like
+            // `Readonly<Props>`. If evaluation degrades to `unknown`, fall back to
+            // the richer pre-resolution type to avoid false overload matches.
+            let application_evaluated = self.evaluate_application_type(props_type);
+            let evaluated = self.evaluate_type_with_env(application_evaluated);
+            let evaluated = if evaluated == TypeId::UNKNOWN
+                && application_evaluated != TypeId::UNKNOWN
+            {
+                application_evaluated
+            } else {
+                evaluated
+            };
             let resolved = self.resolve_type_for_property_access(evaluated);
-            // If resolution produces UNKNOWN (e.g. type not yet resolved),
-            // fall back to the evaluated type which preserves structural information.
+            // If resolution still produces UNKNOWN (e.g. type not yet resolved),
+            // keep the evaluated type which preserves more structural information.
             let props_resolved = if resolved == TypeId::UNKNOWN {
                 evaluated
             } else {

@@ -503,9 +503,6 @@ impl<'a> CheckerState<'a> {
                     && (self.is_overloaded_sfc(resolved_component_type)
                         || self.has_multi_signature_overloads(resolved_component_type)));
 
-            // Extract props type from the component and check attributes.
-            // TS2607/TS2608 are emitted within props extraction when applicable.
-            // Build display target with IntrinsicAttributes intersection for TS2322 messages.
             if let Some((props_type, raw_has_type_params)) = recovered_props {
                 if has_multi_construct {
                     // Class component with overloaded constructors: use overload
