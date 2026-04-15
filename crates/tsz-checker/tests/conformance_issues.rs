@@ -13517,6 +13517,61 @@ const p: string = Alpha.x;
         !diagnostics.iter().any(|(code, _)| *code == 2339),
         "Expected first UMD namespace export to win for Alpha.x without TS2339. Actual diagnostics: {diagnostics:#?}"
     );
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no diagnostics for umdGlobalConflict. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+/// Regression test: cross-binder SymbolId collision must not cause false
+/// TS2448 ("used before declaration") or TS2454 ("used before assignment")
+/// for UMD globals resolved from another file's binder.
+///
+/// When `resolve_identifier_symbol_from_all_binders` returns a SymbolId from
+/// another file, subsequent code that looks up that numeric ID in the local
+/// binder finds a *different* symbol. If that local symbol is a block-scoped
+/// variable, TDZ/DAA checks fire incorrectly.
+#[test]
+fn test_umd_global_no_false_tdz_or_daa_cross_binder() {
+    let files = [
+        (
+            "/lib/index.d.ts",
+            r#"
+export as namespace Lib;
+export var value: string;
+"#,
+        ),
+        (
+            "/app.ts",
+            r#"
+const result: string = Lib.value;
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &files,
+        "/app.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2448),
+        "Should not emit TS2448 for cross-file UMD global. Diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2454),
+        "Should not emit TS2454 for cross-file UMD global. Diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no diagnostics. Actual: {diagnostics:#?}"
+    );
 }
 
 fn compile_two_global_files_get_diagnostics_with_options(

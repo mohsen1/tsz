@@ -50,6 +50,18 @@ impl<'a> CheckerState<'a> {
             return declared_type;
         }
 
+        // Skip flow analysis for cross-file symbols.
+        // The SymbolId belongs to a different binder's arena, so looking it up
+        // in the local binder hits a different symbol (cross-binder SymbolId
+        // collision). This causes false TS2454 for UMD globals and other
+        // cross-file bindings.
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id) {
+            if file_idx != self.ctx.current_file_idx {
+                trace!("Cross-file symbol, skipping flow analysis");
+                return declared_type;
+            }
+        }
+
         // Const object/array literal bindings have a stable type shape and do not
         // benefit from control-flow narrowing. Skipping CFG traversal for these
         // bindings avoids O(N²) reference matching on large call-heavy files.

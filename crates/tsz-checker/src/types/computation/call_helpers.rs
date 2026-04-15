@@ -73,6 +73,17 @@ impl<'a> CheckerState<'a> {
         if self.ctx.is_declaration_file() {
             return false;
         }
+        // Skip TDZ for cross-file symbols (resolved from another binder).
+        // The SymbolId belongs to a different binder's arena, so looking it up
+        // in the local binder would hit a different symbol at the same numeric
+        // ID, causing false TS2448/TS2454 (cross-binder SymbolId collision).
+        // Cross-file symbols (e.g., UMD global aliases from `export as namespace`)
+        // have no same-file TDZ — they are evaluated when their origin file loads.
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id) {
+            if file_idx != self.ctx.current_file_idx {
+                return false;
+            }
+        }
         let is_tdz_in_static_block =
             self.is_variable_used_before_declaration_in_static_block(sym_id, idx);
         let is_tdz_in_property_initializer =
