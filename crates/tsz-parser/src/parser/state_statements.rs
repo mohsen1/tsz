@@ -680,15 +680,12 @@ impl ParserState {
             SyntaxKind::TypeKeyword => self.parse_statement_type_keyword(),
             SyntaxKind::EnumKeyword => self.parse_enum_declaration(),
             SyntaxKind::DeclareKeyword => {
-                // TS1184: 'declare' modifier cannot appear inside a block statement.
-                // tsc emits this alongside the ambient declaration's own diagnostics.
-                if self.in_block_context() {
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        "Modifiers cannot appear here.",
-                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
-                    );
-                }
+                // Note: TS1184/TS1234/TS1235 for `declare` in block context are
+                // handled by the checker's grammar checks (check_module_declaration,
+                // check_grammar_module_element_context, etc.), not the parser.
+                // The parser must NOT emit TS1184 here because that would set
+                // has_syntax_parse_errors and suppress the checker's more specific
+                // diagnostics (TS1234 for ambient modules, TS1235 for namespaces).
                 self.parse_statement_declare_or_expression()
             }
             SyntaxKind::NamespaceKeyword
@@ -700,14 +697,12 @@ impl ParserState {
             SyntaxKind::ForKeyword => self.parse_for_statement(),
             SyntaxKind::SemicolonToken => self.parse_empty_statement(),
             SyntaxKind::ExportKeyword => {
-                // TS1184: 'export' modifier cannot appear inside a block statement.
-                if self.in_block_context() {
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        "Modifiers cannot appear here.",
-                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
-                    );
-                }
+                // Note: TS1184/TS1231/TS1233/TS1258 for `export` in block context
+                // are handled by the checker's grammar checks
+                // (check_grammar_module_element_context), not the parser.
+                // The parser must NOT emit TS1184 here because that would set
+                // has_syntax_parse_errors and suppress the checker's more specific
+                // diagnostics.
                 self.parse_export_declaration()
             }
             SyntaxKind::ImportKeyword => self.parse_statement_import_keyword(),
