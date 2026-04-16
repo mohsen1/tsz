@@ -337,3 +337,52 @@ class Test {
         "expected computed object literal to keep a string index signature"
     );
 }
+
+/// When a file declares a class that shadows a known global value name (e.g.,
+/// `Promise`, `Error`), property access on the class should resolve through
+/// the file-local constructor type — not the global lib type. This ensures
+/// custom static members (including overloaded methods) are visible.
+#[test]
+fn class_shadowing_global_name_preserves_static_members() {
+    let source = r#"
+declare class Error {
+    static custom(msg: string): Error;
+    static custom(msg: string, code: number): Error;
+}
+const x = Error.custom;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    // The type of `Error.custom` should be an overloaded callable, not an
+    // error/any from the global Error constructor which lacks `custom`.
+    let x_init = variable_declaration_initializer_at(&parser, root, 1);
+    let x_type = checker.get_type_of_node(x_init);
+    let formatted = checker.format_type(x_type);
+
+    // The file-local Error class defines `custom` as a static method.
+    // The type must NOT be `any` (which would mean the global Error
+    // was used and the property was not found).
+    assert_ne!(
+        formatted, "any",
+        "Error.custom should resolve through the local class, not the global"
+    );
+    assert!(
+        formatted.contains("msg: string"),
+        "expected Error.custom to have the local static method signature, got: {formatted}"
+    );
+}
