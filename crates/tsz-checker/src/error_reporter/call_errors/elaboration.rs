@@ -1088,6 +1088,31 @@ impl<'a> CheckerState<'a> {
                     } else {
                         cached_prop_type
                     }
+                } else if self
+                    .ctx
+                    .arena
+                    .get(prop_value_idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+                {
+                    // For nested object literal properties, the cached type may have been
+                    // widened (e.g., `{a: 1}` → `{a: number}`) before the contextual type
+                    // from the generic call was available. Re-check with the target property
+                    // type as context to see if the literal form is actually assignable.
+                    // Example: `foo({ a: { a: 1, x: 1 } })` where `a` expects
+                    // `Required<{a?: 1; x: 1}>` — the cached `{a: number}` fails, but
+                    // the contextually-typed `{a: 1; x: 1}` passes.
+                    let contextual_request =
+                        crate::context::TypingRequest::with_contextual_type(target_prop_type);
+                    let contextual_prop_type =
+                        self.get_type_of_node_with_request(prop_value_idx, &contextual_request);
+                    if contextual_prop_type != TypeId::ERROR
+                        && contextual_prop_type != TypeId::ANY
+                        && self.is_assignable_to(contextual_prop_type, target_prop_type)
+                    {
+                        contextual_prop_type
+                    } else {
+                        cached_prop_type
+                    }
                 } else {
                     cached_prop_type
                 }

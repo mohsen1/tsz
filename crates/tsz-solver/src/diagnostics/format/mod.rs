@@ -480,7 +480,33 @@ impl<'a> TypeFormatter<'a> {
                     false
                 };
 
-            if (!is_simple_type || use_keyof_alias)
+            // Application aliases: for Union types that expanded from a generic type alias
+            // (e.g., `IteratorResult<T>` → `IteratorYieldResult<T> | IteratorReturnResult<TReturn>`),
+            // redirect to the application form. tsc preserves the generic name in error messages.
+            //
+            // Only do this when the union has at least one non-literal, non-intrinsic member.
+            // Purely-literal unions from generic aliases (e.g., `1 | 2` from `ValueOf<Obj>`)
+            // should still show in expanded form, matching tsc behavior.
+            let use_application_alias = is_simple_type
+                && matches!(&key, TypeData::Union(..))
+                && matches!(
+                    self.interner.lookup(alias_origin),
+                    Some(TypeData::Application(_))
+                )
+                && if let TypeData::Union(member_list_id) = &key {
+                    let members = self.interner.type_list(*member_list_id);
+                    members.iter().any(|&m| {
+                        !matches!(
+                            self.interner.lookup(m),
+                            Some(TypeData::Literal(_) | TypeData::Intrinsic(_) | TypeData::Error)
+                                | None
+                        )
+                    })
+                } else {
+                    false
+                };
+
+            if (!is_simple_type || use_keyof_alias || use_application_alias)
                 && self.display_alias_visiting.insert(alias_origin)
             {
                 let result = self.format(alias_origin);

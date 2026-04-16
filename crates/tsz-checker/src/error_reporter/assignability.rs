@@ -1005,6 +1005,14 @@ impl<'a> CheckerState<'a> {
             return source_display;
         }
 
+        // Application types (generic instantiations like `Foo<{ b?: 1; x: 1 }>`)
+        // carry literals in their type arguments — these come from type annotations,
+        // not from fresh expression literals, and must NOT be text-widened.
+        // tsc always shows literal type args as-is in assignability messages.
+        if Self::type_displays_as_application(self.ctx.types, source) {
+            return source_display;
+        }
+
         // For intersection types with display properties (fresh object literal in an
         // intersection), check whether the *target* type has literal-typed properties.
         // tsc preserves literal display when the target expects literals (e.g.
@@ -1047,6 +1055,11 @@ impl<'a> CheckerState<'a> {
         {
             return target_display;
         }
+
+        // Application types carry literals in type arguments — preserve them.
+        if Self::type_displays_as_application(self.ctx.types, target) {
+            return target_display;
+        }
         let evaluated = self.evaluate_type_for_assignability(target);
         let widened = crate::query_boundaries::common::widen_type(self.ctx.types, evaluated);
         let widened = self.widen_function_like_display_type(widened);
@@ -1056,6 +1069,25 @@ impl<'a> CheckerState<'a> {
         } else {
             widened_display
         }
+    }
+
+    /// Returns true when `ty` would be formatted as an Application type (e.g. `Foo<{...}>`).
+    ///
+    /// Application types carry their type arguments from annotations — the literals in those
+    /// args represent declared types, not fresh expression values, and must never be text-widened
+    /// in `rewrite_{source,target}_display_for_non_literal_*` calls.
+    fn type_displays_as_application(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
+        // Direct Application: Application(Lazy(Foo), [args])
+        if tsz_solver::is_generic_application(db, ty) {
+            return true;
+        }
+        // Evaluated Application: concrete Object that carries display_alias → Application
+        if let Some(alias) = db.get_display_alias(ty)
+            && tsz_solver::is_generic_application(db, alias)
+        {
+            return true;
+        }
+        false
     }
 
     /// Check if the target type has any properties whose types contain literal
