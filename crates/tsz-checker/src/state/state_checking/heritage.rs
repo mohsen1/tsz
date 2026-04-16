@@ -581,9 +581,18 @@ impl<'a> CheckerState<'a> {
                                 if let Some((lib_type, lib_type_name)) =
                                     self.shadowed_lib_variable_type(sym_to_check)
                                 {
-                                    if lib_type != TypeId::ERROR
-                                        && !self.is_constructor_type(lib_type)
-                                    {
+                                    // Use strict constructor check matching tsc's
+                                    // isConstructorType: only construct signatures
+                                    // count, NOT prototype property presence.
+                                    // SymbolConstructor has `readonly prototype: Symbol`
+                                    // but no construct signatures — tsc emits TS2507.
+                                    let lib_has_construct_sigs =
+                                        class_query::construct_signatures_for_type(
+                                            self.ctx.types,
+                                            lib_type,
+                                        )
+                                        .is_some_and(|sigs| !sigs.is_empty());
+                                    if lib_type != TypeId::ERROR && !lib_has_construct_sigs {
                                         use crate::diagnostics::{
                                             diagnostic_codes, diagnostic_messages, format_message,
                                         };
@@ -619,12 +628,44 @@ impl<'a> CheckerState<'a> {
                                     lib_var_info
                                         .as_ref()
                                         .filter(|(t, _)| {
-                                            *t != TypeId::ERROR && !self.is_constructor_type(*t)
+                                            // Use strict constructor check matching tsc's
+                                            // isConstructorType: only construct signatures,
+                                            // not prototype property presence.
+                                            let has_construct_sigs =
+                                                class_query::construct_signatures_for_type(
+                                                    self.ctx.types,
+                                                    *t,
+                                                )
+                                                .is_some_and(|sigs| !sigs.is_empty());
+                                            *t != TypeId::ERROR && !has_construct_sigs
                                         })
                                         .map(|(t, _)| *t)
                                 } else {
                                     None
                                 };
+
+                                // When lib_var_override is set, the lib variable's type
+                                // overrides the user class for extends checking. Since it
+                                // is set only when the lib type has NO construct signatures,
+                                // emit TS2507 with the lib type name (matching tsc).
+                                if lib_var_override.is_some() {
+                                    use crate::diagnostics::{
+                                        diagnostic_codes, diagnostic_messages, format_message,
+                                    };
+                                    let type_name = lib_var_info
+                                        .as_ref()
+                                        .map(|(_, name)| name.as_str())
+                                        .unwrap_or("unknown");
+                                    let message = format_message(
+                                        diagnostic_messages::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+                                        &[type_name],
+                                    );
+                                    self.error_at_node(
+                                        expr_idx,
+                                        &message,
+                                        diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+                                    );
+                                }
 
                                 // Route heritage constructor validation through the canonical
                                 // relation boundary for unified error code routing.
@@ -1109,6 +1150,26 @@ impl<'a> CheckerState<'a> {
 
         // The heritage symbol must have a CLASS flag (from user code)
         if (symbol.flags & symbol_flags::CLASS) == 0 {
+            return None;
+        }
+
+        // Only classes at global/module scope can shadow lib variables.
+        // A class inside a namespace (e.g., `namespace ts { class Symbol {} }`)
+        // does NOT shadow the global `declare var Symbol: SymbolConstructor`.
+        let is_at_global_scope = symbol.declarations.iter().any(|&decl_idx| {
+            if let Some(ext) = self.ctx.arena.get_extended(decl_idx) {
+                let parent = ext.parent;
+                if let Some(parent_node) = self.ctx.arena.get(parent) {
+                    // Parent is SOURCE_FILE → global scope
+                    parent_node.kind == syntax_kind_ext::SOURCE_FILE
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        });
+        if !is_at_global_scope {
             return None;
         }
 
