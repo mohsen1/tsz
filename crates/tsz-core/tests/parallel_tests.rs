@@ -8540,3 +8540,65 @@ const p: string = Alpha.x;
         "Expected no errors for UMD global conflict (first in wins). Got: {errors:#?}"
     );
 }
+
+/// Cross-module optional interface property must include `undefined` in its type.
+///
+/// When an interface has `server?: IServer`, the property type should be
+/// `IServer | undefined`. Passing this to a parameter that expects `IServer`
+/// should emit TS2345. This tests that cross-module type resolution preserves
+/// the optional flag on interface properties.
+#[test]
+fn test_cross_module_optional_interface_property_emits_ts2345() {
+    let files = vec![
+        (
+            "server.ts".to_string(),
+            r#"
+export interface IServer {}
+export interface IWorkspace {
+    toAbsolutePath(server: IServer, extra?: string): string;
+}
+export interface IConfiguration {
+    workspace: IWorkspace;
+    server?: IServer;
+}
+"#
+            .to_string(),
+        ),
+        (
+            "consumer.ts".to_string(),
+            r#"
+import * as server from './server';
+function run(configuration: server.IConfiguration) {
+    var absoluteWorkspacePath = configuration.workspace.toAbsolutePath(configuration.server);
+}
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let consumer = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "consumer.ts")
+        .expect("expected consumer.ts result");
+
+    let has_ts2345 = consumer.diagnostics.iter().any(|diag| diag.code == 2345);
+    assert!(
+        has_ts2345,
+        "Expected TS2345 for passing optional IServer|undefined to IServer parameter. \
+         Cross-module optional interface property type must include undefined. \
+         Actual diagnostics: {:#?}",
+        consumer.diagnostics
+    );
+}
