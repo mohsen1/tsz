@@ -777,6 +777,60 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
+
+    /// Walk a type annotation looking for `FunctionType`/`ConstructorType` nodes and
+    /// emit TS7006/TS7019 for any parameters that lack explicit type annotations when
+    /// `--noImplicitAny` is enabled.
+    ///
+    /// Called for class property type annotations in ambient (declare) classes, where
+    /// `check_type_for_missing_names` is not invoked because there is no initializer.
+    /// Example: `pub_f10: (x) => string` — tsc emits TS7006 for `x`.
+    pub(crate) fn check_type_annotation_for_implicit_any_params(&mut self, type_idx: NodeIndex) {
+        use tsz_parser::parser::syntax_kind_ext;
+        let Some(node) = self.ctx.arena.get(type_idx) else {
+            return;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
+                if let Some(func_type) = self.ctx.arena.get_function_type(node) {
+                    for (pi, &param_idx) in func_type.parameters.nodes.iter().enumerate() {
+                        if let Some(param_node) = self.ctx.arena.get(param_idx)
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        {
+                            self.maybe_report_implicit_any_parameter(param, false, pi);
+                        }
+                    }
+                    // Recurse into return type for nested function types like `() => (x) => void`
+                    if func_type.type_annotation.is_some() {
+                        self.check_type_annotation_for_implicit_any_params(
+                            func_type.type_annotation,
+                        );
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
+                if let Some(composite) = self.ctx.arena.get_composite_type(node) {
+                    for &member_idx in composite.types.nodes.clone().iter() {
+                        self.check_type_annotation_for_implicit_any_params(member_idx);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::ARRAY_TYPE => {
+                if let Some(arr) = self.ctx.arena.get_array_type(node) {
+                    self.check_type_annotation_for_implicit_any_params(arr.element_type);
+                }
+            }
+            k if k == syntax_kind_ext::OPTIONAL_TYPE
+                || k == syntax_kind_ext::REST_TYPE
+                || k == syntax_kind_ext::PARENTHESIZED_TYPE =>
+            {
+                if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
+                    self.check_type_annotation_for_implicit_any_params(wrapped.type_node);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 #[cfg(test)]
