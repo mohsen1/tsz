@@ -1839,7 +1839,6 @@ impl<'a> CheckerState<'a> {
             symbol: class_symbol,
             is_abstract: is_abstract_class,
         });
-
         // Track constructor accessibility
         if let Some(level) = constructor_access {
             match level {
