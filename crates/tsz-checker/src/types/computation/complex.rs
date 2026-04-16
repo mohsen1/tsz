@@ -575,6 +575,9 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .is_some_and(|s| !s.type_params.is_empty())
             && new_expr.type_arguments.is_none();
+        let has_const_type_params = constructor_shape
+            .as_ref()
+            .is_some_and(|s| s.type_params.iter().any(|tp| tp.is_const));
         trace!(
             is_generic_new = is_generic_new,
             constructor_shape_found = constructor_shape.is_some(),
@@ -641,15 +644,12 @@ impl<'a> CheckerState<'a> {
             // `@template const T`), set const-assertion context so argument
             // expressions produce readonly tuples and readonly objects with
             // literal property types — matching tsc's const type param behavior.
-            if constructor_shape
-                .as_ref()
-                .is_some_and(|s| s.type_params.iter().any(|tp| tp.is_const))
-            {
+            if has_const_type_params {
                 self.ctx.in_const_assertion = true;
             }
         }
 
-        let arg_types = if is_generic_new {
+        let mut arg_types = if is_generic_new {
             if let Some(shape) = constructor_shape {
                 // Pre-compute which parameter positions should skip excess property
                 // checking because the original parameter type contains a type parameter.
@@ -1070,6 +1070,19 @@ impl<'a> CheckerState<'a> {
         self.ctx.generic_excess_skip = prev_generic_excess_skip;
         self.ctx.preserve_literal_types = prev_preserve_literals;
         self.ctx.in_const_assertion = prev_in_const_assertion;
+
+        // For generic constructors (without const type params), widen scalar literal
+        // arg types for error display. During arg collection, preserve_literal_types
+        // was true so that generic inference gets precise literal types (e.g., `true`
+        // for `T = true`). But for TS2345 error messages, tsc displays the widened
+        // type (`boolean`, not `true`). The function call path achieves this via its
+        // multi-pass inference; here we widen explicitly post-collection.
+        if is_generic_new && !has_const_type_params {
+            for arg_type in arg_types.iter_mut() {
+                *arg_type =
+                    tsz_solver::operations::widening::widen_literal_type(self.ctx.types, *arg_type);
+            }
+        }
 
         self.ensure_relation_input_ready(constructor_type);
         self.ensure_relation_inputs_ready(&arg_types);
