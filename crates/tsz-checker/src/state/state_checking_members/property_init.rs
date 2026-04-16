@@ -6,17 +6,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> CheckerState<'a> {
-    // =========================================================================
-    // Super Expression Validation
-    // =========================================================================
-
-    // Check if a super expression is inside a nested function within a constructor.
-    // Walks up the AST from the given node to determine if it's inside
-    // a nested function (function expression, arrow function) within a constructor.
-    //
-    // ## Parameters:
-    // 17. Property Initialization Checking (5 functions)
-
     /// Check for TS2729: Property is used before its initialization.
     ///
     /// This checks if a property initializer references another property via `this.X`
