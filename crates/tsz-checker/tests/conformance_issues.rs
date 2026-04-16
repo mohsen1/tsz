@@ -25706,3 +25706,87 @@ type TestType<C extends string | ComponentType<any>> =
          doesn't satisfy the constraint. Got diagnostics: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_ts1062_self_referencing_promise_in_await() {
+    if !lib_files_available() {
+        return;
+    }
+    let source = r#"
+type T1 = 1 | Promise<T1> | T1[];
+
+export async function myFunction(param: T1) {
+    const awaited = await param;
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts1062_count = diagnostics.iter().filter(|(code, _)| *code == 1062).count();
+    assert!(
+        ts1062_count >= 1,
+        "Expected TS1062 for self-referencing Promise<T1> in await expression.\nGot: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts1062_effect_result_self_referencing_promise() {
+    if !lib_files_available() {
+        return;
+    }
+    let source = r#"
+type EffectResult =
+    | (() => EffectResult)
+    | Promise<EffectResult>;
+
+export async function handleEffectResult(result: EffectResult) {
+    if (result instanceof Function) {
+        await handleEffectResult(result());
+    } else if (result instanceof Promise) {
+        await handleEffectResult(await result);
+    }
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts1062_count = diagnostics.iter().filter(|(code, _)| *code == 1062).count();
+    assert!(
+        ts1062_count >= 1,
+        "Expected TS1062 for self-referencing Promise<EffectResult> in await.\nGot: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_no_ts1062_for_non_self_referencing_promise() {
+    if !lib_files_available() {
+        return;
+    }
+    let source = r#"
+async function normalAwait() {
+    const x = await Promise.resolve(42);
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts1062_count = diagnostics.iter().filter(|(code, _)| *code == 1062).count();
+    assert_eq!(
+        ts1062_count, 0,
+        "Should NOT emit TS1062 for non-self-referencing Promise.\nGot: {diagnostics:#?}"
+    );
+}
