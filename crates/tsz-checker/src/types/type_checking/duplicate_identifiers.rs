@@ -105,6 +105,11 @@ impl<'a> CheckerState<'a> {
                 self.jsx_runtime_conflict_declarations_for_current_file(&symbol.escaped_name);
             let default_import_alias_conflicts = self
                 .default_import_alias_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let module_block_scoped_conflicts = self
+                .module_file_block_scoped_conflict_declarations_for_current_file(
+                    &symbol.escaped_name,
+                    symbol.flags,
+                );
 
             // Check if single NodeIndex has multiple arenas (cross-file duplicate with
             // same NodeIndex due to identical file structure). In this case, declarations
@@ -123,6 +128,7 @@ impl<'a> CheckerState<'a> {
                     && global_scope_declarations.is_empty()
                     && jsx_runtime_conflict_declarations.is_empty()
                     && default_import_alias_conflicts.is_empty()
+                    && module_block_scoped_conflicts.is_empty()
                 {
                     continue;
                 }
@@ -171,6 +177,7 @@ impl<'a> CheckerState<'a> {
                 || !global_scope_declarations.is_empty()
                 || !jsx_runtime_conflict_declarations.is_empty()
                 || !default_import_alias_conflicts.is_empty()
+                || !module_block_scoped_conflicts.is_empty()
             {
                 has_remote = true;
             }
@@ -247,6 +254,11 @@ impl<'a> CheckerState<'a> {
                 self.jsx_runtime_conflict_declarations_for_current_file(&symbol.escaped_name);
             let default_import_alias_conflicts = self
                 .default_import_alias_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let module_block_scoped_conflicts = self
+                .module_file_block_scoped_conflict_declarations_for_current_file(
+                    &symbol.escaped_name,
+                    symbol.flags,
+                );
 
             if emit_ts6200
                 && cross_file_conflicts
@@ -271,6 +283,7 @@ impl<'a> CheckerState<'a> {
                     && global_scope_declarations.is_empty()
                     && jsx_runtime_conflict_declarations.is_empty()
                     && default_import_alias_conflicts.is_empty()
+                    && module_block_scoped_conflicts.is_empty()
                 {
                     continue;
                 }
@@ -364,6 +377,7 @@ impl<'a> CheckerState<'a> {
             declarations.extend(global_scope_declarations);
             declarations.extend(jsx_runtime_conflict_declarations);
             declarations.extend(default_import_alias_conflicts);
+            declarations.extend(module_block_scoped_conflicts);
 
             if declarations.len() <= 1 {
                 continue;
