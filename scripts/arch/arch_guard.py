@@ -408,6 +408,7 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/state/type_analysis/core.rs",
             "crates/tsz-checker/src/declarations/import/declaration.rs",
             "crates/tsz-checker/src/types/type_checking/duplicate_identifiers.rs",
+            "crates/tsz-checker/src/types/type_checking/duplicate_identifiers_helpers.rs",
             "crates/tsz-checker/src/types/property_access_type/resolve.rs",
             "crates/tsz-checker/src/types/queries/lib.rs",
             "crates/tsz-checker/src/types/computation/call_inference.rs",
