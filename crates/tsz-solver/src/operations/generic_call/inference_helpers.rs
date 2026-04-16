@@ -810,6 +810,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             if !has_generic_call_sig && !has_generic_construct_sig {
                 return source_ty;
             }
+            // When the Callable has construct signatures AND properties (static
+            // members), it represents a class constructor type (e.g., `typeof
+            // MyClass`). Decomposing it into a Function type would lose static
+            // members and the construct signature, causing false TS2345/TS2769
+            // errors when the class is passed as an argument to a `typeof MyClass`
+            // parameter in generic overload resolution.
+            if !shape.construct_signatures.is_empty() && !shape.properties.is_empty() {
+                return source_ty;
+            }
         }
         let evaluated_source_ty = self.interner.evaluate_type(source_ty);
         let evaluated_target_ty = self.interner.evaluate_type(target_ty);
