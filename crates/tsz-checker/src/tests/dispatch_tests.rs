@@ -2019,3 +2019,28 @@ var p3 = m3.Color.Blue;
         ts2403.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn ts2345_readonly_array_preserves_readonly_in_message() {
+    // When a readonly array is passed where a mutable array is expected,
+    // the TS2345 message should display 'readonly number[]' not 'number[]'.
+    let diags = check_source_diagnostics(
+        r#"
+declare const a: readonly number[];
+declare function fn(x: number[]): void;
+fn(a);
+"#,
+    );
+    let matching: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    assert_eq!(matching.len(), 1, "Expected one TS2345, got: {diags:?}");
+
+    let msg = &matching[0].message_text;
+    assert!(
+        msg.contains("'readonly number[]'"),
+        "Expected 'readonly number[]' in TS2345 message, got: {msg}"
+    );
+    assert!(
+        msg.contains("parameter of type 'number[]'"),
+        "Expected 'number[]' as target type, got: {msg}"
+    );
+}
