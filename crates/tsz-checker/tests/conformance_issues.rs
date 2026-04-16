@@ -25706,3 +25706,74 @@ type TestType<C extends string | ComponentType<any>> =
          doesn't satisfy the constraint. Got diagnostics: {diagnostics:?}"
     );
 }
+
+/// Module elements inside function bodies should get specific grammar errors
+/// (TS1231-TS1235, TS1258) from the checker, not just TS1184 from the parser.
+/// Previously the parser emitted TS1184 for export/declare in block context,
+/// which set has_syntax_parse_errors and suppressed the checker's specific codes.
+#[test]
+fn module_elements_in_wrong_context_emit_specific_codes() {
+    let source = r#"
+function blah() {
+    namespace M { }
+    export namespace N { export interface I { } }
+    declare module "ambient" { }
+    export = M;
+    export * from "ambient";
+    export default class C { }
+    import I = M;
+    import * as Foo from "ambient";
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    let codes: Vec<u32> = diagnostics.iter().map(|(c, _)| *c).collect();
+
+    // TS1235: namespace in wrong context
+    assert!(
+        codes.contains(&1235),
+        "Expected TS1235 (namespace not at top level). Got codes: {codes:?}"
+    );
+    // TS1234: ambient module in wrong context
+    assert!(
+        codes.contains(&1234),
+        "Expected TS1234 (ambient module not at top level). Got codes: {codes:?}"
+    );
+    // TS1231: export assignment in wrong context
+    assert!(
+        codes.contains(&1231),
+        "Expected TS1231 (export assignment not at top level). Got codes: {codes:?}"
+    );
+    // TS1233: export declaration in wrong context
+    assert!(
+        codes.contains(&1233),
+        "Expected TS1233 (export declaration not at top level). Got codes: {codes:?}"
+    );
+    // TS1232: import declaration in wrong context
+    assert!(
+        codes.contains(&1232),
+        "Expected TS1232 (import not at top level). Got codes: {codes:?}"
+    );
+    // TS1184: modifiers cannot appear here (for export default class)
+    assert!(
+        codes.contains(&1184),
+        "Expected TS1184 (modifiers cannot appear here for export class). Got codes: {codes:?}"
+    );
+}
+
+/// `declare const/class/enum` inside a function body should emit TS1184.
+#[test]
+fn declare_in_block_context_emits_ts1184() {
+    let source = r#"
+function f() {
+    declare const x: number;
+    declare class C {}
+    declare enum E { A }
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts1184_count = diagnostics.iter().filter(|(c, _)| *c == 1184).count();
+    assert_eq!(
+        ts1184_count, 3,
+        "Expected 3 TS1184 errors (one for each declare). Got diagnostics: {diagnostics:?}"
+    );
+}
