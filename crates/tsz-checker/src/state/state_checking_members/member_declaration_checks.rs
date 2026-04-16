@@ -480,8 +480,16 @@ impl<'a> CheckerState<'a> {
                     self.check_type_parameters_for_missing_names(&func_type.type_parameters);
                     self.check_duplicate_type_parameters(&func_type.type_parameters);
                     self.check_duplicate_parameters(&func_type.parameters, false);
-                    for &param_idx in &func_type.parameters.nodes {
+                    for (pi, &param_idx) in func_type.parameters.nodes.iter().enumerate() {
                         self.check_parameter_type_for_missing_names(param_idx);
+                        // Function type literals in type positions (e.g. `(x) => string`)
+                        // require explicit parameter types under --noImplicitAny, just like
+                        // method signatures.  tsc emits TS7006/TS7019 for untyped params here.
+                        if let Some(param_node) = self.ctx.arena.get(param_idx)
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        {
+                            self.maybe_report_implicit_any_parameter(param, false, pi);
+                        }
                     }
                     let typeof_param_names =
                         self.push_typeof_params_from_ast_nodes(&func_type.parameters.nodes);

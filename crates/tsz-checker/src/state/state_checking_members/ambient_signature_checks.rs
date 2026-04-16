@@ -131,6 +131,14 @@ impl<'a> CheckerState<'a> {
             self.check_nested_type_refs_for_ts2314(prop.type_annotation);
         }
 
+        // noImplicitAny: check function-type annotation parameters for TS7006/TS7019.
+        // Ambient class properties (no initializer) skip the normal `check_type_for_missing_names`
+        // path, so we explicitly walk the type annotation here.
+        // Example: `public pub_f10: (x) => string;` — tsc emits TS7006 for `x`.
+        if prop.type_annotation.is_some() && self.ctx.no_implicit_any() {
+            self.check_type_annotation_for_implicit_any_params(prop.type_annotation);
+        }
+
         // Track static property initializer context for TS17011
         let is_static = self.has_static_modifier(&prop.modifiers);
         let prev_static_prop_init = self
