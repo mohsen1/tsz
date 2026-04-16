@@ -674,6 +674,198 @@ impl<'a> CheckerState<'a> {
         declarations
     }
 
+    /// Detect conflicts between a global script's block-scoped variable declaration
+    /// and same-named top-level declarations in module (external) files.
+    ///
+    /// In tsc, when a script file declares `let`/`const` in the global scope and a
+    /// module file also has a top-level declaration with the same name, tsc reports
+    /// TS2451 ("Cannot redeclare block-scoped variable") on the global declaration.
+    /// This covers cases like:
+    /// - `types/lib/index.d.ts`: `declare let $` (global) vs `app.ts`: `export let $` (module)
+    /// - `@types/node/index.d.ts`: `declare const require` (global) vs module files using CommonJS
+    pub(super) fn module_file_block_scoped_conflict_declarations_for_current_file(
+        &self,
+        name: &str,
+        sym_flags: u32,
+    ) -> Vec<(NodeIndex, u32, bool, bool, DuplicateDeclarationOrigin)> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Only applies when the current file is a script (non-module)
+        if self.ctx.binder.is_external_module() {
+            return Vec::new();
+        }
+        // Only check for block-scoped variables (let/const)
+        if (sym_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
+            return Vec::new();
+        }
+
+        // Only applies to type declaration files (.d.ts). In tsc, global
+        // block-scoped declarations from type root / @types .d.ts files
+        // conflict with same-named module declarations. Regular .ts/.js
+        // script files' block-scoped variables do NOT conflict with module
+        // declarations because they are user code, not ambient type definitions.
+        if !self.ctx.is_declaration_file() {
+            return Vec::new();
+        }
+
+        let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
+            return Vec::new();
+        };
+
+        let mut declarations = Vec::new();
+
+        for (file_idx, arena) in all_arenas.iter().enumerate() {
+            if file_idx == self.ctx.current_file_idx {
+                continue;
+            }
+            let Some(binder) = self.ctx.get_binder_for_file(file_idx) else {
+                continue;
+            };
+            // Only check module files (script files are handled by
+            // same_name_top_level_script_declarations_for_current_file)
+            if !binder.is_external_module() {
+                continue;
+            }
+
+            let Some(source_file) = arena.source_files.first() else {
+                continue;
+            };
+
+            for &stmt_idx in &source_file.statements.nodes {
+                let Some(stmt_node) = arena.get(stmt_idx) else {
+                    continue;
+                };
+
+                // Unwrap export declarations
+                let decl_idx = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                    let Some(export_decl) = arena.get_export_decl(stmt_node) else {
+                        continue;
+                    };
+                    export_decl.export_clause
+                } else {
+                    stmt_idx
+                };
+                let Some(decl_node) = arena.get(decl_idx) else {
+                    continue;
+                };
+
+                let matches_name = match decl_node.kind {
+                    syntax_kind_ext::VARIABLE_STATEMENT => {
+                        // Check variable declarations inside the statement
+                        if let Some(var_stmt) = arena.get_variable(decl_node) {
+                            self.variable_statement_contains_name(
+                                arena,
+                                &var_stmt.declarations,
+                                name,
+                            )
+                        } else {
+                            false
+                        }
+                    }
+                    syntax_kind_ext::FUNCTION_DECLARATION => arena
+                        .get_function(decl_node)
+                        .and_then(|decl| arena.get_identifier_at(decl.name))
+                        .is_some_and(|ident| ident.escaped_text == name),
+                    syntax_kind_ext::CLASS_DECLARATION => arena
+                        .get_class(decl_node)
+                        .and_then(|decl| arena.get_identifier_at(decl.name))
+                        .is_some_and(|ident| ident.escaped_text == name),
+                    _ => false,
+                };
+
+                if !matches_name {
+                    continue;
+                }
+
+                // For variable statements, find the specific declaration with the name
+                if decl_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                    if let Some(var_stmt) = arena.get_variable(decl_node) {
+                        for &dl_idx in &var_stmt.declarations.nodes {
+                            let Some(dl_node) = arena.get(dl_idx) else {
+                                continue;
+                            };
+                            let Some(dl_data) = arena.get_variable(dl_node) else {
+                                continue;
+                            };
+                            for &vd_idx in &dl_data.declarations.nodes {
+                                let Some(vd_node) = arena.get(vd_idx) else {
+                                    continue;
+                                };
+                                let Some(var_decl) = arena.get_variable_declaration(vd_node) else {
+                                    continue;
+                                };
+                                if let Some(ident) = arena.get_identifier_at(var_decl.name)
+                                    && ident.escaped_text == name
+                                    && let Some(flags) =
+                                        self.declaration_symbol_flags(arena, vd_idx)
+                                {
+                                    let is_exported = self.is_declaration_exported(arena, stmt_idx);
+                                    declarations.push((
+                                        vd_idx,
+                                        flags,
+                                        false,
+                                        is_exported,
+                                        DuplicateDeclarationOrigin::SymbolDeclaration,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    let Some(flags) = self.declaration_symbol_flags(arena, decl_idx) else {
+                        continue;
+                    };
+                    let is_exported = self.is_declaration_exported(arena, decl_idx);
+                    declarations.push((
+                        decl_idx,
+                        flags,
+                        false,
+                        is_exported,
+                        DuplicateDeclarationOrigin::SymbolDeclaration,
+                    ));
+                }
+            }
+        }
+
+        declarations
+    }
+
+    /// Check if a variable statement (or declaration list) contains a declaration
+    /// with the given name.
+    fn variable_statement_contains_name(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        decl_list: &tsz_parser::parser::NodeList,
+        name: &str,
+    ) -> bool {
+        for &dl_idx in &decl_list.nodes {
+            let Some(dl_node) = arena.get(dl_idx) else {
+                continue;
+            };
+            if let Some(dl_data) = arena.get_variable(dl_node) {
+                for &vd_idx in &dl_data.declarations.nodes {
+                    let Some(vd_node) = arena.get(vd_idx) else {
+                        continue;
+                    };
+                    if let Some(var_decl) = arena.get_variable_declaration(vd_node)
+                        && arena
+                            .get_identifier_at(var_decl.name)
+                            .is_some_and(|ident| ident.escaped_text == name)
+                    {
+                        return true;
+                    }
+                }
+            } else if let Some(var_decl) = arena.get_variable_declaration(dl_node)
+                && arena
+                    .get_identifier_at(var_decl.name)
+                    .is_some_and(|ident| ident.escaped_text == name)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     pub(super) fn is_namespace_export_declaration_name_in_current_file(
         &self,
         decl_idx: NodeIndex,
@@ -1898,6 +2090,43 @@ declare module "express" {
                     .iter()
                     .any(|(_, flags, _)| (flags & tsz_binder::symbol_flags::INTERFACE) != 0),
                 "Expected export surface to include interface flags, got: {decls:#?}"
+            );
+        });
+    }
+
+    #[test]
+    fn module_block_scoped_conflict_detects_global_vs_module_let() {
+        // Simulates typeReferenceDirectives7.ts:
+        // Script file declares `let $` (global, block-scoped)
+        // Module file declares `export let $` (module, block-scoped)
+        // Expected: the helper finds the module file's `$` as a conflict
+        let files = [
+            (
+                "/a.d.ts",
+                // Script file (no import/export) — global `let $`
+                "declare let $: { x: number }\n",
+            ),
+            (
+                "/index.d.ts",
+                // Module file (has export) — module-scoped `let $`
+                "export let $ = 1;\nexport let x: typeof $;\n",
+            ),
+        ];
+
+        with_checker(&files, "/a.d.ts", |checker, _a_idx, _index_idx| {
+            let conflicts = checker
+                .module_file_block_scoped_conflict_declarations_for_current_file(
+                    "$",
+                    tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE,
+                );
+
+            assert!(
+                !conflicts.is_empty(),
+                "Expected to find module file's `$` as a block-scoped conflict"
+            );
+            assert!(
+                conflicts.iter().all(|(_, _, is_local, _, _)| !*is_local),
+                "All conflict declarations should be remote: {conflicts:#?}"
             );
         });
     }
