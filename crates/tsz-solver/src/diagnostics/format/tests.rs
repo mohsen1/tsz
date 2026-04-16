@@ -436,9 +436,13 @@ fn format_intersection_uses_display_properties_for_anonymous_object_member() {
 }
 
 #[test]
-fn format_intersection_flattens_anonymous_objects() {
-    // tsc flattens `{ a: null } & { b: string }` to `{ a: null; b: string }`
-    // when all members are anonymous object types with disjoint properties.
+fn format_intersection_preserves_anonymous_objects() {
+    // tsc's `typeToString` preserves the intersection form (`A & B`) for
+    // IntersectionType values, even when every member is an anonymous object
+    // literal type. A merged single-object display is only produced when the
+    // type is already stored as a single object (e.g. via spread/apparent-type
+    // computation). See intersectionsAndOptionalProperties.ts and
+    // jsxEmptyExpressionNotCountedAsChild2.tsx for cases that depend on this.
     let db = TypeInterner::new();
 
     let a_prop = PropertyInfo::new(db.intern_string("a"), TypeId::NULL);
@@ -451,14 +455,13 @@ fn format_intersection_flattens_anonymous_objects() {
     let mut fmt = TypeFormatter::new(&db);
     let result = fmt.format(intersection);
 
-    // Should be flattened: `{ a: null; b: string; }` (not `{ a: null; } & { b: string; }`)
     assert!(
-        !result.contains(" & "),
-        "Intersection of anonymous objects should be flattened, got: {result}"
+        result.contains(" & "),
+        "Intersection of anonymous objects should keep `&` display, got: {result}"
     );
     assert!(
         result.contains("a: null") && result.contains("b: string"),
-        "Flattened intersection should contain both properties, got: {result}"
+        "Intersection display should contain both members' properties, got: {result}"
     );
 }
 
