@@ -437,6 +437,22 @@ impl<'a> CheckerContext<'a> {
         }
     }
 
+    /// Register a class `extends` relationship in **both** type environments.
+    ///
+    /// This is required so the FlowAnalyzer's `NarrowingContext` (which uses
+    /// `type_environment`) can resolve nominal instanceof relationships just as
+    /// the evaluator (`type_env`) can.  Without this, `is_class_ancestor` always
+    /// returns `false` for user-defined class hierarchies during narrowing, causing
+    /// `D1 & C1` intersections instead of the correct `D1` narrowed type.
+    pub fn register_class_extends_in_envs(&self, def_id: DefId, parent_def_id: DefId) {
+        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+            env.register_class_extends(def_id, parent_def_id);
+        }
+        if let Ok(mut env) = self.type_environment.try_borrow_mut() {
+            env.register_class_extends(def_id, parent_def_id);
+        }
+    }
+
     /// Register an augmented definition body in **both** type environments.
     ///
     /// If the definition is a class (or already has a class-instance entry),

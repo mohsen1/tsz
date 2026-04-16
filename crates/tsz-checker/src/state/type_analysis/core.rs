@@ -2092,12 +2092,18 @@ impl<'a> CheckerState<'a> {
                     // Register class extends relationship for nominal instanceof narrowing.
                     // Look up the parent class via InheritanceGraph (SymbolId-based) and
                     // convert to DefId so the solver can walk the extends chain.
+                    // Must register in BOTH type environments (type_env for the evaluator
+                    // and type_environment for the FlowAnalyzer's NarrowingContext).
                     if let Some(def_id) = def_id {
                         let parents = self.ctx.inheritance_graph.get_parents(sym_id);
                         if let Some(&parent_sym) = parents.first()
                             && let Some(parent_def_id) = self.ctx.get_existing_def_id(parent_sym)
                         {
                             env.register_class_extends(def_id, parent_def_id);
+                            // Also register in type_environment so FlowAnalyzer sees it.
+                            if let Ok(mut te) = self.ctx.type_environment.try_borrow_mut() {
+                                te.register_class_extends(def_id, parent_def_id);
+                            }
                         }
                     }
                 } else if type_params.is_empty() {
