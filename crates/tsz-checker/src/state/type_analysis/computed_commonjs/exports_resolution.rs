@@ -1017,6 +1017,15 @@ impl<'a> CheckerState<'a> {
                 let export_equals_type = self.get_type_of_symbol(export_equals_sym);
                 self.widen_type_for_display(export_equals_type)
             });
+            // TypeScript allows `export { X as "module.exports" }` in ESM modules.
+            // When a CJS file `require()`s such a module, the result is the value of
+            // the "module.exports" export, not the namespace. Treat it like `export =`.
+            if export_equals_type.is_none() {
+                if let Some(module_exports_sym) = exports_table.get("module.exports") {
+                    let me_type = self.get_type_of_symbol(module_exports_sym);
+                    export_equals_type = Some(self.widen_type_for_display(me_type));
+                }
+            }
             let augment_target = source_file_idx
                 .and_then(|src_idx| {
                     self.ctx

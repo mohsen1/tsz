@@ -431,8 +431,9 @@ impl BinderState {
 
                                 // For export { foo }, property_name is NONE, name is "foo"
                                 // For export { foo as bar }, property_name is "foo", name is "bar"
+                                // For export { foo as "module.exports" }, name is a string literal
                                 let original_name = if spec.property_name.is_none() {
-                                    Self::get_identifier_name(arena, spec.name)
+                                    Self::get_identifier_or_string_literal_name(arena, spec.name)
                                 } else {
                                     Self::get_identifier_name(arena, spec.property_name)
                                 };
@@ -440,7 +441,7 @@ impl BinderState {
                                 let exported_name = if spec.name.is_none() {
                                     original_name
                                 } else {
-                                    Self::get_identifier_name(arena, spec.name)
+                                    Self::get_identifier_or_string_literal_name(arena, spec.name)
                                 };
 
                                 if let (Some(orig), Some(exp)) = (original_name, exported_name) {
@@ -550,13 +551,20 @@ impl BinderState {
                                     && let Some(spec) = arena.get_specifier(spec_node)
                                 {
                                     // Get the original name (property_name) and exported name (name)
+                                    // Use get_identifier_or_string_literal_name for the exported
+                                    // name to handle string literal names like "module.exports".
                                     let original_name = if spec.property_name.is_some() {
-                                        Self::get_identifier_name(arena, spec.property_name)
+                                        Self::get_identifier_or_string_literal_name(
+                                            arena,
+                                            spec.property_name,
+                                        )
                                     } else {
                                         None
                                     };
                                     let exported_name = if spec.name.is_some() {
-                                        Self::get_identifier_name(arena, spec.name)
+                                        Self::get_identifier_or_string_literal_name(
+                                            arena, spec.name,
+                                        )
                                     } else {
                                         None
                                     };

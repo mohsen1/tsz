@@ -25706,3 +25706,39 @@ type TestType<C extends string | ComponentType<any>> =
          doesn't satisfy the constraint. Got diagnostics: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_esm_module_exports_string_literal_export_no_ts2351() {
+    // When an ESM module uses `export { X as "module.exports" }`, CJS consumers
+    // should resolve `require()` to the class value (constructable).
+    // No TS2351 ("This expression is not constructable") should be emitted.
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "exporter.mts",
+                r#"
+export default class Foo {}
+export { Foo as "module.exports" };
+                "#,
+            ),
+            (
+                "importer.cts",
+                r#"
+import Foo = require("./exporter.mts");
+new Foo();
+                "#,
+            ),
+        ],
+        "importer.cts",
+        CheckerOptions {
+            module: tsz_common::ModuleKind::Node20,
+            target: tsz_common::common::ScriptTarget::ES2023,
+            ..Default::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 2351),
+        "TS2351 should not be emitted when module has 'export {{ X as \"module.exports\" }}'. \
+         The require() result should be the constructable class. Got diagnostics: {diagnostics:?}"
+    );
+}
