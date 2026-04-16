@@ -4,6 +4,7 @@ use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
+use tsz_solver::type_queries as query;
 
 const MAX_AWAIT_DEPTH: u32 = 10;
 
@@ -112,6 +113,11 @@ impl<'a> CheckerState<'a> {
         }
         let expr_type = self.get_type_of_node_with_request(unary.expression, &operand_request);
 
+        // TS1062: check for self-referencing Promise cycles before unwrapping.
+        // Types like `type T1 = 1 | Promise<T1> | T1[]` create infinite cycles
+        // when resolving Awaited<T>. Detect this and emit TS1062.
+        self.check_self_referencing_promise_cycle(expr_type, idx);
+
         // Recursively unwrap Promise<T> to get T (simulating Awaited<T>)
         // TypeScript's await recursively unwraps nested Promises.
         // For example: await Promise<Promise<number>> should have type `number`
@@ -186,5 +192,96 @@ impl<'a> CheckerState<'a> {
             return Some(self.ctx.types.application(promise_base, vec![type_arg]));
         }
         None
+    }
+
+    /// TS1062: detect self-referencing Promise types that would create infinite
+    /// cycles when resolving `Awaited<T>`.
+    ///
+    /// Types like `type T1 = 1 | Promise<T1> | T1[]` contain a cycle through
+    /// Promise's fulfillment callback. tsc emits TS1062 at the `await` expression
+    /// when this cycle is detected.
+    fn check_self_referencing_promise_cycle(&mut self, type_id: TypeId, error_node: NodeIndex) {
+        let mut visited_def_ids = rustc_hash::FxHashSet::default();
+        if self.has_promise_fulfillment_cycle(type_id, &mut visited_def_ids, 0) {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                error_node,
+                diagnostic_messages::TYPE_IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_THE_FULFILLMENT_CALLBACK_OF_ITS_OWN,
+                diagnostic_codes::TYPE_IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_THE_FULFILLMENT_CALLBACK_OF_ITS_OWN,
+            );
+        }
+    }
+
+    /// Recursive check for Promise fulfillment cycles.
+    ///
+    /// Tracks visited DefIds (type alias identities) rather than TypeIds, since
+    /// a recursive type alias like `type T1 = 1 | Promise<T1>` produces
+    /// different TypeIds at different evaluation stages but shares the same DefId.
+    fn has_promise_fulfillment_cycle(
+        &mut self,
+        type_id: TypeId,
+        visited_defs: &mut rustc_hash::FxHashSet<tsz_solver::def::DefId>,
+        depth: u32,
+    ) -> bool {
+        if depth > 10 {
+            return false;
+        }
+
+        // If this type is a Lazy(DefId), check for DefId cycle and resolve its body
+        if let query::PromiseTypeKind::Lazy(def_id) =
+            query::classify_promise_type(self.ctx.types, type_id)
+        {
+            if !visited_defs.insert(def_id) {
+                return true;
+            }
+            if let Some(body) = self.ctx.definition_store.get_body(def_id) {
+                return self.has_promise_fulfillment_cycle(body, visited_defs, depth + 1);
+            }
+            return false;
+        }
+
+        // Try to evaluate the type to get concrete structure
+        let evaluated = self.evaluate_type_with_env(type_id);
+        let target = if evaluated != type_id {
+            evaluated
+        } else {
+            type_id
+        };
+
+        // Also check if the evaluated form reveals a Lazy(DefId)
+        if target != type_id {
+            if let query::PromiseTypeKind::Lazy(def_id) =
+                query::classify_promise_type(self.ctx.types, target)
+            {
+                if !visited_defs.insert(def_id) {
+                    return true;
+                }
+                if let Some(body) = self.ctx.definition_store.get_body(def_id) {
+                    return self.has_promise_fulfillment_cycle(body, visited_defs, depth + 1);
+                }
+                return false;
+            }
+        }
+
+        match query::classify_promise_type(self.ctx.types, target) {
+            query::PromiseTypeKind::Union(members) => {
+                for member in members {
+                    if let Some(inner) = self.promise_like_return_type_argument(member) {
+                        if self.has_promise_fulfillment_cycle(inner, visited_defs, depth + 1) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            _ => {
+                if let Some(inner) = self.promise_like_return_type_argument(target) {
+                    if self.has_promise_fulfillment_cycle(inner, visited_defs, depth + 1) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
     }
 }
