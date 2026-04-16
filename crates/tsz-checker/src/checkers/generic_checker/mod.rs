@@ -163,24 +163,23 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // Case 2: The type arg is derived from the check type (e.g.,
-                // `T extends O ? X<ReturnType<T['m']>> : never`). In the true branch,
-                // TSC wraps the check type with a substitute type carrying the extends
-                // constraint. Any use of the check type in the true branch benefits
-                // from this constraint, so TS2344 checks are deferred to instantiation
-                // time. Suppress when the arg contains a syntactic reference to the
-                // conditional's check type.
-                if self.type_node_contains_reference(arg_idx, cond.check_type) {
+                // Case 2: The type arg is derived from (but not identical to) the
+                // check type (e.g., `T extends O ? X<ReturnType<T['m']>> : never`).
+                // Only suppress when the arg is DERIVED from the check type — if the
+                // arg IS the check type, Case 1 already handled it and correctly
+                // didn't suppress when extends doesn't satisfy the constraint.
+                if !self.type_nodes_structurally_equal(arg_idx, cond.check_type)
+                    && self.type_node_contains_reference(arg_idx, cond.check_type)
+                {
                     return true;
                 }
 
                 // Case 3: The check type wraps the type argument (e.g.,
-                // `[T] extends [{ a: string }] ? ... : ...`). In non-distributive
-                // conditionals, the check type contains T in a wrapper. In the true
-                // branch, T is narrowed by the corresponding component of the extends
-                // type. Since constraint satisfaction depends on the narrowing, defer
-                // to instantiation time.
-                if self.type_node_contains_reference(cond.check_type, arg_idx) {
+                // `[T] extends [{ a: string }] ? ... : ...`). Only trigger when
+                // the check type WRAPS the arg (not when they're identical).
+                if !self.type_nodes_structurally_equal(cond.check_type, arg_idx)
+                    && self.type_node_contains_reference(cond.check_type, arg_idx)
+                {
                     return true;
                 }
             }
@@ -218,6 +217,31 @@ impl<'a> CheckerState<'a> {
             if self.type_node_contains_reference(child_idx, target_type_node) {
                 return true;
             }
+        }
+        false
+    }
+
+    /// Check if a type argument is inside the FALSE branch of a conditional type
+    /// where the check type is (or contains) the same type parameter.
+    fn type_arg_is_in_conditional_false_branch_of_check_type(&self, arg_idx: NodeIndex) -> bool {
+        let mut current = self.ctx.arena.get_extended(arg_idx).map(|ext| ext.parent);
+        while let Some(parent_idx) = current {
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+            if let Some(cond) = self.ctx.arena.get_conditional_type(parent_node)
+                && self.is_descendant_type_node(arg_idx, cond.false_type)
+                && (self.type_nodes_structurally_equal(arg_idx, cond.check_type)
+                    || self.type_node_contains_reference(cond.check_type, arg_idx)
+                    || self.type_node_contains_reference(arg_idx, cond.check_type))
+            {
+                return true;
+            }
+            current = self
+                .ctx
+                .arena
+                .get_extended(parent_idx)
+                .map(|ext| ext.parent);
         }
         false
     }
