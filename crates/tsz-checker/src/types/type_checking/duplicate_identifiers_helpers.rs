@@ -769,6 +769,48 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
+            // Handle variable declarations (let/const/var) — these are wrapped in
+            // VariableStatement → VariableDeclarationList → VariableDeclaration.
+            if decl_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                if let Some(var_data) = arena.get_variable(decl_node) {
+                    for &decl_list_idx in &var_data.declarations.nodes {
+                        let Some(decl_list_node) = arena.get(decl_list_idx) else {
+                            continue;
+                        };
+                        let Some(decl_list_data) = arena.get_variable(decl_list_node) else {
+                            continue;
+                        };
+                        for &var_decl_idx in &decl_list_data.declarations.nodes {
+                            let Some(var_decl_node) = arena.get(var_decl_idx) else {
+                                continue;
+                            };
+                            if var_decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+                                continue;
+                            }
+                            let Some(var_decl) = arena.get_variable_declaration(var_decl_node)
+                            else {
+                                continue;
+                            };
+                            if let Some(ident) = arena.get_identifier_at(var_decl.name)
+                                && ident.escaped_text == name
+                                && let Some(flags) =
+                                    self.declaration_symbol_flags(arena, var_decl_idx)
+                            {
+                                let is_exported = self.is_declaration_exported(arena, var_decl_idx);
+                                declarations.push((
+                                    var_decl_idx,
+                                    flags,
+                                    false,
+                                    is_exported,
+                                    DuplicateDeclarationOrigin::SymbolDeclaration,
+                                ));
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+
             let matches_name = match decl_node.kind {
                 syntax_kind_ext::FUNCTION_DECLARATION => arena
                     .get_function(decl_node)
