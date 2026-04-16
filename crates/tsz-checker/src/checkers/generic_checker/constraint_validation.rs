@@ -758,12 +758,22 @@ impl<'a> CheckerState<'a> {
                             }
                             continue;
                         }
-                        // If the base constraint is a union, skip. Union-constrained type
-                        // params often appear in conditional types where the true branch
-                        // narrows to a specific union member. Checking the full union
-                        // against the narrowed constraint would produce false positives.
+                        // When the base constraint is a union, only skip if the type
+                        // arg is inside a conditional type's FALSE branch where it
+                        // could be narrowed by exclusion (Exclude<T, extends>). In
+                        // true branches and non-conditional contexts, proceed with
+                        // the constraint check.
                         if query::has_union_members(self.ctx.types.as_type_database(), base) {
-                            continue;
+                            let defer_for_conditional =
+                                type_args_list.nodes.get(i).is_some_and(|&arg_idx| {
+                                    self.type_arg_is_in_conditional_false_branch_of_check_type(
+                                        arg_idx,
+                                    )
+                                });
+                            if defer_for_conditional {
+                                continue;
+                            }
+                            // Fall through to perform the constraint check
                         }
                         if query::contains_type_parameters(self.ctx.types, base) {
                             // Base constraint itself contains type parameters

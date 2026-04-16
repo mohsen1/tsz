@@ -25630,3 +25630,44 @@ x7 = importInst;
          `typeof instantiated` to `typeof Outer`. Got diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_ts2344_conditional_true_branch_unsatisfied_extends() {
+    // When a type parameter appears in a conditional type's true branch and
+    // the extends type does NOT satisfy the required constraint, TS2344 should
+    // still be emitted. Previously, Case 2 in
+    // `type_argument_is_narrowed_by_conditional_true_branch` would suppress the
+    // error even when the arg was the check type itself.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+interface Array<T> {}
+interface Boolean {}
+interface Function {}
+interface IArguments {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+interface ComponentType<P> { (props: P): any; }
+
+type Wrapper = { __brand: any };
+type AnyWrapper = Wrapper | { __brand2: any };
+
+type Inner<C extends ComponentType<any>> = C;
+
+type PropsWithRef<C extends ComponentType<any>> = { ref: C };
+
+// In the true branch, C is narrowed to AnyWrapper & C.
+// But AnyWrapper does NOT satisfy ComponentType<any>.
+// TS2344 should be emitted for the C in Inner<C>.
+type TestType<C extends string | ComponentType<any>> =
+    C extends AnyWrapper ? PropsWithRef<Inner<C>> : PropsWithRef<C>;
+        ",
+    );
+    assert!(
+        has_error(&diagnostics, 2344),
+        "Expected TS2344 for type arg in conditional true branch where extends type \
+         doesn't satisfy the constraint. Got diagnostics: {diagnostics:?}"
+    );
+}
