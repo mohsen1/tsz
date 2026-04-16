@@ -1986,3 +1986,86 @@ var r1 = callWithCallback<Target>((x) => { return "hello" as string; });
         "Block-bodied callback should emit TS2345 for argument type mismatch. Diagnostics: {diags:?}"
     );
 }
+
+/// Generic class constructor type must not be decomposed into a plain Function
+/// during `instantiate_generic_function_argument_against_target`. When a generic
+/// class with a constructor and static methods is passed to a `typeof Class`
+/// parameter in generic overloaded resolution, the Callable type (construct
+/// signatures + property members) must be preserved. Without this fix, the
+/// Callable is decomposed into a Function (just the construct signature),
+/// losing static members and causing false TS2769/TS2345 errors.
+///
+/// Regression: bluebirdStaticThis.ts conformance test
+#[test]
+fn generic_class_typeof_arg_in_generic_overload_no_false_ts2769() {
+    let source = r#"
+        interface Thing<R> {
+            value: R;
+        }
+
+        declare class Prom<T> {
+            constructor(x: T);
+            static foo<R>(dit: typeof Prom, fn: () => Thing<R>): Prom<R>;
+            static foo<R>(dit: typeof Prom, fn: () => R): Prom<R>;
+        }
+
+        interface Bar { a: number; }
+        declare var bar: Bar;
+
+        Prom.foo(Prom, () => bar);
+    "#;
+    let codes = get_codes(source);
+    assert!(
+        !codes.contains(&2769) && !codes.contains(&2345),
+        "Should NOT emit TS2769 or TS2345 for passing generic class to typeof param in overloaded call.\n\
+         Got: {codes:?}"
+    );
+}
+
+/// Same as above but with different type parameter names on class vs overloads.
+#[test]
+fn generic_class_typeof_arg_different_type_param_names() {
+    let source = r#"
+        interface Thing<X> {
+            value: X;
+        }
+
+        declare class MyClass<T> {
+            constructor(x: T);
+            static make<R>(ctor: typeof MyClass, fn: () => Thing<R>): MyClass<R>;
+            static make<R>(ctor: typeof MyClass, fn: () => R): MyClass<R>;
+        }
+
+        interface Foo { a: number; }
+        declare var foo: Foo;
+
+        MyClass.make(MyClass, () => foo);
+    "#;
+    let codes = get_codes(source);
+    assert!(
+        !codes.contains(&2769) && !codes.contains(&2345),
+        "Different type param names should NOT cause false TS2769/TS2345.\n\
+         Got: {codes:?}"
+    );
+}
+
+/// Non-generic class with constructor should still work with typeof parameter
+/// in generic overloads (pre-existing behavior, sanity check).
+#[test]
+fn non_generic_class_typeof_arg_in_generic_overload() {
+    let source = r#"
+        declare class Prom {
+            constructor(x: number);
+            static foo<R>(dit: typeof Prom, fn: () => R): void;
+            static foo(dit: typeof Prom, fn: () => string): void;
+        }
+
+        Prom.foo(Prom, () => 42);
+    "#;
+    let codes = get_codes(source);
+    assert!(
+        !codes.contains(&2769) && !codes.contains(&2345),
+        "Non-generic class should NOT produce false errors for typeof arg.\n\
+         Got: {codes:?}"
+    );
+}
