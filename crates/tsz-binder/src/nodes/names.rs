@@ -56,6 +56,26 @@ impl BinderState {
         None
     }
 
+    /// Get the name text from a node that is either an identifier or a string literal.
+    ///
+    /// This is needed for export specifiers where the exported name can be a string
+    /// literal (e.g., `export { Foo as "module.exports" }`). TypeScript allows
+    /// arbitrary string literal names in export specifiers since ES2022.
+    pub(crate) fn get_identifier_or_string_literal_name<'b>(
+        arena: &'b NodeArena,
+        idx: NodeIndex,
+    ) -> Option<&'b str> {
+        if let Some(node) = arena.get(idx) {
+            if let Some(id) = arena.get_identifier(node) {
+                return Some(&id.escaped_text);
+            }
+            if let Some(lit) = arena.get_literal(node) {
+                return Some(&lit.text);
+            }
+        }
+        None
+    }
+
     /// Extract names from a heritage clause list (`extends` / `implements`).
     ///
     /// Given the `heritage_clauses: Option<NodeList>` from a class or interface
