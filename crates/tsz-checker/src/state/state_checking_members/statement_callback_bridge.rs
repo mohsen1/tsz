@@ -1288,4 +1288,109 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         self.error_at_node(stmt_idx, message, code);
         true
     }
+
+    /// TS1184: Check if a declaration with `declare` modifier is inside a block context
+    /// (function body, bare block, etc.) where it's not allowed.
+    /// This covers variable statements, class declarations, and enum declarations.
+    /// Function declarations are handled separately in DeclarationChecker::check_function_declaration.
+    /// Module/namespace declarations are handled in DeclarationChecker::check_module_declaration.
+    fn check_grammar_declare_in_block_context(&mut self, stmt_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        // Suppress grammar errors when file has parse errors (matches tsc behavior)
+        if self.ctx.has_syntax_parse_errors {
+            return;
+        }
+
+        // Check if the statement has a `declare` modifier
+        let has_declare = {
+            let arena = self.ctx.arena;
+            let Some(node) = arena.get(stmt_idx) else {
+                return;
+            };
+            match node.kind {
+                syntax_kind_ext::VARIABLE_STATEMENT => arena.get_variable(node).is_some_and(|vs| {
+                    arena.has_modifier(&vs.modifiers, tsz_scanner::SyntaxKind::DeclareKeyword)
+                }),
+                syntax_kind_ext::CLASS_DECLARATION => arena.get_class(node).is_some_and(|cls| {
+                    arena.has_modifier(&cls.modifiers, tsz_scanner::SyntaxKind::DeclareKeyword)
+                }),
+                syntax_kind_ext::ENUM_DECLARATION => arena.get_enum(node).is_some_and(|e| {
+                    arena.has_modifier(&e.modifiers, tsz_scanner::SyntaxKind::DeclareKeyword)
+                }),
+                _ => false,
+            }
+        };
+
+        if !has_declare {
+            return;
+        }
+
+        // Check if the parent is a valid context for `declare`
+        let is_valid_context = {
+            let parent_idx = self.ctx.arena.get_extended(stmt_idx).map(|ext| ext.parent);
+            let parent_kind = parent_idx
+                .and_then(|p| self.ctx.arena.get(p))
+                .map(|p| p.kind);
+            // Look through EXPORT_DECLARATION wrappers to the effective parent.
+            // `export declare var x;` inside a namespace has the variable's parent
+            // as EXPORT_DECLARATION, but the effective context is MODULE_BLOCK.
+            let effective_parent_kind = if matches!(parent_kind, Some(k) if k == syntax_kind_ext::EXPORT_DECLARATION)
+            {
+                parent_idx
+                    .and_then(|p| self.ctx.arena.get_extended(p))
+                    .and_then(|ext| self.ctx.arena.get(ext.parent))
+                    .map(|p| p.kind)
+            } else {
+                parent_kind
+            };
+            matches!(
+                effective_parent_kind,
+                Some(k) if k == syntax_kind_ext::SOURCE_FILE
+                    || k == syntax_kind_ext::MODULE_BLOCK
+                    || k == syntax_kind_ext::MODULE_DECLARATION
+            ) || effective_parent_kind.is_none()
+        };
+
+        if !is_valid_context {
+            // Find the `declare` keyword position for the error span
+            let declare_pos = {
+                let arena = self.ctx.arena;
+                let node = arena.get(stmt_idx);
+                node.and_then(|n| {
+                    let mods = match n.kind {
+                        syntax_kind_ext::VARIABLE_STATEMENT => {
+                            arena.get_variable(n).and_then(|vs| vs.modifiers.as_ref())
+                        }
+                        syntax_kind_ext::CLASS_DECLARATION => {
+                            arena.get_class(n).and_then(|cls| cls.modifiers.as_ref())
+                        }
+                        syntax_kind_ext::ENUM_DECLARATION => {
+                            arena.get_enum(n).and_then(|e| e.modifiers.as_ref())
+                        }
+                        _ => None,
+                    };
+                    mods.and_then(|m| {
+                        m.nodes.iter().find_map(|&mod_idx| {
+                            let mod_node = arena.get(mod_idx)?;
+                            if mod_node.kind == tsz_scanner::SyntaxKind::DeclareKeyword as u16 {
+                                Some((mod_node.pos, mod_node.end - mod_node.pos))
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                })
+            };
+
+            if let Some((pos, len)) = declare_pos {
+                self.ctx.error(
+                    pos,
+                    len,
+                    diagnostic_messages::MODIFIERS_CANNOT_APPEAR_HERE.to_string(),
+                    diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                );
+            }
+        }
+    }
 }

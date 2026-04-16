@@ -381,6 +381,11 @@ pub trait StatementCheckCallbacks {
         let _ = stmt_idx;
         false
     }
+
+    /// TS1184: Check if a `declare` modifier on a variable/class/enum declaration
+    /// is inside a block context where it's not allowed. The parser does not emit
+    /// TS1184; the checker handles it with this function.
+    fn check_grammar_declare_in_block_context(&mut self, _stmt_idx: NodeIndex) {}
 }
 
 /// Statement type checker that dispatches to specialized handlers.
@@ -425,6 +430,7 @@ impl StatementChecker {
 
         match kind {
             syntax_kind_ext::VARIABLE_STATEMENT => {
+                state.check_grammar_declare_in_block_context(stmt_idx);
                 state.check_variable_statement_with_request(stmt_idx, request);
             }
             syntax_kind_ext::EXPRESSION_STATEMENT => {
@@ -931,6 +937,7 @@ impl StatementChecker {
                 state.check_type_alias_declaration(stmt_idx);
             }
             syntax_kind_ext::ENUM_DECLARATION => {
+                state.check_grammar_declare_in_block_context(stmt_idx);
                 state.check_enum_duplicate_members(stmt_idx);
                 // Walk enum member initializer expressions for semantic checking
                 // (name resolution, etc.). tsc resolves identifiers in initializers
@@ -986,6 +993,7 @@ impl StatementChecker {
                 state.check_module_declaration(stmt_idx);
             }
             syntax_kind_ext::CLASS_DECLARATION | syntax_kind_ext::CLASS_EXPRESSION => {
+                state.check_grammar_declare_in_block_context(stmt_idx);
                 state.check_class_declaration(stmt_idx);
             }
             syntax_kind_ext::WITH_STATEMENT => {
