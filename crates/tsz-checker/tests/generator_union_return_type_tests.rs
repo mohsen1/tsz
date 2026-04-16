@@ -151,3 +151,51 @@ function* f(): void { }
         "Should not emit cascading TS2322 when TS2505 is emitted. Got: {diags:?}"
     );
 }
+
+// =========================================================================
+// yield* contextual type must not leak into inferred generator yield type
+// =========================================================================
+
+#[test]
+fn yield_star_does_not_widen_to_contextual_supertype() {
+    // When a generator has contextual yield type Foo (from `Iterable<Foo>`) and
+    // yield* delegates to [new Bar] where Bar extends Foo, the inferred generator
+    // yield type must be Bar (the actual type), not Foo (the contextual supertype).
+    // Previously, the array literal [new Bar] was contextually typed as Foo[] instead
+    // of Bar[], which leaked Foo into the inferred generator yield type.
+    let source = r#"
+class Foo { x: number = 0 }
+class Bar extends Foo { y: string = "" }
+class Baz { z: number = 0 }
+
+interface Iterable<T> {
+    [Symbol.iterator](): Iterator<T>;
+}
+interface Iterator<T> {
+    next(): IteratorResult<T, void>;
+}
+
+var g: () => Iterable<Foo> = function* () {
+    yield;
+    yield new Bar;
+    yield new Baz;
+    yield *[new Bar];
+    yield *[new Baz];
+}
+"#;
+    let diags = check_with_strict(source);
+    // The error should mention Bar | Baz | undefined, NOT Foo | Bar | Baz | undefined.
+    // If Foo is in the yield type, the contextual supertype leaked in.
+    for (code, msg) in &diags {
+        if *code == 2322 && msg.contains("Generator<") {
+            assert!(
+                !msg.contains("Foo | Bar"),
+                "Generator yield type should not include contextual supertype Foo. Got: {msg}"
+            );
+            assert!(
+                !msg.contains("Foo | Baz"),
+                "Generator yield type should not include contextual supertype Foo. Got: {msg}"
+            );
+        }
+    }
+}
