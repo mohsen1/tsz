@@ -105,6 +105,13 @@ impl<'a> CheckerState<'a> {
             self.ensure_relation_input_ready(object_type);
         }
 
+        // Resolve Lazy(DefId) types before passing to the QueryCache's property
+        // access evaluator. The QueryCache has a noop TypeResolver that cannot
+        // resolve Lazy types, causing cross-file interface property access to
+        // silently fall back to ANY. Pre-resolve through the checker's
+        // TypeEnvironment which has the DefId→TypeId mappings.
+        let object_type = self.resolve_lazy_type(object_type);
+
         // Resolve mapped types with unresolved constraints (e.g., Omit<T,K>,
         // Pick<T,K> where the constraint is an Application like Exclude<keyof T, K>).
         // The solver's QueryCache has a noop TypeResolver that can't evaluate
