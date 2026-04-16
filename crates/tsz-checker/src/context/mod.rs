@@ -1484,6 +1484,13 @@ pub struct CheckerContext<'a> {
     /// `"a" | "b"` instead of `string`.
     pub preserve_literal_types: bool,
 
+    /// When true, array literals skip the contextual supertype collapse.
+    /// Set during `yield*` expression computation so that `[new Bar]` with
+    /// contextual type `Foo[]` (where `Bar extends Foo`) produces `Bar[]`
+    /// instead of `Foo[]`. This ensures the inferred generator yield type
+    /// reflects the actual yielded values, not the contextual supertype.
+    pub skip_array_contextual_supertype_collapse: bool,
+
     /// Per-argument mask indicating which call arguments should skip excess
     /// property checking because the original (pre-instantiation) parameter type
     /// is or contains a type parameter.

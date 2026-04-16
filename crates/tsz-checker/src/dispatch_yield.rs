@@ -312,9 +312,18 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             } else {
                 request.read().normal_origin().contextual_opt(None)
             };
+            // For yield*, prevent array literal contextual supertype collapse so that
+            // `yield *[new Bar]` with contextual yield type Foo (where Bar extends Foo)
+            // produces Bar[] instead of Foo[]. The inferred generator yield type must
+            // reflect actual yielded values, not the contextual supertype.
+            let saved_skip_collapse = self.checker.ctx.skip_array_contextual_supertype_collapse;
+            if yield_expr.asterisk_token {
+                self.checker.ctx.skip_array_contextual_supertype_collapse = true;
+            }
             let expression_type = self
                 .checker
                 .get_type_of_node_with_request(yield_expr.expression, &yield_request);
+            self.checker.ctx.skip_array_contextual_supertype_collapse = saved_skip_collapse;
             if yield_expr.asterisk_token {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 if is_async_generator {
