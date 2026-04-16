@@ -589,9 +589,11 @@ impl<'a> CheckerState<'a> {
         let exports_table = self.resolve_effective_module_exports(module_name);
 
         if let Some(exports_table) = exports_table {
-            // Get export= type if this is a CommonJS module
+            // Get export= type if this is a CommonJS module.
+            // Also check for `export { X as "module.exports" }` which acts like export=.
             let export_equals_type = exports_table
                 .get("export=")
+                .or_else(|| exports_table.get("module.exports"))
                 .map(|export_equals_sym| self.get_type_of_symbol(export_equals_sym));
 
             // Create an object type with all module exports
