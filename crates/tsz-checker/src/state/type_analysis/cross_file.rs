@@ -404,6 +404,11 @@ impl<'a> CheckerState<'a> {
             for &id in &self.ctx.class_constructor_resolution_set {
                 checker.ctx.class_constructor_resolution_set.insert(id);
             }
+
+            // Wire up the shared DefinitionStore in the child's TypeEnvironment so
+            // inner DefId→TypeId mappings survive child-checker teardown.
+            checker.ctx.ensure_type_env_has_definition_store();
+
             // Use get_type_of_symbol to ensure proper cycle detection.
             let result = checker.get_type_of_symbol(sym_id);
 
@@ -441,10 +446,26 @@ impl<'a> CheckerState<'a> {
             // `DefinitionStore`, so the parent can read them on next access via
             // the fallback path in `def_to_symbol_id()` and `get_def_type_params()`.
 
-            // type_env merge-back is no longer needed: the child's insert_def()
-            // and insert_def_with_params() write through to the shared
-            // DefinitionStore, and the parent's get_def()/resolve_lazy() falls
-            // back to DefinitionStore on local cache miss.
+            // Merge the child's DefId→TypeId mappings into the parent's type_env.
+            // The DefinitionStore write-through (set_body) only works for DefIds
+            // that were created via register(), but get_or_create_def_id() does not
+            // call register(). Copy the child's local def_types cache to ensure the
+            // parent can resolve Lazy(DefId) references for types nested inside
+            // cross-file interfaces (e.g., IServer inside IConfig's properties).
+            if let Ok(child_env) = checker.ctx.type_env.try_borrow() {
+                let child_defs = child_env.snapshot_def_types();
+                drop(child_env);
+                if !child_defs.is_empty() {
+                    if let Ok(mut parent_env) = self.ctx.type_env.try_borrow_mut() {
+                        for (def_id_raw, type_id) in child_defs {
+                            let def_id = tsz_solver::def::DefId(def_id_raw);
+                            if parent_env.get_def(def_id).is_none() {
+                                parent_env.insert_def(def_id, type_id);
+                            }
+                        }
+                    }
+                }
+            }
 
             let child_namespace_names: rustc_hash::FxHashMap<TypeId, String> =
                 std::mem::take(&mut checker.ctx.namespace_module_names);
@@ -600,6 +621,10 @@ impl<'a> CheckerState<'a> {
             checker.ctx.class_constructor_resolution_set.insert(id);
         }
 
+        // Wire up the shared DefinitionStore in the child's TypeEnvironment so
+        // inner DefId→TypeId mappings survive child-checker teardown.
+        checker.ctx.ensure_type_env_has_definition_store();
+
         let result = checker.class_instance_type_with_params_from_symbol(sym_id);
 
         self.ctx.leave_recursion();
@@ -702,12 +727,52 @@ impl<'a> CheckerState<'a> {
         // DefId ↔ SymbolId mappings are resolved via DefinitionStore fallback
         // on cache miss — no parent-to-child copy needed.
 
+        // Wire up the shared DefinitionStore in the child's TypeEnvironment so
+        // that DefId→TypeId mappings for inner types (e.g., IServer inside
+        // IConfig's properties) are written through to the shared store. Without
+        // this, the parent checker cannot resolve Lazy(DefId) references for
+        // types nested inside the cross-file interface after the child is dropped.
+        checker.ctx.ensure_type_env_has_definition_store();
+
         // Try compute_interface_type_from_declarations first (more direct),
         // fall back to get_type_of_symbol for non-pure-interface symbols.
         let mut result = checker.compute_interface_type_from_declarations(sym_id);
         if result == TypeId::ERROR {
             result = checker.get_type_of_symbol(sym_id);
         }
+
+        // Merge the child's DefId→TypeId mappings into the parent's type_env.
+        // The child may have resolved inner types (e.g., IServer inside IConfig)
+        // and registered their DefId→body mappings in its local type_env cache.
+        // Without this merge, the parent cannot resolve Lazy(DefId) references
+        // for those inner types after the child checker is dropped.
+        if let Ok(child_env) = checker.ctx.type_env.try_borrow() {
+            let child_defs = child_env.snapshot_def_types();
+            drop(child_env);
+            tracing::debug!(
+                "delegate_cross_arena_interface_type: merging {} child def_types into parent",
+                child_defs.len()
+            );
+            if !child_defs.is_empty() {
+                if let Ok(mut parent_env) = self.ctx.type_env.try_borrow_mut() {
+                    for (def_id_raw, type_id) in child_defs {
+                        let def_id = tsz_solver::def::DefId(def_id_raw);
+                        if parent_env.get_def(def_id).is_none() {
+                            parent_env.insert_def(def_id, type_id);
+                        }
+                    }
+                } else {
+                    tracing::warn!(
+                        "delegate_cross_arena_interface_type: could not borrow parent type_env for merge"
+                    );
+                }
+            }
+        } else {
+            tracing::warn!(
+                "delegate_cross_arena_interface_type: could not borrow child type_env for snapshot"
+            );
+        }
+
         self.ctx.leave_recursion();
         Self::leave_cross_arena_delegation();
 
