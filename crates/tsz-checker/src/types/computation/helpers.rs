@@ -1260,12 +1260,28 @@ impl<'a> CheckerState<'a> {
                         }
                         // Symbol found but not local - fall through to IArguments check below
                     } else {
-                        // Not "arguments" or not in function - use the symbol
+                        // Not "arguments" or not in function - use the symbol.
+                        // For merged interface+value symbols (e.g., `Array`, `Error`,
+                        // `Promise`) `get_type_of_symbol` returns the INTERFACE type
+                        // which is correct for type position but wrong for assignment
+                        // targets. Route through `get_type_of_node` which invokes
+                        // `get_type_of_identifier_with_request` and picks the value-
+                        // side type (e.g., ArrayConstructor, ErrorConstructor).
+                        if (sym_flags & tsz_binder::symbol_flags::INTERFACE) != 0
+                            && (sym_flags & tsz_binder::symbol_flags::VALUE) != 0
+                        {
+                            return self.get_type_of_node(idx);
+                        }
                         let declared_type = self.get_type_of_symbol(sym_id);
                         return declared_type;
                     }
                 } else {
                     // Use the resolved symbol
+                    if (sym_flags & tsz_binder::symbol_flags::INTERFACE) != 0
+                        && (sym_flags & tsz_binder::symbol_flags::VALUE) != 0
+                    {
+                        return self.get_type_of_node(idx);
+                    }
                     let declared_type = self.get_type_of_symbol(sym_id);
                     return declared_type;
                 }
