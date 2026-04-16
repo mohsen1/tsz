@@ -457,6 +457,21 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        // When the target is a callable type with additional properties (e.g.,
+        // `ArrayConstructor` with `isArray`, `from`, `of`), the primary failure
+        // is missing properties (TS2739), not return type mismatch (TS2322).
+        // Skip function body elaboration so the standard `diagnose_assignment_failure`
+        // path produces TS2739 instead. tsc does the same: it reports missing
+        // properties on the callable, not return type mismatches on the function body.
+        if let Some(callable) = tsz_solver::type_queries::get_callable_shape(
+            self.ctx.types.as_type_database(),
+            param_type,
+        ) {
+            if !callable.properties.is_empty() {
+                return false;
+            }
+        }
+
         // For generator function callbacks, the callable return type is
         // Generator<Y, R, N> or AsyncGenerator<Y, R, N>, but the body's
         // `return` statements produce TReturn (R), not the full Generator type.

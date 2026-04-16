@@ -5855,3 +5855,93 @@ fn test_intersection_with_primitive_weak_type_check_not_suppressed() {
         "intersection with conflicting optional literal properties should not be assignable"
     );
 }
+
+#[test]
+fn test_explain_function_to_callable_with_properties_produces_missing_properties() {
+    // When a function type is assigned to a callable type with additional properties
+    // (like ArrayConstructor with isArray, from, of), the failure should be
+    // MissingProperties, not TypeMismatch. This matches tsc's behavior of emitting
+    // TS2739 instead of TS2322 for `Array = function(n, s) { return n; }`.
+    let interner = TypeInterner::new();
+
+    let is_array = interner.intern_string("isArray");
+    let from = interner.intern_string("from");
+    let of = interner.intern_string("of");
+
+    // Source: (n: number, s: string) => number (a simple function type)
+    let source = interner.function(FunctionShape {
+        params: vec![
+            ParamInfo::unnamed(TypeId::NUMBER),
+            ParamInfo::unnamed(TypeId::STRING),
+        ],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Target: callable with properties (like ArrayConstructor)
+    // Has call signatures and properties: isArray, from, of
+    let target = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature {
+            params: vec![],
+            type_params: Vec::new(),
+            return_type: TypeId::ANY,
+            this_type: None,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![CallSignature {
+            params: vec![],
+            type_params: Vec::new(),
+            return_type: TypeId::ANY,
+            this_type: None,
+            type_predicate: None,
+            is_method: false,
+        }],
+        properties: vec![
+            PropertyInfo::new(is_array, TypeId::BOOLEAN),
+            PropertyInfo::new(from, TypeId::NUMBER),
+            PropertyInfo::new(of, TypeId::NUMBER),
+        ],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    });
+
+    let mut checker = CompatChecker::new(&interner);
+    let reason = checker.explain_failure(source, target);
+
+    match reason {
+        Some(SubtypeFailureReason::MissingProperties { property_names, .. }) => {
+            assert!(
+                property_names.contains(&is_array),
+                "Expected isArray in missing properties, got: {property_names:?}"
+            );
+            assert!(
+                property_names.contains(&from),
+                "Expected from in missing properties, got: {property_names:?}"
+            );
+            assert!(
+                property_names.contains(&of),
+                "Expected of in missing properties, got: {property_names:?}"
+            );
+        }
+        Some(SubtypeFailureReason::MissingProperty { property_name, .. }) => {
+            // If only one property is reported, that's also acceptable
+            assert!(
+                property_name == is_array || property_name == from || property_name == of,
+                "Expected a constructor property in MissingProperty, got: {property_name:?}"
+            );
+        }
+        other => {
+            panic!(
+                "Expected MissingProperties or MissingProperty for function assigned to \
+                 callable with properties, got: {other:?}"
+            );
+        }
+    }
+}
