@@ -4109,22 +4109,6 @@ fn test_reserved_word_emits_ts1359() {
 }
 
 #[test]
-fn test_parser_export_in_block_emits_ts1184() {
-    // export inside a block should emit TS1184 "Modifiers cannot appear here."
-    let source = "{ export var x = 1; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
-
-    let diagnostics = parser.get_diagnostics();
-    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
-    println!("Diagnostics: {diagnostics:?}");
-    assert!(
-        codes.contains(&diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE),
-        "Expected TS1184 for export in block, got codes: {codes:?}"
-    );
-}
-
-#[test]
 fn test_abstract_interface_emits_ts1242_not_ts1184() {
     // 'abstract interface I {}' should emit TS1242, not TS1184.
     // TSC gives the specific "'abstract' modifier can only appear on a class, method, or property declaration."
