@@ -737,6 +737,7 @@ impl<'a> CheckerState<'a> {
             && context_element_type != TypeId::UNKNOWN
             && context_element_type != TypeId::NEVER
             && !self.ctx.preserve_literal_types
+            && !self.ctx.skip_array_contextual_supertype_collapse
         {
             let context_requires_assignability_overrides = {
                 let resolved = self.resolve_ref_type(context_element_type);
