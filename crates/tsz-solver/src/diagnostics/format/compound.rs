@@ -904,11 +904,56 @@ impl<'a> TypeFormatter<'a> {
         // normalize_intersection skips sorting and preserves source/declaration order.
         // tsc also preserves the original declaration order, so displaying members
         // in their stored order matches tsc's behavior.
+
+        // tsc flattens intersections of anonymous object literal types into a
+        // single merged object: `{ a: null } & { b: string }` → `{ a: null; b: string }`.
+        // This matches tsc's behavior when an intersection of object types is the
+        // result of structural type interning (where both a flat object and an
+        // intersection with the same shape share a TypeId).
+        if members.len() > 1 {
+            if let Some(merged) = self.try_flatten_object_intersection(members) {
+                return merged;
+            }
+        }
+
         let formatted: Vec<String> = members
             .iter()
             .map(|&m| self.format_intersection_member(m))
             .collect();
         formatted.join(" & ")
+    }
+
+    /// Try to flatten an intersection of anonymous object types into a single
+    /// merged object display. Returns `None` if any member is not an anonymous
+    /// object type (no named symbol), or if property names overlap across members.
+    fn try_flatten_object_intersection(&mut self, members: &[TypeId]) -> Option<String> {
+        let mut all_props: Vec<PropertyInfo> = Vec::new();
+        let mut seen_names = std::collections::HashSet::new();
+
+        for &m in members {
+            let shape_id = match self.interner.lookup(m) {
+                Some(TypeData::Object(sid)) => sid.clone(),
+                Some(TypeData::ObjectWithIndex(_)) => {
+                    // Don't flatten if any member has index signatures
+                    return None;
+                }
+                _ => return None, // Non-object member → don't flatten
+            };
+            let shape = self.interner.object_shape(shape_id);
+            // Named types (interfaces, classes) should not be flattened
+            if self.resolve_object_shape_name(&shape).is_some() {
+                return None;
+            }
+            for prop in &shape.properties {
+                if !seen_names.insert(prop.name) {
+                    // Property name collision across members → don't flatten
+                    return None;
+                }
+                all_props.push(prop.clone());
+            }
+        }
+
+        Some(self.format_object(&all_props))
     }
 
     pub(super) fn format_intersection_with_display(

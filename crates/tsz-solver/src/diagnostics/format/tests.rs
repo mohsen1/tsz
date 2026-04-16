@@ -435,6 +435,58 @@ fn format_intersection_uses_display_properties_for_anonymous_object_member() {
     assert!(result.contains(" & "));
 }
 
+#[test]
+fn format_intersection_flattens_anonymous_objects() {
+    // tsc flattens `{ a: null } & { b: string }` to `{ a: null; b: string }`
+    // when all members are anonymous object types with disjoint properties.
+    let db = TypeInterner::new();
+
+    let a_prop = PropertyInfo::new(db.intern_string("a"), TypeId::NULL);
+    let b_prop = PropertyInfo::new(db.intern_string("b"), TypeId::STRING);
+
+    let obj_a = db.factory().object(vec![a_prop]);
+    let obj_b = db.factory().object(vec![b_prop]);
+
+    let intersection = db.intersection2(obj_a, obj_b);
+    let mut fmt = TypeFormatter::new(&db);
+    let result = fmt.format(intersection);
+
+    // Should be flattened: `{ a: null; b: string; }` (not `{ a: null; } & { b: string; }`)
+    assert!(
+        !result.contains(" & "),
+        "Intersection of anonymous objects should be flattened, got: {result}"
+    );
+    assert!(
+        result.contains("a: null") && result.contains("b: string"),
+        "Flattened intersection should contain both properties, got: {result}"
+    );
+}
+
+#[test]
+fn format_intersection_preserves_named_types() {
+    // Intersections with named types (type params) should NOT be flattened
+    let db = TypeInterner::new();
+
+    let a_prop = PropertyInfo::new(db.intern_string("a"), TypeId::NULL);
+    let obj_a = db.factory().object(vec![a_prop]);
+    let t = db.type_param(TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let intersection = db.intersection2(obj_a, t);
+    let mut fmt = TypeFormatter::new(&db);
+    let result = fmt.format(intersection);
+
+    // Should preserve intersection form: `{ a: null; } & T`
+    assert!(
+        result.contains(" & "),
+        "Intersection with type param should not be flattened, got: {result}"
+    );
+}
+
 // =================================================================
 // Object type formatting
 // =================================================================
