@@ -533,12 +533,16 @@ impl<'a> CheckerState<'a> {
                 .resolve_identifier_symbol_without_tracking(access.expression)
                 .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
                 .is_some_and(|symbol| {
-                    // Local variables are FUNCTION_SCOPED_VARIABLE or BLOCK_SCOPED_VARIABLE
-                    // Global lib symbols typically have different flags
+                    // Local declarations shadow global value names. This includes
+                    // variables, classes, and functions — e.g., a file-local
+                    // `export declare class Promise<R>` must shadow the global
+                    // `Promise` so that its custom static members are visible.
                     (symbol.flags
                         & (symbol_flags::FUNCTION_SCOPED_VARIABLE
                             | symbol_flags::BLOCK_SCOPED_VARIABLE
-                            | symbol_flags::PROPERTY))
+                            | symbol_flags::PROPERTY
+                            | symbol_flags::CLASS
+                            | symbol_flags::FUNCTION))
                         != 0
                 });
 
