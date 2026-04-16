@@ -1291,8 +1291,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let s_param = &source.params[i];
             let t_param = &target.params[i];
             // Compare declared parameter types, matching the subtype rules.
-            let s_effective = self.effective_param_type(s_param);
-            let t_effective = self.effective_param_type(t_param);
+            // When both params are optional, strip `undefined` so
+            // `(x?: T)` and `(x?: T | undefined)` compare as equivalent.
+            let (s_effective, t_effective) = self.effective_param_type_pair(s_param, t_param);
             // Check parameter compatibility (contravariant in strict mode, bivariant in legacy)
             if !self.are_parameters_compatible_impl(s_effective, t_effective, is_method_or_ctor) {
                 return Some(SubtypeFailureReason::ParameterTypeMismatch {

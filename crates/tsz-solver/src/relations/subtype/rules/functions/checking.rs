@@ -828,8 +828,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
                 // Compute effective parameter types, matching tsc's `getTypeAtPosition`:
                 // optional parameters are widened to `T | undefined` under strictNullChecks.
-                let s_effective = self.effective_param_type(s_param);
-                let t_effective = self.effective_param_type(t_param);
+                // When both parameters are optional, strip `undefined` so that
+                // `(x?: T)` and `(x?: T | undefined)` compare as equivalent.
+                let (s_effective, t_effective) = self.effective_param_type_pair(s_param, t_param);
                 if !self.are_parameters_compatible_impl(s_effective, t_effective, is_method) {
                     // Trace: Parameter type mismatch
                     if let Some(tracer) = &mut self.tracer
@@ -1536,8 +1537,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             // Compute effective types — optional params widened to `T | undefined`
             // under strictNullChecks (matching tsc's `getTypeAtPosition`).
-            let s_effective = self.effective_param_type(s_param);
-            let t_effective = self.effective_param_type(t_param);
+            // When both parameters are optional, strip `undefined` so
+            // `(x?: T)` and `(x?: T | undefined)` compare as equivalent.
+            let (s_effective, t_effective) = self.effective_param_type_pair(s_param, t_param);
             if !self.are_parameters_compatible_impl(s_effective, t_effective, is_method) {
                 return SubtypeResult::False;
             }

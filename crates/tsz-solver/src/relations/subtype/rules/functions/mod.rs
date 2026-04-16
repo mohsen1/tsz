@@ -440,15 +440,64 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         crate::utils::required_param_count(params)
     }
 
-    /// Get the effective parameter type for function subtype comparison.
+    /// Compute effective parameter types for a pair of parameters being compared
+    /// in signature compatibility.
     ///
     /// TypeScript compares declared optional parameter types during signature
     /// compatibility rather than eagerly widening them to `T | undefined`.
     /// That keeps `(x: string) => void` assignable to `(x?: string) => void`
     /// and vice versa, matching the solver unit tests and tsc's behavior for
     /// regular function signature relation checks.
-    pub(crate) const fn effective_param_type(&self, param: &ParamInfo) -> TypeId {
-        param.type_id
+    ///
+    /// When both parameters are optional, strip `undefined` from their types
+    /// so `(x?: T)` and `(x?: T | undefined)` compare as equivalent. This
+    /// matches tsc's behavior where both forms are interchangeable in
+    /// signature comparison.
+    ///
+    /// When only one parameter is optional (or neither), returns the raw types
+    /// without stripping, preserving the stricter comparison needed to catch
+    /// legitimate undefined-related mismatches.
+    pub(crate) fn effective_param_type_pair(
+        &self,
+        s_param: &ParamInfo,
+        t_param: &ParamInfo,
+    ) -> (TypeId, TypeId) {
+        if s_param.optional && t_param.optional {
+            (
+                self.strip_undefined_from_param_type(s_param.type_id),
+                self.strip_undefined_from_param_type(t_param.type_id),
+            )
+        } else {
+            (s_param.type_id, t_param.type_id)
+        }
+    }
+
+    /// Strip `undefined` from a type for optional parameter normalization.
+    /// If the type is `undefined` itself, returns `never`.
+    /// If the type is a union containing `undefined`, returns the union without it.
+    /// Otherwise returns the type as-is.
+    fn strip_undefined_from_param_type(&self, type_id: TypeId) -> TypeId {
+        if type_id == TypeId::UNDEFINED {
+            return TypeId::NEVER;
+        }
+        if let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) {
+            let members = self.interner.type_list(list_id);
+            if members.contains(&TypeId::UNDEFINED) {
+                let filtered: Vec<TypeId> = members
+                    .iter()
+                    .copied()
+                    .filter(|&m| m != TypeId::UNDEFINED)
+                    .collect();
+                if filtered.len() == 1 {
+                    return filtered[0];
+                }
+                if filtered.len() > 1 {
+                    return self.interner.union(filtered);
+                }
+                return TypeId::NEVER;
+            }
+        }
+        type_id
     }
 
     /// Check if a parameter type contains `void` — either is `void` directly
