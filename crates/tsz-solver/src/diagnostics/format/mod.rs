@@ -452,6 +452,11 @@ impl<'a> TypeFormatter<'a> {
         // (e.g., `"b"` not `KeysExtendedBy<M, number>`, or `"a" | "b"` not
         // `ValueOf<Obj>`), so we should not redirect these back to the
         // Application form.
+        //
+        // Exception: Union types that came from `keyof NamedType` should be
+        // redirected to the KeyOf display alias.  tsc preserves the `keyof`
+        // form for named operands (interfaces, classes, aliases) while showing
+        // the expanded union for Application-sourced aliases.
         let is_simple_type = matches!(
             &key,
             TypeData::Literal(_)
@@ -461,14 +466,28 @@ impl<'a> TypeFormatter<'a> {
                 | TypeData::Function(_)
                 | TypeData::Enum(_, _)
         );
-        if !is_simple_type
-            && let Some(alias_origin) = self.interner.get_display_alias(type_id)
-            && self.display_alias_visiting.insert(alias_origin)
-        {
-            let result = self.format(alias_origin);
-            self.display_alias_visiting.remove(&alias_origin);
-            return result;
-            // Otherwise: cycle detected — fall through to format the expanded type directly
+        if let Some(alias_origin) = self.interner.get_display_alias(type_id) {
+            // KeyOf aliases: for Union types that came from `keyof NamedType`,
+            // redirect to the `keyof` display form. Only do this when the keyof
+            // operand has a named definition (interface/class/alias) so that
+            // anonymous keyof (`keyof { a: string }`) still shows the expanded
+            // union form, matching tsc behavior.
+            let use_keyof_alias =
+                if let Some(TypeData::KeyOf(keyof_operand)) = self.interner.lookup(alias_origin) {
+                    self.def_store
+                        .is_some_and(|ds| ds.find_def_for_type(keyof_operand).is_some())
+                } else {
+                    false
+                };
+
+            if (!is_simple_type || use_keyof_alias)
+                && self.display_alias_visiting.insert(alias_origin)
+            {
+                let result = self.format(alias_origin);
+                self.display_alias_visiting.remove(&alias_origin);
+                return result;
+                // Otherwise: cycle detected — fall through to format the expanded type directly
+            }
         }
 
         // Check if this type is a module namespace object that should display

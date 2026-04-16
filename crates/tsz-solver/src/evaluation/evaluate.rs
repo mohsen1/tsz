@@ -1599,7 +1599,37 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Visit a keyof type: keyof T
     fn visit_keyof(&mut self, operand: TypeId) -> TypeId {
-        self.evaluate_keyof(operand)
+        let result = self.evaluate_keyof(operand);
+
+        // Store a display alias so the formatter can display "keyof X" instead
+        // of the expanded union of literal keys.  tsc preserves the `keyof`
+        // form when the operand is a named type (interface / class / alias).
+        //
+        // We only store the alias when:
+        //   - the result is a concrete union or literal (not never / intrinsic)
+        //   - the operand looks like a named type (Lazy, Application, Enum, or
+        //     has a def-store mapping)
+        // This prevents anonymous-object keyof from displaying as
+        // `keyof { a: string; b: number }` (tsc shows the expanded form there).
+        if result != TypeId::NEVER && !result.is_intrinsic() {
+            let keyof_type = self.interner().keyof(operand);
+            if result != keyof_type {
+                let operand_is_named = matches!(
+                    self.interner().lookup(operand),
+                    Some(
+                        TypeData::Lazy(_)
+                            | TypeData::Application(_)
+                            | TypeData::Enum(_, _)
+                            | TypeData::TypeQuery(_)
+                    )
+                );
+                if operand_is_named {
+                    self.interner().store_display_alias(result, keyof_type);
+                }
+            }
+        }
+
+        result
     }
 
     /// Visit a type query: typeof expr

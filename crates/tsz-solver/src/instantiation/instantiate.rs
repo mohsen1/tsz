@@ -1280,7 +1280,21 @@ impl<'a> TypeInstantiator<'a> {
                     return self.interner.keyof(inst_operand);
                 }
                 // Evaluate immediately to expand keyof { a: 1 } -> "a"
-                crate::evaluation::evaluate::evaluate_keyof(self.interner, inst_operand)
+                let result =
+                    crate::evaluation::evaluate::evaluate_keyof(self.interner, inst_operand);
+
+                // Store display alias so the formatter shows "keyof Shape" instead
+                // of the expanded union. Only store when the result is non-trivial
+                // and the operand is a named type (has a def-store mapping via the
+                // Object/Callable shape → def reverse lookup in the formatter).
+                if result != TypeId::NEVER && !result.is_intrinsic() {
+                    let keyof_type = self.interner.keyof(inst_operand);
+                    if result != keyof_type {
+                        self.interner.store_display_alias(result, keyof_type);
+                    }
+                }
+
+                result
             }
 
             // ReadonlyType: instantiate the operand
