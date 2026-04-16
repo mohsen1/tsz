@@ -852,6 +852,11 @@ impl DefinitionStore {
     }
 
     /// Update the body `TypeId` for a definition (for lazy evaluation).
+    ///
+    /// If no entry exists for this `DefId` (e.g., it was created by
+    /// `get_or_create_def_id` without a full `register` call), a minimal
+    /// entry is created so that cross-file type resolution can find the
+    /// body via `get_body`.
     pub fn set_body(&self, id: DefId, body: TypeId) {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
             entry.body = Some(body);
@@ -860,6 +865,35 @@ impl DefinitionStore {
             if entry.kind == DefKind::TypeAlias && entry.type_params.is_empty() {
                 self.body_to_alias.entry(body).or_insert(id);
             }
+        } else {
+            // Create a minimal entry for DefIds created via get_or_create_def_id
+            // (which only populates symbol_to_def/def_to_symbol, not definitions).
+            // This ensures cross-file delegation results survive child-checker
+            // teardown and are visible to parent checkers via get_body().
+            self.definitions.insert(
+                id,
+                DefinitionInfo {
+                    kind: DefKind::Interface,
+                    name: Atom::default(),
+                    type_params: Vec::new(),
+                    body: Some(body),
+                    instance_shape: None,
+                    static_shape: None,
+                    extends: None,
+                    implements: Vec::new(),
+                    enum_members: Vec::new(),
+                    exports: Vec::new(),
+                    file_id: None,
+                    span: None,
+                    symbol_id: self.get_symbol_id(id),
+                    heritage_names: Vec::new(),
+                    is_abstract: false,
+                    is_const: false,
+                    is_exported: false,
+                    is_global_augmentation: false,
+                    is_declare: false,
+                },
+            );
         }
     }
 
