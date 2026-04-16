@@ -1043,7 +1043,7 @@ impl<'a> CheckerContext<'a> {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             message.hash(&mut hasher);
             (hasher.finish() as u32, code)
-        } else if code == 2322 || code == 2411 || code == 2430 || code == 2536 {
+        } else if code == 2322 || code == 2411 || code == 2430 || code == 2536 || code == 4094 {
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             message.hash(&mut hasher);
@@ -1087,6 +1087,10 @@ impl<'a> CheckerContext<'a> {
     ///   incompatibly extends several distinct bases.
     /// - TS2536 uses the same scheme so nested indexed-access failures can report
     ///   multiple distinct messages at the same indexed-access start.
+    /// - TS4094 uses (start ^ `message_hash`, code) because tsc anchors every
+    ///   private/protected member of an exported anonymous class expression at the
+    ///   owning variable/function name, producing one TS4094 per member at the
+    ///   same span.
     pub fn error(&mut self, start: u32, length: u32, message: String, code: u32) {
         // TS2304 ("Cannot find name"), TS2552 ("Cannot find name ... Did you mean?"),
         // and TS2663 ("Did you mean the instance member 'this.X'?") are suppressed when
@@ -1155,6 +1159,9 @@ impl<'a> CheckerContext<'a> {
     ///   report both string and number index incompatibilities.
     /// - TS2430 (incorrectly extends interface) uses (start ^ `message_hash`, code) to allow
     ///   multiple per-base diagnostics at the same interface name position.
+    /// - TS4094 uses (start ^ `message_hash`, code) so each private/protected member of an
+    ///   exported anonymous class expression emits its own diagnostic at the owning
+    ///   variable/function name span.
     pub fn push_diagnostic(&mut self, diag: Diagnostic) {
         if (diag.code == 2304 || diag.code == 2552 || diag.code == 2663)
             && self
