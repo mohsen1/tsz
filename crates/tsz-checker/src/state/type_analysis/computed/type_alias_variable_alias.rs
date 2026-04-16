@@ -797,6 +797,13 @@ impl<'a> CheckerState<'a> {
                                 let export_equals_type = self.get_type_of_symbol(export_equals_sym);
                                 self.widen_type_for_display(export_equals_type)
                             });
+                        // Handle `export { X as "module.exports" }` as export-equals.
+                        if export_equals_type.is_none() {
+                            if let Some(module_exports_sym) = exports_table.get("module.exports") {
+                                let me_type = self.get_type_of_symbol(module_exports_sym);
+                                export_equals_type = Some(self.widen_type_for_display(me_type));
+                            }
+                        }
                         let surface = exports_table_target
                             .map(|target_idx| self.resolve_js_export_surface(target_idx))
                             .or_else(|| {
@@ -1135,6 +1142,15 @@ impl<'a> CheckerState<'a> {
                                 let export_equals_type = self.get_type_of_symbol(export_equals_sym);
                                 self.widen_type_for_display(export_equals_type)
                             });
+                        // TypeScript allows `export { X as "module.exports" }` in ESM.
+                        // This acts like `export = X` for CJS interop: the namespace
+                        // import gets construct/call signatures from X.
+                        if export_equals_type.is_none() {
+                            if let Some(module_exports_sym) = exports_table.get("module.exports") {
+                                let me_type = self.get_type_of_symbol(module_exports_sym);
+                                export_equals_type = Some(self.widen_type_for_display(me_type));
+                            }
+                        }
                         let surface = exports_table_target
                             .map(|target_idx| self.resolve_js_export_surface(target_idx))
                             .or_else(|| {
