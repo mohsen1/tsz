@@ -276,6 +276,18 @@ impl<'a> CheckerState<'a> {
                     expected_type,
                     return_data.expression,
                 );
+            } else if crate::query_boundaries::common::is_fresh_object_type(
+                self.ctx.types,
+                return_type,
+            ) {
+                // Fresh type from non-literal expression (e.g., `return obj = { x: 1, y: 2 }`).
+                // Walk through binary assignment expressions to find the object literal.
+                let literal_idx = self.find_rhs_object_literal(return_data.expression);
+                self.check_object_literal_excess_properties(
+                    return_type,
+                    expected_type,
+                    literal_idx.unwrap_or(return_data.expression),
+                );
             } else if expr_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION {
                 self.check_conditional_return_branches_against_type(
                     return_data.expression,

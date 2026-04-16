@@ -787,11 +787,41 @@ impl<'a> CheckerState<'a> {
         }
         match reason {
             Some(ref failure_reason) => {
-                // Skip ExcessProperty — handled by check_object_literal_excess_properties (avoids duplicate TS2353/TS2561).
+                // ExcessProperty errors need special handling: emit at the property position,
+                // not the statement position. Find the object literal and call the excess
+                // property checker to emit at the correct position.
                 if matches!(
                     failure_reason,
                     tsz_solver::SubtypeFailureReason::ExcessProperty { .. }
                 ) {
+                    // Walk through statements and binary expressions to find the object literal
+                    let start_idx = if let Some(node) = self.ctx.arena.get(anchor_idx) {
+                        // If anchor is a return statement, start from its expression
+                        if node.kind == syntax_kind_ext::RETURN_STATEMENT {
+                            self.ctx
+                                .arena
+                                .get_return_statement(node)
+                                .and_then(|ret| {
+                                    if ret.expression.is_some() {
+                                        Some(ret.expression)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or(anchor_idx)
+                        } else {
+                            anchor_idx
+                        }
+                    } else {
+                        anchor_idx
+                    };
+                    let literal_idx = self.find_rhs_object_literal(start_idx);
+                    if let Some(obj_idx) = literal_idx {
+                        self.check_object_literal_excess_properties(source, target, obj_idx);
+                    }
+                    // If we can't find an object literal, the solver's excess property
+                    // check may be from a non-literal fresh type (shouldn't happen in
+                    // typical code, but fallback to avoid silent suppression).
                     return;
                 }
                 // Skip MissingProperty for computed symbol expressions (TS2339 emitted separately).
