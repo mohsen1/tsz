@@ -2023,6 +2023,16 @@ impl<'a> CheckerState<'a> {
         let widened_element =
             self.normalize_assignability_display_type(self.widen_type_for_display(element_type));
         let rebuilt = self.ctx.types.array(widened_element);
+        // Preserve the readonly modifier: tsc displays `readonly number[]` not `number[]`
+        // when the source type was a readonly array (ReadonlyType(Array(...))).
+        let rebuilt = if crate::query_boundaries::type_computation::complex::is_readonly_type(
+            self.ctx.types,
+            source_type,
+        ) {
+            self.ctx.types.readonly_type(rebuilt)
+        } else {
+            rebuilt
+        };
         Some(self.format_assignability_type_for_message(rebuilt, target))
     }
 
