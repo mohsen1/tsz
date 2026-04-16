@@ -891,6 +891,34 @@ impl<'a> CheckerState<'a> {
         Some((name.to_string(), base_type))
     }
 
+    /// Extract the base type from an anonymous `@typedef {type}` (one without an
+    /// explicit name). In tsc, such typedefs inherit the name of the following
+    /// declaration statement.
+    pub(crate) fn extract_anonymous_typedef_base_type(jsdoc: &str) -> Option<String> {
+        for raw_line in jsdoc.lines() {
+            let line = raw_line.trim_start_matches('*').trim();
+            if let Some(rest) = line.strip_prefix("@typedef") {
+                let rest = rest.trim();
+                if rest.starts_with('{') {
+                    if let Some((expr, after)) = Self::parse_jsdoc_curly_type_expr(rest) {
+                        let after = after.trim();
+                        if after.is_empty()
+                            || !after.chars().next().is_some_and(|c| {
+                                c.is_alphanumeric() || c == '_' || c == '$' || c == '.'
+                            })
+                        {
+                            let expr = expr.trim();
+                            if !expr.is_empty() {
+                                return Some(expr.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
     pub(super) fn parse_jsdoc_property_type(line: &str) -> Option<JsdocPropertyTagInfo> {
         let mut rest = line.trim();
         if let Some(after_tag) = rest.strip_prefix("@property") {
