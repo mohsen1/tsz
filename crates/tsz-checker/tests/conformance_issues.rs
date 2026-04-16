@@ -888,6 +888,41 @@ var r14 = foo7(1, c);
     );
 }
 
+/// Generic constructor calls should widen scalar literal argument types
+/// (e.g., `true` → `boolean`) for TS2345 error messages, matching tsc.
+/// Regression test for exportAssignmentConstrainedGenericType conformance.
+#[test]
+fn test_generic_constructor_widens_boolean_literal_for_error_display() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+class Foo<T extends {a: string; b: number}> {
+    test: T;
+    constructor(x: T) {}
+}
+var x = new Foo(true);
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2345),
+        "Expected TS2345 for boolean arg to generic constructor, got: {diagnostics:?}"
+    );
+    // Verify the error message uses the widened type 'boolean', not literal 'true'
+    let ts2345_msg = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2345)
+        .map(|(_, msg)| msg.as_str())
+        .unwrap_or("");
+    assert!(
+        ts2345_msg.contains("boolean"),
+        "Expected widened 'boolean' in error message (not literal 'true'), got: {ts2345_msg}"
+    );
+}
+
 #[test]
 fn test_unresolved_computed_class_method_contributes_indexed_callable_type() {
     let source = r#"
