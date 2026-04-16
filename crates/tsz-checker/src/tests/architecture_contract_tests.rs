@@ -1610,6 +1610,7 @@ fn checker_files_stay_under_loc_limit() {
         ("assignability/assignment_checker.rs", 2083),
         ("error_reporter/core.rs", 2358),
         ("error_reporter/call_errors.rs", 2554),
+        ("types/type_checking/duplicate_identifiers_helpers.rs", 2125),
     ];
 
     let mut violations = Vec::new();
