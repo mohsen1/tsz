@@ -333,6 +333,83 @@ impl<'a> CheckerState<'a> {
         self.resolve_jsdoc_assigned_value_type_inner(name, false)
     }
 
+    /// Resolve an anonymous `@typedef {type}` attached to a declaration matching
+    /// `name`. In tsc, a nameless `@typedef` inherits the name of the following
+    /// declaration, creating a type alias visible in type-position lookups.
+    pub(crate) fn resolve_anonymous_typedef_for_name(&mut self, name: &str) -> Option<TypeId> {
+        if let Some(ty) = self.resolve_anonymous_typedef_in_arena(name) {
+            return Some(ty);
+        }
+
+        let all_arenas = self.ctx.all_arenas.clone()?;
+        let all_binders = self.ctx.all_binders.clone()?;
+
+        for (file_idx, (arena, binder)) in all_arenas.iter().zip(all_binders.iter()).enumerate() {
+            if file_idx == self.ctx.current_file_idx {
+                continue;
+            }
+            for source_file in &arena.source_files {
+                let mut checker = Box::new(CheckerState::with_parent_cache(
+                    arena.as_ref(),
+                    binder.as_ref(),
+                    self.ctx.types,
+                    source_file.file_name.clone(),
+                    self.ctx.compiler_options.clone(),
+                    self,
+                ));
+                checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+                checker.ctx.copy_cross_file_state_from(&self.ctx);
+                checker.ctx.current_file_idx = file_idx;
+
+                if let Some(ty) = checker.resolve_anonymous_typedef_in_arena(name) {
+                    return Some(ty);
+                }
+            }
+        }
+        None
+    }
+
+    fn resolve_anonymous_typedef_in_arena(&mut self, name: &str) -> Option<TypeId> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        for raw_idx in 0..self.ctx.arena.len() {
+            let idx = NodeIndex(raw_idx as u32);
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(binary) = self.ctx.arena.get_binary_expr(node) else {
+                continue;
+            };
+            if binary.operator_token != tsz_scanner::SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+            if self.expression_text(binary.left).as_deref() != Some(name) {
+                continue;
+            }
+            let Some(stmt_idx) = self.enclosing_expression_statement(idx) else {
+                continue;
+            };
+            let Some(sf) = self.source_file_data_for_node(stmt_idx) else {
+                continue;
+            };
+            let source_text = sf.text.to_string();
+            let comments = sf.comments.clone();
+            let Some(jsdoc) = self.try_jsdoc_with_ancestor_walk(stmt_idx, &comments, &source_text)
+            else {
+                continue;
+            };
+            if let Some(base_type_expr) = Self::extract_anonymous_typedef_base_type(&jsdoc) {
+                if let Some(resolved) = self.resolve_jsdoc_reference(&base_type_expr) {
+                    return Some(resolved);
+                }
+            }
+        }
+        None
+    }
+
     fn resolve_jsdoc_prototype_assignment_type(&mut self, name: &str) -> Option<TypeId> {
         let prototype_name = format!("{name}.prototype");
 

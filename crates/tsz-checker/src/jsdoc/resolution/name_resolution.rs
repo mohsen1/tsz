@@ -1084,6 +1084,13 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Anonymous @typedef takes precedence over assigned value type.
+        // In tsc, `@typedef {type}` without a name creates a type alias
+        // named after the following declaration.
+        if let Some(resolved) = self.resolve_anonymous_typedef_for_name(name) {
+            return Some(resolved);
+        }
+
         self.resolve_jsdoc_assigned_value_type(name)
     }
 
