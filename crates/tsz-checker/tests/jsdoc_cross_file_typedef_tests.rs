@@ -356,6 +356,49 @@ d.prop;
 }
 
 #[test]
+fn anonymous_typedef_inherits_name_from_following_declaration() {
+    let codes = check_js_file_with_types(
+        "enumDef.js",
+        r#"
+var Host = {};
+Host.UserMetrics = {};
+/** @enum {number} */
+Host.UserMetrics.Action = {
+    WindowDocked: 1,
+    WindowUndocked: 2,
+};
+/**
+ * @typedef {string} Host.UserMetrics.Bargh
+ */
+/**
+ * @typedef {string}
+ */
+Host.UserMetrics.Blah = {
+    x: 12
+}
+"#,
+        "index.js",
+        r#"
+/**
+ * @type {Host.UserMetrics.Blah}
+ */
+var y = "ok";
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !codes.contains(&2322),
+        "Expected no TS2322 when anonymous @typedef {{string}} provides type for Host.UserMetrics.Blah, got codes: {codes:?}"
+    );
+}
+
+#[test]
 fn jsdoc_import_defer_namespace_reports_from_expected_and_missing_namespace() {
     let diagnostics = check_js_file_with_types_diagnostics(
         "types.ts",
