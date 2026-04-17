@@ -2035,10 +2035,8 @@ impl<'a> GoToDefinition<'a> {
                             | syntax_kind_ext::SET_ACCESSOR => return Some(parent),
                             _ => {}
                         },
-                        "switch" => {
-                            if parent_node.kind == syntax_kind_ext::SWITCH_STATEMENT {
-                                return Some(parent);
-                            }
+                        "switch" if parent_node.kind == syntax_kind_ext::SWITCH_STATEMENT => {
+                            return Some(parent);
                         }
                         _ => {}
                     }

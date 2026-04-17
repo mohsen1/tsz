@@ -1308,10 +1308,8 @@ pub fn has_type_query_for_symbol(
 
         let Some(key) = db.lookup(ty) else { continue };
         match key {
-            TypeData::TypeQuery(sym_ref) => {
-                if sym_ref.0 == target_sym_id {
-                    return true;
-                }
+            TypeData::TypeQuery(sym_ref) if sym_ref.0 == target_sym_id => {
+                return true;
             }
             TypeData::Array(elem) => worklist.push(elem),
             TypeData::Union(list) | TypeData::Intersection(list) => {

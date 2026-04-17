@@ -1666,10 +1666,8 @@ impl<'a> HoverProvider<'a> {
                         parts.push(format!("@example {}", tag.text));
                     }
                 }
-                "returns" | "return" => {
-                    if !tag.text.is_empty() {
-                        parts.push(format!("@returns {}", tag.text));
-                    }
+                "returns" | "return" if !tag.text.is_empty() => {
+                    parts.push(format!("@returns {}", tag.text));
                 }
                 "deprecated" => {
                     if tag.text.is_empty() {
@@ -1678,10 +1676,8 @@ impl<'a> HoverProvider<'a> {
                         parts.push(format!("@deprecated {}", tag.text));
                     }
                 }
-                "see" => {
-                    if !tag.text.is_empty() {
-                        parts.push(format!("@see {}", tag.text));
-                    }
+                "see" if !tag.text.is_empty() => {
+                    parts.push(format!("@see {}", tag.text));
                 }
                 _ => {}
             }
@@ -1729,10 +1725,8 @@ impl<'a> HoverProvider<'a> {
         // Include relevant JSDoc tags
         for tag in &parsed.tags {
             match tag.name.as_str() {
-                "returns" => {
-                    if !tag.text.is_empty() {
-                        sections.push(format!("Returns: {}", tag.text));
-                    }
+                "returns" if !tag.text.is_empty() => {
+                    sections.push(format!("Returns: {}", tag.text));
                 }
                 "example" => {
                     if tag.text.is_empty() {
@@ -1748,20 +1742,14 @@ impl<'a> HoverProvider<'a> {
                         sections.push(format!("**@deprecated** {}", tag.text));
                     }
                 }
-                "see" => {
-                    if !tag.text.is_empty() {
-                        sections.push(format!("See: {}", tag.text));
-                    }
+                "see" if !tag.text.is_empty() => {
+                    sections.push(format!("See: {}", tag.text));
                 }
-                "throws" | "exception" => {
-                    if !tag.text.is_empty() {
-                        sections.push(format!("Throws: {}", tag.text));
-                    }
+                "throws" | "exception" if !tag.text.is_empty() => {
+                    sections.push(format!("Throws: {}", tag.text));
                 }
-                "since" => {
-                    if !tag.text.is_empty() {
-                        sections.push(format!("Since: {}", tag.text));
-                    }
+                "since" if !tag.text.is_empty() => {
+                    sections.push(format!("Since: {}", tag.text));
                 }
                 _ => {}
             }

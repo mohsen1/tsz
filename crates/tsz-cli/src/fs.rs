@@ -516,15 +516,10 @@ fn strip_source_extension(path: &Path, name: &str) -> Option<PathBuf> {
 /// Strip a declaration extension (.d.ts, .d.mts, .d.cts) and return the
 /// parent-joined stem.
 fn strip_declaration_extension(path: &Path, name: &str) -> Option<PathBuf> {
-    let stem = if let Some(s) = name.strip_suffix(".d.ts") {
-        s
-    } else if let Some(s) = name.strip_suffix(".d.mts") {
-        s
-    } else if let Some(s) = name.strip_suffix(".d.cts") {
-        s
-    } else {
-        return None;
-    };
+    let stem = name
+        .strip_suffix(".d.ts")
+        .or_else(|| name.strip_suffix(".d.mts"))
+        .or_else(|| name.strip_suffix(".d.cts"))?;
     Some(path.with_file_name(stem))
 }
 

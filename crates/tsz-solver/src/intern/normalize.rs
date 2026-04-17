@@ -310,12 +310,11 @@ impl TypeInterner {
 
         for &member in flat.iter() {
             match self.lookup(member) {
-                Some(TypeData::TypeParameter(ref info)) => {
+                Some(TypeData::TypeParameter(ref info))
                     if info.constraint.is_some()
-                        && !constrained.iter().any(|(n, _)| *n == info.name)
-                    {
-                        constrained.push((info.name, member));
-                    }
+                        && !constrained.iter().any(|(n, _)| *n == info.name) =>
+                {
+                    constrained.push((info.name, member));
                 }
                 Some(TypeData::Union(list_id)) => {
                     let union_members = self.type_list(list_id);

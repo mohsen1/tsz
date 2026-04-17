@@ -191,18 +191,6 @@ fn format_object_inner_multiline(inner: &str) -> Option<String> {
     Some(format!("{{\n    {};\n}}", props.join(";\n    ")))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::format_hover_variable_type;
-
-    #[test]
-    fn format_hover_variable_type_multiline_index_signature_object() {
-        let input = "{ [x: string]: T; }";
-        let out = format_hover_variable_type(input);
-        assert_eq!(out, "{\n    [x: string]: T;\n}");
-    }
-}
-
 fn normalize_union_array_precedence(type_string: &str) -> String {
     let trimmed = type_string.trim();
     if !trimmed.ends_with("[]") || trimmed.ends_with(")[]") {
@@ -258,4 +246,16 @@ fn normalize_union_array_precedence(type_string: &str) -> String {
             .to_string();
     }
     format!("({})[]", normalized.join(" | "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_hover_variable_type;
+
+    #[test]
+    fn format_hover_variable_type_multiline_index_signature_object() {
+        let input = "{ [x: string]: T; }";
+        let out = format_hover_variable_type(input);
+        assert_eq!(out, "{\n    [x: string]: T;\n}");
+    }
 }

@@ -437,6 +437,15 @@ pub(crate) fn default_type_roots(base_dir: &Path) -> Vec<PathBuf> {
                 roots.push(canonical);
             }
         }
+        // tsc scopes implicit typeRoots to the project's tsconfig boundary —
+        // once we hit a directory that hosts a `tsconfig.json`, further
+        // ancestors are outside the project and their `@types` packages must
+        // not be silently discovered. Without this, tests that declare
+        // `declare module "xyz"` in a higher-level `node_modules/@types`
+        // resolve the module when tsc correctly reports TS2307.
+        if dir.join("tsconfig.json").is_file() {
+            break;
+        }
         current = dir.parent().map(Path::to_path_buf);
     }
 

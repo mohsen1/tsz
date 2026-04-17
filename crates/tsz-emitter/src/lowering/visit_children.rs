@@ -469,13 +469,11 @@ impl<'a> LoweringPass<'a> {
                     // to avoid emitting it for class-only decorators without members.
                 }
             }
-            k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => {
-                if self.ctx.target_es5 {
-                    self.transforms.insert(
-                        idx,
-                        TransformDirective::ES5TemplateLiteral { template_node: idx },
-                    );
-                }
+            k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 && self.ctx.target_es5 => {
+                self.transforms.insert(
+                    idx,
+                    TransformDirective::ES5TemplateLiteral { template_node: idx },
+                );
             }
             k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
                 if self.ctx.target_es5 {

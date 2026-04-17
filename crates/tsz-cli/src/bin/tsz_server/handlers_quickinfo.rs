@@ -653,14 +653,12 @@ impl Server {
         }
         let (open_idx, quote) = open_quote?;
 
-        let mut close_idx = None;
-        for idx in (open_idx + 1)..bytes.len() {
-            if bytes[idx] == quote {
-                close_idx = Some(idx);
-                break;
-            }
-        }
-        let close_idx = close_idx?;
+        let close_idx = bytes
+            .iter()
+            .enumerate()
+            .skip(open_idx + 1)
+            .find(|&(_, &b)| b == quote)
+            .map(|(idx, _)| idx)?;
         let probe_usize = probe as usize;
         if probe_usize <= open_idx || probe_usize >= close_idx {
             return None;

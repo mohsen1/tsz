@@ -35840,7 +35840,7 @@ export const myVar: number = 42;
     );
 }
 
-/// Test that super() in a class extending a class with private static fields
+/// Test that `super()` in a class extending a class with private static fields
 /// does NOT emit false TS2346 ("Call target does not contain any signatures").
 /// Regression test for conformance: privateNamesAndStaticFields.ts
 #[test]
@@ -35911,9 +35911,9 @@ class B extends A {
     );
 }
 
-/// Test that super() in a class extending a forward-declared class
+/// Test that `super()` in a class extending a forward-declared class
 /// does NOT emit false TS2346. tsc emits TS2449 for the forward reference
-/// but NOT TS2346 for the super() call.
+/// but NOT TS2346 for the `super()` call.
 /// Regression test for conformance: classSideInheritance2.ts
 #[test]
 fn test_super_call_no_false_ts2346_with_forward_reference() {
@@ -36053,7 +36053,6 @@ function f12(x: string | (() => string) | undefined) {
     // The is_constructor_type check should not falsely detect the type as constructable.
     assert!(
         !all_codes.contains(&2348),
-        "Should not emit TS2348 for Extract-narrowed function call. Diagnostics: {:?}",
-        all_codes
+        "Should not emit TS2348 for Extract-narrowed function call. Diagnostics: {all_codes:?}",
     );
 }

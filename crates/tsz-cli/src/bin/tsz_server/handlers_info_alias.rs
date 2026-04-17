@@ -834,10 +834,10 @@ try {
             .ok()?;
 
         let input = serde_json::to_vec(&payload).ok()?;
-        if let Some(mut stdin) = child.stdin.take() {
-            if stdin.write_all(&input).is_err() {
-                return None;
-            }
+        if let Some(mut stdin) = child.stdin.take()
+            && stdin.write_all(&input).is_err()
+        {
+            return None;
         }
 
         let output = child.wait_with_output().ok()?;

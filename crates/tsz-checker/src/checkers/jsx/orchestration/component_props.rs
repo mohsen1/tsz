@@ -1225,15 +1225,17 @@ impl<'a> CheckerState<'a> {
                         })
                     });
                 if should_defer {
-                    // Preserve callback transport for diagnostics, but keep this staged
-                    // pass out of inference until the unresolved type params clear.
-                    let _ = self.compute_type_of_node_with_request(
-                        value_idx,
-                        &(*request).contextual(contextual_type),
-                    );
+                    // The callback references unresolved type parameters. Skip typing it
+                    // now - it will be properly typed in a later round once the type
+                    // parameters are resolved. Typing it here with unresolved params
+                    // would emit false diagnostics like "Property X does not exist on type T".
                     continue;
                 }
             }
+            // Invalidate cached symbol types before re-typing with a new contextual type.
+            // This ensures parameters get the updated inferred type (e.g., `arg: number`)
+            // instead of the stale type from an earlier pass (e.g., `arg: T`).
+            self.invalidate_function_like_for_contextual_retry(value_idx);
             let typed = self.compute_type_of_node_with_request(
                 value_idx,
                 &(*request).contextual(contextual_type),
