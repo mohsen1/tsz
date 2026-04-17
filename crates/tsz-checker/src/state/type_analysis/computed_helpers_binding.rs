@@ -50,6 +50,17 @@ impl<'a> CheckerState<'a> {
                         return components[node_modules_idx - 1..].join("/");
                     }
                 }
+                // tsc displays node_modules imports by their bare package name,
+                // e.g. `typeof import("shortid")` not `typeof import("node_modules/shortid/index")`.
+                // Scoped packages (`@scope/pkg`) keep both segments; unscoped packages
+                // keep just the package directory name.
+                let after_nm = &components[node_modules_idx + 1..];
+                if let Some(first) = after_nm.first() {
+                    if first.starts_with('@') && after_nm.len() >= 2 {
+                        return format!("{}/{}", after_nm[0], after_nm[1]);
+                    }
+                    return (*first).to_string();
+                }
                 return components[node_modules_idx..].join("/");
             }
 
