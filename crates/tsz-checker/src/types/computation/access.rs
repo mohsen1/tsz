@@ -950,7 +950,14 @@ impl<'a> CheckerState<'a> {
                     // private properties `a` and `b`. Without this, those members would
                     // be falsely reported as unused (TS6133) because the solver's property
                     // resolution pipeline never marks binder symbols.
-                    if self.is_this_expression(access.expression)
+                    //
+                    // Skip when the access is the direct LHS of an assignment
+                    // (`this[key] = expr`) or ++/-- — writes don't count as reads
+                    // for noUnusedLocals; mirrors the property_checker.rs guard
+                    // for dot-access.
+                    let is_write_target = self.property_access_is_direct_write_target(idx);
+                    if !is_write_target
+                        && self.is_this_expression(access.expression)
                         && !string_keys.is_empty()
                         && let Some(class_idx) = self.nearest_enclosing_class(access.expression)
                         && let Some(&class_sym_id) = self.ctx.binder.node_symbols.get(&class_idx.0)

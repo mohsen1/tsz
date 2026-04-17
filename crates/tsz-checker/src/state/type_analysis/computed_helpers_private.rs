@@ -216,8 +216,12 @@ impl<'a> CheckerState<'a> {
         let (symbols, saw_class_scope) = self.resolve_private_identifier_symbols(name_idx);
 
         // Mark the private identifier symbol as referenced for unused-variable tracking.
-        for &sym_id in &symbols {
-            self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
+        // Skip in write context (`this.#foo = expr`) — tsc only counts READS as
+        // references for noUnusedLocals; write-only private members still emit TS6133.
+        if !is_write_context {
+            for &sym_id in &symbols {
+                self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
+            }
         }
 
         if !is_write_context && let Some(class_info) = self.ctx.enclosing_class.as_ref() {
