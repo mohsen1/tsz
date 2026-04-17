@@ -913,208 +913,15 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if op_kind == SyntaxKind::InKeyword as u16 {
-                if let Some(left_node) = self.ctx.arena.get(left_idx)
-                    && left_node.kind == SyntaxKind::PrivateIdentifier as u16
-                {
-                    self.check_private_identifier_in_expression(left_idx, right_idx, right_type);
-                }
-
-                // TS18046: tsc emits "'x' is of type 'unknown'" when the RHS of
-                // `in` is `unknown`. This takes priority over TS2322/TS2638.
-                if right_type == TypeId::UNKNOWN {
-                    self.error_is_of_type_unknown(right_idx);
-                } else if !self.is_valid_in_operator_rhs(right_type) {
-                    // Route through the check_assignable_or_report(...) gateway family
-                    // so computation-layer mismatches stay on the centralized path.
-                    let _ = self.check_assignable_or_report_at_exact_anchor(
-                        right_type,
-                        TypeId::OBJECT,
-                        right_idx,
-                        right_idx,
-                    );
-                } else if self.type_may_represent_primitive(right_type)
-                    || self.truthiness_narrowed_from_unknown(right_idx, right_type)
-                {
-                    // TS2638: Type '{}' may represent a primitive value, which is not
-                    // permitted as the right operand of the 'in' operator.
-                    //
-                    // This fires for:
-                    // 1. Type parameters with unconstrained or `{}` constraint
-                    // 2. Identifiers declared as `unknown` that were truthiness-narrowed to `{}`
-                    //
-                    // Note: `instanceof Object` narrowing produces a type that does NOT
-                    // trigger TS2638 because the `Object` instance type excludes primitives.
-                    // Truthiness narrowing produces `{}` which still "may represent primitive"
-                    // because the original `unknown` could have been any primitive value.
-                    //
-                    // tsc displays the apparent type in the error message: for `unknown`
-                    // and unconstrained type params, that's `{}`; for constrained type
-                    // params, it's the constraint type.
-                    let type_str = self.format_apparent_type_for_in_operator(right_type);
-                    self.error_at_node_msg(
-                        right_idx,
-                        tsz_common::diagnostics::diagnostic_codes::TYPE_MAY_REPRESENT_A_PRIMITIVE_VALUE_WHICH_IS_NOT_PERMITTED_AS_THE_RIGHT_OPERAND,
-                        &[&type_str],
-                    );
-                }
-
-                type_stack.push(TypeId::BOOLEAN);
+                let result = self.check_in_operator(left_idx, right_idx, right_type);
+                type_stack.push(result);
                 continue;
             }
             // instanceof always produces boolean
             if op_kind == SyntaxKind::InstanceOfKeyword as u16 {
-                use crate::diagnostics::diagnostic_codes;
-
-                // TS2848: The right-hand side of an instanceof must not be an instantiation expression
-                let unwrapped_right = self.ctx.arena.skip_parenthesized(right_idx);
-                if let Some(right_node) = self.ctx.arena.get(unwrapped_right)
-                    && right_node.kind
-                        == tsz_parser::parser::syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
-                {
-                    self.error_at_node(
-                            unwrapped_right,
-                            crate::diagnostics::diagnostic_messages::THE_RIGHT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_NOT_BE_AN_INSTANTIATION_EXP,
-                            diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_NOT_BE_AN_INSTANTIATION_EXP,
-                        );
-                }
-
-                // `instanceof` left-operand validity is about the expression's semantic
-                // value type, not the relation-normalized type used for assignability.
-                // Running it through assignability evaluation can erase object members
-                // from unions before we validate TS2358.
-                if left_type != TypeId::ERROR {
-                    let evaluator = BinaryOpEvaluator::new(self.ctx.types);
-                    let lhs_type = self.declared_instanceof_left_operand_type(left_idx, left_type);
-                    if !evaluator.is_valid_instanceof_left_operand(lhs_type) {
-                        self.error_at_node_msg(
-                            left_idx,
-                            diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_OF_TYPE_ANY_AN_OBJECT_TYP,
-                            &[],
-                        );
-                    }
-                }
-
-                let eval_right = self.evaluate_type_for_assignability(right_type);
-                if eval_right != TypeId::ERROR {
-                    let mut is_valid_rhs = false;
-
-                    let func_ty_opt = self
-                        .ctx
-                        .binder
-                        .file_locals
-                        .get("Function")
-                        .map(|sym_id| self.get_type_of_symbol(sym_id))
-                        .or_else(|| self.resolve_lib_type_by_name("Function"));
-
-                    if let Some(func_ty) = func_ty_opt {
-                        let evaluator = BinaryOpEvaluator::new(self.ctx.types);
-                        is_valid_rhs = evaluator.is_valid_instanceof_right_operand(
-                            eval_right,
-                            func_ty,
-                            &mut |src, tgt| self.is_assignable_to(src, tgt),
-                        );
-                    } else if eval_right == TypeId::ANY
-                        || eval_right == TypeId::UNKNOWN
-                        || eval_right == TypeId::FUNCTION
-                    {
-                        is_valid_rhs = true;
-                    }
-
-                    if !is_valid_rhs
-                        && self.ctx.is_js_file()
-                        && self
-                            .synthesize_js_constructor_instance_type(right_idx, eval_right, &[])
-                            .is_some()
-                    {
-                        is_valid_rhs = true;
-                    }
-
-                    // Check for [Symbol.hasInstance] on the RHS type.
-                    // This both validates the RHS (making it valid even without Function
-                    // assignability) AND performs additional checks:
-                    //   TS2860: LHS must be assignable to the first parameter
-                    //   TS2861: The method must return a boolean
-                    // These checks run regardless of whether is_valid_rhs is already true,
-                    // because tsc always validates Symbol.hasInstance semantics when present.
-                    {
-                        use crate::query_boundaries::common::PropertyAccessResult;
-                        if let PropertyAccessResult::Success {
-                            type_id: has_instance_type,
-                            ..
-                        } = self
-                            .resolve_property_access_with_env(eval_right, "[Symbol.hasInstance]")
-                        {
-                            is_valid_rhs = true;
-
-                            // Extract params and return type from the [Symbol.hasInstance] method.
-                            // The method can be either a Function type or a Callable type.
-                            let sig_info: Option<(Vec<tsz_solver::ParamInfo>, tsz_solver::TypeId)> =
-                                if let Some(fn_id) =
-                                    tsz_solver::function_shape_id(self.ctx.types, has_instance_type)
-                                {
-                                    let shape = self.ctx.types.function_shape(fn_id);
-                                    Some((shape.params.clone(), shape.return_type))
-                                } else if let Some(shape_id) =
-                                    tsz_solver::callable_shape_id(self.ctx.types, has_instance_type)
-                                {
-                                    let shape = self.ctx.types.callable_shape(shape_id);
-                                    shape
-                                        .call_signatures
-                                        .first()
-                                        .map(|sig| (sig.params.clone(), sig.return_type))
-                                } else {
-                                    None
-                                };
-
-                            if let Some((params, return_type)) = sig_info {
-                                // TS2861: return type must be boolean
-                                let ret = self.evaluate_type_for_assignability(return_type);
-                                if ret != TypeId::BOOLEAN
-                                    && ret != TypeId::ANY
-                                    && ret != TypeId::ERROR
-                                    && !self.is_assignable_to(ret, TypeId::BOOLEAN)
-                                {
-                                    self.error_at_node_msg(
-                                        right_idx,
-                                        diagnostic_codes::AN_OBJECTS_SYMBOL_HASINSTANCE_METHOD_MUST_RETURN_A_BOOLEAN_VALUE_FOR_IT_TO_BE_US,
-                                        &[],
-                                    );
-                                }
-
-                                // TS2860: LHS must be assignable to first parameter
-                                if let Some(first_param) = params.first() {
-                                    let param_type =
-                                        self.evaluate_type_for_assignability(first_param.type_id);
-                                    let lhs_type = self
-                                        .declared_instanceof_left_operand_type(left_idx, left_type);
-                                    if lhs_type != TypeId::ANY
-                                        && lhs_type != TypeId::ERROR
-                                        && param_type != TypeId::ANY
-                                        && param_type != TypeId::UNKNOWN
-                                        && param_type != TypeId::ERROR
-                                        && !self.is_assignable_to(lhs_type, param_type)
-                                    {
-                                        self.error_at_node_msg(
-                                            left_idx,
-                                            diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_ASSIGNABLE_TO_THE_FIRST_A,
-                                            &[],
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if !is_valid_rhs {
-                        self.error_at_node_msg(
-                            right_idx,
-                            diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_EITHER_OF_TYPE_ANY_A_CLA,
-                            &[],
-                        );
-                    }
-                }
-
-                type_stack.push(TypeId::BOOLEAN);
+                let result =
+                    self.check_instanceof_operator(left_idx, right_idx, left_type, right_type);
+                type_stack.push(result);
                 continue;
             }
 
@@ -1122,35 +929,7 @@ impl<'a> CheckerState<'a> {
             if op_kind == SyntaxKind::AmpersandAmpersandToken as u16 {
                 // Skip TS2845 enum member checks — tsc only emits those in condition contexts.
                 self.check_truthy_or_falsy_with_type_no_enum(left_idx, left_type);
-                let callable_truthiness_body = self
-                    .ctx
-                    .arena
-                    .get_extended(idx)
-                    .and_then(|ext| ext.parent.is_some().then_some(ext.parent))
-                    .and_then(|mut parent_idx| loop {
-                        let parent = self.ctx.arena.get(parent_idx)?;
-                        if parent.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-                            || matches!(
-                                self.ctx.arena.get_binary_expr(parent),
-                                Some(bin)
-                                    if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
-                                        || bin.operator_token == SyntaxKind::BarBarToken as u16
-                                        || bin.operator_token == SyntaxKind::QuestionQuestionToken as u16
-                            )
-                        {
-                            parent_idx = self.ctx.arena.get_extended(parent_idx)?.parent;
-                            continue;
-                        }
-
-                        break if parent.kind == syntax_kind_ext::IF_STATEMENT {
-                            self.ctx
-                                .arena
-                                .get_if_statement(parent)
-                                .map(|if_stmt| if_stmt.then_statement)
-                        } else {
-                            None
-                        };
-                    });
+                let callable_truthiness_body = self.find_callable_truthiness_body(idx);
                 self.check_callable_truthiness(left_idx, callable_truthiness_body);
                 if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
                     type_stack.push(TypeId::ERROR);
@@ -1174,35 +953,7 @@ impl<'a> CheckerState<'a> {
                 // TS2872/TS2873: left side of `||` can be syntactically always truthy/falsy.
                 // Skip TS2845 enum member checks — tsc only emits those in condition contexts.
                 self.check_truthy_or_falsy_with_type_no_enum(left_idx, left_type);
-                let callable_truthiness_body = self
-                    .ctx
-                    .arena
-                    .get_extended(idx)
-                    .and_then(|ext| ext.parent.is_some().then_some(ext.parent))
-                    .and_then(|mut parent_idx| loop {
-                        let parent = self.ctx.arena.get(parent_idx)?;
-                        if parent.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-                            || matches!(
-                                self.ctx.arena.get_binary_expr(parent),
-                                Some(bin)
-                                    if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
-                                        || bin.operator_token == SyntaxKind::BarBarToken as u16
-                                        || bin.operator_token == SyntaxKind::QuestionQuestionToken as u16
-                            )
-                        {
-                            parent_idx = self.ctx.arena.get_extended(parent_idx)?.parent;
-                            continue;
-                        }
-
-                        break if parent.kind == syntax_kind_ext::IF_STATEMENT {
-                            self.ctx
-                                .arena
-                                .get_if_statement(parent)
-                                .map(|if_stmt| if_stmt.then_statement)
-                        } else {
-                            None
-                        };
-                    });
+                let callable_truthiness_body = self.find_callable_truthiness_body(idx);
                 if callable_truthiness_body.is_some() {
                     self.check_callable_truthiness(left_idx, callable_truthiness_body);
                 }
@@ -1222,35 +973,7 @@ impl<'a> CheckerState<'a> {
 
             // Nullish coalescing: `a ?? b`
             if op_kind == SyntaxKind::QuestionQuestionToken as u16 {
-                let callable_truthiness_body = self
-                    .ctx
-                    .arena
-                    .get_extended(idx)
-                    .and_then(|ext| ext.parent.is_some().then_some(ext.parent))
-                    .and_then(|mut parent_idx| loop {
-                        let parent = self.ctx.arena.get(parent_idx)?;
-                        if parent.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-                            || matches!(
-                                self.ctx.arena.get_binary_expr(parent),
-                                Some(bin)
-                                    if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
-                                        || bin.operator_token == SyntaxKind::BarBarToken as u16
-                                        || bin.operator_token == SyntaxKind::QuestionQuestionToken as u16
-                            )
-                        {
-                            parent_idx = self.ctx.arena.get_extended(parent_idx)?.parent;
-                            continue;
-                        }
-
-                        break if parent.kind == syntax_kind_ext::IF_STATEMENT {
-                            self.ctx
-                                .arena
-                                .get_if_statement(parent)
-                                .map(|if_stmt| if_stmt.then_statement)
-                        } else {
-                            None
-                        };
-                    });
+                let callable_truthiness_body = self.find_callable_truthiness_body(idx);
                 if callable_truthiness_body.is_some() {
                     self.check_callable_truthiness(left_idx, callable_truthiness_body);
                 }
@@ -1311,29 +1034,19 @@ impl<'a> CheckerState<'a> {
             // false-positive arithmetic diagnostics (e.g., TS2362 from `typeof x`).
             if op_kind == SyntaxKind::AsteriskAsteriskToken as u16 {
                 let mut lhs_grammar_error = false;
+                // Check for unary expression or type assertion on LHS of **
                 if let Some(left_node) = self.ctx.arena.get(left_idx) {
                     if left_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
                         && let Some(left_unary) = self.ctx.arena.get_unary_expr(left_node)
+                        && let Some(op_name) = Self::unary_operator_name(left_unary.operator)
                     {
-                        // TS17006: Unary expression (-, +, ~, !, typeof, void, delete) as LHS.
-                        let op_name = match left_unary.operator {
-                            k if k == SyntaxKind::MinusToken as u16 => Some("-"),
-                            k if k == SyntaxKind::PlusToken as u16 => Some("+"),
-                            k if k == SyntaxKind::TildeToken as u16 => Some("~"),
-                            k if k == SyntaxKind::ExclamationToken as u16 => Some("!"),
-                            k if k == SyntaxKind::TypeOfKeyword as u16 => Some("typeof"),
-                            k if k == SyntaxKind::VoidKeyword as u16 => Some("void"),
-                            k if k == SyntaxKind::DeleteKeyword as u16 => Some("delete"),
-                            _ => None,
-                        };
-                        if let Some(op_name) = op_name {
-                            self.error_at_node_msg(
-                                left_idx,
-                                crate::diagnostics::diagnostic_codes::AN_UNARY_EXPRESSION_WITH_THE_OPERATOR_IS_NOT_ALLOWED_IN_THE_LEFT_HAND_SIDE_OF_AN,
-                                &[op_name],
-                            );
-                            lhs_grammar_error = true;
-                        }
+                        // TS17006: Unary expression as LHS.
+                        self.error_at_node_msg(
+                            left_idx,
+                            crate::diagnostics::diagnostic_codes::AN_UNARY_EXPRESSION_WITH_THE_OPERATOR_IS_NOT_ALLOWED_IN_THE_LEFT_HAND_SIDE_OF_AN,
+                            &[op_name],
+                        );
+                        lhs_grammar_error = true;
                     } else if left_node.kind == syntax_kind_ext::TYPE_ASSERTION {
                         // TS17007: `<T>x ** y` is not allowed.
                         self.error_at_node_msg(
@@ -1345,34 +1058,20 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 // Case 2: parent of `**` is a forbidden unary (e.g. `delete(x ** y)`).
-                // These expressions are ambiguous in the grammar, so tsc emits TS17006
-                // pointing to the parent unary expression rather than the `**` LHS.
-                // Examples: `delete temp ** 3` → `delete(temp ** 3)`, `!(3 ** 4)`.
                 if !lhs_grammar_error
                     && let Some(parent_idx) =
                         self.ctx.arena.get_extended(node_idx).map(|e| e.parent)
                     && let Some(parent_node) = self.ctx.arena.get(parent_idx)
                     && parent_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
                     && let Some(parent_unary) = self.ctx.arena.get_unary_expr(parent_node)
+                    && let Some(op_name) = Self::unary_operator_name(parent_unary.operator)
                 {
-                    let parent_op_name = match parent_unary.operator {
-                        k if k == SyntaxKind::MinusToken as u16 => Some("-"),
-                        k if k == SyntaxKind::PlusToken as u16 => Some("+"),
-                        k if k == SyntaxKind::TildeToken as u16 => Some("~"),
-                        k if k == SyntaxKind::ExclamationToken as u16 => Some("!"),
-                        k if k == SyntaxKind::TypeOfKeyword as u16 => Some("typeof"),
-                        k if k == SyntaxKind::VoidKeyword as u16 => Some("void"),
-                        k if k == SyntaxKind::DeleteKeyword as u16 => Some("delete"),
-                        _ => None,
-                    };
-                    if let Some(op_name) = parent_op_name {
-                        self.error_at_node_msg(
-                            parent_idx,
-                            crate::diagnostics::diagnostic_codes::AN_UNARY_EXPRESSION_WITH_THE_OPERATOR_IS_NOT_ALLOWED_IN_THE_LEFT_HAND_SIDE_OF_AN,
-                            &[op_name],
-                        );
-                        lhs_grammar_error = true;
-                    }
+                    self.error_at_node_msg(
+                        parent_idx,
+                        crate::diagnostics::diagnostic_codes::AN_UNARY_EXPRESSION_WITH_THE_OPERATOR_IS_NOT_ALLOWED_IN_THE_LEFT_HAND_SIDE_OF_AN,
+                        &[op_name],
+                    );
+                    lhs_grammar_error = true;
                 }
                 if lhs_grammar_error {
                     // Skip arithmetic type-checking to avoid false-positive diagnostics
@@ -2112,6 +1811,61 @@ impl<'a> CheckerState<'a> {
         type_stack.pop().unwrap_or(TypeId::UNKNOWN)
     }
 
+    /// Get the operator name for a unary operator token (for TS17006 error messages).
+    ///
+    /// Returns the string representation of unary operators that are not allowed
+    /// on the left-hand side of exponentiation (`**`).
+    fn unary_operator_name(op: u16) -> Option<&'static str> {
+        match op {
+            k if k == SyntaxKind::MinusToken as u16 => Some("-"),
+            k if k == SyntaxKind::PlusToken as u16 => Some("+"),
+            k if k == SyntaxKind::TildeToken as u16 => Some("~"),
+            k if k == SyntaxKind::ExclamationToken as u16 => Some("!"),
+            k if k == SyntaxKind::TypeOfKeyword as u16 => Some("typeof"),
+            k if k == SyntaxKind::VoidKeyword as u16 => Some("void"),
+            k if k == SyntaxKind::DeleteKeyword as u16 => Some("delete"),
+            _ => None,
+        }
+    }
+
+    /// Find the callable truthiness body for a logical operator expression.
+    ///
+    /// When a logical expression (`&&`, `||`, `??`) is part of an `if` condition,
+    /// this returns the then-branch statement for callable truthiness checking.
+    /// It walks up through nested logical expressions and parentheses to find
+    /// the containing `if` statement.
+    fn find_callable_truthiness_body(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let mut parent_idx = self.ctx.arena.get_extended(idx)?.parent;
+        if parent_idx.is_none() {
+            return None;
+        }
+
+        loop {
+            let parent = self.ctx.arena.get(parent_idx)?;
+            if parent.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                || matches!(
+                    self.ctx.arena.get_binary_expr(parent),
+                    Some(bin)
+                        if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+                            || bin.operator_token == SyntaxKind::BarBarToken as u16
+                            || bin.operator_token == SyntaxKind::QuestionQuestionToken as u16
+                )
+            {
+                parent_idx = self.ctx.arena.get_extended(parent_idx)?.parent;
+                continue;
+            }
+
+            break if parent.kind == syntax_kind_ext::IF_STATEMENT {
+                self.ctx
+                    .arena
+                    .get_if_statement(parent)
+                    .map(|if_stmt| if_stmt.then_statement)
+            } else {
+                None
+            };
+        }
+    }
+
     /// If `idx` is a `typeof` expression (`PREFIX_UNARY_EXPRESSION` with `TypeOfKeyword`),
     /// return the typeof result type:
     /// `"string" | "number" | "bigint" | "boolean" | "symbol" | "undefined" | "object" | "function"`.
@@ -2302,13 +2056,201 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a binary operation with `IndexAccess` operands is valid through assignability.
+    /// Check the `instanceof` operator.
     ///
-    /// When the solver's `BinaryOpEvaluator` returns `TypeError` for an operation like
-    /// `number + T[K]`, the `IndexAccess` type may not have been resolved through its
-    /// constraint chain (e.g., T extends Record<K, number> means T[K] is number-like).
-    /// This method uses the checker's assignability infrastructure to validate such cases,
-    /// matching tsc's behavior of using `isTypeAssignableTo` for binary operator validation.
+    /// Validates:
+    /// - TS2848: RHS is not an instantiation expression
+    /// - TS2358: LHS is of type any, an object type, or a type parameter
+    /// - RHS is assignable to Function or has [Symbol.hasInstance]
+    /// - TS2860/TS2861: Symbol.hasInstance param/return type checks
+    fn check_instanceof_operator(
+        &mut self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+        left_type: TypeId,
+        right_type: TypeId,
+    ) -> TypeId {
+        use crate::diagnostics::diagnostic_codes;
+
+        // TS2848: The right-hand side of an instanceof must not be an instantiation expression
+        let unwrapped_right = self.ctx.arena.skip_parenthesized(right_idx);
+        if let Some(right_node) = self.ctx.arena.get(unwrapped_right)
+            && right_node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+        {
+            self.error_at_node(
+                unwrapped_right,
+                crate::diagnostics::diagnostic_messages::THE_RIGHT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_NOT_BE_AN_INSTANTIATION_EXP,
+                diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_NOT_BE_AN_INSTANTIATION_EXP,
+            );
+        }
+
+        // Validate left operand
+        if left_type != TypeId::ERROR {
+            let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+            let lhs_type = self.declared_instanceof_left_operand_type(left_idx, left_type);
+            if !evaluator.is_valid_instanceof_left_operand(lhs_type) {
+                self.error_at_node_msg(
+                    left_idx,
+                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_OF_TYPE_ANY_AN_OBJECT_TYP,
+                    &[],
+                );
+            }
+        }
+
+        let eval_right = self.evaluate_type_for_assignability(right_type);
+        if eval_right != TypeId::ERROR {
+            let mut is_valid_rhs = false;
+
+            let func_ty_opt = self
+                .ctx
+                .binder
+                .file_locals
+                .get("Function")
+                .map(|sym_id| self.get_type_of_symbol(sym_id))
+                .or_else(|| self.resolve_lib_type_by_name("Function"));
+
+            if let Some(func_ty) = func_ty_opt {
+                let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+                is_valid_rhs = evaluator.is_valid_instanceof_right_operand(
+                    eval_right,
+                    func_ty,
+                    &mut |src, tgt| self.is_assignable_to(src, tgt),
+                );
+            } else if eval_right == TypeId::ANY
+                || eval_right == TypeId::UNKNOWN
+                || eval_right == TypeId::FUNCTION
+            {
+                is_valid_rhs = true;
+            }
+
+            if !is_valid_rhs
+                && self.ctx.is_js_file()
+                && self
+                    .synthesize_js_constructor_instance_type(right_idx, eval_right, &[])
+                    .is_some()
+            {
+                is_valid_rhs = true;
+            }
+
+            // Check for [Symbol.hasInstance] on the RHS type
+            {
+                use crate::query_boundaries::common::PropertyAccessResult;
+                if let PropertyAccessResult::Success {
+                    type_id: has_instance_type,
+                    ..
+                } = self.resolve_property_access_with_env(eval_right, "[Symbol.hasInstance]")
+                {
+                    is_valid_rhs = true;
+                    let sig_info: Option<(Vec<tsz_solver::ParamInfo>, tsz_solver::TypeId)> =
+                        if let Some(fn_id) =
+                            tsz_solver::function_shape_id(self.ctx.types, has_instance_type)
+                        {
+                            let shape = self.ctx.types.function_shape(fn_id);
+                            Some((shape.params.clone(), shape.return_type))
+                        } else if let Some(shape_id) =
+                            tsz_solver::callable_shape_id(self.ctx.types, has_instance_type)
+                        {
+                            let shape = self.ctx.types.callable_shape(shape_id);
+                            shape
+                                .call_signatures
+                                .first()
+                                .map(|sig| (sig.params.clone(), sig.return_type))
+                        } else {
+                            None
+                        };
+
+                    if let Some((params, return_type)) = sig_info {
+                        // TS2861: return type must be boolean
+                        let ret = self.evaluate_type_for_assignability(return_type);
+                        if ret != TypeId::BOOLEAN
+                            && ret != TypeId::ANY
+                            && ret != TypeId::ERROR
+                            && !self.is_assignable_to(ret, TypeId::BOOLEAN)
+                        {
+                            self.error_at_node_msg(
+                                right_idx,
+                                diagnostic_codes::AN_OBJECTS_SYMBOL_HASINSTANCE_METHOD_MUST_RETURN_A_BOOLEAN_VALUE_FOR_IT_TO_BE_US,
+                                &[],
+                            );
+                        }
+                        // TS2860: LHS must be assignable to first parameter
+                        if let Some(first_param) = params.first() {
+                            let param_type =
+                                self.evaluate_type_for_assignability(first_param.type_id);
+                            let lhs_type =
+                                self.declared_instanceof_left_operand_type(left_idx, left_type);
+                            if lhs_type != TypeId::ANY
+                                && lhs_type != TypeId::ERROR
+                                && param_type != TypeId::ANY
+                                && param_type != TypeId::UNKNOWN
+                                && param_type != TypeId::ERROR
+                                && !self.is_assignable_to(lhs_type, param_type)
+                            {
+                                self.error_at_node_msg(
+                                    left_idx,
+                                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_ASSIGNABLE_TO_THE_FIRST_A,
+                                    &[],
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !is_valid_rhs {
+                self.error_at_node_msg(
+                    right_idx,
+                    diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_EITHER_OF_TYPE_ANY_A_CLA,
+                    &[],
+                );
+            }
+        }
+
+        TypeId::BOOLEAN
+    }
+
+    /// Check the `in` operator.
+    ///
+    /// Validates:
+    /// - TS18046: RHS is not `unknown`
+    /// - TS2322: RHS is assignable to object
+    /// - TS2638: RHS may not represent a primitive value
+    fn check_in_operator(
+        &mut self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+        right_type: TypeId,
+    ) -> TypeId {
+        if let Some(left_node) = self.ctx.arena.get(left_idx)
+            && left_node.kind == SyntaxKind::PrivateIdentifier as u16
+        {
+            self.check_private_identifier_in_expression(left_idx, right_idx, right_type);
+        }
+
+        if right_type == TypeId::UNKNOWN {
+            self.error_is_of_type_unknown(right_idx);
+        } else if !self.is_valid_in_operator_rhs(right_type) {
+            let _ = self.check_assignable_or_report_at_exact_anchor(
+                right_type,
+                TypeId::OBJECT,
+                right_idx,
+                right_idx,
+            );
+        } else if self.type_may_represent_primitive(right_type)
+            || self.truthiness_narrowed_from_unknown(right_idx, right_type)
+        {
+            let type_str = self.format_apparent_type_for_in_operator(right_type);
+            self.error_at_node_msg(
+                right_idx,
+                tsz_common::diagnostics::diagnostic_codes::TYPE_MAY_REPRESENT_A_PRIMITIVE_VALUE_WHICH_IS_NOT_PERMITTED_AS_THE_RIGHT_OPERAND,
+                &[&type_str],
+            );
+        }
+
+        TypeId::BOOLEAN
+    }
+
+    /// Check a binary operation with `IndexAccess` operands is valid through assignability.
     fn resolve_indexed_access_binary_op(
         &mut self,
         left: TypeId,
@@ -2327,7 +2269,6 @@ impl<'a> CheckerState<'a> {
 
         match op {
             "+" => {
-                // For +, both operands must be number-like, string-like, or bigint-like
                 let left_ok = evaluator.is_arithmetic_operand(left)
                     || left_is_index_access && self.is_assignable_to(left, TypeId::NUMBER);
                 let right_ok = evaluator.is_arithmetic_operand(right)
