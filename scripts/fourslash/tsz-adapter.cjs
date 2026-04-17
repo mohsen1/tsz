@@ -663,45 +663,6 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
                         if (hasCode(7043)) {
                             return [];
                         }
-                        if (hasCode(80004)) {
-                            const content = this._host.readFile(file);
-                            if (typeof content === "string") {
-                                const labels = estimateJsdocInferActionLabels(content, 2);
-                                const annotateAction = deduped.find(action => {
-                                    const fixName = action.fixName || "";
-                                    const description = action.description || "";
-                                    return fixName === "annotateWithTypeFromJSDoc" ||
-                                        String(description).includes("Annotate with type from JSDoc");
-                                });
-                                deduped = deduped.filter(action => {
-                                    const fixId = action.fixId || "";
-                                    const fixName = action.fixName || "";
-                                    const description = action.description || "";
-                                    return !(
-                                        fixId === "inferFromUsage" ||
-                                        fixName === "inferFromUsage" ||
-                                        String(description).startsWith("Infer type from usage")
-                                    );
-                                });
-                                const ordered = [];
-                                if (annotateAction) {
-                                    ordered.push({
-                                        ...annotateAction,
-                                        description: "Annotate with type from JSDoc",
-                                    });
-                                }
-                                for (const label of labels) {
-                                    ordered.push({
-                                        fixName: "inferFromUsage",
-                                        description: `Infer type from usage: ${label}`,
-                                        changes: [],
-                                        fixId: "inferFromUsage",
-                                        fixAllDescription: "Infer all types from usage",
-                                    });
-                                }
-                                deduped = ordered;
-                            }
-                        }
                     }
                     if (isAnnotateJsdocTestFile && !file.endsWith("annotateWithTypeFromJSDoc16.ts")) {
                         deduped = deduped.filter(action => action.fixName !== "import");
