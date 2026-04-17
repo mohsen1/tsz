@@ -527,6 +527,11 @@ impl<'a> CheckerState<'a> {
             "Symbol" => "Symbol",
             "Map" => "MapConstructor",
             "Atomics" => "Atomics",
+            "Array" => "ArrayConstructor",
+            "Math" => "Math",
+            "Number" => "NumberConstructor",
+            "String" => "StringConstructor",
+            "Promise" => "PromiseConstructor",
             _ => return None,
         };
         let lib = get_lib_for_type_property(constructor_name, prop_name)?;
@@ -686,6 +691,17 @@ fn get_lib_for_type_property(type_name: &str, prop_name: &str) -> Option<&'stati
             "toReversed" | "toSorted" | "toSpliced" | "with" => Some("esnext"),
             _ => None,
         },
+        "ArrayConstructor" => match prop_name {
+            "from" | "of" => Some("es2015"),
+            "fromAsync" => Some("esnext"),
+            _ => None,
+        },
+        "Math" => match prop_name {
+            "acosh" | "asinh" | "atanh" | "cbrt" | "clz32" | "cosh" | "expm1" | "fround"
+            | "hypot" | "imul" | "log10" | "log1p" | "log2" | "sign" | "sinh" | "tanh"
+            | "trunc" => Some("es2015"),
+            _ => None,
+        },
         "SharedArrayBuffer" => match prop_name {
             "grow" | "growable" | "maxByteLength" => Some("esnext"),
             _ => Some("es2017"),
@@ -698,8 +714,10 @@ fn get_lib_for_type_property(type_name: &str, prop_name: &str) -> Option<&'stati
             Some("es2018")
         }
         "RegExp" => match prop_name {
+            "flags" | "sticky" | "unicode" => Some("es2015"),
             "dotAll" => Some("es2018"),
             "hasIndices" => Some("es2022"),
+            "unicodeSets" => Some("es2024"),
             _ => None,
         },
         "RegExpMatchArray" => match prop_name {
@@ -713,11 +731,19 @@ fn get_lib_for_type_property(type_name: &str, prop_name: &str) -> Option<&'stati
             _ => None,
         },
         "String" => match prop_name {
+            "codePointAt" | "includes" | "endsWith" | "normalize" | "repeat" | "startsWith" => {
+                Some("es2015")
+            }
+            "padStart" | "padEnd" => Some("es2017"),
             "trimStart" | "trimEnd" | "trimLeft" | "trimRight" => Some("es2019"),
             "matchAll" => Some("es2020"),
             "replaceAll" => Some("es2021"),
             "at" => Some("es2022"),
             "isWellFormed" | "toWellFormed" => Some("esnext"),
+            _ => None,
+        },
+        "StringConstructor" => match prop_name {
+            "fromCodePoint" | "raw" => Some("es2015"),
             _ => None,
         },
         "ObjectConstructor" => match prop_name {
