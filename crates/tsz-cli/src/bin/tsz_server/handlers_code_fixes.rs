@@ -121,17 +121,40 @@ impl Server {
             let add_missing_new_preview =
                 Self::apply_add_missing_new_fallback(&content, request_span);
             let add_missing_await_preview = Self::apply_add_missing_await_fallback(&content, false);
-            let mut add_missing_const_preview = if let Some((start, _)) = request_span {
+            let add_missing_function_declaration_preview =
+                Self::apply_add_missing_function_declaration_fallback_at_request(
+                    &content,
+                    &line_map,
+                    request_span,
+                );
+            let add_missing_function_declaration_anywhere =
+                Self::apply_add_missing_function_declaration_fallback_anywhere(&content);
+            let add_missing_function_declaration_candidate =
+                add_missing_function_declaration_preview
+                    .clone()
+                    .or_else(|| add_missing_function_declaration_anywhere.clone());
+            let has_mixed_declared_binding_assignment =
+                Self::has_mixed_declared_binding_assignment(&content);
+            let add_missing_const_preview = if let Some((start, _)) = request_span {
                 Self::apply_add_missing_const_fallback_at_position(&content, &line_map, start)
             } else {
-                Self::apply_add_missing_const_fallback(&content)
+                None
             };
+            let add_missing_const_anywhere = Self::apply_add_missing_const_fallback(&content);
+            let mut add_missing_const_candidate = add_missing_const_preview
+                .clone()
+                .or_else(|| add_missing_const_anywhere.clone());
+            if has_mixed_declared_binding_assignment {
+                add_missing_const_candidate = None;
+            }
+            let mut skip_add_missing_const_for_declared_bindings = false;
             if let Some((start, _)) = request_span
                 && Self::add_missing_const_should_skip_for_declared_bindings(
-                    &content, &line_map, start, &binder,
+                    &content, &line_map, start,
                 )
             {
-                add_missing_const_preview = None;
+                add_missing_const_candidate = None;
+                skip_add_missing_const_for_declared_bindings = true;
             }
 
             let mut diagnostics = self.get_semantic_diagnostics_full(file_path, &content);
@@ -189,7 +212,7 @@ impl Server {
             let mut seen_diags = rustc_hash::FxHashSet::default();
             diagnostics
                 .retain(|d| seen_diags.insert((d.code, d.start, d.length, d.message_text.clone())));
-            let _has_cannot_find_name_diag = diagnostics
+            let has_cannot_find_name_diag = diagnostics
                 .iter()
                 .any(|d| d.code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME);
 
@@ -335,6 +358,54 @@ impl Server {
                     json_obj
                 })
                 .collect();
+            let includes_cannot_find_name = error_codes
+                .iter()
+                .any(|code| *code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME)
+                || (error_codes.is_empty() && has_cannot_find_name_diag);
+            if includes_cannot_find_name {
+                let should_prune_binding_fix = |action: &serde_json::Value| {
+                    matches!(
+                        action.get("fixId").and_then(serde_json::Value::as_str),
+                        Some("fixMissingImport")
+                            | Some("fixMissingMember")
+                            | Some("forgottenThisPropertyAccess")
+                    )
+                };
+
+                if add_missing_function_declaration_candidate.is_some() {
+                    // In destructuring-call contexts (e.g. [x, y()] = ...), tsserver
+                    // prefers function-declaration fixes over import/member guesses.
+                    response_actions.retain(|action| {
+                        !should_prune_binding_fix(action)
+                            && action.get("fixId").and_then(serde_json::Value::as_str)
+                                != Some("addMissingConst")
+                    });
+                } else if has_mixed_declared_binding_assignment {
+                    // Mixed declared/undeclared LHS assignment patterns (e.g.
+                    // `let x; [x, y] = ...`) should not offer import/member/const
+                    // quick fixes at this site.
+                    response_actions.retain(|action| {
+                        !should_prune_binding_fix(action)
+                            && action.get("fixId").and_then(serde_json::Value::as_str)
+                                != Some("addMissingConst")
+                    });
+                } else if add_missing_const_candidate.is_some()
+                    || skip_add_missing_const_for_declared_bindings
+                {
+                    response_actions.retain(|action| {
+                        if should_prune_binding_fix(action) {
+                            return false;
+                        }
+                        if skip_add_missing_const_for_declared_bindings
+                            && action.get("fixId").and_then(serde_json::Value::as_str)
+                                == Some("addMissingConst")
+                        {
+                            return false;
+                        }
+                        true
+                    });
+                }
+            }
             let normalize_response_actions = |actions: &mut Vec<serde_json::Value>| {
                 for action in actions.iter_mut() {
                     let fix_name = action.get("fixName").and_then(serde_json::Value::as_str);
@@ -357,7 +428,7 @@ impl Server {
             };
             response_actions.retain(|action| {
                 action.get("fixId").and_then(serde_json::Value::as_str) != Some("addMissingConst")
-                    || add_missing_const_preview.is_some()
+                    || add_missing_const_candidate.is_some()
             });
             if add_missing_await_preview.is_some() {
                 response_actions.retain(|action| {
@@ -681,7 +752,7 @@ impl Server {
             }
 
             if add_missing_await_preview.is_none()
-                && let Some(updated_content) = add_missing_const_preview.as_ref()
+                && let Some(updated_content) = add_missing_const_candidate.as_ref()
                 && let Some((start_off, end_off, replacement)) =
                     Self::compute_minimal_edit(&content, updated_content)
             {
@@ -708,15 +779,9 @@ impl Server {
                 response_actions.push(const_action);
             }
             if response_actions.is_empty()
-                && error_codes.iter().any(|code| {
-                    *code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
-                })
+                && includes_cannot_find_name
                 && let Some((name, updated_content)) =
-                    Self::apply_add_missing_function_declaration_fallback_at_request(
-                        &content,
-                        &line_map,
-                        request_span,
-                    )
+                    add_missing_function_declaration_candidate.clone()
                 && let Some((start_off, end_off, replacement)) =
                     Self::compute_minimal_edit(&content, &updated_content)
             {
@@ -1137,7 +1202,6 @@ impl Server {
         content: &str,
         line_map: &LineMap,
         start: tsz::lsp::position::Position,
-        binder: &tsz::binder::BinderState,
     ) -> bool {
         let Some(start_off) = line_map
             .position_to_offset(start, content)
@@ -1191,10 +1255,106 @@ impl Server {
                 continue;
             }
             for name in Self::find_all_binding_identifiers(lhs) {
-                if binder.file_locals.get(name.as_str()).is_some() {
+                if Self::is_value_name_declared_before_offset(content, name.as_str(), line_start) {
                     return true;
                 }
             }
+        }
+        false
+    }
+
+    fn is_value_name_declared_before_offset(content: &str, name: &str, offset: usize) -> bool {
+        let prefix = content.get(..offset).unwrap_or(content);
+        let declaration_prefixes = [
+            "let ",
+            "const ",
+            "var ",
+            "function ",
+            "class ",
+            "enum ",
+            "catch (",
+        ];
+        declaration_prefixes
+            .iter()
+            .any(|decl_prefix| Self::has_declaration_pattern(prefix, decl_prefix, name))
+    }
+
+    fn has_declaration_pattern(haystack: &str, decl_prefix: &str, name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+        let needle = format!("{decl_prefix}{name}");
+        for (idx, _) in haystack.match_indices(&needle) {
+            let before_ok = idx == 0
+                || !haystack
+                    .as_bytes()
+                    .get(idx.saturating_sub(1))
+                    .is_some_and(|b| {
+                        let ch = *b as char;
+                        ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'
+                    });
+            let after_idx = idx + needle.len();
+            let after_ok = !haystack.as_bytes().get(after_idx).is_some_and(|b| {
+                let ch = *b as char;
+                ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'
+            });
+            if before_ok && after_ok {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn has_mixed_declared_binding_assignment(content: &str) -> bool {
+        let mut line_start = 0usize;
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                line_start = line_start.saturating_add(line.len() + 1);
+                continue;
+            }
+            if trimmed.starts_with("for (")
+                || trimmed.starts_with("for await (")
+                || !trimmed.contains('=')
+                || trimmed.starts_with("const ")
+                || trimmed.starts_with("let ")
+                || trimmed.starts_with("var ")
+            {
+                line_start = line_start.saturating_add(line.len() + 1);
+                continue;
+            }
+
+            let lhs_all = trimmed
+                .split_once('=')
+                .map(|(left, _)| left.trim())
+                .unwrap_or_default();
+            if lhs_all.is_empty() {
+                line_start = line_start.saturating_add(line.len() + 1);
+                continue;
+            }
+
+            let mut saw_declared = false;
+            let mut saw_undeclared = false;
+            for binding_part in lhs_all.split(',') {
+                let lhs = binding_part.trim();
+                if lhs.is_empty() {
+                    continue;
+                }
+                for name in Self::find_all_binding_identifiers(lhs) {
+                    if Self::is_value_name_declared_before_offset(content, name.as_str(), line_start)
+                    {
+                        saw_declared = true;
+                    } else {
+                        saw_undeclared = true;
+                    }
+                }
+            }
+
+            if saw_declared && saw_undeclared {
+                return true;
+            }
+
+            line_start = line_start.saturating_add(line.len() + 1);
         }
         false
     }
@@ -1247,6 +1407,40 @@ impl Server {
             }
         }
         if ident_start >= ident_end {
+            let mut i = 0usize;
+            while i < lhs_bytes.len() {
+                let ch = lhs_bytes[i] as char;
+                if !(ch.is_ascii_alphabetic() || ch == '_' || ch == '$') {
+                    i += 1;
+                    continue;
+                }
+                let start_ident = i;
+                i += 1;
+                while i < lhs_bytes.len() {
+                    let c = lhs_bytes[i] as char;
+                    if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+                let candidate = &lhs[start_ident..i];
+                let mut j = i;
+                while j < lhs_bytes.len() && (lhs_bytes[j] as char).is_ascii_whitespace() {
+                    j += 1;
+                }
+                if j < lhs_bytes.len() && lhs_bytes[j] as char == '(' {
+                    if content.contains(&format!("function {candidate}(")) {
+                        continue;
+                    }
+                    let mut updated = content.trim_end_matches('\n').to_string();
+                    updated.push_str("\n\n");
+                    updated.push_str(&format!(
+                        "function {candidate}() {{\n    throw new Error(\"Function not implemented.\");\n}}\n"
+                    ));
+                    return Some((candidate.to_string(), updated));
+                }
+            }
             return None;
         }
         let name = lhs[ident_start..ident_end].to_string();
@@ -1267,6 +1461,61 @@ impl Server {
             "function {name}() {{\n    throw new Error(\"Function not implemented.\");\n}}\n"
         ));
         Some((name, updated))
+    }
+
+    fn apply_add_missing_function_declaration_fallback_anywhere(
+        content: &str,
+    ) -> Option<(String, String)> {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if !(trimmed.starts_with('[') && trimmed.contains('=') && trimmed.contains('(')) {
+                continue;
+            }
+            let lhs = trimmed
+                .split_once('=')
+                .map(|(left, _)| left.trim())
+                .unwrap_or("");
+            if !lhs.starts_with('[') {
+                continue;
+            }
+            let lhs_bytes = lhs.as_bytes();
+            let mut i = 0usize;
+            while i < lhs_bytes.len() {
+                let ch = lhs_bytes[i] as char;
+                if !(ch.is_ascii_alphabetic() || ch == '_' || ch == '$') {
+                    i += 1;
+                    continue;
+                }
+                let start = i;
+                i += 1;
+                while i < lhs_bytes.len() {
+                    let c = lhs_bytes[i] as char;
+                    if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+                let name = &lhs[start..i];
+                let mut j = i;
+                while j < lhs_bytes.len() && (lhs_bytes[j] as char).is_ascii_whitespace() {
+                    j += 1;
+                }
+                if j >= lhs_bytes.len() || lhs_bytes[j] as char != '(' {
+                    continue;
+                }
+                if content.contains(&format!("function {name}(")) {
+                    continue;
+                }
+                let mut updated = content.trim_end_matches('\n').to_string();
+                updated.push_str("\n\n");
+                updated.push_str(&format!(
+                    "function {name}() {{\n    throw new Error(\"Function not implemented.\");\n}}\n"
+                ));
+                return Some((name.to_string(), updated));
+            }
+        }
+        None
     }
 
     fn is_comma_continuation_line(lines: &[String], idx: usize) -> bool {
@@ -1291,6 +1540,7 @@ impl Server {
             || trimmed.starts_with("const ")
             || trimmed.starts_with("let ")
             || trimmed.starts_with("var ")
+            || trimmed.starts_with("type ")
             || trimmed.starts_with("import ")
             || trimmed.starts_with("export ")
         {
@@ -1389,6 +1639,7 @@ impl Server {
             || trimmed.starts_with("const ")
             || trimmed.starts_with("let ")
             || trimmed.starts_with("var ")
+            || trimmed.starts_with("type ")
             || trimmed.starts_with("import ")
             || trimmed.starts_with("export ")
         {

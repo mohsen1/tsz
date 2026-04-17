@@ -365,7 +365,16 @@ function patchSessionClient(SessionClient, ts) {
     // incorrect or empty results.
     // Trust tsz for fix types where it has full AST-based support, since
     // the native LS may have stale content state through the adapter.
-    const tszTrustedFixNames = new Set(["addMissingNewOperator", "addConvertToUnknownForNonOverlappingTypes"]);
+    const tszPreferredFixNames = new Set([
+        "addMissingNewOperator",
+        "addConvertToUnknownForNonOverlappingTypes",
+        "addMissingConst",
+        "fixMissingFunctionDeclaration",
+    ]);
+    const tszSpanSuppressionFixNames = new Set([
+        "addMissingNewOperator",
+        "addConvertToUnknownForNonOverlappingTypes",
+    ]);
 
     // Pre-scanned files: on first getCodeFixesAtPosition call per file,
     // probe TS2339 diagnostics to detect enum member fixes. When tsz has
@@ -510,7 +519,7 @@ function patchSessionClient(SessionClient, ts) {
         // same span (caused by tsz emitting extra diagnostic codes).
         const posKey = `${fileName}:${start}:${end}`;
         if (_trustedFixPositions.has(posKey)) {
-            const tszHasTrustedFixHere = tszResult && tszResult.some(f => tszTrustedFixNames.has(f.fixName));
+            const tszHasTrustedFixHere = tszResult && tszResult.some(f => tszSpanSuppressionFixNames.has(f.fixName));
             if (!tszHasTrustedFixHere && !isAddMemberDeclTestFile) {
                 if (preferences) this.configure(oldPreferences || {});
                 return [];
@@ -518,9 +527,12 @@ function patchSessionClient(SessionClient, ts) {
         }
 
         let finalResult;
-        if (!tszResult || tszResult.length === 0) {
-            // tsz returned nothing - use native
+        if (tszResult === undefined || tszResult === null) {
+            // tsz didn't handle this request - use native
             finalResult = getNative() || [];
+        } else if (tszResult.length === 0) {
+            // tsz explicitly returned no fixes - trust it
+            finalResult = [];
         } else {
             // tsz returned something - use native if available (it matches tsc exactly),
             // but fall back to tsz if native has no results.
@@ -528,12 +540,15 @@ function patchSessionClient(SessionClient, ts) {
             // results but no import fixes (e.g. due to autoImportFileExcludePatterns),
             // filter out import fixes from native results to avoid re-introducing
             // excluded imports.
-            const tszHasTrustedFix = tszResult.some(f => tszTrustedFixNames.has(f.fixName));
+            const tszHasTrustedFix = tszResult.some(f => tszPreferredFixNames.has(f.fixName));
             if (tszHasTrustedFix) {
                 finalResult = tszResult;
                 // Record this position so subsequent calls for the same
                 // span with different error codes get suppressed.
-                _trustedFixPositions.add(posKey);
+                const tszHasSpanSuppressionFix = tszResult.some(f => tszSpanSuppressionFixNames.has(f.fixName));
+                if (tszHasSpanSuppressionFix) {
+                    _trustedFixPositions.add(posKey);
+                }
             } else {
                 const nativeResult = getNative();
                 if (nativeResult && nativeResult.length > 0) {
