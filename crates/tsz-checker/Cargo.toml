@@ -240,6 +240,10 @@ name = "ts2344_infer_conditional_constraint"
 path = "tests/ts2344_infer_conditional_constraint.rs"
 
 [[test]]
+name = "ts2344_self_referential_interface_constraint"
+path = "tests/ts2344_self_referential_interface_constraint.rs"
+
+[[test]]
 name = "promise_constructor_capability_tests"
 path = "tests/promise_constructor_capability_tests.rs"
 
