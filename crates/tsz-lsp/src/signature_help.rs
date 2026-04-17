@@ -200,9 +200,8 @@ impl<'a> SignatureHelpProvider<'a> {
         // bind us to an outer call expression. Prefer explicit textual
         // type-argument handling when we can detect an unclosed `<...` span.
         if self.find_textual_type_argument_trigger(offset).is_some()
-            && let Some(help) = self.signature_help_for_textual_type_arguments(
-                root, offset, type_cache,
-            )
+            && let Some(help) =
+                self.signature_help_for_textual_type_arguments(root, offset, type_cache)
         {
             return Some(help);
         }
@@ -1253,7 +1252,10 @@ impl<'a> SignatureHelpProvider<'a> {
 
         let span_start = trigger.span_start as usize;
         let span_end = span_start + trigger.span_length as usize;
-        let span_text = self.source_text.get(span_start..span_end).unwrap_or_default();
+        let span_text = self
+            .source_text
+            .get(span_start..span_end)
+            .unwrap_or_default();
         let trimmed = span_text.trim_end();
         let arg_count = if trimmed.is_empty() {
             0usize
