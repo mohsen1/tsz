@@ -233,6 +233,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 if let Some(key) =
                     get_string_literal_from_type_index(self.ctx.arena, indexed_access.index_type)
                 {
+                    // `globalThis` is a synthetic global that refers to itself;
+                    // `(typeof globalThis)["globalThis"]` is always valid.
+                    let is_self_reference = key == "globalThis";
                     let not_in_locals = self.ctx.binder.file_locals.get(key.as_str()).is_none();
                     let is_block_scoped = self
                         .ctx
@@ -245,7 +248,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 && symbol.flags & tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE
                                     == 0
                         });
-                    if not_in_locals || is_block_scoped {
+                    if !is_self_reference && (not_in_locals || is_block_scoped) {
                         if let Some(idx_node) = self.ctx.arena.get(indexed_access.index_type) {
                             let message = crate::diagnostics::format_message(
                                 crate::diagnostics::diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
