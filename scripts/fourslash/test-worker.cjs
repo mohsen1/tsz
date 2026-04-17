@@ -881,8 +881,16 @@ function patchSessionClient(SessionClient, ts) {
             !isAddMemberDeclTestFile &&
             !hasAutoImportExclusionPreferences() &&
             prefersRelativeModuleSpecifiers;
+        const nativeOnlyFastPathCodes = new Set([1155, 6133]);
         if (canUseRelativeImportNativeFastPath) {
             const nativeQuick = getNativeDirect();
+            const onlyNativeOnlyCodes =
+                requestErrorCodes.length > 0 &&
+                requestErrorCodes.every(code => nativeOnlyFastPathCodes.has(Number(code)));
+            if (onlyNativeOnlyCodes) {
+                if (preferences) this.configure(oldPreferences || {});
+                return Array.isArray(nativeQuick) ? nativeQuick : [];
+            }
             if (Array.isArray(nativeQuick) && nativeQuick.length > 0) {
                 const hasImportFix = nativeQuick.some(f => f && f.fixName === "import");
                 const quickSpecs = quickImportSpecifiersFromFixes(nativeQuick);
