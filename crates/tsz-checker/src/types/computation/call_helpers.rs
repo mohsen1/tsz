@@ -1175,6 +1175,25 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // If the target property type is a mapped type like `{ [K in keyof T]: V[K] }`,
+                // recursively extract inference from the property value's object literal by
+                // instantiating the mapped type template for each nested key.
+                // Example: VuexStoreOptions pattern where `modules` has type
+                // `{ [k in keyof Modules]: VuexStoreOptions<Modules[k], never> }` and the
+                // initializer is `{ foo: { state() {...}, mutations: {...} } }`.
+                if let Some(mapped_id) =
+                    tsz_solver::type_queries::get_mapped_type_id(self.ctx.types, target_prop_type)
+                {
+                    if let Some(nested_partial) = self.extract_inference_from_mapped_type_target(
+                        prop.initializer,
+                        mapped_id,
+                        type_param_names,
+                    ) {
+                        properties.push(tsz_solver::PropertyInfo::new(name_atom, nested_partial));
+                        continue;
+                    }
+                }
+
                 // Get the function shape for the target property
                 let target_fn_shape =
                     common::function_shape_for_type(self.ctx.types, target_prop_type);
@@ -1279,6 +1298,104 @@ impl<'a> CheckerState<'a> {
                 );
 
                 properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+            }
+        }
+
+        if properties.is_empty() {
+            return None;
+        }
+
+        Some(self.ctx.types.factory().object_fresh(properties))
+    }
+
+    /// Extract inference from an object literal whose target type is a mapped type.
+    ///
+    /// For patterns like VuexStoreOptions where `modules` has type
+    /// `{ [k in keyof Modules]: VuexStoreOptions<Modules[k], never> }` and the initializer is
+    /// `{ foo: { state() {...}, mutations: {...} } }`, we need to:
+    /// 1. For each property key (e.g., `foo`), extract the partial type from the property value
+    /// 2. Build a partial object type from the results
+    ///
+    /// This enables inference from nested "thisless" functions like `state()` even when the
+    /// overall object contains context-sensitive parts.
+    fn extract_inference_from_mapped_type_target(
+        &mut self,
+        arg_idx: NodeIndex,
+        mapped_id: tsz_solver::MappedTypeId,
+        type_param_names: &[tsz_common::Atom],
+    ) -> Option<TypeId> {
+        let node = self.ctx.arena.get(arg_idx)?;
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let obj = self.ctx.arena.get_literal_expr(node)?;
+
+        let mapped = self.ctx.types.get_mapped(mapped_id);
+        let template = mapped.template;
+        let type_param_name = mapped.type_param.name;
+
+        let mut properties = Vec::new();
+
+        for &elem_idx in &obj.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+
+            // Handle property assignments
+            if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
+                let Some(name) = self.get_property_name(prop.name) else {
+                    continue;
+                };
+                let name_atom = self.ctx.types.intern_string(&name);
+
+                // Create a substitution mapping the mapped type's key param to this literal key
+                let key_literal = self.ctx.types.literal_string(&name);
+                let mut subst = common::TypeSubstitution::new();
+                subst.insert(type_param_name, key_literal);
+
+                // Instantiate the template with this key
+                let instantiated_template =
+                    common::instantiate_type(self.ctx.types, template, &subst);
+
+                // Try to recursively extract inference from the property value
+                if let Some(nested_partial) = self
+                    .extract_inference_contributing_object_type(
+                        prop.initializer,
+                        instantiated_template,
+                        type_param_names,
+                    )
+                    .or_else(|| {
+                        // Fallback: if we couldn't extract against the template (likely because
+                        // it contains unresolved type params), try to extract non-sensitive
+                        // parts directly from the nested object literal. This handles patterns
+                        // like VuexStoreOptions where nested modules have "thisless" state()
+                        // methods whose return types should contribute to inference.
+                        self.extract_non_sensitive_object_type(prop.initializer)
+                    })
+                {
+                    properties.push(tsz_solver::PropertyInfo::new(name_atom, nested_partial));
+                }
+            }
+            // Handle method declarations - for mapped types, these typically aren't at this level
+            // but handle them for completeness
+            else if elem_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
+                    // Check if this method is "thisless" (no params, no this)
+                    let has_params = !method.parameters.nodes.is_empty();
+                    if has_params {
+                        continue;
+                    }
+
+                    let Some(name) = self.property_name_for_error(method.name) else {
+                        continue;
+                    };
+                    let name_atom = self.ctx.types.intern_string(&name);
+
+                    // For thisless methods, compute the return type directly
+                    let value_type =
+                        self.speculative_type_of_function(elem_idx, &TypingRequest::NONE);
+                    properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+                }
             }
         }
 
