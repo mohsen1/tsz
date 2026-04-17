@@ -538,6 +538,70 @@ fn reorder_import_candidates_prefers_shallower_relative_specifier_for_same_symbo
 }
 
 #[test]
+fn collect_import_candidates_excludes_index_shorthand_specifiers_for_codefixes() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/lib/components/button/Button.ts".to_string(),
+        "export function Button() {}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/lib/components/button/index.ts".to_string(),
+        "export * from \"./Button\";\n".to_string(),
+    );
+    server.open_files.insert(
+        "/lib/components/index.ts".to_string(),
+        "export * from \"./button\";\n".to_string(),
+    );
+    server.open_files.insert(
+        "/lib/main.ts".to_string(),
+        "export { Button } from \"./components\";\n".to_string(),
+    );
+    server.open_files.insert(
+        "/lib/index.ts".to_string(),
+        "export * from \"./main\";\n".to_string(),
+    );
+    server
+        .open_files
+        .insert("/i-hate-index-files.ts".to_string(), "Button\n".to_string());
+
+    let diagnostics = vec![tsz::lsp::diagnostics::LspDiagnostic {
+        range: tsz::lsp::position::Range::new(
+            tsz::lsp::position::Position::new(0, 0),
+            tsz::lsp::position::Position::new(0, 6),
+        ),
+        message: "Cannot find name 'Button'.".to_string(),
+        code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+        severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+        source: Some("tsz".to_string()),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    }];
+
+    let candidates = server.collect_import_candidates(
+        "/i-hate-index-files.ts",
+        &diagnostics,
+        &["/**/index.*".to_string()],
+        &[],
+        None,
+        None,
+    );
+    let module_specifiers: Vec<String> = candidates
+        .into_iter()
+        .filter(|candidate| candidate.local_name == "Button")
+        .map(|candidate| candidate.module_specifier)
+        .collect();
+
+    assert_eq!(
+        module_specifiers,
+        vec![
+            "./lib/main".to_string(),
+            "./lib/components/button/Button".to_string()
+        ]
+    );
+}
+
+#[test]
 fn collect_import_candidates_respects_node_next_package_exports_root_only() {
     let mut server = make_server();
     server.open_files.insert(
