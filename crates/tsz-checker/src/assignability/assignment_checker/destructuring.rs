@@ -906,14 +906,58 @@ impl<'a> CheckerState<'a> {
 
         // Compute the type of the key expression
         let key_type = self.compute_type_of_node(computed.expression);
+
+        // TS2538: When the key type is `any` or an error type, emit
+        // "Type 'any' cannot be used as an index type" — matching tsc's
+        // behavior for invalid computed property keys in destructuring
+        // assignments (e.g., `[{[foo()]: x}] = [obj]` where foo() is
+        // not callable and resolves to `any`).
         if key_type == TypeId::ANY || key_type == TypeId::ERROR {
+            let display_type = if key_type == TypeId::ERROR {
+                TypeId::ANY
+            } else {
+                key_type
+            };
+            let key_type_str = {
+                let mut formatter = self.ctx.create_type_formatter();
+                formatter.format(display_type).into_owned()
+            };
+            let message = crate::diagnostics::format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                &[&key_type_str],
+            );
+            self.error_at_node(
+                computed.expression,
+                &message,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+            );
             return;
         }
 
-        // Only check for string or number key types
+        // TS2538: Check for other invalid index types (void, boolean, object, etc.)
         let key_is_string = key_type == TypeId::STRING;
         let key_is_number = key_type == TypeId::NUMBER;
         if !key_is_string && !key_is_number {
+            let is_invalid =
+                crate::query_boundaries::type_checking_utilities::get_invalid_index_type_member_strict(
+                    self.ctx.types,
+                    key_type,
+                );
+            if let Some(err_type) = is_invalid {
+                let key_type_str = {
+                    let mut formatter = self.ctx.create_type_formatter();
+                    formatter.format(err_type).into_owned()
+                };
+                let message = crate::diagnostics::format_message(
+                    diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                    &[&key_type_str],
+                );
+                self.error_at_node(
+                    computed.expression,
+                    &message,
+                    diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                );
+            }
             return;
         }
 
