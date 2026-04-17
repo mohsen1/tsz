@@ -142,8 +142,12 @@ impl<'a> CheckerState<'a> {
                         .get(shorthand.name)
                         .and_then(|node| self.ctx.arena.get_identifier(node))
                         .map(|ident| ident.escaped_text.clone());
+                    // Use the non-tracking resolver: this shorthand appears as a
+                    // destructuring-assignment WRITE target (`({x} = expr)`), not a
+                    // read. The tracking resolver would mark `x` as referenced and
+                    // suppress TS6133 for write-only parameters/locals.
                     let target_idx = self
-                        .resolve_identifier_symbol(shorthand.name)
+                        .resolve_identifier_symbol_without_tracking(shorthand.name)
                         .map(|_| shorthand.name);
                     (name, target_idx)
                 } else {
@@ -547,8 +551,12 @@ impl<'a> CheckerState<'a> {
                             shorthand.name,
                             source_type,
                         );
-                        let has_value_binding =
-                            self.resolve_identifier_symbol(shorthand.name).is_some();
+                        // Destructuring-assignment target: `x` is a WRITE target,
+                        // not a read. Use non-tracking resolver so write-only
+                        // parameters still emit TS6133.
+                        let has_value_binding = self
+                            .resolve_identifier_symbol_without_tracking(shorthand.name)
+                            .is_some();
                         // TS2322: Check that the source property type is assignable
                         // to the target variable's declared type. This catches cases
                         // like `({ q } = numMapPoint)` where `q` comes from an index
