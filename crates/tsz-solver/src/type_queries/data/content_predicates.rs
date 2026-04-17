@@ -53,6 +53,45 @@ pub fn contains_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeId) -> bo
     })
 }
 
+/// Check if a type contains *free* type parameters — type parameters that are
+/// not bound by an enclosing function/callable signature's own type parameter list.
+///
+/// When an object type (interface) has method members like `bar<W>(): Inner<W>`,
+/// the `W` type parameter inside the method body is bound by `bar`'s signature.
+/// The standard `contains_type_parameters_db` traverses into these bodies and
+/// finds `W`, incorrectly reporting that the object type "contains type parameters".
+///
+/// This variant skips function/callable bodies that have their own type parameters,
+/// since any type parameter references inside those bodies are (or should be) bound
+/// by the function's own generic declaration, not free from an outer scope.
+///
+/// Used by TS2344 constraint validation to decide whether a base constraint can
+/// be checked eagerly or must be deferred to instantiation time.
+pub fn contains_free_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(
+            TypeData::TypeParameter(_)
+            | TypeData::Infer(_)
+            | TypeData::ThisType
+            | TypeData::BoundParameter(_),
+        ) => return true,
+        Some(
+            TypeData::Literal(_)
+            | TypeData::Intrinsic(_)
+            | TypeData::Error
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ModuleNamespace(_)
+            | TypeData::Recursive(_)
+            | TypeData::Enum(_, _),
+        ) => return false,
+        _ => {}
+    }
+    crate::visitors::visitor_predicates::contains_free_type_parameters(db, type_id)
+}
+
 /// Check if a type contains generic type parameters, excluding `ThisType`.
 ///
 /// Like `contains_type_parameters_db`, but does NOT treat `ThisType` as a type

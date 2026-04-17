@@ -775,9 +775,13 @@ impl<'a> CheckerState<'a> {
                             }
                             // Fall through to perform the constraint check
                         }
-                        if query::contains_type_parameters(self.ctx.types, base) {
-                            // Base constraint itself contains type parameters
+                        if query::contains_free_type_parameters(self.ctx.types, base) {
+                            // Base constraint itself contains free type parameters
                             // (e.g., from outer generic scope). Defer check.
+                            // Uses free-type-param check to avoid false positives
+                            // from bound type params inside method signatures
+                            // (e.g., `interface Base { bar<W>(): Inner<W> }` —
+                            // W is bound by bar, not free in Base).
                             continue;
                         }
                         let constraint_resolved = self.resolve_lazy_type(constraint);
