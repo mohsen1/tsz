@@ -2496,10 +2496,19 @@ impl<'a> CheckerState<'a> {
                     // static method) produce no TS2339 errors in tsc (see superAccess2.ts).
                     // Also suppress TS2339 when base expression is a property access on an unresolved import
                     // (TS2307 was already emitted for the missing module).
+                    // Suppress TS2339 when evaluating a computed property name
+                    // inside a class that is currently being constructed. The
+                    // property lookup may fail because the class instance type
+                    // hasn't been fully registered yet (circular reference).
+                    // tsc handles this gracefully and does not emit TS2339.
+                    let in_circular_computed_property =
+                        self.ctx.checking_computed_property_name.is_some()
+                            && !self.ctx.class_instance_resolution_set.is_empty();
                     if !property_name.starts_with('#')
                         && !accessibility_error_emitted
                         && !self.is_super_expression(access.expression)
                         && !self.is_property_access_on_unresolved_import(access.expression)
+                        && !in_circular_computed_property
                     {
                         if self.is_js_file()
                             && self.is_current_file_commonjs_export_base(access.expression)
