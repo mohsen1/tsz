@@ -163,6 +163,13 @@ impl<'a> CheckerState<'a> {
                         crate::diagnostics::diagnostic_codes::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
                     );
                 }
+                // Resolve type arguments even though the call is untyped. Without
+                // this, unresolved type names in arguments (e.g.
+                // `g<InvalidReference>()`) silently succeed — tsc still emits
+                // TS2304 for them. Mirrors the matching block in generic_checker.
+                for &type_arg_idx in &type_args_list.nodes {
+                    self.get_type_of_node(type_arg_idx);
+                }
             }
             // Still need to check arguments for definite assignment (TS2454) and other errors.
             // Return Some(ANY) for every index so spread arguments are accepted (avoids
