@@ -23841,6 +23841,29 @@ namespace NotInstantiated { export interface I {} }
 }
 
 #[test]
+fn test_ts1294_erasable_syntax_only_import_export_equals_in_cts() {
+    let options = CheckerOptions {
+        erasable_syntax_only: true,
+        ..Default::default()
+    };
+
+    let diagnostics = compile_and_get_diagnostics_named(
+        "commonjs.cts",
+        r#"
+import foo = require("./other");
+export = foo;
+"#,
+        options,
+    );
+
+    let ts1294_count = diagnostics.iter().filter(|(c, _)| *c == 1294).count();
+    assert_eq!(
+        ts1294_count, 2,
+        "Expected 2 TS1294 for import= and export= in .cts file, got {ts1294_count}. Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_ts1294_erasable_syntax_only_not_enabled() {
     // When erasableSyntaxOnly is false (default), no TS1294 should be emitted
     let diagnostics = compile_and_get_diagnostics(
