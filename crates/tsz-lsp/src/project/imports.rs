@@ -550,7 +550,8 @@ impl Project {
             if let Some(cached) = source_cache.import_like_match.get(candidate) {
                 return *cached;
             }
-            let matched = Self::source_contains_import_like_package_usage(from_source_text, candidate);
+            let matched =
+                Self::source_contains_import_like_package_usage(from_source_text, candidate);
             source_cache
                 .import_like_match
                 .insert(candidate.to_string(), matched);
