@@ -453,6 +453,16 @@ function patchSessionClient(SessionClient, ts) {
         return result;
     };
 
+    // Prefer native quick info when available to match tsc display formatting.
+    const _origGetQuickInfoAtPosition = proto.getQuickInfoAtPosition;
+    proto.getQuickInfoAtPosition = function(fileName, position) {
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getQuickInfoAtPosition(fileName, position)
+        );
+        if (nativeResult) return nativeResult;
+        return _origGetQuickInfoAtPosition.call(this, fileName, position);
+    };
+
     // Same preference forwarding for completion details.
     const _origGetCompletionEntryDetails = proto.getCompletionEntryDetails;
     proto.getCompletionEntryDetails = function(fileName, position, entryName, options, source, preferences, data) {
@@ -478,7 +488,10 @@ function patchSessionClient(SessionClient, ts) {
             !displayText ||
             displayText === entryName ||
             displayText === result?.name;
-        if (looksPlaceholderDetails) {
+        // Only use native detail fallback for plain member/global entries.
+        // Auto-import entries carry `source`/`data`; tsz intentionally rewrites
+        // those details/actions and should remain authoritative there.
+        if (looksPlaceholderDetails && !source && !data) {
             const nativeResult = withNativeFallback(this, ls =>
                 ls.getCompletionEntryDetails(
                     fileName,
@@ -1137,6 +1150,12 @@ function patchSessionClient(SessionClient, ts) {
     // 2. Return undefined when items are empty (harness expects undefined for "no help")
     const _origGetSignatureHelpItems = proto.getSignatureHelpItems;
     proto.getSignatureHelpItems = function(fileName, position, options) {
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getSignatureHelpItems(fileName, position, options)
+        );
+        if (nativeResult && nativeResult.items && nativeResult.items.length > 0) {
+            return nativeResult;
+        }
         // Intercept: forward triggerReason to the server by augmenting the request
         if (options && options.triggerReason) {
             const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
@@ -1148,16 +1167,16 @@ function patchSessionClient(SessionClient, ts) {
             };
             const request = this.processRequest("signatureHelp", args);
             const response = this.processResponse(request);
-            if (!response.body) return undefined;
+            if (!response.body) return nativeResult;
             const { items, applicableSpan, selectedItemIndex, argumentIndex, argumentCount } = response.body;
-            if (!items || items.length === 0) return undefined;
+            if (!items || items.length === 0) return nativeResult;
             return { items, applicableSpan, selectedItemIndex, argumentIndex, argumentCount };
         }
         const result = _origGetSignatureHelpItems.call(this, fileName, position, options);
         if (result && result.items && result.items.length === 0) {
-            return undefined;
+            return nativeResult || undefined;
         }
-        return result;
+        return result || nativeResult;
     };
 
     proto.getNameOrDottedNameSpan = function(fileName, startPos, endPos) {
