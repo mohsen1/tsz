@@ -1,10 +1,10 @@
 {
   "summary": {
-    "passed": 49
+    "passed": 3840,
+    "total": 6562
   },
   "source": {
-    "commit": "f97e33631",
-    "date": "2026-04-10",
-    "max": 50
+    "commit": "a6d8f0bc60",
+    "date": "2026-04-17"
   }
 }
