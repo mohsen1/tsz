@@ -3376,15 +3376,15 @@ impl<'a> SignatureHelpProvider<'a> {
                     {
                         text = raw.to_string();
                     }
-                    if text == "any" || text == "unknown" || text == "error" {
-                        if let Some(raw) = raw_literal {
-                            if Self::is_numeric_literal_type(raw) {
-                                text = "number".to_string();
-                            } else if Self::string_literal_value(raw).is_some() {
-                                text = raw.to_string();
-                            } else if raw == "true" || raw == "false" {
-                                text = "boolean".to_string();
-                            }
+                    if (text == "any" || text == "unknown" || text == "error")
+                        && let Some(raw) = raw_literal
+                    {
+                        if Self::is_numeric_literal_type(raw) {
+                            text = "number".to_string();
+                        } else if Self::string_literal_value(raw).is_some() {
+                            text = raw.to_string();
+                        } else if raw == "true" || raw == "false" {
+                            text = "boolean".to_string();
                         }
                     }
                     types.push(text);
@@ -3426,15 +3426,15 @@ impl<'a> SignatureHelpProvider<'a> {
                     {
                         text = raw.to_string();
                     }
-                    if text == "any" || text == "unknown" || text == "error" {
-                        if let Some(raw) = raw_literal {
-                            if Self::is_numeric_literal_type(raw) {
-                                text = "number".to_string();
-                            } else if Self::string_literal_value(raw).is_some() {
-                                text = raw.to_string();
-                            } else if raw == "true" || raw == "false" {
-                                text = "boolean".to_string();
-                            }
+                    if (text == "any" || text == "unknown" || text == "error")
+                        && let Some(raw) = raw_literal
+                    {
+                        if Self::is_numeric_literal_type(raw) {
+                            text = "number".to_string();
+                        } else if Self::string_literal_value(raw).is_some() {
+                            text = raw.to_string();
+                        } else if raw == "true" || raw == "false" {
+                            text = "boolean".to_string();
                         }
                     }
                     types.push(text);
