@@ -233,6 +233,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 if let Some(key) =
                     get_string_literal_from_type_index(self.ctx.arena, indexed_access.index_type)
                 {
+                    // Self-reference: `(typeof globalThis)["globalThis"]` is
+                    // a valid self-reference to the globalThis type itself.
+                    if key.as_str() == "globalThis" {
+                        return object_type;
+                    }
                     let not_in_locals = self.ctx.binder.file_locals.get(key.as_str()).is_none();
                     let is_block_scoped = self
                         .ctx
