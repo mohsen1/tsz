@@ -100,7 +100,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    pub(in crate::types_domain) fn property_access_is_direct_write_target(
+    pub(crate) fn property_access_is_direct_write_target(
         &self,
         property_access_idx: NodeIndex,
     ) -> bool {
