@@ -391,6 +391,35 @@ function patchSessionClient(SessionClient, ts) {
             return nativeResult;
         }
 
+        if (
+            nativeResult &&
+            result &&
+            Array.isArray(nativeResult.entries) &&
+            nativeResult.entries.length > 0 &&
+            Array.isArray(result.entries)
+        ) {
+            const nativeHasOptionalChainInsertions = nativeResult.entries.some(entry =>
+                typeof entry?.insertText === "string" && entry.insertText.startsWith("?.")
+            );
+            const tszHasOptionalChainInsertions = result.entries.some(entry =>
+                typeof entry?.insertText === "string" && entry.insertText.startsWith("?.")
+            );
+            if (nativeHasOptionalChainInsertions && !tszHasOptionalChainInsertions) {
+                return nativeResult;
+            }
+
+            if (nativeResult.isMemberCompletion) {
+                const sourceText = this.host?.readFile?.(fileName);
+                if (typeof sourceText === "string") {
+                    const start = Math.max(0, position - 64);
+                    const prefix = sourceText.slice(start, position);
+                    if (/\?\.\s*$/.test(prefix)) {
+                        return nativeResult;
+                    }
+                }
+            }
+        }
+
         if (result && result.entries && result.entries.length === 0) {
             // tsz returned empty entries. If native LS has results, use them.
             if (nativeResult && nativeResult.entries && nativeResult.entries.length > 0) {
