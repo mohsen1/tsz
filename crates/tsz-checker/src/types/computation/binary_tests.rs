@@ -702,8 +702,10 @@ fn ts2367_still_emitted_for_genuinely_unrelated_types() {
 
 #[test]
 fn ts2367_widens_cross_family_literal_against_constrained_intersection() {
-    // tsc preserves the narrow types in TS2367 messages, showing `"hello"`
-    // instead of widened `string`.
+    // When comparing a type-parameter intersection in a primitive family
+    // against a literal from a different family, tsc widens the literal
+    // to its base primitive (e.g. `"hello"` -> `string`). Matches the
+    // conformance baseline in intersectionNarrowing.ts.
     let diags = check_source_diagnostics(
         r#"function f<T extends string | number>(x: T & number) {
     const t1 = x === "hello";
@@ -722,8 +724,8 @@ fn ts2367_widens_cross_family_literal_against_constrained_intersection() {
     assert!(
         relevant[0]
             .message_text
-            .contains("types 'T & number' and '\"hello\"' have no overlap"),
-        "Expected narrow type display matching tsc, got: {:?}",
+            .contains("types 'T & number' and 'string' have no overlap"),
+        "Expected cross-family widened display matching tsc, got: {:?}",
         relevant[0].message_text
     );
 }

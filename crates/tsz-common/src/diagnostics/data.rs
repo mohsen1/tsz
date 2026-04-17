@@ -10659,7 +10659,7 @@ pub static DIAGNOSTIC_MESSAGES: &[DiagnosticMessage] = &[
 ];
 
 /// Diagnostic message templates matching TypeScript exactly.
-/// Use format_message() to fill in placeholders.
+/// Use `format_message()` to fill in placeholders.
 pub mod diagnostic_messages {
     pub const UNTERMINATED_STRING_LITERAL: &str = "Unterminated string literal.";
     pub const IDENTIFIER_EXPECTED: &str = "Identifier expected.";

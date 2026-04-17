@@ -120,7 +120,7 @@ for (const entry of codeEntries) {
 output += `];
 
 /// Diagnostic message templates matching TypeScript exactly.
-/// Use format_message() to fill in placeholders.
+/// Use `format_message()` to fill in placeholders.
 pub mod diagnostic_messages {
 `;
 

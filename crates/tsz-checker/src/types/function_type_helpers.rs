@@ -628,7 +628,7 @@ impl<'a> CheckerState<'a> {
             let comments = &sf.comments;
             let func_node = self.ctx.arena.get(func_idx)?;
             for comment in comments.iter().rev() {
-                if comment.end <= func_node.pos as u32 {
+                if comment.end <= func_node.pos {
                     if tsz_common::comments::is_jsdoc_comment(comment, source_text) {
                         return Self::jsdoc_type_tag_function_return_type_span_in_source(
                             source_text,
@@ -649,9 +649,9 @@ impl<'a> CheckerState<'a> {
                             }
                             if let Some(parent_node) = self.ctx.arena.get(parent) {
                                 for comment in comments.iter().rev() {
-                                    if comment.end <= parent_node.pos as u32
-                                        || (comment.pos <= parent_node.pos as u32
-                                            && comment.end <= parent_node.end as u32)
+                                    if comment.end <= parent_node.pos
+                                        || (comment.pos <= parent_node.pos
+                                            && comment.end <= parent_node.end)
                                     {
                                         if tsz_common::comments::is_jsdoc_comment(
                                             comment,
@@ -677,7 +677,7 @@ impl<'a> CheckerState<'a> {
         });
         let msg = format_message(
             diagnostic_messages::THE_RETURN_TYPE_OF_AN_ASYNC_FUNCTION_OR_METHOD_MUST_BE_THE_GLOBAL_PROMISE_T_TYPE,
-            &[&inner_type_name],
+            &[inner_type_name],
         );
         if let Some((start, length)) = span {
             self.error_at_position(
