@@ -475,6 +475,22 @@ impl Project {
         imported
     }
 
+    fn source_contains_quoted_package_literal(source_text: &str, package_name: &str) -> bool {
+        source_text.contains(&format!("\"{package_name}\""))
+            || source_text.contains(&format!("'{package_name}'"))
+    }
+
+    fn source_contains_import_like_package_usage(source_text: &str, package_name: &str) -> bool {
+        source_text.contains(&format!("from \"{package_name}\""))
+            || source_text.contains(&format!("from '{package_name}'"))
+            || source_text.contains(&format!("require(\"{package_name}\")"))
+            || source_text.contains(&format!("require('{package_name}')"))
+            || source_text.contains(&format!("import(\"{package_name}\")"))
+            || source_text.contains(&format!("import('{package_name}')"))
+            || source_text.contains(&format!("types=\"{package_name}\""))
+            || source_text.contains(&format!("types='{package_name}'"))
+    }
+
     fn bare_specifier_allowed_for_file(
         &self,
         module_specifier: &str,
@@ -486,12 +502,44 @@ impl Project {
             return true;
         };
 
-        if existing_imported_packages.contains(package_name) {
+        let node_prefixed = (!package_name.starts_with("node:")).then(|| format!("node:{package_name}"));
+        let node_stripped = package_name.strip_prefix("node:");
+
+        let quoted_in_source = Self::source_contains_quoted_package_literal(from_source_text, package_name)
+            || node_prefixed
+                .as_deref()
+                .is_some_and(|candidate| {
+                    Self::source_contains_quoted_package_literal(from_source_text, candidate)
+                })
+            || node_stripped.is_some_and(|candidate| {
+                Self::source_contains_quoted_package_literal(from_source_text, candidate)
+            });
+
+        let has_existing_import = existing_imported_packages.contains(package_name)
+            || node_prefixed
+                .as_deref()
+                .is_some_and(|candidate| existing_imported_packages.contains(candidate))
+            || node_stripped
+                .is_some_and(|candidate| existing_imported_packages.contains(candidate));
+
+        // Guard against stale parser snapshots in edit-heavy server tests:
+        // only trust existing-import evidence when the package literal is
+        // still present in the current source text.
+        if has_existing_import && quoted_in_source {
             return true;
         }
-        if from_source_text.contains(&format!("\"{package_name}\""))
-            || from_source_text.contains(&format!("'{package_name}'"))
-        {
+
+        let import_like_in_source =
+            Self::source_contains_import_like_package_usage(from_source_text, package_name)
+                || node_prefixed
+                    .as_deref()
+                    .is_some_and(|candidate| {
+                        Self::source_contains_import_like_package_usage(from_source_text, candidate)
+                    })
+                || node_stripped.is_some_and(|candidate| {
+                    Self::source_contains_import_like_package_usage(from_source_text, candidate)
+                });
+        if import_like_in_source {
             return true;
         }
 
