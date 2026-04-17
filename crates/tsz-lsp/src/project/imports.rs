@@ -96,6 +96,8 @@ impl Project {
         if !self.auto_imports_allowed_for_file(from_file.file_name()) {
             return;
         }
+        let allowed_packages = self.allowed_dependency_package_names(from_file.file_name());
+        let existing_imported_packages = Self::imported_package_names(from_file);
 
         // Try optimized path for named exports using symbol index
         let candidate_files = self.symbol_index.get_files_with_symbol(missing_name);
@@ -120,7 +122,12 @@ impl Project {
             for (module_specifier, export_match) in
                 self.matching_exports_in_ambient_modules(&file_name, missing_name)
             {
-                if self.is_ambient_module_candidate_excluded(&module_specifier) {
+                if self.is_ambient_module_candidate_excluded(
+                    &module_specifier,
+                    from_file.source_text(),
+                    allowed_packages.as_ref(),
+                    &existing_imported_packages,
+                ) {
                     continue;
                 }
 
@@ -160,7 +167,13 @@ impl Project {
             }
 
             let Some(module_specifier) = module_specifiers.into_iter().find(|module_specifier| {
-                !self.is_auto_import_candidate_excluded(&file_name, module_specifier)
+                !self.is_auto_import_candidate_excluded(
+                    &file_name,
+                    module_specifier,
+                    from_file.source_text(),
+                    allowed_packages.as_ref(),
+                    &existing_imported_packages,
+                )
             }) else {
                 continue;
             };
@@ -226,6 +239,8 @@ impl Project {
         if !self.auto_imports_allowed_for_file(from_file.file_name()) {
             return;
         }
+        let allowed_packages = self.allowed_dependency_package_names(from_file.file_name());
+        let existing_imported_packages = Self::imported_package_names(from_file);
 
         // Get all symbols that match the prefix using the sorted symbol index
         let matching_symbols = self.symbol_index.get_symbols_with_prefix(prefix);
@@ -247,7 +262,12 @@ impl Project {
                 for (module_specifier, export_match) in
                     self.matching_exports_in_ambient_modules(&file_name, &symbol_name)
                 {
-                    if self.is_ambient_module_candidate_excluded(&module_specifier) {
+                    if self.is_ambient_module_candidate_excluded(
+                        &module_specifier,
+                        from_file.source_text(),
+                        allowed_packages.as_ref(),
+                        &existing_imported_packages,
+                    ) {
                         continue;
                     }
 
@@ -290,7 +310,13 @@ impl Project {
 
                 let Some(module_specifier) =
                     module_specifiers.into_iter().find(|module_specifier| {
-                        !self.is_auto_import_candidate_excluded(&file_name, module_specifier)
+                        !self.is_auto_import_candidate_excluded(
+                            &file_name,
+                            module_specifier,
+                            from_file.source_text(),
+                            allowed_packages.as_ref(),
+                            &existing_imported_packages,
+                        )
                     })
                 else {
                     continue;
@@ -353,7 +379,135 @@ impl Project {
             .any(|matcher| matcher.is_match(module_specifier))
     }
 
-    fn is_auto_import_candidate_excluded(&self, target_file: &str, module_specifier: &str) -> bool {
+    fn allowed_dependency_package_names(&self, from_file: &str) -> Option<FxHashSet<String>> {
+        let mut allowed = FxHashSet::default();
+        let mut saw_package_json = false;
+        let mut current = Path::new(from_file).parent();
+        while let Some(dir) = current {
+            let package_json_path = dir.join("package.json");
+            let package_json_key = package_json_path.to_string_lossy().replace('\\', "/");
+            let package_json_text = self
+                .files
+                .get(&package_json_key)
+                .map(|f| f.source_text().to_string())
+                .or_else(|| std::fs::read_to_string(&package_json_key).ok());
+
+            if let Some(text) = package_json_text {
+                saw_package_json = true;
+                let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+                    // Match tsserver behavior: invalid package.json should not
+                    // suppress auto-import candidates.
+                    return None;
+                };
+                for field in [
+                    "dependencies",
+                    "devDependencies",
+                    "peerDependencies",
+                    "optionalDependencies",
+                ] {
+                    if let Some(deps) = json.get(field).and_then(serde_json::Value::as_object) {
+                        allowed.extend(deps.keys().cloned());
+                    }
+                }
+            }
+
+            current = dir.parent();
+        }
+
+        saw_package_json.then_some(allowed)
+    }
+
+    fn module_specifier_package_name(module_specifier: &str) -> Option<&str> {
+        if module_specifier.is_empty()
+            || module_specifier.starts_with('.')
+            || module_specifier.starts_with('/')
+            || module_specifier.starts_with('#')
+        {
+            return None;
+        }
+
+        if let Some(scoped) = module_specifier.strip_prefix('@') {
+            let mut parts = scoped.split('/');
+            let scope = parts.next()?;
+            let pkg = parts.next()?;
+            if scope.is_empty() || pkg.is_empty() {
+                return None;
+            }
+            let len = 1 + scope.len() + 1 + pkg.len();
+            return module_specifier.get(..len);
+        }
+
+        module_specifier.split('/').next()
+    }
+
+    fn imported_package_names(file: &ProjectFile) -> FxHashSet<String> {
+        let arena = file.arena();
+        let Some(source_file) = arena.get_source_file_at(file.root()) else {
+            return FxHashSet::default();
+        };
+        let mut imported = FxHashSet::default();
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = arena.get(stmt_idx) else {
+                continue;
+            };
+            let module_specifier = if stmt_node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                arena
+                    .get_import_decl(stmt_node)
+                    .and_then(|import| arena.get_literal_text(import.module_specifier))
+            } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                arena
+                    .get_export_decl(stmt_node)
+                    .and_then(|export| export.module_specifier.into_option())
+                    .and_then(|specifier| arena.get_literal_text(specifier))
+            } else {
+                None
+            };
+
+            if let Some(package_name) = module_specifier
+                .and_then(Self::module_specifier_package_name)
+                .map(str::to_string)
+            {
+                imported.insert(package_name);
+            }
+        }
+
+        imported
+    }
+
+    fn bare_specifier_allowed_for_file(
+        &self,
+        module_specifier: &str,
+        from_source_text: &str,
+        allowed_packages: Option<&FxHashSet<String>>,
+        existing_imported_packages: &FxHashSet<String>,
+    ) -> bool {
+        let Some(package_name) = Self::module_specifier_package_name(module_specifier) else {
+            return true;
+        };
+
+        if existing_imported_packages.contains(package_name) {
+            return true;
+        }
+        if from_source_text.contains(&format!("\"{package_name}\""))
+            || from_source_text.contains(&format!("'{package_name}'"))
+        {
+            return true;
+        }
+
+        allowed_packages
+            .map(|allowed| allowed.contains(package_name))
+            .unwrap_or(true)
+    }
+
+    fn is_auto_import_candidate_excluded(
+        &self,
+        target_file: &str,
+        module_specifier: &str,
+        from_source_text: &str,
+        allowed_packages: Option<&FxHashSet<String>>,
+        existing_imported_packages: &FxHashSet<String>,
+    ) -> bool {
         if self.auto_import_specifier_is_excluded(module_specifier) {
             return true;
         }
@@ -366,6 +520,15 @@ impl Project {
             return false;
         }
 
+        if !self.bare_specifier_allowed_for_file(
+            module_specifier,
+            from_source_text,
+            allowed_packages,
+            existing_imported_packages,
+        ) {
+            return true;
+        }
+
         if self.auto_import_path_is_excluded(module_specifier) {
             return true;
         }
@@ -376,13 +539,28 @@ impl Project {
                 .auto_import_path_is_excluded(synthetic_node_modules_path.trim_start_matches('/'))
     }
 
-    fn is_ambient_module_candidate_excluded(&self, module_specifier: &str) -> bool {
+    fn is_ambient_module_candidate_excluded(
+        &self,
+        module_specifier: &str,
+        from_source_text: &str,
+        allowed_packages: Option<&FxHashSet<String>>,
+        existing_imported_packages: &FxHashSet<String>,
+    ) -> bool {
         if self.auto_import_specifier_is_excluded(module_specifier) {
             return true;
         }
 
         if module_specifier.starts_with('.') {
             return false;
+        }
+
+        if !self.bare_specifier_allowed_for_file(
+            module_specifier,
+            from_source_text,
+            allowed_packages,
+            existing_imported_packages,
+        ) {
+            return true;
         }
 
         if self.auto_import_path_is_excluded(module_specifier) {

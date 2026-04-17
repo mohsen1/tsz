@@ -2476,3 +2476,152 @@ fn test_completion_info_class_member_declaration_prefix_is_new_identifier_locati
         entry.get("name").and_then(serde_json::Value::as_str) == Some("constructor")
     }));
 }
+
+#[test]
+fn test_completion_info_auto_import_dependency_filter_hides_unlisted_bare_package() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/@types/react/index.d.ts".to_string(),
+        "export declare function useMemo(): void;\nexport declare function useState(): void;\n"
+            .to_string(),
+    );
+    server
+        .open_files
+        .insert("/package.json".to_string(), "{}".to_string());
+    server
+        .open_files
+        .insert("/index.ts".to_string(), "useMemo/**/".to_string());
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 1,
+            "offset": 8,
+            "preferences": {
+                "includeCompletionsForModuleExports": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let completion_body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = completion_body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    assert!(
+        !entries.iter().any(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("useMemo")
+                && entry.get("source").and_then(serde_json::Value::as_str) == Some("react")
+        }),
+        "expected dependency filter to hide bare package auto-imports without a listed dependency"
+    );
+}
+
+#[test]
+fn test_completion_info_auto_import_dependency_filter_allows_existing_imported_package() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/@types/react/index.d.ts".to_string(),
+        "export declare function useMemo(): void;\nexport declare function useState(): void;\n"
+            .to_string(),
+    );
+    server
+        .open_files
+        .insert("/package.json".to_string(), "{}".to_string());
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "import { useState } from \"react\";\nuseMemo/**/\n".to_string(),
+    );
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 2,
+            "offset": 8,
+            "preferences": {
+                "includeCompletionsForModuleExports": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let completion_body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = completion_body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    assert!(
+        entries.iter().any(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("useMemo")
+                && entry.get("source").and_then(serde_json::Value::as_str) == Some("react")
+        }),
+        "expected existing imports to keep same-package auto-import candidates available"
+    );
+}
+
+#[test]
+fn test_completion_info_auto_import_dependency_filter_ignores_invalid_package_json() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/react/index.d.ts".to_string(),
+        "export declare const React: any;\n".to_string(),
+    );
+    server.open_files.insert(
+        "/node_modules/react/package.json".to_string(),
+        r#"{ "name": "react", "types": "./index.d.ts" }"#.to_string(),
+    );
+    server.open_files.insert(
+        "/node_modules/fake-react/index.d.ts".to_string(),
+        "export declare const ReactFake: any;\n".to_string(),
+    );
+    server.open_files.insert(
+        "/node_modules/fake-react/package.json".to_string(),
+        r#"{ "name": "fake-react", "types": "./index.d.ts" }"#.to_string(),
+    );
+    server.open_files.insert(
+        "/package.json".to_string(),
+        "{\n  \"mod\"\n  \"dependencies\": { \"react\": \"*\" }\n}\n".to_string(),
+    );
+    server
+        .open_files
+        .insert("/src/index.ts".to_string(), "const x = Re/**/".to_string());
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/src/index.ts",
+            "line": 1,
+            "offset": 12,
+            "preferences": {
+                "includeCompletionsForModuleExports": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let completion_body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = completion_body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    assert!(
+        entries.iter().any(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("React")
+                && entry.get("source").and_then(serde_json::Value::as_str) == Some("react")
+        }),
+        "expected invalid package.json not to suppress normal auto-import candidates"
+    );
+    assert!(
+        entries.iter().any(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("ReactFake")
+                && entry.get("source").and_then(serde_json::Value::as_str) == Some("fake-react")
+        }),
+        "expected invalid package.json not to filter unrelated package candidates"
+    );
+}
