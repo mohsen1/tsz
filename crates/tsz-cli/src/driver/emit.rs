@@ -345,6 +345,7 @@ pub(crate) fn emit_outputs(
                         def_to_symbol: cache.def_to_symbol.clone(),
                         def_types: cache.def_types.clone(),
                         def_type_params: cache.def_type_params.clone(),
+                        def_to_name: cache.def_to_name.clone(),
                     };
                     let mut emitter = DeclarationEmitter::with_type_info(
                         &file.arena,
@@ -432,6 +433,7 @@ pub(crate) fn emit_outputs(
                         def_to_symbol: cache.def_to_symbol.clone(),
                         def_types: cache.def_types.clone(),
                         def_type_params: cache.def_type_params.clone(),
+                        def_to_name: cache.def_to_name.clone(),
                     };
 
                     let mut analyzer = UsageAnalyzer::new(

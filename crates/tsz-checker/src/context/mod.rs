@@ -538,6 +538,12 @@ pub struct TypeCache {
     /// Populated by `CheckerContext` during type checking, consumed by `UsageAnalyzer`.
     pub def_to_symbol: FxHashMap<tsz_solver::DefId, SymbolId>,
 
+    /// Maps `DefIds` to symbol name strings for declaration emit.
+    /// Built from `DefinitionStore` at `extract_cache` time; used as a fallback
+    /// in `TypePrinter::print_lazy_type` when the symbol lives in a lib binder
+    /// that is not present in the current file's `symbol_arena`.
+    pub def_to_name: FxHashMap<tsz_solver::DefId, String>,
+
     /// Snapshot of resolved `DefId -> TypeId` bodies for declaration emit evaluation.
     pub def_types: FxHashMap<u32, TypeId>,
 

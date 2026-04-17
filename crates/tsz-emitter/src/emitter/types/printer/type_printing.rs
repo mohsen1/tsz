@@ -1087,6 +1087,18 @@ impl<'a> TypePrinter<'a> {
             None
         };
 
+        // If the symbol is a global lib type (e.g. Promise) that is NOT in
+        // the current file's symbol arena (multi-file tests: each file has its
+        // own binder without lib symbols merged), fall back to the pre-built
+        // name map from TypeCache so we can still emit "Promise" instead of "any".
+        if let Some(sym_id) = sym_id
+            && self.symbol_arena.is_some_and(|a| a.get(sym_id).is_none())
+        {
+            if let Some(name) = self.type_cache.and_then(|c| c.def_to_name.get(&def_id)) {
+                return name.clone();
+            }
+        }
+
         // If we have a symbol and it's visible/global, use the name. Otherwise
         // fall back to an import-qualified reference when the emitter can
         // resolve the owning module specifier.
