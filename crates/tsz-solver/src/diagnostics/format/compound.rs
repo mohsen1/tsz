@@ -829,7 +829,9 @@ impl<'a> TypeFormatter<'a> {
 
     /// Disambiguate union member display names: when two members format to
     /// the same string (e.g., `Yep | Yep`), try to add namespace qualification
-    /// so the output matches tsc (e.g., `Foo.Yep | Bar.Yep`).
+    /// so the output matches tsc (e.g., `Foo.Yep | Bar.Yep`). When namespace
+    /// qualification still leaves collisions (or is unavailable for plain
+    /// cross-file class references), fall back to `import("<specifier>").Name`.
     fn disambiguate_union_member_names(
         &mut self,
         members: &[TypeId],
@@ -844,19 +846,58 @@ impl<'a> TypeFormatter<'a> {
         if !counts.values().any(|&c| c > 1) {
             return formatted;
         }
-        // Try to qualify duplicate names
-        let mut result = Vec::with_capacity(formatted.len());
-        for (name, &member) in formatted.iter().zip(members.iter()) {
-            if counts.get(name.as_str()).copied().unwrap_or(0) > 1
-                && let Some(qualified) = self.namespace_qualified_name_for_type(member)
-                && qualified != *name
-            {
-                result.push(qualified);
-                continue;
+        // First pass: prefer namespace qualification.
+        let mut result: Vec<String> = formatted
+            .iter()
+            .zip(members.iter())
+            .map(|(name, &member)| {
+                if counts.get(name.as_str()).copied().unwrap_or(0) > 1
+                    && let Some(qualified) = self.namespace_qualified_name_for_type(member)
+                    && qualified != *name
+                {
+                    return qualified;
+                }
+                name.clone()
+            })
+            .collect();
+        // Second pass: any remaining collisions after namespace qualification
+        // get resolved via `import("<specifier>").Name` for types whose
+        // declaring symbol lives in a foreign file.
+        let mut second_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for name in &result {
+            *second_counts.entry(name.clone()).or_default() += 1;
+        }
+        if second_counts.values().any(|&c| c > 1) {
+            for (slot, &member) in result.iter_mut().zip(members.iter()) {
+                if second_counts.get(slot.as_str()).copied().unwrap_or(0) > 1
+                    && let Some(qualified) = self.import_qualified_name_for_type(member)
+                    && qualified != *slot
+                {
+                    *slot = qualified;
+                }
             }
-            result.push(name.clone());
         }
         result
+    }
+
+    /// Format two types for a diagnostic message where both appear side by
+    /// side (e.g., `Type '<a>' is not assignable to type '<b>'`). When the
+    /// plain display names collide, re-qualifies via namespace / import so
+    /// the reader can tell which type is which.
+    pub fn format_pair_disambiguated(&mut self, a: TypeId, b: TypeId) -> (String, String) {
+        let sa = self.format(a).into_owned();
+        let sb = self.format(b).into_owned();
+        if sa != sb || a == b {
+            return (sa, sb);
+        }
+        let ids = [a, b];
+        let disambiguated =
+            self.disambiguate_union_member_names(&ids, vec![sa.clone(), sb.clone()]);
+        let mut iter = disambiguated.into_iter();
+        let da = iter.next().unwrap_or(sa);
+        let db = iter.next().unwrap_or(sb);
+        (da, db)
     }
 
     /// Try to get a namespace-qualified name for a type (for disambiguation).
@@ -896,6 +937,66 @@ impl<'a> TypeFormatter<'a> {
             }
         }
         None
+    }
+
+    /// Locate the primary declaring symbol for a `TypeId`, when one exists —
+    /// used by cross-file disambiguation to find the `decl_file_idx`.
+    fn primary_symbol_for_type(&self, type_id: TypeId) -> Option<SymbolId> {
+        if let Some(shape) = crate::type_queries::get_object_shape(self.interner, type_id) {
+            if let Some(sym_id) = shape.symbol {
+                return Some(sym_id);
+            }
+            if let Some(def_store) = self.def_store
+                && let Some(def_id) = def_store.find_def_by_shape(&shape)
+                && let Some(def) = def_store.get(def_id)
+                && let Some(sym_raw) = def.symbol_id
+            {
+                return Some(SymbolId(sym_raw));
+            }
+        }
+        if let Some(def_id) = crate::type_queries::get_lazy_def_id(self.interner, type_id)
+            && let Some(def_store) = self.def_store
+            && let Some(def) = def_store.get(def_id)
+            && let Some(sym_raw) = def.symbol_id
+        {
+            return Some(SymbolId(sym_raw));
+        }
+        if let Some(def_id) = crate::type_queries::get_enum_def_id(self.interner, type_id)
+            && let Some(def_store) = self.def_store
+            && let Some(def) = def_store.get(def_id)
+            && let Some(sym_raw) = def.symbol_id
+        {
+            return Some(SymbolId(sym_raw));
+        }
+        None
+    }
+
+    /// Format a type using `import("<specifier>").Name` qualification when the
+    /// type's primary declaring symbol lives in a file different from the file
+    /// currently being checked. Returns `None` when no such qualification is
+    /// available (type has no symbol, no def-store, same file, or no module
+    /// specifier is registered for the foreign file).
+    fn import_qualified_name_for_type(&mut self, type_id: TypeId) -> Option<String> {
+        let sym_id = self.primary_symbol_for_type(type_id)?;
+        let arena = self.symbol_arena?;
+        let sym = arena.get(sym_id)?;
+        let decl_file_idx = sym.decl_file_idx;
+        if decl_file_idx == u32::MAX {
+            return None;
+        }
+        if self.current_file_id == Some(decl_file_idx) {
+            return None;
+        }
+        let specifier = self
+            .module_path_specifiers
+            .and_then(|m| m.get(&decl_file_idx))
+            .or_else(|| self.module_specifiers.and_then(|m| m.get(&decl_file_idx)))?;
+        // Use the namespace-qualified short name so surrounding namespace
+        // ancestors (e.g. `predom.JSX.Element`) survive the `import(...)`
+        // prefix and produce `import("<path>").predom.JSX.Element`.
+        let base = self.format_symbol_name(sym_id)?;
+        let qualified = self.namespace_qualify_symbol_name(sym_id, base);
+        Some(format!("import(\"{specifier}\").{qualified}"))
     }
 
     pub(super) fn format_intersection(&mut self, members: &[TypeId]) -> String {

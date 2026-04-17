@@ -239,6 +239,7 @@ impl<'a> CheckerContext<'a> {
         // Each file (other than the current file) gets its name stem as the module specifier.
         // This enables import-qualified type display like `import("a").F`.
         self.module_specifiers = Self::build_module_specifiers(&arenas);
+        self.module_path_specifiers = Self::build_module_path_specifiers(&arenas);
         self.all_arenas = Some(arenas);
     }
 
@@ -261,6 +262,80 @@ impl<'a> CheckerContext<'a> {
             }
         }
         map
+    }
+
+    /// Build a mapping from `file_id` -> project-relative stripped path, used
+    /// by cross-module diagnostic disambiguation. Unlike `build_module_specifiers`,
+    /// this preserves any directory prefix (e.g. `src/library-a/index`) so
+    /// `import("<path>").X` messages match tsc when the same short name lives
+    /// in two different modules. The common absolute-directory prefix shared
+    /// by all source files is stripped so temp-dir paths (e.g.
+    /// `/private/var/folders/.../T/tmpABC/`) don't leak into diagnostics.
+    fn build_module_path_specifiers(arenas: &[Arc<NodeArena>]) -> FxHashMap<u32, String> {
+        let mut paths: Vec<(u32, String)> = Vec::new();
+        for (idx, arena) in arenas.iter().enumerate() {
+            for sf in &arena.source_files {
+                let specifier = Self::strip_ts_extension(&sf.file_name);
+                paths.push((idx as u32, specifier.to_string()));
+            }
+        }
+
+        // Compute the longest common directory prefix across all absolute
+        // paths. Only absolute-path entries participate (lib / built-in files
+        // often come in with their own absolute root and should not pull the
+        // common prefix to `/`).
+        let absolute: Vec<&str> = paths
+            .iter()
+            .filter_map(|(_, p)| p.starts_with('/').then_some(p.as_str()))
+            .collect();
+        let common = if absolute.len() >= 2 {
+            Self::longest_common_directory_prefix(&absolute)
+        } else {
+            String::new()
+        };
+
+        let mut map = FxHashMap::default();
+        for (idx, specifier) in paths {
+            let trimmed = if !common.is_empty() && specifier.starts_with(&common) {
+                specifier[common.len()..]
+                    .trim_start_matches('/')
+                    .to_string()
+            } else {
+                specifier.trim_start_matches('/').to_string()
+            };
+            map.insert(idx, trimmed);
+        }
+        map
+    }
+
+    /// Return the longest common directory prefix shared by all paths (may be
+    /// empty). The returned prefix never splits a path component: it ends at
+    /// the last `/` that every input has in the same position.
+    fn longest_common_directory_prefix(paths: &[&str]) -> String {
+        if paths.is_empty() {
+            return String::new();
+        }
+        let first = paths[0];
+        let mut end = first.len();
+        for other in &paths[1..] {
+            let new_end = first
+                .char_indices()
+                .zip(other.char_indices())
+                .take_while(|((_, a), (_, b))| a == b)
+                .map(|((i, c), _)| i + c.len_utf8())
+                .last()
+                .unwrap_or(0);
+            end = end.min(new_end);
+            if end == 0 {
+                return String::new();
+            }
+        }
+        // Trim back to the last `/` so we don't split a filename component.
+        let prefix = &first[..end];
+        match prefix.rfind('/') {
+            Some(last_slash) => first[..=last_slash].to_string(),
+            None => String::new(),
+        }
     }
 
     /// Strip TypeScript/JavaScript extension from a file path to get the module specifier.
@@ -338,6 +413,7 @@ impl<'a> CheckerContext<'a> {
         self.resolved_module_paths = parent.resolved_module_paths.clone();
         self.resolved_module_errors = parent.resolved_module_errors.clone();
         self.module_specifiers = parent.module_specifiers.clone();
+        self.module_path_specifiers = parent.module_path_specifiers.clone();
         self.is_external_module_by_file = parent.is_external_module_by_file.clone();
         self.file_is_esm_map = parent.file_is_esm_map.clone();
     }

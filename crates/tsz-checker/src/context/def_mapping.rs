@@ -791,6 +791,8 @@ impl<'a> CheckerContext<'a> {
         TypeFormatter::with_symbols(self.types, &self.binder.symbols)
             .with_def_store(&self.definition_store)
             .with_namespace_module_names(&self.namespace_module_names)
+            .with_module_specifiers(&self.module_specifiers)
+            .with_module_path_specifiers(&self.module_path_specifiers)
             .with_current_file_id(self.current_file_idx as u32)
     }
 
