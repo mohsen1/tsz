@@ -545,19 +545,16 @@ impl Server {
                 }));
             }
 
-            // addMissingAsync: for error 1308 (await in sync function) or assignability
-            // errors when the content actually contains 'await' usage.
+            // addMissingAsync: for error 1308 (await in sync function) or
+            // assignability errors (2322/2345) where an async rewrite exists.
             if let Some(updated_content) = missing_async_content.as_ref()
                 && !response_actions.iter().any(|a| {
                     a.get("fixId").and_then(serde_json::Value::as_str)
                         == Some(ADD_MISSING_ASYNC_FIX_ID)
                 })
             {
-                let content_has_await = content.contains("await ");
-                let has_1308 =
-                    error_codes.contains(&AWAIT_IN_SYNC_FUNCTION_ERROR_CODE) && content_has_await;
-                let has_assignability =
-                    error_codes.iter().any(|c| *c == 2322 || *c == 2345) && content_has_await;
+                let has_1308 = error_codes.contains(&AWAIT_IN_SYNC_FUNCTION_ERROR_CODE);
+                let has_assignability = error_codes.iter().any(|c| *c == 2322 || *c == 2345);
                 let async_fix = serde_json::json!({
                     "fixName": ADD_MISSING_ASYNC_FIX_ID,
                     "description": "Add async modifier to containing function",
@@ -572,8 +569,9 @@ impl Server {
                     "fixId": ADD_MISSING_ASYNC_FIX_ID,
                     "fixAllDescription": "Add all missing async modifiers",
                 });
-                if has_assignability && !has_1308 {
-                    // For assignability errors (2322/2345), insert at front
+                if has_assignability {
+                    // For assignability errors (2322/2345), prefer async at
+                    // the top.
                     response_actions.insert(0, async_fix);
                 } else if has_1308 {
                     // For 1308, append at the end (preserve existing fix order)
