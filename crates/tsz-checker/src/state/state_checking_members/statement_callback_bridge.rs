@@ -121,7 +121,16 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
     fn check_export_declaration(&mut self, export_idx: NodeIndex) {
         if let Some(export_decl) = self.ctx.arena.get_export_decl_at(export_idx) {
-            if export_decl.is_default_export && self.is_inside_namespace_declaration(export_idx) {
+            // When the export is inside a non-module-element context (e.g., a block
+            // statement within a namespace), tsc already reports context errors
+            // (TS1231-1235) and does not additionally emit namespace/module-specific
+            // diagnostics like TS1194 or TS1319.
+            let in_non_module_context = self.is_in_non_module_element_context(export_idx);
+
+            if !in_non_module_context
+                && export_decl.is_default_export
+                && self.is_inside_namespace_declaration(export_idx)
+            {
                 // tsc points TS1319 at `default` for class/function/interface declarations
                 // but at the node start (`export`) for expression exports.
                 let clause_is_declaration = self
@@ -167,7 +176,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // TS1194: Export declarations are not permitted in a namespace.
             // `export { } from "mod"` is NEVER allowed in any namespace (even declare);
             // `export { }` (no from) is only disallowed in non-ambient namespaces.
-            if self.is_inside_namespace_declaration(export_idx) {
+            if !in_non_module_context && self.is_inside_namespace_declaration(export_idx) {
                 let has_from = export_decl.module_specifier.is_some();
                 let is_named = self
                     .ctx
