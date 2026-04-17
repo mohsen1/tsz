@@ -61,10 +61,10 @@ impl BinderState {
     /// This is needed for export specifiers where the exported name can be a string
     /// literal (e.g., `export { Foo as "module.exports" }`). TypeScript allows
     /// arbitrary string literal names in export specifiers since ES2022.
-    pub(crate) fn get_identifier_or_string_literal_name<'b>(
-        arena: &'b NodeArena,
+    pub(crate) fn get_identifier_or_string_literal_name(
+        arena: &NodeArena,
         idx: NodeIndex,
-    ) -> Option<&'b str> {
+    ) -> Option<&str> {
         if let Some(node) = arena.get(idx) {
             if let Some(id) = arena.get_identifier(node) {
                 return Some(&id.escaped_text);
