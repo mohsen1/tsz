@@ -194,75 +194,6 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
     const LanguageServiceAdapterHost = Harness.LanguageService.LanguageServiceAdapterHost;
     const virtualFileSystemRoot = Harness.virtualFileSystemRoot;
 
-    function estimateJsdocInferActionCount(content, startLineOneBased) {
-        const lines = content.split(/\r?\n/);
-        if (!lines.length) return 0;
-
-        let lineIdx = Math.min(
-            Math.max((startLineOneBased ?? 1) - 1, 0),
-            lines.length - 1,
-        );
-        while (lineIdx > 0 && !lines[lineIdx].includes("/**")) {
-            lineIdx--;
-        }
-        if (!lines[lineIdx].includes("/**")) return 0;
-
-        let blockEnd = lineIdx;
-        while (blockEnd < lines.length && !lines[blockEnd].includes("*/")) {
-            blockEnd++;
-        }
-        if (blockEnd >= lines.length) return 0;
-
-        const targetLine = lines.slice(blockEnd + 1).find(line => line.trim().length > 0);
-        if (!targetLine) return 0;
-
-        const open = targetLine.indexOf("(");
-        const close = targetLine.lastIndexOf(")");
-        if (open < 0 || close <= open) return 0;
-
-        return targetLine.slice(open + 1, close)
-            .split(",")
-            .filter(segment => {
-                const trimmed = segment.trim();
-                return trimmed.length > 0 && !trimmed.includes(":");
-            })
-            .length;
-    }
-
-    function estimateJsdocInferActionLabels(content, startLineOneBased) {
-        const lines = content.split(/\r?\n/);
-        if (!lines.length) return [];
-
-        let lineIdx = Math.min(
-            Math.max((startLineOneBased ?? 1) - 1, 0),
-            lines.length - 1,
-        );
-        while (lineIdx > 0 && !lines[lineIdx].includes("/**")) {
-            lineIdx--;
-        }
-        if (!lines[lineIdx].includes("/**")) return [];
-
-        let blockEnd = lineIdx;
-        while (blockEnd < lines.length && !lines[blockEnd].includes("*/")) {
-            blockEnd++;
-        }
-        if (blockEnd >= lines.length) return [];
-
-        const targetLine = lines.slice(blockEnd + 1).find(line => line.trim().length > 0);
-        if (!targetLine) return [];
-
-        const open = targetLine.indexOf("(");
-        const close = targetLine.lastIndexOf(")");
-        if (open < 0 || close <= open) return [];
-
-        return targetLine.slice(open + 1, close)
-            .split(",")
-            .map(segment => segment.trim())
-            .filter(segment => segment.length > 0 && !segment.includes(":"))
-            .map(segment => segment.replace(/^\.\.\./, "").replace(/[^A-Za-z0-9_$].*$/, ""))
-            .filter(label => label.length > 0);
-    }
-
     /**
      * Host for the SessionClient that sends messages to tsz-server.
      *
@@ -683,52 +614,7 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
                         deduped.push(action);
                     }
 
-                    const hasCode = (code) => Array.isArray(errorCodes) && errorCodes.some((value) => Number(value) === code);
-                    if (file.endsWith("annotateWithTypeFromJSDoc16.ts") && Array.isArray(errorCodes)) {
-                        if (hasCode(2322)) {
-                            return [];
-                        }
-                        if (hasCode(7043)) {
-                            return [];
-                        }
-                        if (hasCode(80004)) {
-                            const content = this._host.readFile(file);
-                            if (typeof content === "string") {
-                                const labels = estimateJsdocInferActionLabels(content, 2);
-                                const annotateAction = deduped.find(action => {
-                                    const fixName = action.fixName || "";
-                                    const description = action.description || "";
-                                    return fixName === "annotateWithTypeFromJSDoc" ||
-                                        String(description).includes("Annotate with type from JSDoc");
-                                });
-                                deduped = deduped.filter(action => {
-                                    const fixId = action.fixId || "";
-                                    const fixName = action.fixName || "";
-                                    const description = action.description || "";
-                                    return !(
-                                        fixId === "inferFromUsage" ||
-                                        fixName === "inferFromUsage" ||
-                                        String(description).startsWith("Infer type from usage")
-                                    );
-                                });
-                                const ordered = [];
-                                for (const label of labels) {
-                                    ordered.push({
-                                        fixName: "inferFromUsage",
-                                        description: `Infer type from usage: ${label}`,
-                                        changes: [],
-                                        fixId: "inferFromUsage",
-                                        fixAllDescription: "Infer all types from usage",
-                                    });
-                                }
-                                if (annotateAction) {
-                                    ordered.push(annotateAction);
-                                }
-                                deduped = ordered;
-                            }
-                        }
-                    }
-                    if (isAnnotateJsdocTestFile && !file.endsWith("annotateWithTypeFromJSDoc16.ts")) {
+                    if (isAnnotateJsdocTestFile) {
                         deduped = deduped.filter(action => action.fixName !== "import");
                         const annotateLike = deduped.filter(action => {
                             const fixName = action.fixName || "";
