@@ -32,12 +32,11 @@ impl<'a> CheckerState<'a> {
         };
 
         match node.kind {
-            k if k == syntax_kind_ext::ARROW_FUNCTION
-                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            k if (k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION)
+                && !out.contains(&current) =>
             {
-                if !out.contains(&current) {
-                    out.push(current);
-                }
+                out.push(current);
             }
             k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
                 if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {

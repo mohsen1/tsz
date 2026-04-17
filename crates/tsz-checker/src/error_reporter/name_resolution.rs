@@ -148,45 +148,41 @@ impl<'a> CheckerState<'a> {
                     | syntax_kind_ext::TYPE_OPERATOR
                     | syntax_kind_ext::TYPE_QUERY
                     | syntax_kind_ext::INFER_TYPE => return true,
-                    syntax_kind_ext::IMPORT_CLAUSE => {
+                    syntax_kind_ext::IMPORT_CLAUSE
                         if self
                             .ctx
                             .arena
                             .get_import_clause(node)
-                            .is_some_and(|clause| clause.is_type_only)
-                        {
-                            return true;
-                        }
+                            .is_some_and(|clause| clause.is_type_only) =>
+                    {
+                        return true;
                     }
-                    syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                    syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                         if self
                             .ctx
                             .arena
                             .get_import_decl(node)
-                            .is_some_and(|decl| decl.is_type_only)
-                        {
-                            return true;
-                        }
+                            .is_some_and(|decl| decl.is_type_only) =>
+                    {
+                        return true;
                     }
-                    syntax_kind_ext::IMPORT_SPECIFIER | syntax_kind_ext::EXPORT_SPECIFIER => {
+                    syntax_kind_ext::IMPORT_SPECIFIER | syntax_kind_ext::EXPORT_SPECIFIER
                         if self
                             .ctx
                             .arena
                             .get_specifier(node)
-                            .is_some_and(|specifier| specifier.is_type_only)
-                        {
-                            return true;
-                        }
+                            .is_some_and(|specifier| specifier.is_type_only) =>
+                    {
+                        return true;
                     }
-                    syntax_kind_ext::EXPORT_DECLARATION => {
+                    syntax_kind_ext::EXPORT_DECLARATION
                         if self
                             .ctx
                             .arena
                             .get_export_decl(node)
-                            .is_some_and(|decl| decl.is_type_only)
-                        {
-                            return true;
-                        }
+                            .is_some_and(|decl| decl.is_type_only) =>
+                    {
+                        return true;
                     }
                     // Stop at expression/statement boundaries
                     syntax_kind_ext::FUNCTION_DECLARATION

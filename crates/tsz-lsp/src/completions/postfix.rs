@@ -227,6 +227,7 @@ fn looks_like_expression_end(text: &str) -> bool {
 }
 
 /// Find the start of the expression before the dot by scanning backwards.
+#[allow(clippy::collapsible_match)]
 fn find_expression_start(_expr_text: &str, full_text: &str, dot_pos: usize) -> usize {
     // Simple heuristic: scan backwards through identifier characters and
     // property access chains (dots, brackets).

@@ -471,10 +471,8 @@ pub(super) fn rename_namespace_refs_in_body(body: &mut [IRNode], old_name: &str,
 /// Recursively rename namespace references in a single IR node
 pub(super) fn rename_namespace_refs_in_node(node: &mut IRNode, old_name: &str, new_name: &str) {
     match node {
-        IRNode::NamespaceExport { namespace, .. } => {
-            if namespace == old_name {
-                *namespace = new_name.to_string().into();
-            }
+        IRNode::NamespaceExport { namespace, .. } if namespace == old_name => {
+            *namespace = new_name.to_string().into();
         }
         IRNode::NamespaceIIFE { parent_name, .. } => {
             if let Some(parent) = parent_name
@@ -509,14 +507,12 @@ pub(super) fn rewrite_exported_var_refs(
     names: &std::collections::HashSet<String>,
 ) {
     match node {
-        IRNode::Identifier(name) => {
-            if names.contains(&**name) {
-                let property = name.clone();
-                *node = IRNode::PropertyAccess {
-                    object: Box::new(IRNode::Identifier(ns_name.to_string().into())),
-                    property,
-                };
-            }
+        IRNode::Identifier(name) if names.contains(&**name) => {
+            let property = name.clone();
+            *node = IRNode::PropertyAccess {
+                object: Box::new(IRNode::Identifier(ns_name.to_string().into())),
+                property,
+            };
         }
         IRNode::BinaryExpr { left, right, .. }
         | IRNode::LogicalOr { left, right }
