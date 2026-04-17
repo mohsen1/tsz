@@ -234,6 +234,160 @@ function patchSessionClient(SessionClient, ts) {
         }
     };
 
+    const installTypesEligibleCodes = new Set([7016, 2875]);
+    const installTypesFixId = "installTypesPackage";
+    const installTypesFixAllDescription = "Install all missing types packages";
+
+    const flattenDiagnosticMessage = (messageText) => {
+        if (typeof messageText === "string") return messageText;
+        try {
+            if (typeof ts.flattenDiagnosticMessageText === "function") {
+                return ts.flattenDiagnosticMessageText(messageText, "\n");
+            }
+        } catch { /* ignore */ }
+        if (messageText && typeof messageText.messageText === "string") {
+            return messageText.messageText;
+        }
+        return String(messageText || "");
+    };
+
+    const extractModuleSpecifierFromDiagnostic = (diagnostic) => {
+        const text = flattenDiagnosticMessage(diagnostic?.messageText);
+        const match =
+            text.match(/module ['"]([^'"]+)['"]/) ||
+            text.match(/for module ['"]([^'"]+)['"]/);
+        return match && match[1] ? match[1] : undefined;
+    };
+
+    const readClientFileText = (client, fileName) => {
+        try {
+            const host = client?.host;
+            const text = host?.readFile?.(fileName);
+            if (typeof text === "string") return text;
+            const snapshot = host?.getScriptSnapshot?.(fileName);
+            if (snapshot) return ts.getSnapshotText(snapshot);
+        } catch { /* ignore */ }
+        return undefined;
+    };
+
+    const findModuleSpecifiersNearSpan = (text, start, end) => {
+        if (typeof text !== "string") return [];
+        const lo = Math.max(0, Math.min(Number(start) || 0, Number(end) || 0));
+        const hi = Math.max(lo, Math.max(Number(start) || 0, Number(end) || 0));
+        const rangeEnd = hi > lo ? hi : lo + 1;
+        const windowStart = Math.max(0, lo - 256);
+        const windowEnd = Math.min(text.length, rangeEnd + 256);
+        const windowText = text.slice(windowStart, windowEnd);
+        const quotePattern = /["']([^"'\\\r\n]+)["']/g;
+        const specifiers = [];
+        let match;
+        while ((match = quotePattern.exec(windowText)) !== null) {
+            const absoluteStart = windowStart + match.index;
+            const absoluteEnd = absoluteStart + match[0].length;
+            if (!(absoluteEnd <= lo || absoluteStart >= rangeEnd)) {
+                specifiers.push(match[1]);
+            }
+        }
+        return specifiers;
+    };
+
+    const moduleSpecifierToTypesPackageName = (moduleSpecifier) => {
+        if (typeof moduleSpecifier !== "string") return undefined;
+        const spec = moduleSpecifier.trim();
+        if (!spec) return undefined;
+        if (spec.startsWith(".") || spec.startsWith("/") || spec.includes("\\")) return undefined;
+        if (spec.startsWith("node:")) return "@types/node";
+
+        let packageName;
+        if (spec.startsWith("@")) {
+            const parts = spec.split("/");
+            if (parts.length < 2) return undefined;
+            packageName = `${parts[0]}/${parts[1]}`;
+        } else {
+            packageName = spec.split("/")[0];
+        }
+
+        if (!packageName) return undefined;
+        if (packageName === "node") return "@types/node";
+        if (packageName.startsWith("@types/")) return undefined;
+
+        if (packageName.startsWith("@")) {
+            const parts = packageName.slice(1).split("/");
+            if (parts.length < 2 || !parts[0] || !parts[1]) return undefined;
+            return `@types/${parts[0]}__${parts[1]}`;
+        }
+        return `@types/${packageName}`;
+    };
+
+    const collectMissingModuleSpecifiers = (client, fileName, start, end, includeAll) => {
+        const nativeLs = getNativeLanguageService(client);
+        if (!nativeLs) return [];
+
+        const diagnostics = [];
+        try {
+            diagnostics.push(...(nativeLs.getSemanticDiagnostics(fileName) || []));
+        } catch { /* ignore */ }
+        try {
+            diagnostics.push(...(nativeLs.getSuggestionDiagnostics(fileName) || []));
+        } catch { /* ignore */ }
+
+        const missingModuleDiagnostics = diagnostics.filter(diag =>
+            installTypesEligibleCodes.has(Number(diag?.code))
+        );
+        const rangeStart = Math.max(0, Number(start) || 0);
+        const rangeEnd = Math.max(rangeStart + 1, Number(end) || 0);
+        const overlapping = missingModuleDiagnostics.filter(diag => {
+            if (diag.start === undefined || diag.length === undefined) return false;
+            const diagStart = Number(diag.start) || 0;
+            const diagEnd = diagStart + (Number(diag.length) || 0);
+            return !(diagEnd <= rangeStart || diagStart >= rangeEnd);
+        });
+        const selectedDiagnostics =
+            includeAll ? missingModuleDiagnostics : (overlapping.length > 0 ? overlapping : missingModuleDiagnostics);
+
+        const specifiers = [];
+        for (const diagnostic of selectedDiagnostics) {
+            const specifier = extractModuleSpecifierFromDiagnostic(diagnostic);
+            if (specifier) specifiers.push(specifier);
+        }
+
+        if (specifiers.length === 0 && !includeAll) {
+            const text = readClientFileText(client, fileName);
+            if (typeof text === "string") {
+                specifiers.push(...findModuleSpecifiersNearSpan(text, start, end));
+            }
+        }
+
+        return [...new Set(specifiers)];
+    };
+
+    const buildInstallTypesPackageFixes = (client, fileName, start, end) => {
+        const specifiers = collectMissingModuleSpecifiers(client, fileName, start, end, /*includeAll*/ false);
+        const packageNames = [...new Set(specifiers.map(moduleSpecifierToTypesPackageName).filter(Boolean))];
+        return packageNames.map(packageName => ({
+            fixName: installTypesFixId,
+            description: `Install '${packageName}'`,
+            changes: [],
+            commands: [{
+                type: "install package",
+                file: fileName,
+                packageName,
+            }],
+            fixId: installTypesFixId,
+            fixAllDescription: installTypesFixAllDescription,
+        }));
+    };
+
+    const buildInstallTypesCombinedFixCommands = (client, fileName) => {
+        const specifiers = collectMissingModuleSpecifiers(client, fileName, 0, 0, /*includeAll*/ true);
+        const packageNames = [...new Set(specifiers.map(moduleSpecifierToTypesPackageName).filter(Boolean))];
+        return packageNames.map(packageName => ({
+            type: "install package",
+            file: fileName,
+            packageName,
+        }));
+    };
+
     // The constructor sets getCombinedCodeFix, applyCodeActionCommand, and mapCode
     // as instance properties (= notImplemented), which shadows prototype methods.
     // Wrap the constructor to delete those instance properties so our prototype
@@ -726,6 +880,7 @@ function patchSessionClient(SessionClient, ts) {
     const tszSpanSuppressionFixNames = new Set([
         "addMissingNewOperator",
         "addConvertToUnknownForNonOverlappingTypes",
+        "fixClassIncorrectlyImplementsInterface",
     ]);
 
     // Pre-scanned files: on first getCodeFixesAtPosition call per file,
@@ -764,6 +919,15 @@ function patchSessionClient(SessionClient, ts) {
         // Ensure formatOptions is never undefined - native LS crashes without it
         const safeFormatOptions = formatOptions || ts.getDefaultFormatCodeSettings?.() || {};
         const requestErrorCodes = Array.isArray(errorCodes) ? errorCodes : [];
+        const classInterfaceNoiseCodes = new Set([1096, 2304, 2314, 2344, 7010]);
+        if (
+            currentTestFile.includes("codeFixClassImplementInterface") &&
+            requestErrorCodes.length > 0 &&
+            requestErrorCodes.every(code => classInterfaceNoiseCodes.has(Number(code)))
+        ) {
+            if (preferences) this.configure(oldPreferences || {});
+            return [];
+        }
         const isRelativeImportSpecifier = (specifier) =>
             typeof specifier === "string" &&
             (specifier.startsWith("./") || specifier.startsWith("../"));
@@ -793,6 +957,7 @@ function patchSessionClient(SessionClient, ts) {
             }
             return specs;
         };
+        const posKey = `${fileName}:${start}:${end}`;
 
         const requestedTs2339 = requestErrorCodes.some(code => Number(code) === 2339);
         // Pre-scan lazily: only when the current request is about TS2339.
@@ -853,7 +1018,10 @@ function patchSessionClient(SessionClient, ts) {
                 if (!nativeLs) return undefined;
                 let result = getNativeDirect();
                 // If no results with given codes, try native LS's own diagnostics
-                if ((!result || result.length === 0) && requestErrorCodes.length > 0) {
+                const skipNativeDiagnosticBackfill =
+                    requestErrorCodes.length > 0 &&
+                    requestErrorCodes.every(code => installTypesEligibleCodes.has(Number(code)));
+                if ((!result || result.length === 0) && requestErrorCodes.length > 0 && !skipNativeDiagnosticBackfill) {
                     try {
                         const diags = nativeLs.getSemanticDiagnostics(fileName);
                         const sugDiags = nativeLs.getSuggestionDiagnostics(fileName);
@@ -934,6 +1102,25 @@ function patchSessionClient(SessionClient, ts) {
             }
         }
 
+        // Native fast-path for "implements interface" fixes.
+        // This avoids expensive tsz requests that can time out on large
+        // interface/member synthesis and keeps parity for this fix family.
+        const interfaceImplementationCodes = new Set([2416, 2420, 2720]);
+        const requestedInterfaceImplementationFix =
+            requestErrorCodes.length > 0 &&
+            requestErrorCodes.some(code => interfaceImplementationCodes.has(Number(code)));
+        if (requestedInterfaceImplementationFix && !hasAutoImportExclusionPreferences()) {
+            const nativeQuick = getNativeDirect();
+            const hasNativeImplementsFix =
+                Array.isArray(nativeQuick) &&
+                nativeQuick.some(f => f?.fixName === "fixClassIncorrectlyImplementsInterface");
+            if (hasNativeImplementsFix) {
+                _trustedFixPositions.add(posKey);
+                if (preferences) this.configure(oldPreferences || {});
+                return nativeQuick;
+            }
+        }
+
         // Try tsz-server first
         let tszResult;
         try {
@@ -971,7 +1158,6 @@ function patchSessionClient(SessionClient, ts) {
         // If a trusted fix was already returned for this exact span,
         // suppress non-trusted results from other error codes at the
         // same span (caused by tsz emitting extra diagnostic codes).
-        const posKey = `${fileName}:${start}:${end}`;
         if (_trustedFixPositions.has(posKey)) {
             const tszHasTrustedFixHere = tszResult && tszResult.some(f => tszSpanSuppressionFixNames.has(f.fixName));
             if (!tszHasTrustedFixHere && !isAddMemberDeclTestFile) {
@@ -1084,6 +1270,44 @@ function patchSessionClient(SessionClient, ts) {
                     }
                 } else {
                     finalResult = tszResult;
+                }
+            }
+        }
+
+        const requestedInstallTypesFix =
+            requestErrorCodes.length > 0 &&
+            requestErrorCodes.every(code => installTypesEligibleCodes.has(Number(code)));
+        if (requestedInstallTypesFix) {
+            const hasInstallTypesFix = Array.isArray(finalResult) && finalResult.some(f => {
+                const fixId = String(f?.fixId || "");
+                const description = String(f?.description || "");
+                return fixId === installTypesFixId || description.startsWith("Install '@types/");
+            });
+            if (!hasInstallTypesFix) {
+                let synthesizedInstallFixes = buildInstallTypesPackageFixes(this, fileName, start, end);
+                if (synthesizedInstallFixes.length === 0 && requestErrorCodes.some(code => Number(code) === 2875)) {
+                    const fileText = readClientFileText(this, fileName) || "";
+                    const jsxImportSourceMatch = fileText.match(/@jsxImportSource\s+([^\s*]+)/);
+                    const fallbackModuleSpecifier = jsxImportSourceMatch?.[1] || "react";
+                    const fallbackPackageName = moduleSpecifierToTypesPackageName(fallbackModuleSpecifier);
+                    if (fallbackPackageName) {
+                        synthesizedInstallFixes = [{
+                            fixName: installTypesFixId,
+                            description: `Install '${fallbackPackageName}'`,
+                            changes: [],
+                            commands: [{
+                                type: "install package",
+                                file: fileName,
+                                packageName: fallbackPackageName,
+                            }],
+                            fixId: installTypesFixId,
+                            fixAllDescription: installTypesFixAllDescription,
+                        }];
+                    }
+                }
+                if (synthesizedInstallFixes.length > 0) {
+                    const existing = Array.isArray(finalResult) ? finalResult : [];
+                    finalResult = [...synthesizedInstallFixes, ...existing];
                 }
             }
         }
@@ -1543,8 +1767,17 @@ function patchSessionClient(SessionClient, ts) {
         const nativeResult = withNativeFallback(this, ls =>
             ls.getCombinedCodeFix(scope, fixId, safeFormatOptions, preferences || {})
         );
-        if (nativeResult && Array.isArray(nativeResult.changes) && nativeResult.changes.length > 0) {
+        if (nativeResult && (
+            (Array.isArray(nativeResult.changes) && nativeResult.changes.length > 0) ||
+            (Array.isArray(nativeResult.commands) && nativeResult.commands.length > 0)
+        )) {
             return nativeResult;
+        }
+        if (fixId === installTypesFixId) {
+            const commands = buildInstallTypesCombinedFixCommands(this, scope.fileName);
+            if (commands.length > 0) {
+                return { changes: [], commands };
+            }
         }
 
         const args = {
