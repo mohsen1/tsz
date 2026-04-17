@@ -407,6 +407,27 @@ function patchSessionClient(SessionClient, ts) {
             return nativeResult;
         }
 
+        if (nativeResult) {
+            const sourceText = this.host?.readFile?.(fileName);
+            if (typeof sourceText === "string") {
+                const start = Math.max(0, position - 256);
+                const prefix = sourceText.slice(start, position);
+                const isModuleSpecifierContext =
+                    /(?:import|export)\s+[\s\S]*?\bfrom\s*["'][^"'`]*$/.test(prefix) ||
+                    /import\s*\(\s*["'][^"'`]*$/.test(prefix) ||
+                    /require\s*\(\s*["'][^"'`]*$/.test(prefix);
+                const isElementAccessMemberContext =
+                    /\[\s*\??\.\s*$/.test(prefix) ||
+                    /\[\s*\??\s*$/.test(prefix);
+
+                if (isModuleSpecifierContext || isElementAccessMemberContext) {
+                    if (nativeResult.entries && nativeResult.entries.length > 0) {
+                        return nativeResult;
+                    }
+                }
+            }
+        }
+
         if (
             nativeResult &&
             result &&
