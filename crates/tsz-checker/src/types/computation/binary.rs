@@ -2259,6 +2259,18 @@ impl<'a> CheckerState<'a> {
             return TypeId::STRING;
         }
 
+        // Intersections narrow their members; if any member sits in a primitive
+        // family, treat the intersection as belonging to that family (e.g.
+        // `T & number` should count as number-family for TS2367 widening).
+        if let Some(list_id) = tsz_solver::intersection_list_id(self.ctx.types, type_id) {
+            for member in self.ctx.types.type_list(list_id).iter() {
+                let family = self.get_primitive_family(*member);
+                if family != TypeId::ERROR {
+                    return family;
+                }
+            }
+        }
+
         TypeId::ERROR // Non-primitive types
     }
 
