@@ -91,17 +91,43 @@ impl<'a> CallSite<'a> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrimitiveKind {
+    String,
+    Number,
+    Boolean,
+    BigInt,
+}
+
+#[derive(Clone)]
 struct SignatureCandidate {
     info: SignatureInformation,
     required_params: usize,
     total_params: usize,
     has_rest: bool,
     param_names: Vec<Option<String>>,
+    type_params: Vec<String>,
     /// Type parameter (name, substitution) pairs from the function signature,
     /// used for substitution when no explicit type arguments are provided at
     /// the call site. The substitution is the default type, constraint type,
     /// or "unknown" (in that priority order).
     type_param_substitutions: Vec<(String, String)>,
+}
+
+#[derive(Clone, Copy)]
+struct TypeArgumentContext {
+    active_parameter: u32,
+    span_start: u32,
+    span_length: u32,
+}
+
+struct TextualTypeArgumentTrigger {
+    callee_name: String,
+    callee_offset: u32,
+    call_kind: CallKind,
+    active_parameter: u32,
+    span_start: u32,
+    span_length: u32,
 }
 
 struct SignatureDocCandidate {
@@ -125,6 +151,13 @@ impl SignatureDocs {
 define_lsp_provider!(full SignatureHelpProvider, "Signature help provider.");
 
 impl<'a> SignatureHelpProvider<'a> {
+    fn is_js_like_file(&self) -> bool {
+        self.file_name.ends_with(".js")
+            || self.file_name.ends_with(".jsx")
+            || self.file_name.ends_with(".mjs")
+            || self.file_name.ends_with(".cjs")
+    }
+
     /// Get signature help at the given position.
     ///
     /// # Arguments
@@ -163,19 +196,48 @@ impl<'a> SignatureHelpProvider<'a> {
             .line_map
             .position_to_offset(position, self.source_text)?;
 
+        // In incomplete generic invocations like `foo(bar<|)`, the parser may
+        // bind us to an outer call expression. Prefer explicit textual
+        // type-argument handling when we can detect an unclosed `<...` span.
+        if self.find_textual_type_argument_trigger(offset).is_some()
+            && let Some(help) = self.signature_help_for_textual_type_arguments(
+                root, offset, type_cache,
+            )
+        {
+            return Some(help);
+        }
+
         // 1. Find the deepest node at the cursor
         let leaf_node = find_node_at_or_before_offset(self.arena, offset, self.source_text);
 
         // 2. Walk up to find the nearest CallExpression, NewExpression, or TaggedTemplateExpression
-        let (call_node_idx, call_site, call_kind) = self.find_containing_call(leaf_node, offset)?;
+        let Some((call_node_idx, call_site, call_kind)) =
+            self.find_containing_call(leaf_node, offset)
+        else {
+            if let Some(help) = self.signature_help_for_textual_call(root, offset, type_cache) {
+                return Some(help);
+            }
+            return self.signature_help_for_textual_type_arguments(root, offset, type_cache);
+        };
+        let type_argument_context = match &call_site {
+            CallSite::Regular(data) => {
+                self.type_argument_context_for_call(call_node_idx, data, offset)
+            }
+            CallSite::TaggedTemplate(_) => None,
+        };
+        let in_type_argument_list = type_argument_context.is_some();
 
         // 3. Determine active parameter
-        let active_parameter = match &call_site {
-            CallSite::Regular(call_expr) => {
-                self.determine_active_parameter(call_node_idx, call_expr, offset)
-            }
-            CallSite::TaggedTemplate(tagged) => {
-                self.determine_tagged_template_active_param(tagged, offset)
+        let mut active_parameter = if let Some(ctx) = type_argument_context {
+            ctx.active_parameter
+        } else {
+            match &call_site {
+                CallSite::Regular(call_expr) => {
+                    self.determine_active_parameter(call_node_idx, call_expr, offset)
+                }
+                CallSite::TaggedTemplate(tagged) => {
+                    self.determine_tagged_template_active_param(tagged, offset)
+                }
             }
         };
 
@@ -280,9 +342,13 @@ impl<'a> SignatureHelpProvider<'a> {
         } else {
             call_kind
         };
-        let has_explicit_type_args = match &call_site {
-            CallSite::Regular(data) => data.type_arguments.is_some(),
-            CallSite::TaggedTemplate(_) => false,
+        let has_explicit_type_args = if in_type_argument_list {
+            false
+        } else {
+            match &call_site {
+                CallSite::Regular(data) => data.type_arguments.is_some(),
+                CallSite::TaggedTemplate(_) => false,
+            }
         };
         // Extract source text for each explicit type argument node
         let explicit_type_arg_texts: Vec<String> = if has_explicit_type_args {
@@ -335,56 +401,119 @@ impl<'a> SignatureHelpProvider<'a> {
         // overwrite labels with raw source text containing type parameter names.
         // When explicit type arguments are provided, we substitute with the
         // actual type argument text; otherwise we use defaults/constraints/unknown.
-        for sig in &mut signatures {
-            if !sig.type_param_substitutions.is_empty() {
-                apply_type_param_substitution(&mut sig.info, &sig.type_param_substitutions);
+        if !in_type_argument_list {
+            for sig in &mut signatures {
+                if !sig.type_param_substitutions.is_empty() {
+                    apply_type_param_substitution(&mut sig.info, &sig.type_param_substitutions);
+                }
             }
         }
+        if let Some(symbol_id) = symbol_id
+            && !in_type_argument_list
+        {
+            self.expand_source_rest_tuple_union_signatures(&mut signatures, symbol_id);
+        }
+        if in_type_argument_list {
+            self.rewrite_signatures_for_type_arguments(
+                &mut signatures,
+                &callee_name,
+                active_parameter,
+            );
+        }
+
+        let supplied_argument_types = self.argument_type_texts(&call_site, &mut checker);
 
         // Extract and save the updated cache for future queries
         *type_cache = Some(checker.extract_cache());
 
         if signatures.is_empty() {
+            if let Some(help) = self.signature_help_for_textual_call(root, offset, type_cache) {
+                return Some(help);
+            }
+            if let Some(help) =
+                self.signature_help_for_textual_type_arguments(root, offset, type_cache)
+            {
+                return Some(help);
+            }
             return None;
         }
 
-        let arg_count = match &call_site {
-            CallSite::Regular(call_expr) => call_expr
-                .arguments
-                .as_ref()
-                .map_or(0, |args| args.nodes.len()),
-            CallSite::TaggedTemplate(tagged) => {
-                // For tagged templates, arg count = 1 (templateStrings) + number of ${} expressions
-                if let Some(tmpl_node) = self.arena.get(tagged.template) {
-                    if let Some(tmpl_expr) = self.arena.get_template_expr(tmpl_node) {
-                        1 + tmpl_expr.template_spans.nodes.len()
+        let arg_count = if in_type_argument_list {
+            0
+        } else {
+            match &call_site {
+                CallSite::Regular(call_expr) => call_expr.arguments.as_ref().map_or(0, |args| {
+                    args.nodes
+                        .iter()
+                        .filter(|&&arg_idx| {
+                            self.arena.get(arg_idx).is_some_and(|node| {
+                                node.kind != syntax_kind_ext::OMITTED_EXPRESSION
+                            })
+                        })
+                        .count()
+                }),
+                CallSite::TaggedTemplate(tagged) => {
+                    // For tagged templates, arg count = 1 (templateStrings) + number of ${} expressions
+                    if let Some(tmpl_node) = self.arena.get(tagged.template) {
+                        if let Some(tmpl_expr) = self.arena.get_template_expr(tmpl_node) {
+                            1 + tmpl_expr.template_spans.nodes.len()
+                        } else {
+                            1 // NoSubstitutionTemplateLiteral = just templateStrings
+                        }
                     } else {
-                        1 // NoSubstitutionTemplateLiteral = just templateStrings
+                        1
                     }
-                } else {
-                    1
                 }
             }
         };
-        let active_signature =
-            self.select_active_signature(&signatures, arg_count, active_parameter);
+        let active_signature = self.select_active_signature(
+            &signatures,
+            arg_count,
+            active_parameter,
+            &supplied_argument_types,
+        );
+        if let Some(selected) = signatures.get(active_signature as usize) {
+            if selected.info.parameters.is_empty() {
+                active_parameter = 0;
+            } else {
+                let has_rest_param = selected.info.parameters.iter().any(|param| param.is_rest);
+                let max_index = selected.info.parameters.len().saturating_sub(1);
+                if has_rest_param {
+                    // Keep active_parameter advancing across concrete rest arguments,
+                    // but clamp trailing-comma empty slots back to the rest parameter.
+                    if active_parameter as usize >= arg_count
+                        && active_parameter as usize > max_index
+                    {
+                        active_parameter = max_index as u32;
+                    }
+                } else if active_parameter as usize > max_index {
+                    active_parameter = max_index as u32;
+                }
+            }
+        }
 
         // Compute applicable span (byte offsets for the argument region)
-        let (span_start, span_length) = match &call_site {
-            CallSite::Regular(call_expr) => self.compute_applicable_span(call_node_idx, call_expr),
-            CallSite::TaggedTemplate(tagged) => {
-                // For tagged templates, span covers the template
-                if let Some(tmpl_node) = self.arena.get(tagged.template) {
-                    let tmpl_start = tmpl_node.pos as usize;
-                    let tmpl_end = (tmpl_node.end as usize).min(self.source_text.len());
-                    let tmpl_text = &self.source_text[tmpl_start..tmpl_end];
-                    if let Some(bt) = tmpl_text.find('`') {
-                        ((tmpl_start + bt + 1) as u32, 0)
+        let (span_start, span_length) = if let Some(ctx) = type_argument_context {
+            (ctx.span_start, ctx.span_length)
+        } else {
+            match &call_site {
+                CallSite::Regular(call_expr) => {
+                    self.compute_applicable_span(call_node_idx, call_expr)
+                }
+                CallSite::TaggedTemplate(tagged) => {
+                    // For tagged templates, span covers the template
+                    if let Some(tmpl_node) = self.arena.get(tagged.template) {
+                        let tmpl_start = tmpl_node.pos as usize;
+                        let tmpl_end = (tmpl_node.end as usize).min(self.source_text.len());
+                        let tmpl_text = &self.source_text[tmpl_start..tmpl_end];
+                        if let Some(bt) = tmpl_text.find('`') {
+                            ((tmpl_start + bt + 1) as u32, 0)
+                        } else {
+                            (tmpl_node.pos, 0)
+                        }
                     } else {
-                        (tmpl_node.pos, 0)
+                        (offset, 0)
                     }
-                } else {
-                    (offset, 0)
                 }
             }
         };
@@ -488,9 +617,9 @@ impl<'a> SignatureHelpProvider<'a> {
                     let call_end = (node.end as usize).min(self.source_text.len());
                     let call_text = &self.source_text[call_start..call_end];
                     let delimiter = if data.type_arguments.is_some() {
-                        call_text.find('<')
+                        call_text.find('<').or_else(|| call_text.find('('))
                     } else {
-                        call_text.find('(')
+                        call_text.find('(').or_else(|| call_text.find('<'))
                     };
                     if let Some(delim_offset) = delimiter {
                         let delim_pos = (call_start + delim_offset) as u32;
@@ -638,39 +767,63 @@ impl<'a> SignatureHelpProvider<'a> {
             return 0;
         }
 
-        // Find which argument contains or precedes the cursor
+        let mut seen_non_omitted = 0usize;
+        let mut last_non_omitted_end = None;
+
         for (index, &arg_idx) in args.nodes.iter().enumerate() {
             let Some(arg_node) = self.arena.get(arg_idx) else {
                 continue;
             };
+            if arg_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                continue;
+            }
 
             // If cursor is before this argument's start, we're between args
             // Treat it as the next argument.
-            if cursor_offset < arg_node.pos {
-                return index as u32;
+            if cursor_offset <= arg_node.pos {
+                return seen_non_omitted as u32;
             }
 
             // If cursor is within this argument's range, return this index
-            if cursor_offset >= arg_node.pos && cursor_offset < arg_node.end {
-                return index as u32;
+            if cursor_offset <= arg_node.end {
+                return seen_non_omitted as u32;
+            }
+
+            let next_start = args
+                .nodes
+                .iter()
+                .skip(index + 1)
+                .filter_map(|&next_idx| self.arena.get(next_idx))
+                .find(|next| next.kind != syntax_kind_ext::OMITTED_EXPRESSION)
+                .map(|next| next.pos);
+            if let Some(next_start) = next_start
+                && cursor_offset < next_start
+            {
+                return (seen_non_omitted + 1) as u32;
+            }
+            last_non_omitted_end = Some(arg_node.end as usize);
+            seen_non_omitted += 1;
+        }
+
+        if let Some(last_end) = last_non_omitted_end {
+            let end = (cursor_offset as usize).min(self.source_text.len());
+            if last_end < end && seen_non_omitted > 0 {
+                if !self.has_comma_between(last_end as u32, cursor_offset) {
+                    return (seen_non_omitted - 1) as u32;
+                }
             }
         }
 
-        if let Some(&last_arg_idx) = args.nodes.last()
-            && let Some(last_arg_node) = self.arena.get(last_arg_idx)
+        if let Some(call_node) = self.arena.get(call_idx)
+            && let Some(last_end) = last_non_omitted_end
         {
-            let call_end = self
-                .arena
-                .get(call_idx)
-                .map_or(cursor_offset, |node| node.end);
-            let scan_end = cursor_offset.min(call_end);
-            if scan_end > last_arg_node.end && self.has_comma_between(last_arg_node.end, scan_end) {
-                return args.nodes.len() as u32;
+            let scan_end = cursor_offset.min(call_node.end);
+            if self.has_comma_between(last_end as u32, scan_end) {
+                return seen_non_omitted as u32;
             }
         }
 
-        // Cursor is after all arguments - return the last argument index.
-        (args.nodes.len().saturating_sub(1)) as u32
+        seen_non_omitted as u32
     }
 
     fn has_comma_between(&self, start: u32, end: u32) -> bool {
@@ -714,6 +867,550 @@ impl<'a> SignatureHelpProvider<'a> {
         }
 
         false
+    }
+
+    fn count_top_level_commas_in_range(&self, start: usize, end: usize) -> u32 {
+        if start >= end || start >= self.source_text.len() {
+            return 0;
+        }
+        let end = end.min(self.source_text.len());
+        let bytes = self.source_text.as_bytes();
+        let mut commas = 0u32;
+        let mut paren = 0i32;
+        let mut bracket = 0i32;
+        let mut brace = 0i32;
+        let mut angle = 0i32;
+        let mut i = start;
+        while i < end {
+            match bytes[i] {
+                b'(' => paren += 1,
+                b')' => paren = paren.saturating_sub(1),
+                b'[' => bracket += 1,
+                b']' => bracket = bracket.saturating_sub(1),
+                b'{' => brace += 1,
+                b'}' => brace = brace.saturating_sub(1),
+                b'<' => angle += 1,
+                b'>' if i == 0 || bytes[i - 1] != b'=' => {
+                    angle = angle.saturating_sub(1);
+                }
+                b',' if paren == 0 && bracket == 0 && brace == 0 && angle == 0 => commas += 1,
+                _ => {}
+            }
+            i += 1;
+        }
+        commas
+    }
+
+    fn type_argument_context_for_call(
+        &self,
+        call_idx: NodeIndex,
+        data: &CallExprData,
+        cursor_offset: u32,
+    ) -> Option<TypeArgumentContext> {
+        if data.type_arguments.is_none() {
+            return None;
+        }
+
+        let call_node = self.arena.get(call_idx)?;
+        let call_start = call_node.pos as usize;
+        let call_end = (call_node.end as usize).min(self.source_text.len());
+        if call_start >= call_end {
+            return None;
+        }
+        let call_text = &self.source_text[call_start..call_end];
+        let lt_rel = call_text.find('<')?;
+        let lt_abs = call_start + lt_rel;
+        if cursor_offset <= lt_abs as u32 {
+            return None;
+        }
+
+        let bytes = self.source_text.as_bytes();
+        let mut depth = 0i32;
+        let mut gt_abs = None;
+        let mut i = lt_abs;
+        while i < call_end {
+            match bytes[i] {
+                b'<' => depth += 1,
+                b'>' if i == 0 || bytes[i - 1] != b'=' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        gt_abs = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+
+        if let Some(gt) = gt_abs
+            && cursor_offset > gt as u32
+        {
+            return None;
+        }
+
+        let scan_end = gt_abs.map_or(cursor_offset as usize, |gt| {
+            (cursor_offset as usize).min(gt)
+        });
+        let scan_start = (lt_abs + 1).min(scan_end);
+        let active_parameter = self.count_top_level_commas_in_range(scan_start, scan_end);
+
+        Some(TypeArgumentContext {
+            active_parameter,
+            span_start: scan_start as u32,
+            span_length: (scan_end.saturating_sub(scan_start)) as u32,
+        })
+    }
+
+    fn rewrite_signatures_for_type_arguments(
+        &self,
+        signatures: &mut Vec<SignatureCandidate>,
+        callee_name: &str,
+        active_parameter: u32,
+    ) {
+        let has_generic_signatures = signatures
+            .iter()
+            .any(|candidate| !candidate.type_params.is_empty());
+        if has_generic_signatures {
+            signatures.retain(|candidate| {
+                !candidate.type_params.is_empty()
+                    && (active_parameter as usize) < candidate.type_params.len()
+            });
+        }
+        for candidate in signatures.iter_mut() {
+            let params = if has_generic_signatures {
+                candidate.type_params.clone()
+            } else {
+                Vec::new()
+            };
+            let function_tail = candidate
+                .info
+                .label
+                .find('(')
+                .map(|idx| candidate.info.label[idx..].to_string())
+                .unwrap_or_else(|| "()".to_string());
+            let prefix = format!("{callee_name}<");
+            let suffix = format!(">{function_tail}");
+            candidate.info.parameters = params
+                .iter()
+                .map(|param| {
+                    let name = param
+                        .split_once(" extends ")
+                        .map_or_else(|| param.clone(), |(name, _)| name.to_string());
+                    ParameterInformation {
+                        name,
+                        label: param.clone(),
+                        documentation: None,
+                        is_optional: false,
+                        is_rest: false,
+                    }
+                })
+                .collect();
+            candidate.info.prefix = prefix.clone();
+            candidate.info.suffix = suffix.clone();
+            candidate.info.label = format!("{prefix}{}{}", params.join(", "), suffix);
+            candidate.info.is_variadic = false;
+            candidate.required_params = params.len();
+            candidate.total_params = params.len();
+            candidate.has_rest = false;
+            candidate.param_names = params
+                .iter()
+                .map(|param| {
+                    Some(
+                        param
+                            .split_once(" extends ")
+                            .map_or_else(|| param.clone(), |(name, _)| name.to_string()),
+                    )
+                })
+                .collect();
+        }
+    }
+
+    const fn is_ascii_identifier_byte(byte: u8) -> bool {
+        byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
+    }
+
+    fn find_textual_call_trigger(&self, cursor_offset: u32) -> Option<TextualTypeArgumentTrigger> {
+        let bytes = self.source_text.as_bytes();
+        if bytes.is_empty() {
+            return None;
+        }
+        let cursor = (cursor_offset as usize).min(bytes.len());
+        if cursor == 0 {
+            return None;
+        }
+
+        let mut depth = 0i32;
+        let mut paren_idx = None;
+        let mut idx = cursor;
+        while idx > 0 {
+            idx -= 1;
+            match bytes[idx] {
+                b')' => depth += 1,
+                b'(' => {
+                    if depth == 0 {
+                        paren_idx = Some(idx);
+                        break;
+                    }
+                    depth -= 1;
+                }
+                b';' | b'\n' | b'\r' if depth == 0 => break,
+                _ => {}
+            }
+        }
+        let paren_idx = paren_idx?;
+
+        let mut name_end = paren_idx;
+        while name_end > 0 && bytes[name_end - 1].is_ascii_whitespace() {
+            name_end -= 1;
+        }
+        let mut name_start = name_end;
+        while name_start > 0 && Self::is_ascii_identifier_byte(bytes[name_start - 1]) {
+            name_start -= 1;
+        }
+        if name_start == name_end {
+            return None;
+        }
+        let callee_name = self.source_text[name_start..name_end].to_string();
+        if callee_name.is_empty() {
+            return None;
+        }
+
+        let mut probe = name_start;
+        while probe > 0 && bytes[probe - 1].is_ascii_whitespace() {
+            probe -= 1;
+        }
+        let call_kind = if probe >= 3 {
+            let prefix = &self.source_text[probe - 3..probe];
+            let boundary_ok = probe == 3 || !Self::is_ascii_identifier_byte(bytes[probe - 4]);
+            if prefix == "new" && boundary_ok {
+                CallKind::New
+            } else {
+                CallKind::Call
+            }
+        } else {
+            CallKind::Call
+        };
+
+        let scan_start = (paren_idx + 1).min(cursor);
+        let active_parameter = self.count_top_level_commas_in_range(scan_start, cursor);
+        Some(TextualTypeArgumentTrigger {
+            callee_name,
+            callee_offset: name_end.saturating_sub(1) as u32,
+            call_kind,
+            active_parameter,
+            span_start: scan_start as u32,
+            span_length: (cursor.saturating_sub(scan_start)) as u32,
+        })
+    }
+
+    fn find_textual_type_argument_trigger(
+        &self,
+        cursor_offset: u32,
+    ) -> Option<TextualTypeArgumentTrigger> {
+        let bytes = self.source_text.as_bytes();
+        if bytes.is_empty() {
+            return None;
+        }
+        let cursor = (cursor_offset as usize).min(bytes.len());
+
+        let mut depth = 0i32;
+        let mut lt_idx = None;
+        let mut idx = cursor;
+        while idx > 0 {
+            idx -= 1;
+            match bytes[idx] {
+                b'>' if idx == 0 || bytes[idx - 1] != b'=' => depth += 1,
+                b'<' => {
+                    if depth == 0 {
+                        lt_idx = Some(idx);
+                        break;
+                    }
+                    depth -= 1;
+                }
+                b';' | b'\n' | b'\r' if depth == 0 => break,
+                _ => {}
+            }
+        }
+        let lt_idx = lt_idx?;
+
+        let mut name_end = lt_idx;
+        while name_end > 0 && bytes[name_end - 1].is_ascii_whitespace() {
+            name_end -= 1;
+        }
+        let mut name_start = name_end;
+        while name_start > 0 && Self::is_ascii_identifier_byte(bytes[name_start - 1]) {
+            name_start -= 1;
+        }
+        if name_start == name_end {
+            return None;
+        }
+        let callee_name = self.source_text[name_start..name_end].to_string();
+        if callee_name.is_empty() {
+            return None;
+        }
+
+        let mut probe = name_start;
+        while probe > 0 && bytes[probe - 1].is_ascii_whitespace() {
+            probe -= 1;
+        }
+        let call_kind = if probe >= 3 {
+            let prefix = &self.source_text[probe - 3..probe];
+            let boundary_ok = probe == 3 || !Self::is_ascii_identifier_byte(bytes[probe - 4]);
+            if prefix == "new" && boundary_ok {
+                CallKind::New
+            } else {
+                CallKind::Call
+            }
+        } else {
+            CallKind::Call
+        };
+
+        let scan_start = (lt_idx + 1).min(cursor);
+        let active_parameter = self.count_top_level_commas_in_range(scan_start, cursor);
+        Some(TextualTypeArgumentTrigger {
+            callee_name,
+            callee_offset: name_end.saturating_sub(1) as u32,
+            call_kind,
+            active_parameter,
+            span_start: scan_start as u32,
+            span_length: (cursor.saturating_sub(scan_start)) as u32,
+        })
+    }
+
+    fn signature_help_for_textual_call(
+        &self,
+        root: NodeIndex,
+        cursor_offset: u32,
+        type_cache: &mut Option<tsz_checker::TypeCache>,
+    ) -> Option<SignatureHelp> {
+        let trigger = self.find_textual_call_trigger(cursor_offset)?;
+        let callee_expr =
+            self.find_identifier_node_at_offset(trigger.callee_offset, &trigger.callee_name)?;
+
+        let mut walker = crate::resolver::ScopeWalker::new(self.arena, self.binder);
+        let symbol_id = walker.resolve_node(root, callee_expr)?;
+
+        let compiler_options = tsz_checker::context::CheckerOptions {
+            strict: self.strict,
+            no_implicit_any: self.strict,
+            no_implicit_returns: false,
+            no_implicit_this: self.strict,
+            strict_null_checks: self.strict,
+            strict_function_types: self.strict,
+            strict_property_initialization: self.strict,
+            use_unknown_in_catch_variables: self.strict,
+            isolated_modules: false,
+            ..Default::default()
+        };
+        let mut checker = if let Some(cache) = type_cache.take() {
+            CheckerState::with_cache(
+                self.arena,
+                self.binder,
+                self.interner,
+                self.file_name.clone(),
+                cache,
+                compiler_options,
+            )
+        } else {
+            CheckerState::new(
+                self.arena,
+                self.binder,
+                self.interner,
+                self.file_name.clone(),
+                compiler_options,
+            )
+        };
+
+        let docs = self.signature_documentation_for_symbol(root, symbol_id, trigger.call_kind);
+        let callee_type = checker.get_type_of_symbol(symbol_id);
+        let callee_type = checker.resolve_lazy_type(callee_type);
+        let mut signatures = self.get_signatures_from_type(
+            callee_type,
+            &checker,
+            trigger.call_kind,
+            &trigger.callee_name,
+            false,
+            &[],
+        );
+
+        if let Some(docs) = docs {
+            self.apply_signature_docs(&mut signatures, &docs);
+        }
+        self.apply_source_signature_type_overrides(&mut signatures, symbol_id);
+        for sig in &mut signatures {
+            if !sig.type_param_substitutions.is_empty() {
+                apply_type_param_substitution(&mut sig.info, &sig.type_param_substitutions);
+            }
+        }
+        self.expand_source_rest_tuple_union_signatures(&mut signatures, symbol_id);
+        if signatures.is_empty() {
+            *type_cache = Some(checker.extract_cache());
+            return None;
+        }
+
+        *type_cache = Some(checker.extract_cache());
+
+        let span_start = trigger.span_start as usize;
+        let span_end = span_start + trigger.span_length as usize;
+        let span_text = self.source_text.get(span_start..span_end).unwrap_or_default();
+        let trimmed = span_text.trim_end();
+        let arg_count = if trimmed.is_empty() {
+            0usize
+        } else if trimmed.ends_with(',') {
+            trigger.active_parameter as usize
+        } else {
+            trigger.active_parameter as usize + 1
+        };
+
+        let active_signature =
+            self.select_active_signature(&signatures, arg_count, trigger.active_parameter, &[]);
+        let mut active_parameter = trigger.active_parameter;
+        if let Some(selected) = signatures.get(active_signature as usize) {
+            if selected.info.parameters.is_empty() {
+                active_parameter = 0;
+            } else {
+                let has_rest_param = selected.info.parameters.iter().any(|param| param.is_rest);
+                let max_index = selected.info.parameters.len().saturating_sub(1);
+                if has_rest_param {
+                    if active_parameter as usize >= arg_count
+                        && active_parameter as usize > max_index
+                    {
+                        active_parameter = max_index as u32;
+                    }
+                } else if active_parameter as usize > max_index {
+                    active_parameter = max_index as u32;
+                }
+            }
+        }
+
+        Some(SignatureHelp {
+            signatures: signatures.into_iter().map(|sig| sig.info).collect(),
+            active_signature,
+            active_parameter,
+            argument_count: arg_count as u32,
+            applicable_span_start: trigger.span_start,
+            applicable_span_length: trigger.span_length,
+        })
+    }
+
+    fn find_identifier_node_at_offset(
+        &self,
+        offset: u32,
+        expected_name: &str,
+    ) -> Option<NodeIndex> {
+        let mut current = find_node_at_or_before_offset(self.arena, offset, self.source_text);
+        let mut depth = 0usize;
+        while current.is_some() && depth < 128 {
+            let node = self.arena.get(current)?;
+            if node.kind == SyntaxKind::Identifier as u16
+                && self.arena.get_identifier_text(current) == Some(expected_name)
+            {
+                return Some(current);
+            }
+            current = self.arena.get_extended(current)?.parent;
+            depth += 1;
+        }
+        None
+    }
+
+    fn signature_help_for_textual_type_arguments(
+        &self,
+        root: NodeIndex,
+        cursor_offset: u32,
+        type_cache: &mut Option<tsz_checker::TypeCache>,
+    ) -> Option<SignatureHelp> {
+        let trigger = self.find_textual_type_argument_trigger(cursor_offset)?;
+        let callee_expr =
+            self.find_identifier_node_at_offset(trigger.callee_offset, &trigger.callee_name)?;
+
+        let mut walker = crate::resolver::ScopeWalker::new(self.arena, self.binder);
+        let symbol_id = walker.resolve_node(root, callee_expr)?;
+
+        let compiler_options = tsz_checker::context::CheckerOptions {
+            strict: self.strict,
+            no_implicit_any: self.strict,
+            no_implicit_returns: false,
+            no_implicit_this: self.strict,
+            strict_null_checks: self.strict,
+            strict_function_types: self.strict,
+            strict_property_initialization: self.strict,
+            use_unknown_in_catch_variables: self.strict,
+            isolated_modules: false,
+            ..Default::default()
+        };
+        let mut checker = if let Some(cache) = type_cache.take() {
+            CheckerState::with_cache(
+                self.arena,
+                self.binder,
+                self.interner,
+                self.file_name.clone(),
+                cache,
+                compiler_options,
+            )
+        } else {
+            CheckerState::new(
+                self.arena,
+                self.binder,
+                self.interner,
+                self.file_name.clone(),
+                compiler_options,
+            )
+        };
+
+        let docs = self.signature_documentation_for_symbol(root, symbol_id, trigger.call_kind);
+        let callee_type = checker.get_type_of_symbol(symbol_id);
+        let callee_type = checker.resolve_lazy_type(callee_type);
+        let mut signatures = self.get_signatures_from_type(
+            callee_type,
+            &checker,
+            trigger.call_kind,
+            &trigger.callee_name,
+            false,
+            &[],
+        );
+
+        if let Some(docs) = docs {
+            self.apply_signature_docs(&mut signatures, &docs);
+        }
+        self.apply_source_signature_type_overrides(&mut signatures, symbol_id);
+        self.rewrite_signatures_for_type_arguments(
+            &mut signatures,
+            &trigger.callee_name,
+            trigger.active_parameter,
+        );
+        if signatures.is_empty() {
+            *type_cache = Some(checker.extract_cache());
+            return None;
+        }
+
+        *type_cache = Some(checker.extract_cache());
+
+        let active_signature =
+            self.select_active_signature(&signatures, 0, trigger.active_parameter, &[]);
+        let mut active_parameter = trigger.active_parameter;
+        if let Some(selected) = signatures.get(active_signature as usize) {
+            if selected.info.parameters.is_empty() {
+                active_parameter = 0;
+            } else {
+                let has_rest_param = selected.info.parameters.iter().any(|param| param.is_rest);
+                if !has_rest_param {
+                    let max_index = selected.info.parameters.len().saturating_sub(1);
+                    if active_parameter as usize > max_index {
+                        active_parameter = max_index as u32;
+                    }
+                }
+            }
+        }
+
+        Some(SignatureHelp {
+            signatures: signatures.into_iter().map(|sig| sig.info).collect(),
+            active_signature,
+            active_parameter,
+            argument_count: 0,
+            applicable_span_start: trigger.span_start,
+            applicable_span_length: trigger.span_length,
+        })
     }
 
     /// Compute the applicable span for a regular call expression.
@@ -827,14 +1524,14 @@ impl<'a> SignatureHelpProvider<'a> {
     ) -> Vec<SignatureCandidate> {
         if let Some(shape_id) = visitor::function_shape_id(self.interner, type_id) {
             let shape = self.interner.function_shape(shape_id);
-            return vec![self.signature_candidate(
+            return self.signature_candidates_for_shape(
                 &shape,
                 checker,
                 false,
                 callee_name,
                 has_explicit_type_args,
                 explicit_type_arg_texts,
-            )];
+            );
         }
 
         if let Some(shape_id) = visitor::callable_shape_id(self.interner, type_id) {
@@ -856,7 +1553,7 @@ impl<'a> SignatureHelpProvider<'a> {
                         is_constructor: false,
                         is_method: false,
                     };
-                    sigs.push(self.signature_candidate(
+                    sigs.extend(self.signature_candidates_for_shape(
                         &func_shape,
                         checker,
                         false,
@@ -878,7 +1575,7 @@ impl<'a> SignatureHelpProvider<'a> {
                         is_constructor: true,
                         is_method: false,
                     };
-                    sigs.push(self.signature_candidate(
+                    sigs.extend(self.signature_candidates_for_shape(
                         &func_shape,
                         checker,
                         true,
@@ -909,6 +1606,60 @@ impl<'a> SignatureHelpProvider<'a> {
         }
 
         vec![]
+    }
+
+    fn signature_candidates_for_shape(
+        &self,
+        shape: &FunctionShape,
+        checker: &CheckerState,
+        is_constructor: bool,
+        callee_name: &str,
+        has_explicit_type_args: bool,
+        explicit_type_arg_texts: &[String],
+    ) -> Vec<SignatureCandidate> {
+        self.expand_rest_tuple_union_variants(shape, checker)
+            .into_iter()
+            .map(|variant| {
+                self.signature_candidate(
+                    &variant,
+                    checker,
+                    is_constructor,
+                    callee_name,
+                    has_explicit_type_args,
+                    explicit_type_arg_texts,
+                )
+            })
+            .collect()
+    }
+
+    fn expand_rest_tuple_union_variants(
+        &self,
+        shape: &FunctionShape,
+        checker: &CheckerState,
+    ) -> Vec<FunctionShape> {
+        let Some(rest_index) = shape.params.iter().position(|param| param.rest) else {
+            return vec![shape.clone()];
+        };
+        let rest_param = shape.params[rest_index];
+        let Some(TypeData::Union(list_id)) = checker.ctx.types.lookup(rest_param.type_id) else {
+            return vec![shape.clone()];
+        };
+
+        let mut variants = Vec::new();
+        for &member in checker.ctx.types.type_list(list_id).iter() {
+            if !matches!(checker.ctx.types.lookup(member), Some(TypeData::Tuple(_))) {
+                continue;
+            }
+            let mut variant = shape.clone();
+            variant.params[rest_index].type_id = member;
+            variants.push(variant);
+        }
+
+        if variants.is_empty() {
+            vec![shape.clone()]
+        } else {
+            variants
+        }
     }
 
     /// Format a `FunctionShape` into `SignatureInformation`
@@ -947,8 +1698,6 @@ impl<'a> SignatureHelpProvider<'a> {
         // Note: we do NOT include `this` parameter in user-visible params
         // because tsserver also excludes it from the signature help display.
 
-        let has_rest = shape.params.iter().any(|p| p.rest);
-
         for param in &shape.params {
             // When a rest parameter has a tuple type, expand the tuple elements
             // as individual parameters. e.g. `...args: [...names: string[], allCaps: boolean]`
@@ -971,7 +1720,12 @@ impl<'a> SignatureHelpProvider<'a> {
                     } else {
                         checker.format_type(elem.type_id)
                     };
-                    let optional = if elem.optional { "?" } else { "" };
+                    let is_optional = elem.optional && !elem.rest;
+                    let optional = if is_optional && !self.is_js_like_file() {
+                        "?"
+                    } else {
+                        ""
+                    };
                     let rest = if elem.rest { "..." } else { "" };
 
                     let param_label = format!("{rest}{elem_name}{optional}: {type_str}");
@@ -979,7 +1733,7 @@ impl<'a> SignatureHelpProvider<'a> {
                         name: elem_name.clone(),
                         label: param_label.clone(),
                         documentation: None,
-                        is_optional: elem.optional,
+                        is_optional,
                         is_rest: elem.rest,
                     });
                     param_labels.push(param_label);
@@ -987,10 +1741,13 @@ impl<'a> SignatureHelpProvider<'a> {
                 continue;
             }
 
-            let name = param.name.map_or_else(
+            let mut name = param.name.map_or_else(
                 || "arg".to_string(),
                 |atom| checker.ctx.types.resolve_atom(atom),
             );
+            if param.rest && name == "arg" {
+                name = "args".to_string();
+            }
             let mut type_str = if param.type_id == TypeId::UNKNOWN {
                 "any".to_string()
             } else {
@@ -1000,7 +1757,12 @@ impl<'a> SignatureHelpProvider<'a> {
             if param.rest && type_str == "any" {
                 type_str = "any[]".to_string();
             }
-            let optional = if param.optional { "?" } else { "" };
+            let is_optional = param.optional && !param.rest;
+            let optional = if is_optional && !self.is_js_like_file() {
+                "?"
+            } else {
+                ""
+            };
             let rest = if param.rest { "..." } else { "" };
 
             let param_label = format!("{rest}{name}{optional}: {type_str}");
@@ -1008,7 +1770,7 @@ impl<'a> SignatureHelpProvider<'a> {
                 name: name.clone(),
                 label: param_label.clone(),
                 documentation: None,
-                is_optional: param.optional,
+                is_optional,
                 is_rest: param.rest,
             });
 
@@ -1060,6 +1822,7 @@ impl<'a> SignatureHelpProvider<'a> {
 
         // Build full label: prefix + params joined by ", " + suffix
         let label = format!("{}{}{}", prefix, param_labels.join(", "), suffix,);
+        let is_variadic = parameters.iter().any(|param| param.is_rest);
 
         SignatureInformation {
             label,
@@ -1067,7 +1830,7 @@ impl<'a> SignatureHelpProvider<'a> {
             suffix,
             documentation: None,
             parameters,
-            is_variadic: has_rest,
+            is_variadic,
             is_constructor,
             tags: Vec::new(),
         }
@@ -1082,12 +1845,18 @@ impl<'a> SignatureHelpProvider<'a> {
         has_explicit_type_args: bool,
         explicit_type_arg_texts: &[String],
     ) -> SignatureCandidate {
-        let (required_params, total_params, has_rest) = self.signature_meta(&shape.params);
-        let param_names = shape
-            .params
+        let type_params = shape
+            .type_params
             .iter()
-            .map(|param| param.name.map(|atom| checker.ctx.types.resolve_atom(atom)))
-            .collect();
+            .map(|tp| {
+                let name = checker.ctx.types.resolve_atom(tp.name);
+                if let Some(constraint) = tp.constraint {
+                    format!("{name} extends {}", checker.format_type(constraint))
+                } else {
+                    name
+                }
+            })
+            .collect::<Vec<_>>();
         let type_param_substitutions = if !shape.type_params.is_empty() {
             if has_explicit_type_args && !explicit_type_arg_texts.is_empty() {
                 // Use the actual explicit type argument text for substitution
@@ -1136,18 +1905,32 @@ impl<'a> SignatureHelpProvider<'a> {
         // hide the <T, U> prefix since the types are instantiated in params.
         let show_type_params = has_explicit_type_args
             && (explicit_type_arg_texts.is_empty() || type_param_substitutions.is_empty());
+        let info = self.format_signature(
+            shape,
+            checker,
+            is_constructor,
+            callee_name,
+            show_type_params,
+        );
+        let required_params = info
+            .parameters
+            .iter()
+            .filter(|param| !param.is_optional && !param.is_rest)
+            .count();
+        let total_params = info.parameters.len();
+        let has_rest = info.parameters.iter().any(|param| param.is_rest);
+        let param_names = info
+            .parameters
+            .iter()
+            .map(|param| Some(param.name.clone()))
+            .collect();
         SignatureCandidate {
-            info: self.format_signature(
-                shape,
-                checker,
-                is_constructor,
-                callee_name,
-                show_type_params,
-            ),
+            info,
             required_params,
             total_params,
             has_rest,
             param_names,
+            type_params,
             type_param_substitutions,
         }
     }
@@ -1187,7 +1970,11 @@ impl<'a> SignatureHelpProvider<'a> {
             .zip(param_type_texts.into_iter())
         {
             if let Some(type_text) = type_text {
-                let optional = if param.is_optional { "?" } else { "" };
+                let optional = if param.is_optional && !self.is_js_like_file() {
+                    "?"
+                } else {
+                    ""
+                };
                 let rest = if param.is_rest { "..." } else { "" };
                 param.label = format!("{rest}{}{optional}: {type_text}", param.name);
             }
@@ -1209,6 +1996,264 @@ impl<'a> SignatureHelpProvider<'a> {
             param_labels.join(", "),
             signature.info.suffix
         );
+    }
+
+    fn expand_source_rest_tuple_union_signatures(
+        &self,
+        signatures: &mut Vec<SignatureCandidate>,
+        symbol_id: tsz_binder::SymbolId,
+    ) {
+        if signatures.is_empty() {
+            return;
+        }
+
+        let Some(symbol) = self.binder.symbols.get(symbol_id) else {
+            return;
+        };
+        if symbol.declarations.len() != 1 {
+            return;
+        }
+        let Some((param_type_texts, _)) = self.source_signature_type_texts(symbol.declarations[0])
+        else {
+            return;
+        };
+        let Some((rest_param_index, rest_tuple_union_text)) = param_type_texts
+            .iter()
+            .enumerate()
+            .find_map(|(idx, maybe_text)| {
+                let text = maybe_text.as_ref()?;
+                (Self::tuple_union_variants(text).len() > 1).then_some((idx, text.clone()))
+            })
+        else {
+            return;
+        };
+        let tuple_variants = Self::tuple_union_variants(&rest_tuple_union_text);
+        if tuple_variants.len() <= 1 {
+            return;
+        }
+
+        let Some(base) = signatures
+            .iter()
+            .find(|sig| sig.info.parameters.len() >= rest_param_index)
+            .cloned()
+            .or_else(|| signatures.first().cloned())
+        else {
+            return;
+        };
+        let base_rest_name = self
+            .arena
+            .get(symbol.declarations[0])
+            .and_then(|decl_node| self.arena.get_function(decl_node))
+            .and_then(|fn_data| fn_data.parameters.nodes.get(rest_param_index).copied())
+            .and_then(|param_idx| self.arena.get(param_idx))
+            .and_then(|param_node| self.arena.get_parameter(param_node))
+            .and_then(|param| self.arena.get_identifier_text(param.name))
+            .map(|name| name.to_string())
+            .or_else(|| {
+                signatures
+                    .iter()
+                    .flat_map(|sig| sig.info.parameters.iter())
+                    .find(|param| param.is_rest)
+                    .map(|param| param.name.clone())
+            })
+            .unwrap_or_else(|| "args".to_string());
+
+        let mut expanded = Vec::new();
+        for tuple_variant in tuple_variants {
+            let Some(expanded_rest_params) =
+                Self::tuple_variant_parameters(&tuple_variant, &base_rest_name)
+            else {
+                continue;
+            };
+            let mut info = base.info.clone();
+            let prefix_param_count = rest_param_index.min(base.info.parameters.len());
+            let mut params = base.info.parameters[..prefix_param_count].to_vec();
+            params.extend(expanded_rest_params);
+            info.parameters = params;
+            let labels: Vec<&str> = info
+                .parameters
+                .iter()
+                .map(|param| param.label.as_str())
+                .collect();
+            info.label = format!("{}{}{}", info.prefix, labels.join(", "), info.suffix);
+
+            let required_params = info
+                .parameters
+                .iter()
+                .filter(|param| !param.is_optional && !param.is_rest)
+                .count();
+            let total_params = info.parameters.len();
+            let has_rest = info.parameters.iter().any(|param| param.is_rest);
+            info.is_variadic = has_rest;
+            let param_names = info
+                .parameters
+                .iter()
+                .map(|param| Some(param.name.clone()))
+                .collect();
+
+            expanded.push(SignatureCandidate {
+                info,
+                required_params,
+                total_params,
+                has_rest,
+                param_names,
+                type_params: base.type_params.clone(),
+                type_param_substitutions: base.type_param_substitutions.clone(),
+            });
+        }
+
+        if !expanded.is_empty() {
+            *signatures = expanded;
+        }
+    }
+
+    fn tuple_union_variants(text: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        for part in Self::split_top_level_text(text, '|') {
+            let trimmed = part.trim();
+            if trimmed.starts_with('[') && trimmed.ends_with(']') {
+                out.push(trimmed.to_string());
+            }
+        }
+        out
+    }
+
+    fn tuple_variant_parameters(
+        tuple_variant: &str,
+        base_name: &str,
+    ) -> Option<Vec<ParameterInformation>> {
+        let inner = tuple_variant
+            .trim()
+            .strip_prefix('[')?
+            .strip_suffix(']')?
+            .trim();
+        if inner.is_empty() {
+            return Some(Vec::new());
+        }
+
+        let mut params = Vec::new();
+        for (idx, raw) in Self::split_top_level_text(inner, ',')
+            .into_iter()
+            .enumerate()
+        {
+            let raw = raw.trim();
+            if raw.is_empty() {
+                continue;
+            }
+
+            let (name, ty, is_optional, is_rest) =
+                if let Some(colon_idx) = Self::find_top_level_char(raw, ':') {
+                    let lhs = raw[..colon_idx].trim();
+                    let rhs = raw[colon_idx + 1..].trim();
+                    let mut name = lhs.trim();
+                    let is_rest = name.starts_with("...");
+                    if is_rest {
+                        name = name.trim_start_matches("...").trim();
+                    }
+                    let is_optional = name.ends_with('?');
+                    if is_optional {
+                        name = name.trim_end_matches('?').trim();
+                    }
+                    let fallback = if is_rest {
+                        base_name.to_string()
+                    } else {
+                        format!("{base_name}_{idx}")
+                    };
+                    let name = if name.is_empty() {
+                        fallback
+                    } else {
+                        name.to_string()
+                    };
+                    (name, rhs.to_string(), is_optional, is_rest)
+                } else if let Some(rest_ty) = raw.strip_prefix("...") {
+                    (
+                        base_name.to_string(),
+                        rest_ty.trim().to_string(),
+                        false,
+                        true,
+                    )
+                } else {
+                    (format!("{base_name}_{idx}"), raw.to_string(), false, false)
+                };
+
+            if ty.is_empty() {
+                continue;
+            }
+            let optional = if is_optional { "?" } else { "" };
+            let rest = if is_rest { "..." } else { "" };
+            let label = format!("{rest}{name}{optional}: {ty}");
+            params.push(ParameterInformation {
+                name,
+                label,
+                documentation: None,
+                is_optional,
+                is_rest,
+            });
+        }
+
+        Some(params)
+    }
+
+    fn split_top_level_text(text: &str, separator: char) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut start = 0usize;
+        let bytes = text.as_bytes();
+        let sep = separator as u8;
+        let mut paren = 0i32;
+        let mut bracket = 0i32;
+        let mut brace = 0i32;
+        let mut angle = 0i32;
+
+        for (idx, &byte) in bytes.iter().enumerate() {
+            match byte {
+                b'(' => paren += 1,
+                b')' => paren = paren.saturating_sub(1),
+                b'[' => bracket += 1,
+                b']' => bracket = bracket.saturating_sub(1),
+                b'{' => brace += 1,
+                b'}' => brace = brace.saturating_sub(1),
+                b'<' => angle += 1,
+                b'>' if idx == 0 || bytes[idx - 1] != b'=' => {
+                    angle = angle.saturating_sub(1);
+                }
+                _ => {}
+            }
+            if byte == sep && paren == 0 && bracket == 0 && brace == 0 && angle == 0 {
+                out.push(text[start..idx].trim().to_string());
+                start = idx + 1;
+            }
+        }
+        out.push(text[start..].trim().to_string());
+        out
+    }
+
+    fn find_top_level_char(text: &str, needle: char) -> Option<usize> {
+        let bytes = text.as_bytes();
+        let mut paren = 0i32;
+        let mut bracket = 0i32;
+        let mut brace = 0i32;
+        let mut angle = 0i32;
+
+        for (idx, &byte) in bytes.iter().enumerate() {
+            match byte {
+                b'(' => paren += 1,
+                b')' => paren = paren.saturating_sub(1),
+                b'[' => bracket += 1,
+                b']' => bracket = bracket.saturating_sub(1),
+                b'{' => brace += 1,
+                b'}' => brace = brace.saturating_sub(1),
+                b'<' => angle += 1,
+                b'>' if idx == 0 || bytes[idx - 1] != b'=' => {
+                    angle = angle.saturating_sub(1);
+                }
+                _ => {}
+            }
+            if byte == needle as u8 && paren == 0 && bracket == 0 && brace == 0 && angle == 0 {
+                return Some(idx);
+            }
+        }
+
+        None
     }
 
     fn source_signature_type_texts(
@@ -1337,21 +2382,12 @@ impl<'a> SignatureHelpProvider<'a> {
             > text.chars().filter(|&ch| ch == close).count()
     }
 
-    fn signature_meta(&self, params: &[tsz_solver::ParamInfo]) -> (usize, usize, bool) {
-        let required_params = params
-            .iter()
-            .filter(|param| !param.optional && !param.rest)
-            .count();
-        let total_params = params.len();
-        let has_rest = params.iter().any(|param| param.rest);
-        (required_params, total_params, has_rest)
-    }
-
     fn select_active_signature(
         &self,
         signatures: &[SignatureCandidate],
         arg_count: usize,
         active_parameter: u32,
+        supplied_argument_types: &[String],
     ) -> u32 {
         if signatures.is_empty() {
             return 0;
@@ -1365,8 +2401,10 @@ impl<'a> SignatureHelpProvider<'a> {
 
         let mut best_idx = 0usize;
         let mut best_score = usize::MAX;
+        let mut best_type_penalty = usize::MAX;
         let mut best_rest_penalty = usize::MAX;
         let mut best_total_params = usize::MAX;
+        let is_trailing_argument_slot = arg_count > 0 && (active_parameter as usize) >= arg_count;
 
         for (idx, sig) in signatures.iter().enumerate() {
             let min_params = sig.required_params;
@@ -1375,29 +2413,252 @@ impl<'a> SignatureHelpProvider<'a> {
             } else {
                 sig.total_params
             };
-            let score = if desired < min_params {
+            let mut score = if desired < min_params {
                 min_params.saturating_sub(desired)
             } else if desired > max_params {
                 desired.saturating_sub(max_params)
             } else {
                 0
             };
+            if is_trailing_argument_slot {
+                let active_index = active_parameter as usize;
+                let trailing_slot_penalty = if active_index < sig.total_params {
+                    usize::from(sig.has_rest)
+                } else if sig.has_rest {
+                    0
+                } else {
+                    2
+                };
+                score = score.saturating_add(trailing_slot_penalty);
+            }
             let rest_penalty = usize::from(sig.has_rest);
+            let type_penalty =
+                self.argument_type_penalty(sig, active_parameter, supplied_argument_types);
 
             if score < best_score
-                || (score == best_score && rest_penalty < best_rest_penalty)
+                || (score == best_score && type_penalty < best_type_penalty)
                 || (score == best_score
+                    && type_penalty == best_type_penalty
+                    && rest_penalty < best_rest_penalty)
+                || (score == best_score
+                    && type_penalty == best_type_penalty
                     && rest_penalty == best_rest_penalty
                     && sig.total_params < best_total_params)
             {
                 best_idx = idx;
                 best_score = score;
+                best_type_penalty = type_penalty;
                 best_rest_penalty = rest_penalty;
                 best_total_params = sig.total_params;
             }
         }
 
         best_idx as u32
+    }
+
+    fn argument_type_texts(
+        &self,
+        call_site: &CallSite<'_>,
+        checker: &mut CheckerState<'_>,
+    ) -> Vec<String> {
+        let mut types = Vec::new();
+        match call_site {
+            CallSite::Regular(call_expr) => {
+                let Some(args) = call_expr.arguments.as_ref() else {
+                    return Vec::new();
+                };
+
+                for &arg_idx in &args.nodes {
+                    let Some(arg_node) = self.arena.get(arg_idx) else {
+                        continue;
+                    };
+                    if arg_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                        continue;
+                    }
+                    let arg_type_id = checker.get_type_of_node(arg_idx);
+                    let arg_type = checker.resolve_lazy_type(arg_type_id);
+                    let mut text = checker.format_type(arg_type);
+                    if text == "any" || text == "unknown" || text == "error" {
+                        let start = arg_node.pos as usize;
+                        let end = (arg_node.end as usize).min(self.source_text.len());
+                        if start < end {
+                            let raw = self.source_text[start..end].trim();
+                            if Self::is_numeric_literal_type(raw) {
+                                text = "number".to_string();
+                            } else if raw.starts_with('"') || raw.starts_with('\'') {
+                                text = "string".to_string();
+                            } else if raw == "true" || raw == "false" {
+                                text = "boolean".to_string();
+                            }
+                        }
+                    }
+                    types.push(text);
+                }
+            }
+            CallSite::TaggedTemplate(tagged) => {
+                // Tagged template signatures always receive a template strings array as
+                // the first argument followed by `${}` expression values.
+                types.push("TemplateStringsArray".to_string());
+                let Some(tmpl_node) = self.arena.get(tagged.template) else {
+                    return types;
+                };
+                let Some(tmpl_expr) = self.arena.get_template_expr(tmpl_node) else {
+                    return types;
+                };
+                for &span_idx in &tmpl_expr.template_spans.nodes {
+                    let Some(span_node) = self.arena.get(span_idx) else {
+                        continue;
+                    };
+                    let Some(span_data) = self.arena.get_template_span(span_node) else {
+                        continue;
+                    };
+                    let expr_idx = span_data.expression;
+                    let Some(expr_node) = self.arena.get(expr_idx) else {
+                        continue;
+                    };
+                    let expr_type_id = checker.get_type_of_node(expr_idx);
+                    let expr_type = checker.resolve_lazy_type(expr_type_id);
+                    let mut text = checker.format_type(expr_type);
+                    if text == "any" || text == "unknown" || text == "error" {
+                        let start = expr_node.pos as usize;
+                        let end = (expr_node.end as usize).min(self.source_text.len());
+                        if start < end {
+                            let raw = self.source_text[start..end].trim();
+                            if Self::is_numeric_literal_type(raw) {
+                                text = "number".to_string();
+                            } else if raw.starts_with('"') || raw.starts_with('\'') {
+                                text = "string".to_string();
+                            } else if raw == "true" || raw == "false" {
+                                text = "boolean".to_string();
+                            }
+                        }
+                    }
+                    types.push(text);
+                }
+            }
+        }
+        types
+    }
+
+    fn argument_type_penalty(
+        &self,
+        sig: &SignatureCandidate,
+        _active_parameter: u32,
+        supplied_argument_types: &[String],
+    ) -> usize {
+        if supplied_argument_types.is_empty() || sig.info.parameters.is_empty() {
+            return 0;
+        }
+
+        let mut penalty = 0usize;
+        for (arg_index, arg_type_text) in supplied_argument_types.iter().enumerate() {
+            if arg_type_text.is_empty() || arg_type_text == "error" {
+                continue;
+            }
+            let Some(arg_kind) = Self::primitive_kind_from_type_text(arg_type_text) else {
+                continue;
+            };
+
+            let param_idx = if arg_index < sig.info.parameters.len() {
+                arg_index
+            } else if sig.has_rest {
+                sig.info.parameters.len().saturating_sub(1)
+            } else {
+                penalty += 1;
+                continue;
+            };
+
+            let Some((_, param_ty)) = sig.info.parameters[param_idx].label.rsplit_once(':') else {
+                continue;
+            };
+            let Some(param_mask) = Self::primitive_kind_mask_from_type_text(param_ty) else {
+                continue;
+            };
+            let arg_mask = Self::primitive_mask(arg_kind);
+            if (param_mask & arg_mask) == 0 {
+                penalty += 1;
+            }
+        }
+
+        penalty
+    }
+
+    fn primitive_mask(kind: PrimitiveKind) -> u8 {
+        match kind {
+            PrimitiveKind::String => 0b0001,
+            PrimitiveKind::Number => 0b0010,
+            PrimitiveKind::Boolean => 0b0100,
+            PrimitiveKind::BigInt => 0b1000,
+        }
+    }
+
+    fn primitive_kind_from_type_text(text: &str) -> Option<PrimitiveKind> {
+        let mask = Self::primitive_kind_mask_from_type_text(text)?;
+        if mask & Self::primitive_mask(PrimitiveKind::Number) != 0 {
+            return Some(PrimitiveKind::Number);
+        }
+        if mask & Self::primitive_mask(PrimitiveKind::String) != 0 {
+            return Some(PrimitiveKind::String);
+        }
+        if mask & Self::primitive_mask(PrimitiveKind::Boolean) != 0 {
+            return Some(PrimitiveKind::Boolean);
+        }
+        if mask & Self::primitive_mask(PrimitiveKind::BigInt) != 0 {
+            return Some(PrimitiveKind::BigInt);
+        }
+        None
+    }
+
+    fn primitive_kind_mask_from_type_text(text: &str) -> Option<u8> {
+        let normalized = text.trim().trim_matches(|c| c == '(' || c == ')');
+        if normalized.is_empty() {
+            return None;
+        }
+
+        let mut mask = 0u8;
+        for part in normalized
+            .split('|')
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+        {
+            if part == "string" || part.starts_with('"') || part.starts_with('\'') {
+                mask |= Self::primitive_mask(PrimitiveKind::String);
+                continue;
+            }
+            if part == "number" || Self::is_numeric_literal_type(part) {
+                mask |= Self::primitive_mask(PrimitiveKind::Number);
+                continue;
+            }
+            if part == "boolean" || part == "true" || part == "false" {
+                mask |= Self::primitive_mask(PrimitiveKind::Boolean);
+                continue;
+            }
+            if part == "bigint" || Self::is_bigint_literal_type(part) {
+                mask |= Self::primitive_mask(PrimitiveKind::BigInt);
+            }
+        }
+
+        (mask != 0).then_some(mask)
+    }
+
+    fn is_numeric_literal_type(text: &str) -> bool {
+        let mut chars = text.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        let rest = if first == '-' { chars.as_str() } else { text };
+        if rest.is_empty() {
+            return false;
+        }
+        rest.chars()
+            .all(|ch| ch.is_ascii_digit() || ch == '.' || ch == 'e' || ch == 'E' || ch == '+')
+    }
+
+    fn is_bigint_literal_type(text: &str) -> bool {
+        let Some(stripped) = text.strip_suffix('n') else {
+            return false;
+        };
+        !stripped.is_empty() && stripped.chars().all(|ch| ch.is_ascii_digit() || ch == '-')
     }
 
     fn apply_signature_docs(&self, signatures: &mut [SignatureCandidate], docs: &SignatureDocs) {
@@ -2015,6 +3276,169 @@ fn substitute_type_params(s: &str, type_param_substitutions: &[(String, String)]
 #[inline]
 const fn is_ident_char(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
+}
+
+#[cfg(test)]
+mod signature_help_internal_tests {
+    use super::SignatureHelpProvider;
+    use tsz_binder::BinderState;
+    use tsz_common::position::{LineMap, Position};
+    use tsz_parser::ParserState;
+    use tsz_solver::TypeInterner;
+
+    #[test]
+    fn split_top_level_text_keeps_function_type_commas_grouped() {
+        let parts = SignatureHelpProvider::<'_>::split_top_level_text(
+            "(err: Error) => void, ...object[]",
+            ',',
+        );
+        assert_eq!(parts, vec!["(err: Error) => void", "...object[]"]);
+    }
+
+    #[test]
+    fn tuple_variant_parameters_names_unlabeled_entries() {
+        let params = SignatureHelpProvider::<'_>::tuple_variant_parameters(
+            "[object, (err: Error) => void]",
+            "rest",
+        )
+        .expect("tuple should parse");
+        let labels: Vec<String> = params.into_iter().map(|param| param.label).collect();
+        assert_eq!(
+            labels,
+            vec![
+                "rest_0: object".to_string(),
+                "rest_1: (err: Error) => void".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn textual_nested_incomplete_call_prefers_inner_callee() {
+        let source = "declare function foo<T>(x: T, y: T): T;\ndeclare function bar<U>(x: U, y: U): U;\nfoo(bar(";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let interner = TypeInterner::new();
+        let line_map = LineMap::build(source);
+
+        let provider = SignatureHelpProvider::new(
+            parser.get_arena(),
+            &binder,
+            &line_map,
+            &interner,
+            source,
+            "test.ts".to_string(),
+        );
+
+        let offset = source.find("bar(").expect("bar(") + "bar(".len();
+        let trigger = provider
+            .find_textual_call_trigger(offset as u32)
+            .expect("textual call trigger");
+        assert_eq!(trigger.callee_name, "bar");
+        assert_eq!(trigger.active_parameter, 0);
+
+        let mut cache = None;
+        let help = provider
+            .signature_help_for_textual_call(root, offset as u32, &mut cache)
+            .expect("textual call help");
+        assert!(
+            !help.signatures.is_empty(),
+            "Should provide signatures for incomplete inner call"
+        );
+        assert_eq!(
+            help.signatures[help.active_signature as usize].label,
+            "bar(x: unknown, y: unknown): unknown"
+        );
+    }
+
+    #[test]
+    fn nested_call_with_outer_unclosed_context_still_has_inner_signature_help() {
+        let source = "declare function foo<T>(x: T, y: T): T;\ndeclare function bar<U>(x: U, y: U): U;\nfoo(bar()";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let interner = TypeInterner::new();
+        let line_map = LineMap::build(source);
+
+        let provider = SignatureHelpProvider::new(
+            parser.get_arena(),
+            &binder,
+            &line_map,
+            &interner,
+            source,
+            "test.ts".to_string(),
+        );
+
+        let mut cache = None;
+        let help = provider
+            .get_signature_help(root, Position::new(2, 8), &mut cache)
+            .expect("nested incomplete call should return signature help");
+        let typed_pos = source.find("bar(").expect("bar(") + "bar".len();
+        assert_eq!(
+            help.applicable_span_start as usize,
+            typed_pos + 1,
+            "Applicable span should start immediately after inner call '('"
+        );
+        assert!(
+            help.signatures[help.active_signature as usize]
+                .label
+                .starts_with("bar("),
+            "Expected active signature for inner callee `bar`"
+        );
+    }
+
+    #[test]
+    fn trigger_sequence_for_nested_generic_call_keeps_signature_help_available() {
+        let cases = [
+            (
+                "declare function foo<T>(x: T, y: T): T;\ndeclare function bar<U>(x: U, y: U): U;\nfoo(bar()",
+                Position::new(2, 8),
+                "bar(x: unknown, y: unknown): unknown",
+            ),
+            (
+                "declare function foo<T>(x: T, y: T): T;\ndeclare function bar<U>(x: U, y: U): U;\nfoo(bar<)",
+                Position::new(2, 8),
+                "bar<U>(x: U, y: U): U",
+            ),
+            (
+                "declare function foo<T>(x: T, y: T): T;\ndeclare function bar<U>(x: U, y: U): U;\nfoo(bar,)",
+                Position::new(2, 8),
+                "foo(x: unknown, y: unknown): unknown",
+            ),
+        ];
+
+        for (source, position, expected_label) in cases {
+            let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+            let root = parser.parse_source_file();
+
+            let mut binder = BinderState::new();
+            binder.bind_source_file(parser.get_arena(), root);
+
+            let interner = TypeInterner::new();
+            let line_map = LineMap::build(source);
+            let provider = SignatureHelpProvider::new(
+                parser.get_arena(),
+                &binder,
+                &line_map,
+                &interner,
+                source,
+                "test.ts".to_string(),
+            );
+
+            let mut cache = None;
+            let help = provider
+                .get_signature_help(root, position, &mut cache)
+                .expect("signature help should be available");
+            let actual = &help.signatures[help.active_signature as usize].label;
+            assert_eq!(actual, expected_label);
+        }
+    }
 }
 
 #[cfg(test)]

@@ -176,7 +176,10 @@ fn format_object_inner_multiline(inner: &str) -> Option<String> {
         .map(str::trim)
         .filter(|p| !p.is_empty())
         .collect();
-    if props.len() < 2 {
+    if props.is_empty() {
+        return None;
+    }
+    if props.len() < 2 && !props[0].starts_with('[') {
         return None;
     }
     if props.iter().any(|p| p.contains('{') || p.contains('}')) {
@@ -186,6 +189,18 @@ fn format_object_inner_multiline(inner: &str) -> Option<String> {
         return None;
     }
     Some(format!("{{\n    {};\n}}", props.join(";\n    ")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_hover_variable_type;
+
+    #[test]
+    fn format_hover_variable_type_multiline_index_signature_object() {
+        let input = "{ [x: string]: T; }";
+        let out = format_hover_variable_type(input);
+        assert_eq!(out, "{\n    [x: string]: T;\n}");
+    }
 }
 
 fn normalize_union_array_precedence(type_string: &str) -> String {

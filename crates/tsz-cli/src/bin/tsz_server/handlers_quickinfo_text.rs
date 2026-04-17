@@ -157,12 +157,250 @@ pub(super) fn normalize_quickinfo_display_string(display: &str) -> String {
     } else {
         trimmed.to_string()
     };
-    normalize_call_signature_colon_spacing(&normalized)
+    let normalized = normalize_call_signature_colon_spacing(&normalized);
+    let normalized = normalize_single_rest_tuple_function_params(&normalized);
+    let normalized = normalize_single_call_signature_object_types(&normalized);
+    normalize_single_index_signature_objects(&normalized)
 }
 
 /// Normalize `) :` to `):` in call signatures.
 pub(super) fn normalize_call_signature_colon_spacing(display: &str) -> String {
     display.replace(") :", "):")
+}
+
+fn normalize_single_call_signature_object_types(display: &str) -> String {
+    let mut out = String::with_capacity(display.len());
+    let bytes = display.as_bytes();
+    let mut cursor = 0usize;
+
+    while let Some(rel_open) = display[cursor..].find('{') {
+        let open = cursor + rel_open;
+        out.push_str(&display[cursor..open]);
+
+        let Some(close) = find_matching_brace(display, open) else {
+            out.push_str(&display[open..]);
+            return out;
+        };
+        let inner = display[open + 1..close].trim();
+        if let Some(arrow_sig) = single_call_signature_object_to_arrow(inner) {
+            let mut probe = close + 1;
+            while probe < bytes.len() && bytes[probe].is_ascii_whitespace() {
+                probe += 1;
+            }
+            if probe < bytes.len() && bytes[probe] == b'[' {
+                out.push('(');
+                out.push_str(&arrow_sig);
+                out.push(')');
+            } else {
+                out.push_str(&arrow_sig);
+            }
+        } else {
+            out.push_str(&display[open..=close]);
+        }
+        cursor = close + 1;
+    }
+
+    out.push_str(&display[cursor..]);
+    out
+}
+
+fn normalize_single_index_signature_objects(display: &str) -> String {
+    let mut out = String::with_capacity(display.len());
+    let mut cursor = 0usize;
+
+    while let Some(rel_open) = display[cursor..].find('{') {
+        let open = cursor + rel_open;
+        out.push_str(&display[cursor..open]);
+        let Some(close) = find_matching_brace(display, open) else {
+            out.push_str(&display[open..]);
+            return out;
+        };
+        let inner = display[open + 1..close].trim();
+        if inner.contains('\n') || inner.contains('{') || inner.contains('}') {
+            out.push_str(&display[open..=close]);
+            cursor = close + 1;
+            continue;
+        }
+        let cleaned = inner.trim_end_matches(';').trim();
+        if cleaned.starts_with('[') && cleaned.contains(':') {
+            out.push_str("{\n    ");
+            out.push_str(cleaned);
+            out.push_str(";\n}");
+        } else {
+            out.push_str(&display[open..=close]);
+        }
+        cursor = close + 1;
+    }
+
+    out.push_str(&display[cursor..]);
+    out
+}
+
+fn normalize_single_rest_tuple_function_params(display: &str) -> String {
+    let mut out = String::with_capacity(display.len());
+    let bytes = display.as_bytes();
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        // Normalize a single-parameter rest tuple function type:
+        // `(...a: [x: X, y: Y]) => R` -> `(x: X, y: Y) => R`
+        if bytes[i] == b'(' && i + 4 < bytes.len() && &bytes[i + 1..i + 4] == b"..." {
+            let mut cursor = i + 4;
+            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                cursor += 1;
+            }
+            let name_start = cursor;
+            while cursor < bytes.len() && is_js_identifier_char(bytes[cursor]) {
+                cursor += 1;
+            }
+            if cursor == name_start {
+                out.push(bytes[i] as char);
+                i += 1;
+                continue;
+            }
+            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                cursor += 1;
+            }
+            if cursor >= bytes.len() || bytes[cursor] != b':' {
+                out.push(bytes[i] as char);
+                i += 1;
+                continue;
+            }
+            cursor += 1;
+            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                cursor += 1;
+            }
+            if cursor >= bytes.len() || bytes[cursor] != b'[' {
+                out.push(bytes[i] as char);
+                i += 1;
+                continue;
+            }
+
+            let tuple_open = cursor;
+            let mut depth = 0i32;
+            let mut tuple_close = None;
+            while cursor < bytes.len() {
+                match bytes[cursor] {
+                    b'[' => depth += 1,
+                    b']' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            tuple_close = Some(cursor);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                cursor += 1;
+            }
+            let Some(tuple_close) = tuple_close else {
+                out.push(bytes[i] as char);
+                i += 1;
+                continue;
+            };
+            let tuple_inner = display[tuple_open + 1..tuple_close].trim();
+            if tuple_inner.is_empty() {
+                out.push(bytes[i] as char);
+                i += 1;
+                continue;
+            }
+
+            cursor = tuple_close + 1;
+            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                cursor += 1;
+            }
+            if cursor >= bytes.len() || bytes[cursor] != b')' {
+                out.push(bytes[i] as char);
+                i += 1;
+                continue;
+            }
+            let close_paren = cursor;
+            cursor += 1;
+            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                cursor += 1;
+            }
+            if cursor + 1 >= bytes.len() || bytes[cursor] != b'=' || bytes[cursor + 1] != b'>' {
+                out.push(bytes[i] as char);
+                i += 1;
+                continue;
+            }
+
+            out.push('(');
+            out.push_str(tuple_inner);
+            out.push(')');
+            i = close_paren + 1;
+            continue;
+        }
+
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+
+    out
+}
+
+fn find_matching_brace(text: &str, open_brace: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for (idx, ch) in text[open_brace..].char_indices() {
+        let absolute = open_brace + idx;
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(absolute);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn single_call_signature_object_to_arrow(inner: &str) -> Option<String> {
+    let mut body = inner.trim().trim_end_matches(';').trim();
+    if body.is_empty() {
+        return None;
+    }
+    if body.contains('{') || body.contains('}') {
+        return None;
+    }
+    if body.matches(';').count() > 0 {
+        // Multiple members/signatures should remain in object-literal form.
+        return None;
+    }
+    if !body.starts_with('(') {
+        return None;
+    }
+
+    let bytes = body.as_bytes();
+    let mut depth = 0i32;
+    let mut close = None;
+    for (idx, b) in bytes.iter().enumerate() {
+        match *b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(idx);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = close?;
+    let params = &body[..=close];
+    body = body[close + 1..].trim_start();
+    let ret = body
+        .strip_prefix(':')?
+        .trim_start()
+        .trim_end_matches(';')
+        .trim();
+    if ret.is_empty() {
+        return None;
+    }
+    Some(format!("{params} => {ret}"))
 }
 
 /// Strip balanced outer parentheses from text.
@@ -350,7 +588,7 @@ pub(super) fn parameter_name_if_any(display: &str) -> Option<String> {
     let (name, ty) = rest.split_once(':')?;
     let name = name.trim();
     let ty = ty.trim();
-    if ty == "any" && !name.is_empty() {
+    if matches!(ty, "any" | "error" | "unknown") && !name.is_empty() {
         Some(name.to_string())
     } else {
         None
@@ -587,6 +825,53 @@ mod tests {
         assert_eq!(
             contextual_parameter_type_from_text(type_text, 1).as_deref(),
             Some("string")
+        );
+    }
+
+    #[test]
+    fn normalize_quickinfo_display_string_converts_single_call_signature_object_array() {
+        let display = "var c3t11: {(n: number, s: string): string;}[]";
+        let normalized = normalize_quickinfo_display_string(display);
+        assert_eq!(
+            normalized,
+            "var c3t11: ((n: number, s: string) => string)[]"
+        );
+    }
+
+    #[test]
+    fn normalize_quickinfo_display_string_keeps_multi_signature_object_literal() {
+        let display = "var c3t7: {\n    (n: number): number;\n    (s1: string): number;\n}";
+        let normalized = normalize_quickinfo_display_string(display);
+        assert_eq!(
+            normalized,
+            "var c3t7: {\n    (n: number): number;\n    (s1: string): number;\n}"
+        );
+    }
+
+    #[test]
+    fn normalize_quickinfo_display_string_multiline_index_signature_object() {
+        let display = "(local var) r2: { [x: string]: T; }";
+        let normalized = normalize_quickinfo_display_string(display);
+        assert_eq!(normalized, "(local var) r2: {\n    [x: string]: T;\n}");
+    }
+
+    #[test]
+    fn normalize_quickinfo_display_string_flattens_single_rest_tuple_param() {
+        let display = "var fnWrapped: (...a: [str: string, num: number]) => void";
+        let normalized = normalize_quickinfo_display_string(display);
+        assert_eq!(
+            normalized,
+            "var fnWrapped: (str: string, num: number) => void"
+        );
+    }
+
+    #[test]
+    fn normalize_quickinfo_display_string_flattens_single_rest_tuple_param_variadic() {
+        let display = "var fnVariadicWrapped: (...a: [str: string, ...num: number[]]) => void";
+        let normalized = normalize_quickinfo_display_string(display);
+        assert_eq!(
+            normalized,
+            "var fnVariadicWrapped: (str: string, ...num: number[]) => void"
         );
     }
 }
