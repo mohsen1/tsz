@@ -484,7 +484,7 @@ impl Server {
             .get(callee_node.pos as usize..callee_node.end as usize)
             .map(str::trim)
             .unwrap_or(sig_base_name);
-        let base_name = if sig_base_name == "new" && !callee_text.is_empty() {
+        let base_name = if !callee_text.is_empty() {
             callee_text
         } else {
             sig_base_name
@@ -591,6 +591,12 @@ impl Server {
             *type_cache = Some(checker.extract_cache());
             instance_type
         };
+        let instance_type =
+            if instance_type.is_empty() || instance_type == "error" || instance_type == "unknown" {
+                base_name.to_string()
+            } else {
+                instance_type
+            };
         let mut params_segment = signature
             .label
             .find('(')
@@ -619,6 +625,92 @@ impl Server {
             range: Some(tsz::lsp::position::Range::new(start, end)),
             display_string,
             kind: "constructor".to_string(),
+            kind_modifiers: String::new(),
+            documentation: String::new(),
+            tags: Vec::new(),
+        })
+    }
+
+    fn quickinfo_for_js_element_access_literal(
+        source_text: &str,
+        line_map: &LineMap,
+        probe_offset: u32,
+    ) -> Option<HoverInfo> {
+        let bytes = source_text.as_bytes();
+        let len = bytes.len() as u32;
+        if len == 0 {
+            return None;
+        }
+        let probe = probe_offset.min(len.saturating_sub(1)) as i32;
+
+        let mut open_quote = None;
+        for idx in (0..=probe as usize).rev() {
+            let b = bytes[idx];
+            if b == b'"' || b == b'\'' {
+                open_quote = Some((idx, b));
+                break;
+            }
+        }
+        let (open_idx, quote) = open_quote?;
+
+        let mut close_idx = None;
+        for idx in (open_idx + 1)..bytes.len() {
+            if bytes[idx] == quote {
+                close_idx = Some(idx);
+                break;
+            }
+        }
+        let close_idx = close_idx?;
+        let probe_usize = probe as usize;
+        if probe_usize <= open_idx || probe_usize >= close_idx {
+            return None;
+        }
+
+        let mut bracket_idx = open_idx;
+        while bracket_idx > 0 && bytes[bracket_idx - 1].is_ascii_whitespace() {
+            bracket_idx -= 1;
+        }
+        if bracket_idx == 0 || bytes[bracket_idx - 1] != b'[' {
+            return None;
+        }
+        bracket_idx -= 1;
+
+        let mut expr_end = bracket_idx;
+        while expr_end > 0 && bytes[expr_end - 1].is_ascii_whitespace() {
+            expr_end -= 1;
+        }
+        if expr_end == 0 || bytes[expr_end - 1] == b']' {
+            return None;
+        }
+        let mut expr_start = expr_end;
+        while expr_start > 0 && text::is_js_identifier_char(bytes[expr_start - 1]) {
+            expr_start -= 1;
+        }
+        if expr_start >= expr_end {
+            return None;
+        }
+
+        let base_expr = source_text[expr_start..expr_end].trim();
+        if base_expr.is_empty() {
+            return None;
+        }
+        let member_key = source_text[open_idx + 1..close_idx].trim();
+        if member_key.is_empty() {
+            return None;
+        }
+
+        let member_expr = format!("{base_expr}[\"{member_key}\"]");
+        let display_string = format!(
+            "module {member_expr}\n(property) {member_expr}: typeof {base_expr}.{member_key}"
+        );
+        let start = line_map.offset_to_position((open_idx + 1) as u32, source_text);
+        let end = line_map.offset_to_position(close_idx as u32, source_text);
+
+        Some(HoverInfo {
+            contents: vec![format!("```typescript\n{display_string}\n```")],
+            range: Some(tsz::lsp::position::Range::new(start, end)),
+            display_string,
+            kind: "module".to_string(),
             kind_modifiers: String::new(),
             documentation: String::new(),
             tags: Vec::new(),
@@ -827,7 +919,9 @@ impl Server {
         *type_cache = Some(checker.extract_cache());
         let mut parameter_type =
             text::contextual_parameter_type_from_text(&type_text, parameter_index)?;
-        if parameter_type == "any"
+        let is_unresolved_contextual_type =
+            |ty: &str| ty == "any" || ty == "error" || ty == "unknown";
+        if is_unresolved_contextual_type(&parameter_type)
             && let Some(from_hover) = Self::contextual_parameter_type_from_enclosing_callable_hover(
                 arena,
                 line_map,
@@ -841,7 +935,7 @@ impl Server {
         {
             parameter_type = from_hover;
         }
-        if parameter_type == "any" {
+        if is_unresolved_contextual_type(&parameter_type) {
             return None;
         }
 
@@ -1333,6 +1427,18 @@ impl Server {
                         )
                 {
                     info = Some(parameter_hover);
+                }
+
+                if info
+                    .as_ref()
+                    .is_none_or(|hover| hover.display_string.trim().is_empty())
+                    && let Some(js_element_hover) = Self::quickinfo_for_js_element_access_literal(
+                        &source_text,
+                        &line_map,
+                        parameter_probe_offset,
+                    )
+                {
+                    info = Some(js_element_hover);
                 }
             }
             let info = match info {
