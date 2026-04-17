@@ -808,7 +808,12 @@ impl<'a> TypeLowering<'a> {
                 match ident.escaped_text.as_str() {
                     "undefined" => return TypeId::UNDEFINED,
                     "NaN" | "Infinity" => return TypeId::NUMBER,
-                    "globalThis" => return TypeId::UNKNOWN,
+                    // typeof globalThis — we don't have a synthetic globalThis
+                    // object type, so use `any` to avoid spurious TS2536
+                    // "cannot index type 'unknown'" for every indexed access.
+                    // A follow-up pass in type_node_advanced validates specific
+                    // indexed access patterns (block-scoped let/const keys).
+                    "globalThis" => return TypeId::ANY,
                     _ => {}
                 }
             }
