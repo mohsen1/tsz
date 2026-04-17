@@ -212,7 +212,13 @@ function patchSessionClient(SessionClient, ts) {
         if (!nativeLs) return undefined;
         try {
             return op(nativeLs);
-        } catch {
+        } catch (err) {
+            if (
+                (ts.OperationCanceledException && err instanceof ts.OperationCanceledException) ||
+                err?.name === "OperationCanceledException"
+            ) {
+                throw err;
+            }
             return undefined;
         }
     };
@@ -985,9 +991,9 @@ function patchSessionClient(SessionClient, ts) {
         return nativeResult || [];
     };
 
-    proto.getSemanticClassifications = function(fileName, span) {
+    proto.getSemanticClassifications = function(fileName, span, format) {
         const nativeResult = withNativeFallback(this, ls =>
-            ls.getSemanticClassifications(fileName, span)
+            ls.getSemanticClassifications(fileName, span, format)
         );
         return nativeResult || [];
     };
