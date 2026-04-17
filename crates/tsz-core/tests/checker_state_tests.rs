@@ -28154,6 +28154,71 @@ const arrowPromise = async (): Promise<string> => "test";
     );
 }
 
+/// TS1064 fires for async functions in JS files with `@type {function(): string}`.
+/// When a variable in a JS file has a JSDoc `@type` annotation declaring a function
+/// type with a non-Promise return type, and the initializer is async, tsc emits TS1064.
+#[test]
+fn test_ts1064_jsdoc_type_function_async() {
+    use crate::parser::ParserState;
+
+    let source = r#"
+interface Promise<T> {}
+
+/** @type {function(): string} */
+const a = async () => 0
+
+/** @type {function(): string} */
+const b = async () => {
+    return 0
+}
+"#;
+
+    let mut parser = ParserState::new("file.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "file.js".to_string(),
+        crate::checker::context::CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2017,
+            allow_js: true,
+            check_js: true,
+            ..crate::checker::context::CheckerOptions::default()
+        },
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let ts1064_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 1064)
+        .count();
+    assert!(
+        ts1064_count >= 2,
+        "Expected at least 2 TS1064 errors for async functions with JSDoc @type {{function(): string}}, got {ts1064_count}. Diagnostics: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
 #[test]
 fn test_duplicate_class_members() {
     use crate::parser::ParserState;

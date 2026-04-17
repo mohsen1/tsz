@@ -1674,6 +1674,15 @@ impl<'a> CheckerState<'a> {
                 type_annotation,
             );
 
+            // TS1064 for JSDoc `@type {function(): ReturnType}` on async functions.
+            // When a JS file uses `@type {function(): string}` on an async arrow/function,
+            // tsc emits TS1064 because `string` is not `Promise<string>`. The check above
+            // only fires when `has_type_annotation` (AST-level return type) is true, so
+            // we need a separate path for JSDoc-derived return types.
+            if !has_type_annotation && is_async && !is_generator && self.is_js_file() {
+                self.check_async_return_type_from_jsdoc_type(idx, &func_jsdoc);
+            }
+
             // TS2366/TS2355/TS7030: Check return completeness
             self.check_function_return_completeness(
                 is_function_declaration,
