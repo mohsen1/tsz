@@ -598,6 +598,103 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// TS1064 for async functions in JS files with `@type {function(): ReturnType}`.
+    ///
+    /// When a variable in a JS file has `/** @type {function(): string} */` and the
+    /// initializer is an async function, tsc emits TS1064 because `string` is not
+    /// `Promise<string>`. The main `check_async_return_type_is_promise` only fires
+    /// when there's an AST-level return type annotation, so this method handles the
+    /// JSDoc-only case.
+    pub(crate) fn check_async_return_type_from_jsdoc_type(
+        &mut self,
+        func_idx: NodeIndex,
+        func_jsdoc: &Option<String>,
+    ) {
+        let Some(jsdoc) = func_jsdoc else {
+            return;
+        };
+        let Some(ret_type_str) = Self::jsdoc_type_tag_function_return_type(jsdoc) else {
+            return;
+        };
+        let trimmed = ret_type_str.trim();
+        if trimmed.starts_with("Promise") || trimmed.starts_with("PromiseLike") {
+            return;
+        }
+
+        let inner_type_name = trimmed;
+        let sf = self.source_file_data_for_node(func_idx);
+        let span = sf.and_then(|sf| {
+            let source_text: &str = &sf.text;
+            let comments = &sf.comments;
+            let func_node = self.ctx.arena.get(func_idx)?;
+            for comment in comments.iter().rev() {
+                if comment.end <= func_node.pos as u32 {
+                    if tsz_common::comments::is_jsdoc_comment(comment, source_text) {
+                        return Self::jsdoc_type_tag_function_return_type_span_in_source(
+                            source_text,
+                            comment.pos,
+                        );
+                    }
+                    break;
+                }
+            }
+            self.try_jsdoc_with_ancestor_walk(func_idx, comments, source_text)
+                .and_then(|_jsdoc_text| {
+                    let mut current = func_idx;
+                    for _ in 0..4 {
+                        if let Some(ext) = self.ctx.arena.get_extended(current) {
+                            let parent = ext.parent;
+                            if parent.is_none() {
+                                break;
+                            }
+                            if let Some(parent_node) = self.ctx.arena.get(parent) {
+                                for comment in comments.iter().rev() {
+                                    if comment.end <= parent_node.pos as u32
+                                        || (comment.pos <= parent_node.pos as u32
+                                            && comment.end <= parent_node.end as u32)
+                                    {
+                                        if tsz_common::comments::is_jsdoc_comment(
+                                            comment,
+                                            source_text,
+                                        ) {
+                                            return Self::jsdoc_type_tag_function_return_type_span_in_source(
+                                                source_text,
+                                                comment.pos,
+                                            );
+                                        }
+                                    }
+                                }
+                                current = parent;
+                            } else {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    None
+                })
+        });
+        let msg = format_message(
+            diagnostic_messages::THE_RETURN_TYPE_OF_AN_ASYNC_FUNCTION_OR_METHOD_MUST_BE_THE_GLOBAL_PROMISE_T_TYPE,
+            &[&inner_type_name],
+        );
+        if let Some((start, length)) = span {
+            self.error_at_position(
+                start,
+                length,
+                &msg,
+                diagnostic_codes::THE_RETURN_TYPE_OF_AN_ASYNC_FUNCTION_OR_METHOD_MUST_BE_THE_GLOBAL_PROMISE_T_TYPE,
+            );
+        } else {
+            self.error_at_node(
+                func_idx,
+                &msg,
+                diagnostic_codes::THE_RETURN_TYPE_OF_AN_ASYNC_FUNCTION_OR_METHOD_MUST_BE_THE_GLOBAL_PROMISE_T_TYPE,
+            );
+        }
+    }
+
     /// Check if a type is a type alias application that resolves to Promise.
     ///
     /// For example, `type PromiseAlias<T> = Promise<T>; async function f(): PromiseAlias<void>`
