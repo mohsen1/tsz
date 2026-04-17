@@ -33,32 +33,10 @@ impl<'a> CheckerState<'a> {
         };
 
         // Handle import.meta: emit TS1470 in files that compile to CommonJS output
-        if let Some(expr_node) = self.ctx.arena.get(access.expression)
-            && expr_node.kind == SyntaxKind::ImportKeyword as u16
+        if let Some(result) =
+            self.try_resolve_import_meta_access(idx, access.expression, access.name_or_argument)
         {
-            let is_meta = self
-                .ctx
-                .arena
-                .get(access.name_or_argument)
-                .and_then(|n| self.ctx.arena.get_identifier(n))
-                .is_some_and(|ident| ident.escaped_text == "meta");
-
-            if is_meta {
-                self.check_import_meta_in_cjs(idx);
-                // import.meta resolves to the global `ImportMeta` interface
-                // (declared in lib.es2020.full.d.ts). Returning that type
-                // enables TS2339 on unknown properties (`import.meta.blah`)
-                // and merges `declare global { interface ImportMeta { ... } }`
-                // augmentations through lib-heritage merging.
-                if let Some(import_meta_ty) = self.resolve_lib_type_by_name("ImportMeta") {
-                    return import_meta_ty;
-                }
-            }
-            // Fallback (ImportMeta not in lib scope, or non-`meta` meta-property
-            // like `import.metal`): return ANY so downstream access doesn't
-            // cascade misleading TS2339s. A separate grammar check is expected
-            // to emit TS17012 for the invalid meta-property name.
-            return TypeId::ANY;
+            return result;
         }
 
         let factory = self.ctx.types.factory();
@@ -194,162 +172,14 @@ impl<'a> CheckerState<'a> {
         }
 
         // Fast path for enum/namespace member value access (`E.Member` or `Ns.Member`).
-        // This avoids the general property-access pipeline (accessibility checks,
-        // type environment classification, etc.) for a very common hot path.
-        // For namespaces, this is also critical for correctness: when a namespace
-        // exports both an interface and a var with the same name (e.g., `Intl.DateTimeFormat`),
-        // the general property-access pipeline may resolve to the interface type instead
-        // of the var type, causing false TS2351 "not constructable" errors.
-        if let Some(name_ident) = self.ctx.arena.get_identifier(name_node) {
-            let property_name = &name_ident.escaped_text;
-            let is_identifier_base = self
-                .ctx
-                .arena
-                .get(access.expression)
-                .is_some_and(|expr_node| expr_node.kind == SyntaxKind::Identifier as u16);
-            if is_identifier_base
-                && let Some(base_sym_id) = self
-                    .ctx
-                    .binder
-                    .resolve_identifier(self.ctx.arena, access.expression)
-                && let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym_id)
-                && base_symbol.flags & (symbol_flags::ENUM | symbol_flags::VALUE_MODULE) != 0
-                && let Some(exports) = base_symbol.exports.as_ref()
-                && let Some(member_sym_id) = exports.get(property_name)
-                // For namespace members, only use the fast path when the export has
-                // value semantics (VARIABLE, CLASS, FUNCTION, etc.) or is an alias
-                // (export import). Type-only exports (interfaces, type aliases) must go
-                // through the general property-access path so that TS2708/TS2693
-                // diagnostics are properly emitted.
-                && self.ctx.binder.get_symbol(member_sym_id)
-                    .map_or(false, |s| s.flags & (symbol_flags::VALUE | symbol_flags::ALIAS) != 0)
-                // For merged symbols (e.g., namespace + interface), verify that the VALUE
-                // part is actually exported. If only the TYPE part is exported, the value
-                // is not accessible and we should fall through to emit TS2339.
-                && self.symbol_has_exported_value_declaration(member_sym_id)
-            {
-                let is_enum = base_symbol.flags & symbol_flags::ENUM != 0;
-
-                // TS1361/TS1362: Check if the base identifier is a type-only import.
-                // resolve_identifier follows aliases, so base_sym_id is the target,
-                // not the local import binding. Check the local symbol in file_locals.
-                // Applies to both enum and namespace member access.
-                if let Some(local_sym_id) = self.resolve_identifier_symbol(access.expression)
-                    && self.alias_resolves_to_type_only(local_sym_id)
-                    && let Some(base_node) = self.ctx.arena.get(access.expression)
-                    && let Some(base_ident) = self.ctx.arena.get_identifier(base_node)
-                    && !self.source_file_has_value_import_binding_named(
-                        access.expression,
-                        &base_ident.escaped_text,
-                    )
-                {
-                    self.report_wrong_meaning_diagnostic(
-                        &base_ident.escaped_text,
-                        access.expression,
-                        crate::query_boundaries::name_resolution::NameLookupKind::Type,
-                    );
-                    return TypeId::ERROR;
-                }
-
-                if is_enum {
-                    // TS2450: Check if enum is used before its declaration (TDZ violation).
-                    // Only non-const enums are flagged (const enums are always hoisted).
-                    if let Some(base_node) = self.ctx.arena.get(access.expression)
-                        && let Some(base_ident) = self.ctx.arena.get_identifier(base_node)
-                    {
-                        let base_name = &base_ident.escaped_text;
-                        if self.check_tdz_violation(base_sym_id, access.expression, base_name, true)
-                        {
-                            return TypeId::ERROR;
-                        }
-                    }
-
-                    // TS2748: Cannot access ambient const enums when isolatedModules is enabled.
-                    if self.ctx.isolated_modules()
-                        && base_symbol.flags & symbol_flags::CONST_ENUM != 0
-                        && self.is_const_enum_ambient(base_symbol)
-                        && !self.is_in_type_only_position(idx)
-                    {
-                        let option_name = if self.ctx.compiler_options.verbatim_module_syntax {
-                            "verbatimModuleSyntax"
-                        } else {
-                            "isolatedModules"
-                        };
-                        let msg = crate::diagnostics::format_message(
-                            crate::diagnostics::diagnostic_messages::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
-                            &[option_name],
-                        );
-                        self.error_at_node(
-                            idx,
-                            &msg,
-                            crate::diagnostics::diagnostic_codes::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
-                        );
-                    }
-                }
-
-                // TS2729 for namespace member access in static property initializers:
-                // `namespace Ns { export let A = 0 }` compiles to `var` (hoisted),
-                // but the IIFE that populates members runs at declaration position.
-                // Accessing `Ns.A` before the namespace body executes is a forward
-                // reference and tsc emits TS2729 at the property name site.
-                if base_symbol.flags & symbol_flags::VALUE_MODULE != 0
-                    && self.is_in_static_property_initializer_ast_context(access.expression)
-                    && self
-                        .find_enclosing_computed_property(access.expression)
-                        .is_none()
-                {
-                    // Check if the namespace declaration is after the usage
-                    let decl_idx = if base_symbol.value_declaration.is_some() {
-                        base_symbol.value_declaration
-                    } else if let Some(&first_decl) = base_symbol.declarations.first() {
-                        first_decl
-                    } else {
-                        NodeIndex::NONE
-                    };
-                    if decl_idx.is_some()
-                        && let Some(usage_node) = self.ctx.arena.get(access.expression)
-                        && let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                        && usage_node.pos < decl_node.pos
-                    {
-                        self.error_at_node(
-                            access.name_or_argument,
-                            &format!(
-                                "Property '{}' is used before its initialization.",
-                                name_ident.escaped_text
-                            ),
-                            tsz_common::diagnostics::diagnostic_codes::PROPERTY_IS_USED_BEFORE_ITS_INITIALIZATION,
-                        );
-                    }
-                }
-
-                // Enum members and namespace exports both resolve to the selected member symbol type.
-                // Namespace exports may represent functions, variables, etc., each with its own symbol type.
-                //
-                // For merged symbols (e.g., `interface Foo` + `var Foo: FooConstructor` in a
-                // namespace), `get_type_of_symbol` returns the interface type. In value position
-                // (property access on namespace), we need the variable's type instead — otherwise
-                // `new Ns.Foo()` would fail with TS2351 because the interface has no construct
-                // signatures. Use the value declaration path for merged interface+variable symbols.
-                let member_sym = self.ctx.binder.get_symbol(member_sym_id);
-                let member_type = if let Some(member_sym) = member_sym
-                    && member_sym.flags & symbol_flags::INTERFACE != 0
-                    && member_sym.flags & symbol_flags::VARIABLE != 0
-                    && member_sym.value_declaration.is_some()
-                {
-                    self.type_of_value_declaration_for_symbol(
-                        member_sym_id,
-                        member_sym.value_declaration,
-                    )
-                } else {
-                    self.get_type_of_symbol(member_sym_id)
-                };
-                return self.finalize_property_access_result(
-                    idx,
-                    member_type,
-                    skip_flow_narrowing,
-                    false,
-                );
-            }
+        if let Some(result) = self.try_resolve_enum_namespace_member_access(
+            idx,
+            access.expression,
+            access.name_or_argument,
+            name_node,
+            skip_flow_narrowing,
+        ) {
+            return result;
         }
 
         // Get the type of the object.
@@ -1100,55 +930,14 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
                 );
             }
-            let is_this_global = self.is_this_resolving_to_global(access.expression);
-            if self.is_global_this_like_expression(access.expression) || is_this_global {
-                let base_display =
-                    if self.is_global_this_expression(access.expression) || is_this_global {
-                        "typeof globalThis"
-                    } else {
-                        "Window & typeof globalThis"
-                    };
-                let allow_unknown_property_fallback =
-                    self.is_global_this_expression(access.expression) || is_this_global;
-                let property_type = self.resolve_global_this_property_type(
-                    property_name,
-                    access.name_or_argument,
-                    allow_unknown_property_fallback,
-                    base_display,
-                );
-                if property_type == TypeId::ERROR {
-                    return TypeId::ERROR;
-                }
-                // TS7017: When noImplicitAny is enabled and `this` (not the `globalThis`
-                // identifier) resolves to typeof globalThis and the property is not found,
-                // emit "Element implicitly has an 'any' type because type 'typeof
-                // globalThis' has no index signature." — matching tsc behavior for dot
-                // access. Only for `this` — the `globalThis` identifier path uses the
-                // global property resolver which may return ANY for unresolved properties
-                // that do exist in lib declarations.
-                if is_this_global
-                    && property_type == TypeId::ANY
-                    && self.ctx.no_implicit_any()
-                    && !self.is_js_file()
-                {
-                    use crate::diagnostics::{
-                        diagnostic_codes, diagnostic_messages, format_message,
-                    };
-                    self.error_at_node(
-                        access.name_or_argument,
-                        &format_message(
-                            diagnostic_messages::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_TYPE_HAS_NO_INDEX_SIGNATURE,
-                            &["typeof globalThis"],
-                        ),
-                        diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_TYPE_HAS_NO_INDEX_SIGNATURE,
-                    );
-                }
-                return self.finalize_property_access_result(
-                    idx,
-                    property_type,
-                    skip_flow_narrowing,
-                    false,
-                );
+            if let Some(result) = self.try_resolve_global_this_property_access(
+                idx,
+                access.expression,
+                access.name_or_argument,
+                property_name,
+                skip_flow_narrowing,
+            ) {
+                return result;
             }
         }
 
@@ -2639,191 +2428,18 @@ impl<'a> CheckerState<'a> {
                 PropertyAccessResult::PossiblyNullOrUndefined {
                     property_type,
                     cause,
-                } => {
-                    if receiver_has_daa_error {
-                        return self.finalize_property_access_result(
-                            idx,
-                            property_type.unwrap_or(TypeId::ERROR),
-                            skip_flow_narrowing,
-                            false,
-                        );
-                    }
-                    // Check for optional chaining (?.)
-                    if access.question_dot_token {
-                        if self
-                            .ctx
-                            .compiler_options
-                            .no_property_access_from_index_signature
-                            && let (Some(non_nullish_base), _) =
-                                self.split_nullish_type(object_type_for_access)
-                            && let PropertyAccessResult::Success {
-                                from_index_signature,
-                                ..
-                            } = self
-                                .resolve_property_access_with_env(non_nullish_base, property_name)
-                            && from_index_signature
-                            && !self
-                                .union_has_explicit_property_member(non_nullish_base, property_name)
-                        {
-                            use crate::diagnostics::diagnostic_codes;
-                            self.error_at_node(
-                                access.name_or_argument,
-                                &format!(
-                                    "Property '{property_name}' comes from an index signature, so it must be accessed with ['{property_name}']."
-                                ),
-                                diagnostic_codes::PROPERTY_COMES_FROM_AN_INDEX_SIGNATURE_SO_IT_MUST_BE_ACCESSED_WITH,
-                            );
-                        }
-                        // Suppress error, return (property_type | undefined)
-                        let base_type = property_type.unwrap_or(TypeId::UNKNOWN);
-                        return factory.union2(base_type, TypeId::UNDEFINED);
-                    }
-
-                    // Report error based on the cause (TS2531/TS2532/TS2533 or TS18050)
-                    // TS18050 is for definitely-nullish values in strict mode
-                    // TS2531/2532/2533 are for possibly-nullish values in strict mode
-                    use crate::diagnostics::diagnostic_codes;
-
-                    // Suppress cascade errors when cause is ERROR/ANY/UNKNOWN
-                    if cause == TypeId::ERROR || cause == TypeId::ANY || cause == TypeId::UNKNOWN {
-                        return property_type.unwrap_or(TypeId::ERROR);
-                    }
-
-                    // Check if the type is entirely nullish (no non-nullish part in union)
-                    let is_type_nullish = object_type_for_access == TypeId::NULL
-                        || object_type_for_access == TypeId::UNDEFINED;
-
-                    // For possibly-nullish values in non-strict mode, don't error
-                    // But for definitely-nullish values in non-strict mode, fall through to error reporting below
-                    if !self.ctx.compiler_options.strict_null_checks && !is_type_nullish {
-                        return self.finalize_property_access_result(
-                            idx,
-                            property_type.unwrap_or(TypeId::ERROR),
-                            skip_flow_narrowing,
-                            false,
-                        );
-                    }
-                    // Check if the expression is a literal null/undefined keyword (not a variable)
-                    // TS18050 is only for `null.foo` and `undefined.bar`, not `x.foo` where x: null
-                    // TS18050 is emitted even without strictNullChecks, so check first
-                    let is_literal_nullish =
-                        if let Some(expr_node) = self.ctx.arena.get(access.expression) {
-                            expr_node.kind == SyntaxKind::NullKeyword as u16
-                                || (expr_node.kind == SyntaxKind::Identifier as u16
-                                    && self
-                                        .ctx
-                                        .arena
-                                        .get_identifier(expr_node)
-                                        .is_some_and(|ident| ident.escaped_text == "undefined"))
-                        } else {
-                            false
-                        };
-
-                    // When the expression IS a literal null/undefined keyword (e.g., null.foo or undefined.bar),
-                    // emit TS18050 "The value 'X' cannot be used here."
-                    if is_literal_nullish {
-                        let value_name = if cause == TypeId::NULL {
-                            "null"
-                        } else if cause == TypeId::UNDEFINED {
-                            "undefined"
-                        } else {
-                            "null | undefined"
-                        };
-                        self.error_at_node_msg(
-                            access.expression,
-                            diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
-                            &[value_name],
-                        );
-                        return self.finalize_property_access_result(
-                            idx,
-                            property_type.unwrap_or(TypeId::ERROR),
-                            skip_flow_narrowing,
-                            false,
-                        );
-                    }
-
-                    // Without strictNullChecks, null/undefined are in every type's domain,
-                    // so TS18047/TS18048/TS18049 are never emitted (matches tsc behavior).
-                    // Note: TS18050 for literal null/undefined is handled above.
-                    if !self.ctx.compiler_options.strict_null_checks {
-                        return self.finalize_property_access_result(
-                            idx,
-                            property_type.unwrap_or(TypeId::ERROR),
-                            skip_flow_narrowing,
-                            false,
-                        );
-                    }
-
-                    // When TS2454 (variable used before being assigned) has already been
-                    // emitted for this expression, suppress TS18047/18048/18049.  tsc does
-                    // not stack "possibly undefined" on top of "used before assignment".
-                    if self.ctx.daa_error_nodes.contains(&access.expression.0)
-                        || self.ctx.daa_error_nodes.contains(&idx.0)
-                    {
-                        return self.finalize_property_access_result(
-                            idx,
-                            property_type.unwrap_or(TypeId::ERROR),
-                            skip_flow_narrowing,
-                            false,
-                        );
-                    }
-
-                    // Try to get the name of the expression (handles identifiers and property chains like a.b)
-                    // Use specific error codes (TS18047/18048/18049) when name is available
-                    let name = self.expression_text(access.expression).or_else(|| {
-                        self.is_this_expression(access.expression)
-                            .then(|| "this".to_string())
-                    });
-
-                    let (code, message): (u32, String) = if let Some(ref name) = name {
-                        // Use specific error codes with the variable name
-                        if cause == TypeId::NULL {
-                            (
-                                diagnostic_codes::IS_POSSIBLY_NULL,
-                                format!("'{name}' is possibly 'null'."),
-                            )
-                        } else if cause == TypeId::UNDEFINED {
-                            (
-                                diagnostic_codes::IS_POSSIBLY_UNDEFINED,
-                                format!("'{name}' is possibly 'undefined'."),
-                            )
-                        } else {
-                            (
-                                diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED,
-                                format!("'{name}' is possibly 'null' or 'undefined'."),
-                            )
-                        }
-                    } else {
-                        // Fall back to generic error codes
-                        if cause == TypeId::NULL {
-                            (
-                                diagnostic_codes::OBJECT_IS_POSSIBLY_NULL,
-                                "Object is possibly 'null'.".to_string(),
-                            )
-                        } else if cause == TypeId::UNDEFINED {
-                            (
-                                diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED,
-                                "Object is possibly 'undefined'.".to_string(),
-                            )
-                        } else {
-                            (
-                                diagnostic_codes::OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED,
-                                "Object is possibly 'null' or 'undefined'.".to_string(),
-                            )
-                        }
-                    };
-
-                    // Report the error on the expression part
-                    self.error_at_node(access.expression, &message, code);
-
-                    // Error recovery: return the property type found in valid members
-                    self.finalize_property_access_result(
-                        idx,
-                        property_type.unwrap_or(TypeId::ERROR),
-                        skip_flow_narrowing,
-                        false,
-                    )
-                }
+                } => self.handle_possibly_null_or_undefined_access(
+                    idx,
+                    access.expression,
+                    access.name_or_argument,
+                    access.question_dot_token,
+                    property_type,
+                    cause,
+                    object_type_for_access,
+                    property_name,
+                    skip_flow_narrowing,
+                    receiver_has_daa_error,
+                ),
 
                 PropertyAccessResult::IsUnknown => {
                     // TS18046: 'x' is of type 'unknown'.
@@ -2838,5 +2454,438 @@ impl<'a> CheckerState<'a> {
         } else {
             TypeId::ANY
         }
+    }
+
+    /// Handles import.meta property access.
+    /// Returns Some(type) if this is an import.meta access, None otherwise.
+    fn try_resolve_import_meta_access(
+        &mut self,
+        idx: NodeIndex,
+        expression: NodeIndex,
+        name_or_argument: NodeIndex,
+    ) -> Option<TypeId> {
+        let expr_node = self.ctx.arena.get(expression)?;
+        if expr_node.kind != SyntaxKind::ImportKeyword as u16 {
+            return None;
+        }
+
+        let is_meta = self
+            .ctx
+            .arena
+            .get(name_or_argument)
+            .and_then(|n| self.ctx.arena.get_identifier(n))
+            .is_some_and(|ident| ident.escaped_text == "meta");
+
+        if is_meta {
+            self.check_import_meta_in_cjs(idx);
+            // import.meta resolves to the global `ImportMeta` interface
+            // (declared in lib.es2020.full.d.ts). Returning that type
+            // enables TS2339 on unknown properties (`import.meta.blah`)
+            // and merges `declare global { interface ImportMeta { ... } }`
+            // augmentations through lib-heritage merging.
+            if let Some(import_meta_ty) = self.resolve_lib_type_by_name("ImportMeta") {
+                return Some(import_meta_ty);
+            }
+        }
+        // Fallback (ImportMeta not in lib scope, or non-`meta` meta-property
+        // like `import.metal`): return ANY so downstream access doesn't
+        // cascade misleading TS2339s. A separate grammar check is expected
+        // to emit TS17012 for the invalid meta-property name.
+        Some(TypeId::ANY)
+    }
+
+    /// Fast path for enum/namespace member value access (`E.Member` or `Ns.Member`).
+    /// Returns Some(type) if this is an enum/namespace member access that can be resolved
+    /// directly, None otherwise (fall through to general property-access pipeline).
+    fn try_resolve_enum_namespace_member_access(
+        &mut self,
+        idx: NodeIndex,
+        expression: NodeIndex,
+        name_or_argument: NodeIndex,
+        name_node: &tsz_parser::parser::node::Node,
+        skip_flow_narrowing: bool,
+    ) -> Option<TypeId> {
+        let name_ident = self.ctx.arena.get_identifier(name_node)?;
+        let property_name = &name_ident.escaped_text;
+
+        let is_identifier_base = self
+            .ctx
+            .arena
+            .get(expression)
+            .is_some_and(|expr_node| expr_node.kind == SyntaxKind::Identifier as u16);
+
+        if !is_identifier_base {
+            return None;
+        }
+
+        let base_sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expression)?;
+        let base_symbol = self.ctx.binder.get_symbol(base_sym_id)?;
+
+        if base_symbol.flags & (symbol_flags::ENUM | symbol_flags::VALUE_MODULE) == 0 {
+            return None;
+        }
+
+        let exports = base_symbol.exports.as_ref()?;
+        let member_sym_id = exports.get(property_name)?;
+
+        // For namespace members, only use the fast path when the export has
+        // value semantics (VARIABLE, CLASS, FUNCTION, etc.) or is an alias
+        // (export import). Type-only exports (interfaces, type aliases) must go
+        // through the general property-access path so that TS2708/TS2693
+        // diagnostics are properly emitted.
+        let member_has_value_semantics = self
+            .ctx
+            .binder
+            .get_symbol(member_sym_id)
+            .map_or(false, |s| {
+                s.flags & (symbol_flags::VALUE | symbol_flags::ALIAS) != 0
+            });
+        if !member_has_value_semantics {
+            return None;
+        }
+
+        // For merged symbols (e.g., namespace + interface), verify that the VALUE
+        // part is actually exported. If only the TYPE part is exported, the value
+        // is not accessible and we should fall through to emit TS2339.
+        if !self.symbol_has_exported_value_declaration(member_sym_id) {
+            return None;
+        }
+
+        let is_enum = base_symbol.flags & symbol_flags::ENUM != 0;
+
+        // TS1361/TS1362: Check if the base identifier is a type-only import.
+        if let Some(local_sym_id) = self.resolve_identifier_symbol(expression)
+            && self.alias_resolves_to_type_only(local_sym_id)
+            && let Some(base_node) = self.ctx.arena.get(expression)
+            && let Some(base_ident) = self.ctx.arena.get_identifier(base_node)
+            && !self
+                .source_file_has_value_import_binding_named(expression, &base_ident.escaped_text)
+        {
+            self.report_wrong_meaning_diagnostic(
+                &base_ident.escaped_text,
+                expression,
+                crate::query_boundaries::name_resolution::NameLookupKind::Type,
+            );
+            return Some(TypeId::ERROR);
+        }
+
+        if is_enum {
+            // TS2450: Check if enum is used before its declaration (TDZ violation).
+            if let Some(base_node) = self.ctx.arena.get(expression)
+                && let Some(base_ident) = self.ctx.arena.get_identifier(base_node)
+            {
+                let base_name = &base_ident.escaped_text;
+                if self.check_tdz_violation(base_sym_id, expression, base_name, true) {
+                    return Some(TypeId::ERROR);
+                }
+            }
+
+            // TS2748: Cannot access ambient const enums when isolatedModules is enabled.
+            if self.ctx.isolated_modules()
+                && base_symbol.flags & symbol_flags::CONST_ENUM != 0
+                && self.is_const_enum_ambient(base_symbol)
+                && !self.is_in_type_only_position(idx)
+            {
+                let option_name = if self.ctx.compiler_options.verbatim_module_syntax {
+                    "verbatimModuleSyntax"
+                } else {
+                    "isolatedModules"
+                };
+                let msg = crate::diagnostics::format_message(
+                    crate::diagnostics::diagnostic_messages::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
+                    &[option_name],
+                );
+                self.error_at_node(
+                    idx,
+                    &msg,
+                    crate::diagnostics::diagnostic_codes::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
+                );
+            }
+        }
+
+        // TS2729 for namespace member access in static property initializers.
+        if base_symbol.flags & symbol_flags::VALUE_MODULE != 0
+            && self.is_in_static_property_initializer_ast_context(expression)
+            && self.find_enclosing_computed_property(expression).is_none()
+        {
+            let decl_idx = if base_symbol.value_declaration.is_some() {
+                base_symbol.value_declaration
+            } else if let Some(&first_decl) = base_symbol.declarations.first() {
+                first_decl
+            } else {
+                NodeIndex::NONE
+            };
+            if decl_idx.is_some()
+                && let Some(usage_node) = self.ctx.arena.get(expression)
+                && let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                && usage_node.pos < decl_node.pos
+            {
+                self.error_at_node(
+                    name_or_argument,
+                    &format!(
+                        "Property '{}' is used before its initialization.",
+                        name_ident.escaped_text
+                    ),
+                    tsz_common::diagnostics::diagnostic_codes::PROPERTY_IS_USED_BEFORE_ITS_INITIALIZATION,
+                );
+            }
+        }
+
+        // Resolve the member type.
+        let member_sym = self.ctx.binder.get_symbol(member_sym_id);
+        let member_type = if let Some(member_sym) = member_sym
+            && member_sym.flags & symbol_flags::INTERFACE != 0
+            && member_sym.flags & symbol_flags::VARIABLE != 0
+            && member_sym.value_declaration.is_some()
+        {
+            self.type_of_value_declaration_for_symbol(member_sym_id, member_sym.value_declaration)
+        } else {
+            self.get_type_of_symbol(member_sym_id)
+        };
+
+        Some(self.finalize_property_access_result(idx, member_type, skip_flow_narrowing, false))
+    }
+
+    /// Handles the PossiblyNullOrUndefined result from property access resolution.
+    /// Emits appropriate diagnostics (TS18047/18048/18049/18050) and returns the resolved type.
+    #[allow(clippy::too_many_arguments)]
+    fn handle_possibly_null_or_undefined_access(
+        &mut self,
+        idx: NodeIndex,
+        expression: NodeIndex,
+        name_or_argument: NodeIndex,
+        question_dot_token: bool,
+        property_type: Option<TypeId>,
+        cause: TypeId,
+        object_type_for_access: TypeId,
+        property_name: &str,
+        skip_flow_narrowing: bool,
+        receiver_has_daa_error: bool,
+    ) -> TypeId {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
+        let factory = self.ctx.types.factory();
+
+        if receiver_has_daa_error {
+            return self.finalize_property_access_result(
+                idx,
+                property_type.unwrap_or(TypeId::ERROR),
+                skip_flow_narrowing,
+                false,
+            );
+        }
+
+        // Check for optional chaining (?.)
+        if question_dot_token {
+            if self
+                .ctx
+                .compiler_options
+                .no_property_access_from_index_signature
+                && let (Some(non_nullish_base), _) = self.split_nullish_type(object_type_for_access)
+                && let PropertyAccessResult::Success {
+                    from_index_signature,
+                    ..
+                } = self.resolve_property_access_with_env(non_nullish_base, property_name)
+                && from_index_signature
+                && !self.union_has_explicit_property_member(non_nullish_base, property_name)
+            {
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node(
+                    name_or_argument,
+                    &format!(
+                        "Property '{property_name}' comes from an index signature, so it must be accessed with ['{property_name}']."
+                    ),
+                    diagnostic_codes::PROPERTY_COMES_FROM_AN_INDEX_SIGNATURE_SO_IT_MUST_BE_ACCESSED_WITH,
+                );
+            }
+            // Suppress error, return (property_type | undefined)
+            let base_type = property_type.unwrap_or(TypeId::UNKNOWN);
+            return factory.union2(base_type, TypeId::UNDEFINED);
+        }
+
+        // Report error based on the cause (TS2531/TS2532/TS2533 or TS18050)
+        use crate::diagnostics::diagnostic_codes;
+
+        // Suppress cascade errors when cause is ERROR/ANY/UNKNOWN
+        if cause == TypeId::ERROR || cause == TypeId::ANY || cause == TypeId::UNKNOWN {
+            return property_type.unwrap_or(TypeId::ERROR);
+        }
+
+        // Check if the type is entirely nullish (no non-nullish part in union)
+        let is_type_nullish =
+            object_type_for_access == TypeId::NULL || object_type_for_access == TypeId::UNDEFINED;
+
+        // For possibly-nullish values in non-strict mode, don't error
+        if !self.ctx.compiler_options.strict_null_checks && !is_type_nullish {
+            return self.finalize_property_access_result(
+                idx,
+                property_type.unwrap_or(TypeId::ERROR),
+                skip_flow_narrowing,
+                false,
+            );
+        }
+
+        // Check if the expression is a literal null/undefined keyword
+        let is_literal_nullish = if let Some(expr_node) = self.ctx.arena.get(expression) {
+            expr_node.kind == SyntaxKind::NullKeyword as u16
+                || (expr_node.kind == SyntaxKind::Identifier as u16
+                    && self
+                        .ctx
+                        .arena
+                        .get_identifier(expr_node)
+                        .is_some_and(|ident| ident.escaped_text == "undefined"))
+        } else {
+            false
+        };
+
+        // When the expression IS a literal null/undefined keyword, emit TS18050
+        if is_literal_nullish {
+            let value_name = if cause == TypeId::NULL {
+                "null"
+            } else if cause == TypeId::UNDEFINED {
+                "undefined"
+            } else {
+                "null | undefined"
+            };
+            self.error_at_node_msg(
+                expression,
+                diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
+                &[value_name],
+            );
+            return self.finalize_property_access_result(
+                idx,
+                property_type.unwrap_or(TypeId::ERROR),
+                skip_flow_narrowing,
+                false,
+            );
+        }
+
+        // Without strictNullChecks, TS18047/TS18048/TS18049 are never emitted
+        if !self.ctx.compiler_options.strict_null_checks {
+            return self.finalize_property_access_result(
+                idx,
+                property_type.unwrap_or(TypeId::ERROR),
+                skip_flow_narrowing,
+                false,
+            );
+        }
+
+        // When TS2454 has already been emitted, suppress TS18047/18048/18049
+        if self.ctx.daa_error_nodes.contains(&expression.0)
+            || self.ctx.daa_error_nodes.contains(&idx.0)
+        {
+            return self.finalize_property_access_result(
+                idx,
+                property_type.unwrap_or(TypeId::ERROR),
+                skip_flow_narrowing,
+                false,
+            );
+        }
+
+        // Get expression name for error message
+        let name = self.expression_text(expression).or_else(|| {
+            self.is_this_expression(expression)
+                .then(|| "this".to_string())
+        });
+
+        let (code, message): (u32, String) = if let Some(ref name) = name {
+            if cause == TypeId::NULL {
+                (
+                    diagnostic_codes::IS_POSSIBLY_NULL,
+                    format!("'{name}' is possibly 'null'."),
+                )
+            } else if cause == TypeId::UNDEFINED {
+                (
+                    diagnostic_codes::IS_POSSIBLY_UNDEFINED,
+                    format!("'{name}' is possibly 'undefined'."),
+                )
+            } else {
+                (
+                    diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED,
+                    format!("'{name}' is possibly 'null' or 'undefined'."),
+                )
+            }
+        } else if cause == TypeId::NULL {
+            (
+                diagnostic_codes::OBJECT_IS_POSSIBLY_NULL,
+                "Object is possibly 'null'.".to_string(),
+            )
+        } else if cause == TypeId::UNDEFINED {
+            (
+                diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED,
+                "Object is possibly 'undefined'.".to_string(),
+            )
+        } else {
+            (
+                diagnostic_codes::OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED,
+                "Object is possibly 'null' or 'undefined'.".to_string(),
+            )
+        };
+
+        self.error_at_node(expression, &message, code);
+
+        self.finalize_property_access_result(
+            idx,
+            property_type.unwrap_or(TypeId::ERROR),
+            skip_flow_narrowing,
+            false,
+        )
+    }
+
+    /// Handles property access on globalThis or Window-like expressions.
+    /// Returns Some(type) if this is a globalThis/Window access, None otherwise.
+    fn try_resolve_global_this_property_access(
+        &mut self,
+        idx: NodeIndex,
+        expression: NodeIndex,
+        name_or_argument: NodeIndex,
+        property_name: &str,
+        skip_flow_narrowing: bool,
+    ) -> Option<TypeId> {
+        let is_this_global = self.is_this_resolving_to_global(expression);
+        if !self.is_global_this_like_expression(expression) && !is_this_global {
+            return None;
+        }
+
+        let base_display = if self.is_global_this_expression(expression) || is_this_global {
+            "typeof globalThis"
+        } else {
+            "Window & typeof globalThis"
+        };
+        let allow_unknown_property_fallback =
+            self.is_global_this_expression(expression) || is_this_global;
+        let property_type = self.resolve_global_this_property_type(
+            property_name,
+            name_or_argument,
+            allow_unknown_property_fallback,
+            base_display,
+        );
+
+        if property_type == TypeId::ERROR {
+            return Some(TypeId::ERROR);
+        }
+
+        // TS7017: When noImplicitAny is enabled and `this` resolves to typeof globalThis
+        // and the property is not found, emit the index signature error.
+        if is_this_global
+            && property_type == TypeId::ANY
+            && self.ctx.no_implicit_any()
+            && !self.is_js_file()
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            self.error_at_node(
+                name_or_argument,
+                &format_message(
+                    diagnostic_messages::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_TYPE_HAS_NO_INDEX_SIGNATURE,
+                    &["typeof globalThis"],
+                ),
+                diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_TYPE_HAS_NO_INDEX_SIGNATURE,
+            );
+        }
+
+        Some(self.finalize_property_access_result(idx, property_type, skip_flow_narrowing, false))
     }
 }
