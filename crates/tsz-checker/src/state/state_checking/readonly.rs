@@ -623,7 +623,7 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        return self.constraint_has_index_signature(object_type, index_type);
+        self.constraint_has_index_signature(object_type, index_type)
     }
 
     /// Check if the constraint of a type parameter has an index signature

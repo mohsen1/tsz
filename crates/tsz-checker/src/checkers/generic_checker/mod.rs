@@ -22,11 +22,11 @@ impl<'a> CheckerState<'a> {
             if node.kind == syntax_kind_ext::INFER_TYPE {
                 return true;
             }
-            if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
-                if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
-                    node_idx = wrapped.type_node;
-                    continue;
-                }
+            if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+                && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
+            {
+                node_idx = wrapped.type_node;
+                continue;
             }
             return false;
         }

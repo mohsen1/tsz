@@ -73,14 +73,12 @@ pub(crate) fn is_string_property_name_node(arena: &NodeArena, name_idx: NodeInde
         return true;
     }
     // Computed property name with string literal: { ["404"]: value }
-    if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-        if let Some(computed) = arena.get_computed_property(name_node) {
-            if let Some(expr_node) = arena.get(computed.expression) {
-                if expr_node.kind == SyntaxKind::StringLiteral as u16 {
-                    return true;
-                }
-            }
-        }
+    if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+        && let Some(computed) = arena.get_computed_property(name_node)
+        && let Some(expr_node) = arena.get(computed.expression)
+        && expr_node.kind == SyntaxKind::StringLiteral as u16
+    {
+        return true;
     }
     false
 }

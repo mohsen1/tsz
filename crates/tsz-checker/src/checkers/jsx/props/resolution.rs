@@ -682,7 +682,7 @@ impl<'a> CheckerState<'a> {
                                 if is_ident {
                                     attr_name.clone()
                                 } else {
-                                    format!("\"{}\"", attr_name)
+                                    format!("\"{attr_name}\"")
                                 }
                             };
                             let source_display = format!("{{ {display_name}: {attr_type_name}; }}");
@@ -1037,9 +1037,8 @@ impl<'a> CheckerState<'a> {
                 } else {
                     false
                 };
-                let has_body_children = children_ctx
-                    .as_ref()
-                    .map_or(false, |ctx| ctx.child_count > 0);
+                let has_body_children =
+                    children_ctx.as_ref().is_some_and(|ctx| ctx.child_count > 0);
                 let suppress_missing_props = spread_has_children && has_body_children;
 
                 let had_error = self.check_spread_property_types(

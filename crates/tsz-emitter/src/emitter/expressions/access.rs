@@ -568,10 +568,10 @@ impl<'a> Printer<'a> {
                     return Some(r);
                 }
             }
-        } else if let Some(target) = self.const_enum_import_aliases.get(enum_path) {
-            if let Some(r) = self.lookup_scoped_const_enum_values_direct(target, access_pos) {
-                return Some(r);
-            }
+        } else if let Some(target) = self.const_enum_import_aliases.get(enum_path)
+            && let Some(r) = self.lookup_scoped_const_enum_values_direct(target, access_pos)
+        {
+            return Some(r);
         }
         None
     }
@@ -720,17 +720,15 @@ impl<'a> Printer<'a> {
         };
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access) = self.arena.get_access_expr(node)
+            && let Some(ep) = self.build_access_chain_path(access.expression)
+            && let Some(expr) = self.arena.get(access.expression)
+            && let Some(name) = self.arena.get(access.name_or_argument)
+            && name.kind == SyntaxKind::Identifier as u16
+            && let Some(mi) = self.arena.get_identifier(name)
+            && let Some(members) = self.lookup_scoped_const_enum_values(&ep, expr.pos)
+            && let Some(value) = members.get(mi.escaped_text.as_str())
         {
-            if let Some(ep) = self.build_access_chain_path(access.expression)
-                && let Some(expr) = self.arena.get(access.expression)
-                && let Some(name) = self.arena.get(access.name_or_argument)
-                && name.kind == SyntaxKind::Identifier as u16
-                && let Some(mi) = self.arena.get_identifier(name)
-                && let Some(members) = self.lookup_scoped_const_enum_values(&ep, expr.pos)
-                && let Some(value) = members.get(mi.escaped_text.as_str())
-            {
-                return value.is_negative();
-            }
+            return value.is_negative();
         }
         // Check element access: EnumName["Member"] or EnumName[`Member`]
         if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
@@ -762,17 +760,15 @@ impl<'a> Printer<'a> {
         }
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access) = self.arena.get_access_expr(node)
+            && let Some(ep) = self.build_access_chain_path(access.expression)
+            && let Some(expr) = self.arena.get(access.expression)
+            && let Some(name) = self.arena.get(access.name_or_argument)
+            && name.kind == SyntaxKind::Identifier as u16
+            && let Some(mi) = self.arena.get_identifier(name)
+            && let Some(members) = self.lookup_scoped_const_enum_values(&ep, expr.pos)
+            && let Some(value) = members.get(mi.escaped_text.as_str())
         {
-            if let Some(ep) = self.build_access_chain_path(access.expression)
-                && let Some(expr) = self.arena.get(access.expression)
-                && let Some(name) = self.arena.get(access.name_or_argument)
-                && name.kind == SyntaxKind::Identifier as u16
-                && let Some(mi) = self.arena.get_identifier(name)
-                && let Some(members) = self.lookup_scoped_const_enum_values(&ep, expr.pos)
-                && let Some(value) = members.get(mi.escaped_text.as_str())
-            {
-                return value.needs_double_dot();
-            }
+            return value.needs_double_dot();
         }
         // Check element access: EnumName["Member"] or EnumName[`Member`]
         if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION

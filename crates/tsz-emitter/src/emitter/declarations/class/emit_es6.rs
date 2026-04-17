@@ -537,6 +537,8 @@ impl<'a> Printer<'a> {
         let target_needs_field_lowering = (self.ctx.options.target as u32)
             < (tsz_common::ScriptTarget::ES2022 as u32)
             || !self.ctx.options.use_define_for_class_fields;
+        // Positive-form predicate reads more clearly than clippy's inverted De Morgan form.
+        #[allow(clippy::nonminimal_bool)]
         let needs_static_comma_expr = is_class_expression
             && target_needs_field_lowering
             && class.members.nodes.iter().any(|&member_idx| {

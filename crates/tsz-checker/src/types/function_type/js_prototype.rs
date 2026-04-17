@@ -1,5 +1,6 @@
 //! JS prototype owner expression helpers and constructor body instance type resolution.
 use crate::state::CheckerState;
+use crate::types_domain::computation::complex_constructors::PrototypeMembers;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
@@ -80,16 +81,12 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn find_assignment_lhs_for_rhs(&self, rhs_idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = rhs_idx;
         for _ in 0..6 {
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                return None;
-            };
+            let ext = self.ctx.arena.get_extended(current)?;
             let parent = ext.parent;
             if parent.is_none() {
                 return None;
             }
-            let Some(parent_node) = self.ctx.arena.get(parent) else {
-                return None;
-            };
+            let parent_node = self.ctx.arena.get(parent)?;
             match parent_node.kind {
                 syntax_kind_ext::PARENTHESIZED_EXPRESSION
                 | syntax_kind_ext::PROPERTY_ASSIGNMENT
@@ -97,9 +94,7 @@ impl<'a> CheckerState<'a> {
                     current = parent;
                 }
                 syntax_kind_ext::BINARY_EXPRESSION => {
-                    let Some(binary) = self.ctx.arena.get_binary_expr(parent_node) else {
-                        return None;
-                    };
+                    let binary = self.ctx.arena.get_binary_expr(parent_node)?;
                     if binary.right == current && self.is_assignment_operator(binary.operator_token)
                     {
                         return Some(binary.left);
@@ -224,8 +219,11 @@ impl<'a> CheckerState<'a> {
             })
             && let Some(sym_id) = self.ctx.binder.get_node_symbol(func_idx)
         {
-            let (method_bindings, this_props, _) =
-                self.collect_prototype_members_and_this_properties(func_idx, &func_name, sym_id);
+            let PrototypeMembers {
+                method_bindings,
+                this_props,
+                ..
+            } = self.collect_prototype_members_and_this_properties(func_idx, &func_name, sym_id);
             for (name, prop) in method_bindings {
                 properties.entry(name).or_insert(prop);
             }

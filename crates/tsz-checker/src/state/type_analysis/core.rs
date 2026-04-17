@@ -1811,12 +1811,12 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
         // Periodically probe remaining stack and trip the breaker if low.
-        if crate::checkers_domain::should_probe_stack() {
-            if stacker::remaining_stack().unwrap_or(0) < 1024 * 1024 {
-                crate::checkers_domain::trip_stack_overflow();
-                self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
-                return TypeId::ERROR;
-            }
+        if crate::checkers_domain::should_probe_stack()
+            && stacker::remaining_stack().unwrap_or(0) < 1024 * 1024
+        {
+            crate::checkers_domain::trip_stack_overflow();
+            self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
+            return TypeId::ERROR;
         }
         // Dynamically grow the stack for deeply recursive symbol resolution
         // chains.
@@ -2232,48 +2232,44 @@ impl<'a> CheckerState<'a> {
                     .definition_store
                     .get(def_id)
                     .is_some_and(|d| d.type_params.is_empty())
+                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                 {
-                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                        for &decl_idx in &symbol.declarations {
-                            if let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                                && let Some(type_alias) = self.ctx.arena.get_type_alias(decl_node)
-                                && let Some(body_node) = self.ctx.arena.get(type_alias.type_node)
+                    for &decl_idx in &symbol.declarations {
+                        if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                            && let Some(type_alias) = self.ctx.arena.get_type_alias(decl_node)
+                            && let Some(body_node) = self.ctx.arena.get(type_alias.type_node)
+                        {
+                            use tsz_parser::parser::syntax_kind_ext;
+                            if body_node.kind == syntax_kind_ext::INTERSECTION_TYPE
+                                || body_node.kind == syntax_kind_ext::CONDITIONAL_TYPE
                             {
-                                use tsz_parser::parser::syntax_kind_ext;
-                                if body_node.kind == syntax_kind_ext::INTERSECTION_TYPE
-                                    || body_node.kind == syntax_kind_ext::CONDITIONAL_TYPE
-                                {
-                                    // Only mark if the result is a union of purely
-                                    // primitive/literal types (no objects, functions, etc.).
-                                    // When an intersection distributes and produces object-
-                                    // typed members, tsc preserves the alias name for
-                                    // readability. Only trivial reductions like
-                                    // `T1 & ("a"|"b")` → `"a"|"b"` should expand.
-                                    let is_trivial_reduction =
-                                        crate::query_boundaries::common::union_members(
-                                            self.ctx.types,
-                                            result,
-                                        )
-                                        .is_some_and(
-                                            |members| {
-                                                members.iter().all(|&m| {
-                                                    tsz_solver::literal_value(self.ctx.types, m)
-                                                        .is_some()
-                                                        || m == TypeId::STRING
-                                                        || m == TypeId::NUMBER
-                                                        || m == TypeId::BOOLEAN
-                                                        || m == TypeId::BIGINT
-                                                        || m == TypeId::SYMBOL
-                                                        || m == TypeId::UNDEFINED
-                                                        || m == TypeId::NULL
-                                                        || m == TypeId::VOID
-                                                        || m == TypeId::NEVER
-                                                })
-                                            },
-                                        );
-                                    if is_trivial_reduction {
-                                        self.ctx.definition_store.mark_body_as_computed(result);
-                                    }
+                                // Only mark if the result is a union of purely
+                                // primitive/literal types (no objects, functions, etc.).
+                                // When an intersection distributes and produces object-
+                                // typed members, tsc preserves the alias name for
+                                // readability. Only trivial reductions like
+                                // `T1 & ("a"|"b")` → `"a"|"b"` should expand.
+                                let is_trivial_reduction =
+                                    crate::query_boundaries::common::union_members(
+                                        self.ctx.types,
+                                        result,
+                                    )
+                                    .is_some_and(|members| {
+                                        members.iter().all(|&m| {
+                                            tsz_solver::literal_value(self.ctx.types, m).is_some()
+                                                || m == TypeId::STRING
+                                                || m == TypeId::NUMBER
+                                                || m == TypeId::BOOLEAN
+                                                || m == TypeId::BIGINT
+                                                || m == TypeId::SYMBOL
+                                                || m == TypeId::UNDEFINED
+                                                || m == TypeId::NULL
+                                                || m == TypeId::VOID
+                                                || m == TypeId::NEVER
+                                        })
+                                    });
+                                if is_trivial_reduction {
+                                    self.ctx.definition_store.mark_body_as_computed(result);
                                 }
                             }
                         }

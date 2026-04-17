@@ -303,13 +303,12 @@ impl<'a> CheckerState<'a> {
                         | tsz_binder::symbol_flags::VALUE_MODULE)
                     != 0
         });
-        if !is_ns_interface_merge {
-            if let Some(&cached) = self.ctx.symbol_instance_types.get(&sym_id)
-                && cached != TypeId::ERROR
-                && cached != TypeId::UNKNOWN
-            {
-                return cached;
-            }
+        if !is_ns_interface_merge
+            && let Some(&cached) = self.ctx.symbol_instance_types.get(&sym_id)
+            && cached != TypeId::ERROR
+            && cached != TypeId::UNKNOWN
+        {
+            return cached;
         }
 
         let depth = self.ctx.symbol_resolution_depth.get();
@@ -358,7 +357,7 @@ impl<'a> CheckerState<'a> {
                 let value_flags_except_module =
                     tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE;
                 if (member_flags & value_flags_except_module) == 0 {
-                    let is_instantiated = member_symbol.map_or(false, |ms| {
+                    let is_instantiated = member_symbol.is_some_and(|ms| {
                         ms.declarations
                             .iter()
                             .any(|&decl_idx| self.is_namespace_declaration_instantiated(decl_idx))
@@ -845,10 +844,9 @@ impl<'a> CheckerState<'a> {
             // `m3: typeof M3` and M3 is a namespace exporting enum Color.
             if member_symbol.flags & symbol_flags::ENUM != 0
                 && (member_symbol.flags & symbol_flags::ENUM_MEMBER) == 0
+                && let Some(&ns_type) = self.ctx.enum_namespace_types.get(member_id)
             {
-                if let Some(&ns_type) = self.ctx.enum_namespace_types.get(member_id) {
-                    type_id = ns_type;
-                }
+                type_id = ns_type;
             }
             if member_symbol.flags & symbol_flags::INTERFACE != 0 {
                 let mut candidate = self.type_of_value_declaration_for_symbol(

@@ -36,7 +36,7 @@ impl<'a> CheckerState<'a> {
         };
         call.arguments
             .as_ref()
-            .map_or(false, |args| args.nodes.len() == 1)
+            .is_some_and(|args| args.nodes.len() == 1)
     }
 
     pub(super) fn overload_callee_is_property_like(&self, idx: NodeIndex) -> bool {

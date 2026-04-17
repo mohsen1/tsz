@@ -56,13 +56,13 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
-        if self.is_js_file() && self.ctx.compiler_options.check_js {
-            if self.property_access_is_direct_write_target(idx) {
-                let write_base_type =
-                    self.get_type_of_write_target_base_expression(access.expression);
-                if self.is_expando_function_assignment(idx, access.expression, write_base_type) {
-                    return TypeId::ANY;
-                }
+        if self.is_js_file()
+            && self.ctx.compiler_options.check_js
+            && self.property_access_is_direct_write_target(idx)
+        {
+            let write_base_type = self.get_type_of_write_target_base_expression(access.expression);
+            if self.is_expando_function_assignment(idx, access.expression, write_base_type) {
+                return TypeId::ANY;
             }
         }
 
@@ -2540,9 +2540,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .binder
             .get_symbol(member_sym_id)
-            .map_or(false, |s| {
-                s.flags & (symbol_flags::VALUE | symbol_flags::ALIAS) != 0
-            });
+            .is_some_and(|s| s.flags & (symbol_flags::VALUE | symbol_flags::ALIAS) != 0);
         if !member_has_value_semantics {
             return None;
         }
@@ -2649,7 +2647,7 @@ impl<'a> CheckerState<'a> {
         Some(self.finalize_property_access_result(idx, member_type, skip_flow_narrowing, false))
     }
 
-    /// Handles the PossiblyNullOrUndefined result from property access resolution.
+    /// Handles the `PossiblyNullOrUndefined` result from property access resolution.
     /// Emits appropriate diagnostics (TS18047/18048/18049/18050) and returns the resolved type.
     #[allow(clippy::too_many_arguments)]
     fn handle_possibly_null_or_undefined_access(

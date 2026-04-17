@@ -855,16 +855,24 @@ pub fn collect_export_names_with_options(
 
 /// Collect export names, categorized into function declarations (hoisted)
 /// and other declarations (non-hoisted).
-/// Returns (`function_exports`, `other_exports`, `default_func_export`)
-/// where `default_func_export` is `Some(local_name)` when the file has
-/// `export default function name() {}` — the local function name for the
-/// hoisted `exports.default = name;` preamble assignment.
-#[allow(clippy::type_complexity)]
+/// Categorized exports from a source file, grouped by how `CommonJS` lowering
+/// should emit their initialization.
+pub struct CategorizedExports {
+    /// Function exports as `(exported_name, local_name)` pairs. These are
+    /// hoisted so `exports.foo = foo;` can be emitted before the function body.
+    pub function_exports: Vec<(String, String)>,
+    /// Non-function exports that need `exports.foo = void 0;` initialization.
+    pub other_exports: Vec<String>,
+    /// Local names of `export default function name() {}` declarations,
+    /// used for the hoisted `exports.default = name;` preamble assignment.
+    pub default_function_exports: Vec<String>,
+}
+
 pub fn collect_export_names_categorized(
     arena: &NodeArena,
     statements: &[NodeIndex],
     preserve_const_enums: bool,
-) -> (Vec<(String, String)>, Vec<String>, Vec<String>) {
+) -> CategorizedExports {
     let mut func_exports: Vec<(String, String)> = Vec::new(); // (exported_name, local_name)
     let mut other_exports = Vec::new();
     let mut default_func_exports: Vec<String> = Vec::new();
@@ -1072,7 +1080,11 @@ pub fn collect_export_names_categorized(
     // groups of 50, with each chunk reversed (via reduceLeft in tsc).
     // We keep source order here and let the emit code handle chunking+reversal.
 
-    (func_exports, other_exports, default_func_exports)
+    CategorizedExports {
+        function_exports: func_exports,
+        other_exports,
+        default_function_exports: default_func_exports,
+    }
 }
 
 /// Collect names from inline-exported variable declarations (`export let/const/var`).
@@ -1120,13 +1132,11 @@ pub fn collect_inline_exported_var_names(
             // `export import b = a.foo` — the alias name becomes `exports.b`
             else if clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                 && let Some(import_decl) = arena.get_import_decl(clause_node)
+                && let Some(name_node) = arena.get(import_decl.import_clause)
+                && name_node.kind == SyntaxKind::Identifier as u16
+                && let Some(ident) = arena.get_identifier(name_node)
             {
-                if let Some(name_node) = arena.get(import_decl.import_clause)
-                    && name_node.kind == SyntaxKind::Identifier as u16
-                    && let Some(ident) = arena.get_identifier(name_node)
-                {
-                    names.push(ident.escaped_text.clone());
-                }
+                names.push(ident.escaped_text.clone());
             }
         }
     }

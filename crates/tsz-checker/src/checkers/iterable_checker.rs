@@ -1451,7 +1451,7 @@ impl<'a> CheckerState<'a> {
     /// will be sent to it during iteration.
     ///
     /// For for-of, spread, and destructuring, the sent type is always `undefined`.
-    /// For `yield*`, the sent type is the containing generator's TNext.
+    /// For `yield*`, the sent type is the containing generator's `TNext`.
     ///
     /// If incompatible, emits:
     /// - TS2763 for for-of

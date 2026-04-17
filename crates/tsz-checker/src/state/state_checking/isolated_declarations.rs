@@ -1274,19 +1274,19 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
-        } else if expr_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-            if let Some(arr) = self.ctx.arena.get_literal_expr(expr_node) {
-                for &elem_idx in &arr.elements.nodes {
-                    if !self.is_isolated_decl_simple_value(elem_idx) {
-                        // Recurse into nested object/array literals
-                        if let Some(elem_node) = self.ctx.arena.get(elem_idx)
-                            && (elem_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                                || elem_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
-                        {
-                            return self.find_first_non_inferrable_expr(elem_idx);
-                        }
-                        return Some(elem_idx);
+        } else if expr_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            && let Some(arr) = self.ctx.arena.get_literal_expr(expr_node)
+        {
+            for &elem_idx in &arr.elements.nodes {
+                if !self.is_isolated_decl_simple_value(elem_idx) {
+                    // Recurse into nested object/array literals
+                    if let Some(elem_node) = self.ctx.arena.get(elem_idx)
+                        && (elem_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            || elem_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+                    {
+                        return self.find_first_non_inferrable_expr(elem_idx);
                     }
+                    return Some(elem_idx);
                 }
             }
         }
@@ -1400,18 +1400,18 @@ impl<'a> CheckerState<'a> {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                 continue;
             };
-            if elem_node.kind == syntax_kind_ext::BINDING_ELEMENT {
-                if let Some(binding_elem) = self.ctx.arena.get_binding_element(elem_node) {
-                    let name_idx = binding_elem.name;
-                    if self.is_binding_pattern(name_idx) {
-                        self.report_isolated_decl_binding_elements(name_idx);
-                    } else if name_idx.is_some() {
-                        self.error_at_node(
+            if elem_node.kind == syntax_kind_ext::BINDING_ELEMENT
+                && let Some(binding_elem) = self.ctx.arena.get_binding_element(elem_node)
+            {
+                let name_idx = binding_elem.name;
+                if self.is_binding_pattern(name_idx) {
+                    self.report_isolated_decl_binding_elements(name_idx);
+                } else if name_idx.is_some() {
+                    self.error_at_node(
                             name_idx,
                             diagnostic_messages::BINDING_ELEMENTS_CANT_BE_EXPORTED_DIRECTLY_WITH_ISOLATEDDECLARATIONS,
                             diagnostic_codes::BINDING_ELEMENTS_CANT_BE_EXPORTED_DIRECTLY_WITH_ISOLATEDDECLARATIONS,
                         );
-                    }
                 }
             }
         }
@@ -1420,12 +1420,8 @@ impl<'a> CheckerState<'a> {
     /// Return the source anchor (start, length) for the first `...` spread
     /// token in an array literal.
     fn first_array_spread_anchor(&self, arr_idx: NodeIndex) -> Option<(u32, u32)> {
-        let Some(arr_node) = self.ctx.arena.get(arr_idx) else {
-            return None;
-        };
-        let Some(arr) = self.ctx.arena.get_literal_expr(arr_node) else {
-            return None;
-        };
+        let arr_node = self.ctx.arena.get(arr_idx)?;
+        let arr = self.ctx.arena.get_literal_expr(arr_node)?;
         for &elem_idx in &arr.elements.nodes {
             if let Some(elem_node) = self.ctx.arena.get(elem_idx)
                 && elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT

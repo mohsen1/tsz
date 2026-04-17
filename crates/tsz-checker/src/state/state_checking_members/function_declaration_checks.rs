@@ -839,16 +839,15 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        if !self.is_assignable_to(predicate_type, param_type) {
-            if let Some(type_node) = self.ctx.arena.get(pred_data.type_node) {
-                self.ctx.error(
-                    type_node.pos,
-                    type_node.end - type_node.pos,
-                    "A type predicate's type must be assignable to its parameter's type."
-                        .to_string(),
-                    2677,
-                );
-            }
+        if !self.is_assignable_to(predicate_type, param_type)
+            && let Some(type_node) = self.ctx.arena.get(pred_data.type_node)
+        {
+            self.ctx.error(
+                type_node.pos,
+                type_node.end - type_node.pos,
+                "A type predicate's type must be assignable to its parameter's type.".to_string(),
+                2677,
+            );
         }
     }
 

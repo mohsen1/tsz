@@ -17,8 +17,8 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{FunctionShape, TypeId};
 
 /// Detect spread marker tuples `[...T]` created by the checker for generic
-/// TypeParameter spreads. A spread marker is a 1-element tuple where the single
-/// element is a rest element whose inner type is a TypeParameter.
+/// `TypeParameter` spreads. A spread marker is a 1-element tuple where the single
+/// element is a rest element whose inner type is a `TypeParameter`.
 fn is_spread_marker_tuple(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
     if let Some(elems) = common::tuple_elements(db, type_id) {
         elems.len() == 1 && elems[0].rest && is_type_parameter_type(db, elems[0].type_id)
@@ -1292,22 +1292,20 @@ impl<'a> CheckerState<'a> {
             let spread_inner = common::tuple_elements(self.ctx.types, cached_actual)
                 .filter(|elems| elems.len() == 1 && elems[0].rest)
                 .map(|elems| elems[0].type_id);
-            if let Some(inner_type) = spread_inner {
-                if let Some(param) = instantiated_params.get(index).or_else(|| {
+            if let Some(inner_type) = spread_inner
+                && let Some(param) = instantiated_params.get(index).or_else(|| {
                     let last = instantiated_params.last()?;
                     last.rest.then_some(last)
-                }) {
-                    if param.rest {
-                        let rest_array_type = self.evaluate_type_with_env(param.type_id);
-                        let is_assignable =
-                            self.is_assignable_to_with_env(inner_type, rest_array_type);
-                        if is_assignable {
-                            continue;
-                        }
-                        // If not directly assignable, fall through to normal check
-                        expected = rest_array_type;
-                    }
+                })
+                && param.rest
+            {
+                let rest_array_type = self.evaluate_type_with_env(param.type_id);
+                let is_assignable = self.is_assignable_to_with_env(inner_type, rest_array_type);
+                if is_assignable {
+                    continue;
                 }
+                // If not directly assignable, fall through to normal check
+                expected = rest_array_type;
             }
 
             let arg_idx = args.get(index).copied();

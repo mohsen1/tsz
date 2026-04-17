@@ -564,8 +564,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 diag_idx,
                 &format!(
-                    "Excessive complexity comparing types '{}' and '{}'.",
-                    source_name, target_name
+                    "Excessive complexity comparing types '{source_name}' and '{target_name}'."
                 ),
                 crate::diagnostics::diagnostic_codes::EXCESSIVE_COMPLEXITY_COMPARING_TYPES_AND,
             );
@@ -927,10 +926,9 @@ impl<'a> CheckerState<'a> {
         // Check direct function shape (FunctionShape has type_params)
         if let Some(func_shape) =
             crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
+            && !func_shape.type_params.is_empty()
         {
-            if !func_shape.type_params.is_empty() {
-                return true;
-            }
+            return true;
         }
 
         // Check object properties for callable/function types with generics
@@ -956,10 +954,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(func_shape) = crate::query_boundaries::common::function_shape_for_type(
                     self.ctx.types,
                     prop.type_id,
-                ) {
-                    if !func_shape.type_params.is_empty() {
-                        return true;
-                    }
+                ) && !func_shape.type_params.is_empty()
+                {
+                    return true;
                 }
             }
         }
@@ -1507,30 +1504,27 @@ impl<'a> CheckerState<'a> {
         // Check call signatures first
         if let Some(return_type) =
             tsz_solver::type_queries::get_return_type(self.ctx.types, resolved_source)
+            && return_type != TypeId::VOID
+            && return_type != TypeId::UNDEFINED
+            && return_type != TypeId::NEVER
+            && self.is_assignable_to(return_type, target)
         {
-            if return_type != TypeId::VOID
-                && return_type != TypeId::UNDEFINED
-                && return_type != TypeId::NEVER
-                && self.is_assignable_to(return_type, target)
-            {
-                return true;
-            }
+            return true;
         }
 
         // Check construct signatures — use get_construct_signatures directly
         // which handles Callable types and intersections.
         if let Some(sigs) =
             tsz_solver::type_queries::get_construct_signatures(self.ctx.types, resolved_source)
+            && let Some(first_sig) = sigs.first()
         {
-            if let Some(first_sig) = sigs.first() {
-                let construct_return = first_sig.return_type;
-                if construct_return != TypeId::VOID
-                    && construct_return != TypeId::UNDEFINED
-                    && construct_return != TypeId::NEVER
-                    && self.is_assignable_to(construct_return, target)
-                {
-                    return true;
-                }
+            let construct_return = first_sig.return_type;
+            if construct_return != TypeId::VOID
+                && construct_return != TypeId::UNDEFINED
+                && construct_return != TypeId::NEVER
+                && self.is_assignable_to(construct_return, target)
+            {
+                return true;
             }
         }
 

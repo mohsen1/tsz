@@ -106,8 +106,7 @@ impl ModuleResolver {
         if let Some((key, value)) = imports.get_key_value(specifier)
             && !key.contains('*')
         {
-            return self
-                .resolve_export_target_to_string(value, conditions)
+            return Self::resolve_export_target_to_string(value, conditions)
                 .map(|target| (target, false));
         }
 
@@ -128,7 +127,7 @@ impl ModuleResolver {
         }
 
         if let Some((_, wildcard, value)) = best_match
-            && let Some(target) = self.resolve_export_target_to_string(value, conditions)
+            && let Some(target) = Self::resolve_export_target_to_string(value, conditions)
         {
             let resolved_using_ts_extension = wildcard.ends_with(".ts")
                 || wildcard.ends_with(".tsx")
@@ -148,9 +147,7 @@ impl ModuleResolver {
     }
 
     /// Resolve an export/import value to a string path
-    #[allow(clippy::only_used_in_recursion)]
     pub(super) fn resolve_export_target_to_string(
-        &self,
         value: &PackageExports,
         conditions: &[String],
     ) -> Option<String> {
@@ -164,7 +161,7 @@ impl ModuleResolver {
                             return None;
                         }
                         if let Some(result) =
-                            self.resolve_export_target_to_string(nested, conditions)
+                            Self::resolve_export_target_to_string(nested, conditions)
                         {
                             return Some(result);
                         }
@@ -175,7 +172,7 @@ impl ModuleResolver {
             PackageExports::Array(elements) => {
                 // Array of fallback targets — try each element in order
                 for element in elements {
-                    if let Some(result) = self.resolve_export_target_to_string(element, conditions)
+                    if let Some(result) = Self::resolve_export_target_to_string(element, conditions)
                     {
                         return Some(result);
                     }

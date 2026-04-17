@@ -55,7 +55,6 @@ fn scope_id_equality() {
 }
 
 #[test]
-#[allow(clippy::clone_on_copy)]
 fn scope_id_clone_copy() {
     let id = ScopeId(42);
     let copied = id;
@@ -92,7 +91,6 @@ fn container_kind_equality() {
 }
 
 #[test]
-#[allow(clippy::clone_on_copy)]
 fn container_kind_clone_copy() {
     let kind = ContainerKind::Function;
     let copied = kind;

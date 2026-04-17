@@ -237,26 +237,26 @@ impl<'a> CheckerState<'a> {
                 // checking—matching resolve_generic_call_inner which defaults to
                 // `unknown` for unconstrained, uninferred type params.
                 for tp in &shape.type_params {
-                    if let Some(resolved) = substitution.get(tp.name) {
-                        if let Some(info) = tsz_solver::type_queries::get_type_parameter_info(
+                    if let Some(resolved) = substitution.get(tp.name)
+                        && let Some(info) = tsz_solver::type_queries::get_type_parameter_info(
                             self.ctx.types,
                             resolved,
-                        ) {
-                            let name_str = self.ctx.types.resolve_atom(info.name);
-                            if name_str.as_str().starts_with("__infer_") {
-                                let fallback = if let Some(constraint) = tp.constraint {
-                                    let inst =
-                                        instantiate_type(self.ctx.types, constraint, &substitution);
-                                    if !contains_type_parameters(self.ctx.types, inst) {
-                                        inst
-                                    } else {
-                                        TypeId::UNKNOWN
-                                    }
+                        )
+                    {
+                        let name_str = self.ctx.types.resolve_atom(info.name);
+                        if name_str.as_str().starts_with("__infer_") {
+                            let fallback = if let Some(constraint) = tp.constraint {
+                                let inst =
+                                    instantiate_type(self.ctx.types, constraint, &substitution);
+                                if !contains_type_parameters(self.ctx.types, inst) {
+                                    inst
                                 } else {
                                     TypeId::UNKNOWN
-                                };
-                                substitution.insert(tp.name, fallback);
-                            }
+                                }
+                            } else {
+                                TypeId::UNKNOWN
+                            };
+                            substitution.insert(tp.name, fallback);
                         }
                     }
                 }

@@ -300,12 +300,11 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if node.kind == syntax_kind_ext::BINDING_ELEMENT {
-            if let Some(binding) = self.ctx.arena.get_binding_element(node) {
-                // The `name` field is the bound identifier or a nested pattern
-                self.collect_binding_identifiers(binding.name, names);
-            }
-            return;
+        if node.kind == syntax_kind_ext::BINDING_ELEMENT
+            && let Some(binding) = self.ctx.arena.get_binding_element(node)
+        {
+            // The `name` field is the bound identifier or a nested pattern
+            self.collect_binding_identifiers(binding.name, names);
         }
     }
 

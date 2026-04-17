@@ -789,26 +789,21 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check if this node is a mapped type with self-reference in template
-        if node.kind == syntax_kind_ext::MAPPED_TYPE {
-            if let Some(mapped) = self.ctx.arena.get_mapped_type(node) {
-                if self.template_has_identity_self_ref(mapped.type_node, name, param_names) {
-                    return true;
-                }
-            }
+        if node.kind == syntax_kind_ext::MAPPED_TYPE
+            && let Some(mapped) = self.ctx.arena.get_mapped_type(node)
+            && self.template_has_identity_self_ref(mapped.type_node, name, param_names)
+        {
+            return true;
         }
 
         // Special case: index access type like `{ [P in K]: N<T, K> }[K]`
         // The object type is a mapped type, check if it self-references
-        if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE {
-            if let Some(indexed) = self.ctx.arena.get_indexed_access_type(node) {
-                // Check the object type (which may be a mapped type)
-                if self.body_contains_self_referencing_mapped(
-                    indexed.object_type,
-                    name,
-                    param_names,
-                ) {
-                    return true;
-                }
+        if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE
+            && let Some(indexed) = self.ctx.arena.get_indexed_access_type(node)
+        {
+            // Check the object type (which may be a mapped type)
+            if self.body_contains_self_referencing_mapped(indexed.object_type, name, param_names) {
+                return true;
             }
         }
 
@@ -938,7 +933,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Try to extract the property name from a circular mapped type application.
-    /// Returns (unquoted_name, quoted_name) for use in the diagnostic message.
+    /// Returns (`unquoted_name`, `quoted_name`) for use in the diagnostic message.
     fn extract_mapped_type_property_name(&self, type_id: TypeId) -> Option<(String, String)> {
         let (_base, args) =
             tsz_solver::type_queries::get_application_info(self.ctx.types, type_id)?;

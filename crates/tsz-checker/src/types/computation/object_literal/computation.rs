@@ -142,10 +142,10 @@ impl<'a> CheckerState<'a> {
             } else {
                 let (non_nullish, _) =
                     tsz_solver::split_nullish_type(self.ctx.types.as_type_database(), ctx);
-                if let Some(non_nullish) = non_nullish {
-                    if non_nullish != ctx {
-                        contextual_type = Some(non_nullish);
-                    }
+                if let Some(non_nullish) = non_nullish
+                    && non_nullish != ctx
+                {
+                    contextual_type = Some(non_nullish);
                 }
             }
         }

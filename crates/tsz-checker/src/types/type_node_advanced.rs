@@ -360,26 +360,26 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             self.ctx.types,
                             resolved_object,
                         )
-                        .map_or(false, |shape| {
+                        .is_some_and(|shape| {
                             shape.string_index.is_some()
                                 || (shape.number_index.is_some() && key.parse::<f64>().is_ok())
                         });
 
-                        if !has_index_sig {
-                            if let Some(idx_node) = self.ctx.arena.get(indexed_access.index_type) {
-                                let mut formatter = self.ctx.create_type_formatter();
-                                let type_str = formatter.format(object_type);
-                                let message = crate::diagnostics::format_message(
+                        if !has_index_sig
+                            && let Some(idx_node) = self.ctx.arena.get(indexed_access.index_type)
+                        {
+                            let mut formatter = self.ctx.create_type_formatter();
+                            let type_str = formatter.format(object_type);
+                            let message = crate::diagnostics::format_message(
                                     crate::diagnostics::diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
                                     &[&key, &type_str],
                                 );
-                                self.ctx.error(
+                            self.ctx.error(
                                     idx_node.pos,
                                     idx_node.end - idx_node.pos,
                                     message,
                                     crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
                                 );
-                            }
                         }
                     }
                 }

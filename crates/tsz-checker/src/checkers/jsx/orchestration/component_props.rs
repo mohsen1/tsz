@@ -205,7 +205,7 @@ impl<'a> CheckerState<'a> {
         self.refine_jsx_callable_contextual_type(single_children_type)
     }
 
-    pub(in crate::checkers_domain::jsx) fn file_has_same_line_adjacent_jsx_recovery_pattern(
+    pub(in crate::checkers_domain::jsx) const fn file_has_same_line_adjacent_jsx_recovery_pattern(
         &self,
     ) -> bool {
         // Previously this used text-based heuristics to detect adjacent JSX

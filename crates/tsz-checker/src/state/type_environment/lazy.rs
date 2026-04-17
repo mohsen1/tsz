@@ -157,11 +157,11 @@ impl<'a> CheckerState<'a> {
         // and similar constructs that depend on the enclosing class type.
         let class_this_type = self.current_this_type();
         let mut set_this_type = false;
-        if class_this_type.is_some() {
-            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                env.set_this_type(class_this_type);
-                set_this_type = true;
-            }
+        if class_this_type.is_some()
+            && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
+        {
+            env.set_this_type(class_this_type);
+            set_this_type = true;
         }
 
         // Only resolve refs when not already inside an evaluate_type_with_env_impl
@@ -278,10 +278,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // Restore the this_type to avoid leaking class context into other checks.
-        if set_this_type {
-            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                env.set_this_type(None);
-            }
+        if set_this_type && let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+            env.set_this_type(None);
         }
 
         EVAL_ENV_DEPTH.set(eval_depth);
@@ -1082,38 +1080,34 @@ impl<'a> CheckerState<'a> {
             // checker context didn't propagate them to the main context. The
             // DefinitionStore still has the name, so we can materialize the interface
             // type through the lib type resolution system.
-            if self.ctx.has_lib_loaded() {
-                if let Some(def_info) = self.ctx.definition_store.get(def_id) {
-                    if matches!(
-                        def_info.kind,
-                        tsz_solver::def::DefKind::Interface | tsz_solver::def::DefKind::TypeAlias
-                    ) {
-                        let name = self.ctx.types.resolve_atom(def_info.name);
-                        drop(def_info);
-                        if let Some(lib_type) = self.resolve_lib_type_by_name(&name) {
-                            if lib_type != type_id
-                                && lib_type != TypeId::ERROR
-                                && lib_type != TypeId::ANY
-                            {
-                                // Re-check the type_env: resolve_lib_type_by_name
-                                // materializes the interface and registers it in
-                                // the type_env as a side effect.
-                                let env = self.ctx.type_env.borrow();
-                                if let Some(resolved) = tsz_solver::TypeResolver::resolve_lazy(
-                                    &*env,
-                                    def_id,
-                                    self.ctx.types,
-                                ) && resolved != type_id
-                                {
-                                    drop(env);
-                                    return self.resolve_lazy_type_inner(resolved, visited);
-                                }
-                                drop(env);
-                                // If type_env still doesn't have it, use the lib type directly
-                                return self.resolve_lazy_type_inner(lib_type, visited);
-                            }
-                        }
+            if self.ctx.has_lib_loaded()
+                && let Some(def_info) = self.ctx.definition_store.get(def_id)
+                && matches!(
+                    def_info.kind,
+                    tsz_solver::def::DefKind::Interface | tsz_solver::def::DefKind::TypeAlias
+                )
+            {
+                let name = self.ctx.types.resolve_atom(def_info.name);
+                drop(def_info);
+                if let Some(lib_type) = self.resolve_lib_type_by_name(&name)
+                    && lib_type != type_id
+                    && lib_type != TypeId::ERROR
+                    && lib_type != TypeId::ANY
+                {
+                    // Re-check the type_env: resolve_lib_type_by_name
+                    // materializes the interface and registers it in
+                    // the type_env as a side effect.
+                    let env = self.ctx.type_env.borrow();
+                    if let Some(resolved) =
+                        tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
+                        && resolved != type_id
+                    {
+                        drop(env);
+                        return self.resolve_lazy_type_inner(resolved, visited);
                     }
+                    drop(env);
+                    // If type_env still doesn't have it, use the lib type directly
+                    return self.resolve_lazy_type_inner(lib_type, visited);
                 }
             }
         }

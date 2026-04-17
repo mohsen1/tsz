@@ -588,12 +588,12 @@ impl<'a> Printer<'a> {
         let Some(node) = self.arena.get(idx) else {
             return String::new();
         };
-        if node.kind == tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME {
-            if let Some(qn) = self.arena.get_qualified_name(node) {
-                let left = self.qualified_name_to_expr(qn.left);
-                let right = emit_utils::identifier_text_or_empty(self.arena, qn.right);
-                return format!("{left}.{right}");
-            }
+        if node.kind == tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME
+            && let Some(qn) = self.arena.get_qualified_name(node)
+        {
+            let left = self.qualified_name_to_expr(qn.left);
+            let right = emit_utils::identifier_text_or_empty(self.arena, qn.right);
+            return format!("{left}.{right}");
         }
         emit_utils::identifier_text_or_empty(self.arena, idx)
     }
@@ -1312,16 +1312,16 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        if segments.len() == 1 {
-            if let ArraySegment::Spread(spread_idx) = &segments[0] {
-                self.write_helper("__spreadArray");
-                self.write("([void 0], ");
-                if let Some(spread_node) = self.arena.get(*spread_idx) {
-                    self.emit_spread_expression(spread_node);
-                }
-                self.write(", false)");
-                return;
+        if segments.len() == 1
+            && let ArraySegment::Spread(spread_idx) = &segments[0]
+        {
+            self.write_helper("__spreadArray");
+            self.write("([void 0], ");
+            if let Some(spread_node) = self.arena.get(*spread_idx) {
+                self.emit_spread_expression(spread_node);
             }
+            self.write(", false)");
+            return;
         }
 
         for _ in 0..segments.len() - 1 {

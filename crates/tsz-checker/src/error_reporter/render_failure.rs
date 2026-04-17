@@ -571,8 +571,8 @@ impl<'a> CheckerState<'a> {
                             .first()
                             .and_then(|sig| sig.params.get(*param_index).and_then(|p| p.name))
                     })
-                    .map(|a| self.ctx.types.resolve_atom(a).to_string())
-                    .unwrap_or_else(|| format!("arg{}", param_index));
+                    .map(|a| self.ctx.types.resolve_atom(a))
+                    .unwrap_or_else(|| format!("arg{param_index}"));
 
                     let target_name = tsz_solver::type_queries::get_callable_shape_for_type(
                         self.ctx.types,
@@ -584,15 +584,15 @@ impl<'a> CheckerState<'a> {
                             .first()
                             .and_then(|sig| sig.params.get(*param_index).and_then(|p| p.name))
                     })
-                    .map(|a| self.ctx.types.resolve_atom(a).to_string())
-                    .unwrap_or_else(|| format!("arg{}", param_index));
+                    .map(|a| self.ctx.types.resolve_atom(a))
+                    .unwrap_or_else(|| format!("arg{param_index}"));
 
                     let ts2328_message = format_message(
                         diagnostic_messages::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
                         &[&source_name, &target_name],
                     );
                     let ts2328_diag = Diagnostic::error(
-                        file_name.clone(),
+                        file_name,
                         start,
                         length,
                         ts2328_message,
@@ -1952,15 +1952,14 @@ impl<'a> CheckerState<'a> {
         // 'First.E'" when both types are named "E" from different namespaces.
         if depth == 0 {
             let source_unqualified = source_str.rsplit('.').next().unwrap_or(&source_str);
-            if source_unqualified == target_str || source_str == target_str {
-                if let Some(target_expr) = self.assignment_target_expression(idx)
-                    && let Some(annotation) =
-                        self.declared_type_annotation_text_for_expression(target_expr)
-                {
-                    let trimmed = annotation.trim();
-                    if trimmed.contains('.') && !trimmed.contains(' ') && !trimmed.contains('{') {
-                        target_str = self.format_annotation_like_type(trimmed);
-                    }
+            if (source_unqualified == target_str || source_str == target_str)
+                && let Some(target_expr) = self.assignment_target_expression(idx)
+                && let Some(annotation) =
+                    self.declared_type_annotation_text_for_expression(target_expr)
+            {
+                let trimmed = annotation.trim();
+                if trimmed.contains('.') && !trimmed.contains(' ') && !trimmed.contains('{') {
+                    target_str = self.format_annotation_like_type(trimmed);
                 }
             }
         }

@@ -498,8 +498,8 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Recursively collect type parameter names from FUNCTION_TYPE and
-    /// CONSTRUCTOR_TYPE nodes within the given AST subtree.
+    /// Recursively collect type parameter names from `FUNCTION_TYPE` and
+    /// `CONSTRUCTOR_TYPE` nodes within the given AST subtree.
     fn collect_type_param_names_from_function_type(
         &self,
         root: NodeIndex,
@@ -770,16 +770,16 @@ impl<'a> CheckerState<'a> {
         // from the Window interface (the more specific type member).
         // This ensures properties like `name` on Window are found before
         // falling back to globalThis resolution.
-        if base_display == "Window & typeof globalThis" {
-            if let Some(window_type) = self.resolve_lib_type_by_name("Window") {
-                let prop_result = crate::query_boundaries::property_access::resolve_property_access(
-                    self.ctx.types,
-                    window_type,
-                    name,
-                );
-                if let Some(type_id) = prop_result.success_type() {
-                    return type_id;
-                }
+        if base_display == "Window & typeof globalThis"
+            && let Some(window_type) = self.resolve_lib_type_by_name("Window")
+        {
+            let prop_result = crate::query_boundaries::property_access::resolve_property_access(
+                self.ctx.types,
+                window_type,
+                name,
+            );
+            if let Some(type_id) = prop_result.success_type() {
+                return type_id;
             }
         }
 
@@ -807,26 +807,25 @@ impl<'a> CheckerState<'a> {
                     // E.g. `const Symbol = globalThis.Symbol` — the local const shadows
                     // the lib `declare var Symbol: SymbolConstructor`, but globalThis
                     // should still resolve to the lib var.
-                    if let Some(lib_sym_id) = self.resolve_lib_global_var_symbol(name) {
-                        if let Some(lib_sym) = self.ctx.binder.get_symbol(lib_sym_id).cloned() {
-                            for &decl_idx in &lib_sym.declarations {
-                                if decl_idx.is_none() {
-                                    continue;
-                                }
-                                let vt =
-                                    self.type_of_value_declaration_for_symbol(lib_sym_id, decl_idx);
-                                if vt != TypeId::UNKNOWN && vt != TypeId::ERROR {
-                                    return self.augment_js_global_value_type_with_expandos(
-                                        name, lib_sym_id, vt,
-                                    );
-                                }
+                    if let Some(lib_sym_id) = self.resolve_lib_global_var_symbol(name)
+                        && let Some(lib_sym) = self.ctx.binder.get_symbol(lib_sym_id).cloned()
+                    {
+                        for &decl_idx in &lib_sym.declarations {
+                            if decl_idx.is_none() {
+                                continue;
                             }
-                            let vt = self.get_type_of_symbol(lib_sym_id);
+                            let vt =
+                                self.type_of_value_declaration_for_symbol(lib_sym_id, decl_idx);
                             if vt != TypeId::UNKNOWN && vt != TypeId::ERROR {
                                 return self.augment_js_global_value_type_with_expandos(
                                     name, lib_sym_id, vt,
                                 );
                             }
+                        }
+                        let vt = self.get_type_of_symbol(lib_sym_id);
+                        if vt != TypeId::UNKNOWN && vt != TypeId::ERROR {
+                            return self
+                                .augment_js_global_value_type_with_expandos(name, lib_sym_id, vt);
                         }
                     }
                     self.error_property_not_exist_on_global_this(name, error_node, base_display);

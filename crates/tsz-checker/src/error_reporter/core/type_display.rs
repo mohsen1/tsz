@@ -1338,19 +1338,19 @@ impl<'a> CheckerState<'a> {
         // For function types with a return type that is a TypeQuery, don't use
         // the evaluated display. The evaluation would resolve the TypeQuery to
         // the full function type, causing double arrows like `() => () => typeof fn`.
-        if let Some(fn_shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, ty) {
-            if tsz_solver::type_queries::is_type_query_type(self.ctx.types, fn_shape.return_type) {
-                return false;
-            }
+        if let Some(fn_shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, ty)
+            && tsz_solver::type_queries::is_type_query_type(self.ctx.types, fn_shape.return_type)
+        {
+            return false;
         }
 
         // Also check callable types (single call signature)
-        if let Some(callable) = tsz_solver::type_queries::get_callable_shape(self.ctx.types, ty) {
-            if callable.call_signatures.len() == 1 {
-                let sig = &callable.call_signatures[0];
-                if tsz_solver::type_queries::is_type_query_type(self.ctx.types, sig.return_type) {
-                    return false;
-                }
+        if let Some(callable) = tsz_solver::type_queries::get_callable_shape(self.ctx.types, ty)
+            && callable.call_signatures.len() == 1
+        {
+            let sig = &callable.call_signatures[0];
+            if tsz_solver::type_queries::is_type_query_type(self.ctx.types, sig.return_type) {
+                return false;
             }
         }
 
@@ -1364,26 +1364,16 @@ impl<'a> CheckerState<'a> {
         // This check MUST run before the generic-type-parameter guard below —
         // these alias shapes should substitute their evaluated form for display
         // even when the reference contains free type parameters.
-        if tsz_solver::is_generic_application(self.ctx.types, ty) {
-            if let Some(def_id) =
+        if tsz_solver::is_generic_application(self.ctx.types, ty)
+            && let Some(def_id) =
                 tsz_solver::type_queries::get_application_lazy_def_id(self.ctx.types, ty)
-            {
-                if let Some(def) = self.ctx.definition_store.get(def_id) {
-                    if def.kind == tsz_solver::def::DefKind::TypeAlias {
-                        if let Some(body) = def.body {
-                            if crate::query_boundaries::common::is_index_access_type(
-                                self.ctx.types,
-                                body,
-                            ) || crate::query_boundaries::common::is_conditional_type(
-                                self.ctx.types,
-                                body,
-                            ) {
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+            && def.kind == tsz_solver::def::DefKind::TypeAlias
+            && let Some(body) = def.body
+            && (crate::query_boundaries::common::is_index_access_type(self.ctx.types, body)
+                || crate::query_boundaries::common::is_conditional_type(self.ctx.types, body))
+        {
+            return true;
         }
 
         if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)

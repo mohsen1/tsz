@@ -848,80 +848,72 @@ impl<'a> CheckerState<'a> {
                 // properties from index signature source. If so, emit TS2741 instead.
                 if let Some(anchor) =
                     self.resolve_diagnostic_anchor(anchor_idx, DiagnosticAnchorKind::Exact)
-                {
-                    if let Some(missing_props) =
+                    && let Some(missing_props) =
                         self.missing_required_properties_from_index_signature_source(source, target)
-                    {
-                        let src_str = self.format_assignment_source_type_for_diagnostic(
-                            source, target, anchor_idx,
-                        );
-                        let tgt_str = self.format_assignment_target_type_for_diagnostic(
-                            target, source, anchor_idx,
-                        );
-                        let (message, code) = if missing_props.len() == 1 {
-                            let prop_name = self
-                                .ctx
-                                .types
-                                .resolve_atom_ref(missing_props[0])
-                                .to_string();
-                            if prop_name.starts_with("__js_ctor_brand_") {
-                                // Synthetic brand from JS constructor functions — TSC
-                                // doesn't report these as missing properties.
-                                self.error_type_not_assignable_generic_with_anchor(
-                                    source, target, anchor_idx,
-                                );
-                                return;
-                            }
-                            if prop_name.starts_with("__private_brand") {
-                                // Private brand mismatch
-                                self.error_type_not_assignable_generic_with_anchor(
-                                    source, target, anchor_idx,
-                                );
-                                return;
-                            }
-                            (
+                {
+                    let src_str = self
+                        .format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
+                    let tgt_str = self
+                        .format_assignment_target_type_for_diagnostic(target, source, anchor_idx);
+                    let (message, code) = if missing_props.len() == 1 {
+                        let prop_name = self
+                            .ctx
+                            .types
+                            .resolve_atom_ref(missing_props[0])
+                            .to_string();
+                        if prop_name.starts_with("__js_ctor_brand_") {
+                            // Synthetic brand from JS constructor functions — TSC
+                            // doesn't report these as missing properties.
+                            self.error_type_not_assignable_generic_with_anchor(
+                                source, target, anchor_idx,
+                            );
+                            return;
+                        }
+                        if prop_name.starts_with("__private_brand") {
+                            // Private brand mismatch
+                            self.error_type_not_assignable_generic_with_anchor(
+                                source, target, anchor_idx,
+                            );
+                            return;
+                        }
+                        (
                                 format_message(
                                     diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                                     &[&prop_name, &src_str, &tgt_str],
                                 ),
                                 diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                             )
-                        } else {
-                            let prop_list: Vec<String> = missing_props
-                                .iter()
-                                .take(4)
-                                .map(|name| self.ctx.types.resolve_atom_ref(*name).to_string())
-                                .collect();
-                            let props_joined = prop_list.join(", ");
-                            if missing_props.len() > 4 {
-                                let more_count = (missing_props.len() - 4).to_string();
-                                (
+                    } else {
+                        let prop_list: Vec<String> = missing_props
+                            .iter()
+                            .take(4)
+                            .map(|name| self.ctx.types.resolve_atom_ref(*name).to_string())
+                            .collect();
+                        let props_joined = prop_list.join(", ");
+                        if missing_props.len() > 4 {
+                            let more_count = (missing_props.len() - 4).to_string();
+                            (
                                     format_message(
                                         diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
                                         &[&src_str, &tgt_str, &props_joined, &more_count],
                                     ),
                                     diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
                                 )
-                            } else {
-                                (
+                        } else {
+                            (
                                     format_message(
                                         diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
                                         &[&src_str, &tgt_str, &props_joined],
                                     ),
                                     diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
                                 )
-                            }
-                        };
-                        self.emit_render_request_at_anchor(
-                            anchor,
-                            DiagnosticRenderRequest::simple(
-                                DiagnosticAnchorKind::Exact,
-                                code,
-                                message,
-                            ),
-                        );
-                        return;
-                    }
+                        }
+                    };
+                    self.emit_render_request_at_anchor(
+                        anchor,
+                        DiagnosticRenderRequest::simple(DiagnosticAnchorKind::Exact, code, message),
+                    );
+                    return;
                 }
                 // Fallback to generic message
                 self.error_type_not_assignable_generic_with_anchor(source, target, anchor_idx);

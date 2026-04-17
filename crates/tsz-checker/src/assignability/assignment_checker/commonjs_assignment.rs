@@ -140,15 +140,13 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check if the target symbol has namespace-like members (is a JS container)
-        if let Some(sym_id) = self.resolve_qualified_symbol(target_idx) {
-            if let Some(symbol) = self
+        if let Some(sym_id) = self.resolve_qualified_symbol(target_idx)
+            && let Some(symbol) = self
                 .get_cross_file_symbol(sym_id)
                 .or_else(|| self.ctx.binder.get_symbol(sym_id))
-            {
-                if symbol_is_container(symbol) {
-                    return true;
-                }
-            }
+            && symbol_is_container(symbol)
+        {
+            return true;
         }
 
         // Fallback: when qualified symbol resolution fails (e.g., for `module.exports.b`
@@ -161,16 +159,13 @@ impl<'a> CheckerState<'a> {
             .arena
             .get_identifier_at(access.name_or_argument)
             .map(|ident| ident.escaped_text.as_str());
-        if let Some(prop_name) = prop_name {
-            if let Some(file_exports) = self.ctx.binder.module_exports.get(&*self.ctx.file_name) {
-                if let Some(export_sym_id) = file_exports.get(prop_name) {
-                    if let Some(symbol) = self.ctx.binder.get_symbol(export_sym_id) {
-                        if symbol_is_container(symbol) {
-                            return true;
-                        }
-                    }
-                }
-            }
+        if let Some(prop_name) = prop_name
+            && let Some(file_exports) = self.ctx.binder.module_exports.get(&*self.ctx.file_name)
+            && let Some(export_sym_id) = file_exports.get(prop_name)
+            && let Some(symbol) = self.ctx.binder.get_symbol(export_sym_id)
+            && symbol_is_container(symbol)
+        {
+            return true;
         }
 
         false
@@ -225,15 +220,14 @@ impl<'a> CheckerState<'a> {
             if let Some(symbol) = self
                 .get_cross_file_symbol(checked_ctor_sym_id)
                 .or_else(|| self.ctx.binder.get_symbol(checked_ctor_sym_id))
-            {
-                if symbol.declarations.iter().copied().any(|decl_idx| {
+                && symbol.declarations.iter().copied().any(|decl_idx| {
                     self.declaration_is_checked_js_constructor_value_declaration(
                         checked_ctor_sym_id,
                         decl_idx,
                     )
-                }) {
-                    return true;
-                }
+                })
+            {
+                return true;
             }
 
             return false;
@@ -286,12 +280,10 @@ impl<'a> CheckerState<'a> {
         let mut has_expando_property = self
             .collect_expando_properties_for_root(&object_key)
             .contains(&prop_name);
-        if !has_expando_property {
-            if let Some((_, last_segment)) = object_key.rsplit_once('.') {
-                has_expando_property = self
-                    .collect_expando_properties_for_root(last_segment)
-                    .contains(&prop_name);
-            }
+        if !has_expando_property && let Some((_, last_segment)) = object_key.rsplit_once('.') {
+            has_expando_property = self
+                .collect_expando_properties_for_root(last_segment)
+                .contains(&prop_name);
         }
         if !has_expando_property {
             return false;
@@ -323,7 +315,7 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-    /// Check if an expression contains a FunctionExpression or ClassExpression,
+    /// Check if an expression contains a `FunctionExpression` or `ClassExpression`,
     /// looking through parentheses, type assertions, and logical OR (`||`) /
     /// nullish coalescing (`??`) expressions.
     ///
@@ -342,15 +334,15 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(bin) = arena.get_binary_expr(node) {
-                let op = bin.operator_token;
-                if op == SyntaxKind::BarBarToken as u16
-                    || op == SyntaxKind::QuestionQuestionToken as u16
-                {
-                    return Self::rhs_contains_function_or_class_expression(arena, bin.left)
-                        || Self::rhs_contains_function_or_class_expression(arena, bin.right);
-                }
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(bin) = arena.get_binary_expr(node)
+        {
+            let op = bin.operator_token;
+            if op == SyntaxKind::BarBarToken as u16
+                || op == SyntaxKind::QuestionQuestionToken as u16
+            {
+                return Self::rhs_contains_function_or_class_expression(arena, bin.left)
+                    || Self::rhs_contains_function_or_class_expression(arena, bin.right);
             }
         }
         false
@@ -376,26 +368,26 @@ impl<'a> CheckerState<'a> {
         }
 
         // Property access: check for `module.exports` or recurse
-        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            if let Some(access) = self.ctx.arena.get_access_expr(node) {
-                // Check for `module.exports`
-                let is_module = self
-                    .ctx
-                    .arena
-                    .get_identifier_at(access.expression)
-                    .is_some_and(|ident| ident.escaped_text == "module");
-                let is_exports = self
-                    .ctx
-                    .arena
-                    .get_identifier_at(access.name_or_argument)
-                    .is_some_and(|ident| ident.escaped_text == "exports");
-                if is_module && is_exports {
-                    return true;
-                }
-
-                // Recurse for deeper chains like `exports.n.K`
-                return self.is_exports_rooted_access(access.expression);
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(node)
+        {
+            // Check for `module.exports`
+            let is_module = self
+                .ctx
+                .arena
+                .get_identifier_at(access.expression)
+                .is_some_and(|ident| ident.escaped_text == "module");
+            let is_exports = self
+                .ctx
+                .arena
+                .get_identifier_at(access.name_or_argument)
+                .is_some_and(|ident| ident.escaped_text == "exports");
+            if is_module && is_exports {
+                return true;
             }
+
+            // Recurse for deeper chains like `exports.n.K`
+            return self.is_exports_rooted_access(access.expression);
         }
 
         false
@@ -424,21 +416,20 @@ impl<'a> CheckerState<'a> {
             && let Some(member_symbol) = self
                 .get_cross_file_symbol(member_sym_id)
                 .or_else(|| self.ctx.binder.get_symbol(member_sym_id))
+            && (member_symbol.flags & symbol_flags::ENUM) != 0
         {
-            if (member_symbol.flags & symbol_flags::ENUM) != 0 {
-                let parent_sym_id = member_symbol.parent;
-                if let Some(parent_symbol) = self
-                    .get_cross_file_symbol(parent_sym_id)
-                    .or_else(|| self.ctx.binder.get_symbol(parent_sym_id))
-                    && (parent_symbol.flags
-                        & (symbol_flags::MODULE
-                            | symbol_flags::NAMESPACE
-                            | symbol_flags::NAMESPACE_MODULE))
-                        != 0
-                    && (parent_symbol.flags & symbol_flags::ENUM) == 0
-                {
-                    return true;
-                }
+            let parent_sym_id = member_symbol.parent;
+            if let Some(parent_symbol) = self
+                .get_cross_file_symbol(parent_sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(parent_sym_id))
+                && (parent_symbol.flags
+                    & (symbol_flags::MODULE
+                        | symbol_flags::NAMESPACE
+                        | symbol_flags::NAMESPACE_MODULE))
+                    != 0
+                && (parent_symbol.flags & symbol_flags::ENUM) == 0
+            {
+                return true;
             }
         }
 
@@ -450,36 +441,34 @@ impl<'a> CheckerState<'a> {
             && let Some(enum_symbol) = self
                 .get_cross_file_symbol(enum_sym_id)
                 .or_else(|| self.ctx.binder.get_symbol(enum_sym_id))
+            && (enum_symbol.flags & symbol_flags::ENUM) != 0
+            && (enum_symbol.flags & symbol_flags::ENUM_MEMBER) == 0
         {
-            if (enum_symbol.flags & symbol_flags::ENUM) != 0
-                && (enum_symbol.flags & symbol_flags::ENUM_MEMBER) == 0
+            // If the property being assigned is a declared member of this enum,
+            // this is an enum member assignment (should get TS2540), not a rebind.
+            if self.is_declared_enum_member_property(
+                enum_sym_id,
+                &self
+                    .ctx
+                    .arena
+                    .get_identifier_at(access.name_or_argument)
+                    .map(|ident| ident.escaped_text.clone())
+                    .unwrap_or_default(),
+            ) {
+                return false;
+            }
+            let parent_sym_id = enum_symbol.parent;
+            if let Some(parent_symbol) = self
+                .get_cross_file_symbol(parent_sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(parent_sym_id))
+                && (parent_symbol.flags
+                    & (symbol_flags::MODULE
+                        | symbol_flags::NAMESPACE
+                        | symbol_flags::NAMESPACE_MODULE))
+                    != 0
+                && (parent_symbol.flags & symbol_flags::ENUM) == 0
             {
-                // If the property being assigned is a declared member of this enum,
-                // this is an enum member assignment (should get TS2540), not a rebind.
-                if self.is_declared_enum_member_property(
-                    enum_sym_id,
-                    &self
-                        .ctx
-                        .arena
-                        .get_identifier_at(access.name_or_argument)
-                        .map(|ident| ident.escaped_text.clone())
-                        .unwrap_or_default(),
-                ) {
-                    return false;
-                }
-                let parent_sym_id = enum_symbol.parent;
-                if let Some(parent_symbol) = self
-                    .get_cross_file_symbol(parent_sym_id)
-                    .or_else(|| self.ctx.binder.get_symbol(parent_sym_id))
-                    && (parent_symbol.flags
-                        & (symbol_flags::MODULE
-                            | symbol_flags::NAMESPACE
-                            | symbol_flags::NAMESPACE_MODULE))
-                        != 0
-                    && (parent_symbol.flags & symbol_flags::ENUM) == 0
-                {
-                    return true;
-                }
+                return true;
             }
         }
 

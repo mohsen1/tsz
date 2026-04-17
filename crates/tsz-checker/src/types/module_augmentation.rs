@@ -282,16 +282,15 @@ impl<'a> CheckerState<'a> {
         {
             // Use global module augmentations index when available for O(1) key iteration,
             // falling back to O(N) binder scan otherwise.
-            #[allow(clippy::type_complexity)]
-            let aug_entries: Vec<(String, Vec<(usize, ModuleAugmentation)>)> =
+            type IndexedAug = (usize, ModuleAugmentation);
+            let aug_entries: Vec<(String, Vec<IndexedAug>)> =
                 if let Some(aug_index) = self.ctx.global_module_augmentations_index.as_ref() {
                     aug_index
                         .iter()
                         .map(|(k, v)| (k.clone(), v.clone()))
                         .collect()
                 } else if let Some(all_binders) = self.ctx.all_binders.as_ref() {
-                    let mut entries: FxHashMap<String, Vec<(usize, ModuleAugmentation)>> =
-                        FxHashMap::default();
+                    let mut entries: FxHashMap<String, Vec<IndexedAug>> = FxHashMap::default();
                     for (file_idx, binder) in all_binders.iter().enumerate() {
                         for (aug_key, augs) in binder.module_augmentations.iter() {
                             entries

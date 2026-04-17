@@ -70,7 +70,7 @@ pub fn reset_stack_overflow_flag() {
 /// MUST be called between independent compilation sessions (e.g., in batch
 /// mode) to prevent stale cached entries from a previous compilation from
 /// affecting subsequent compilations. Thread-local caches use arena-local
-/// indices (NodeIndex) as keys, and these indices get reused across
+/// indices (`NodeIndex`) as keys, and these indices get reused across
 /// compilations, causing cross-compilation contamination.
 pub fn clear_all_thread_local_state() {
     // Reset stack overflow breaker

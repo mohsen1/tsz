@@ -447,7 +447,7 @@ impl<'a> CheckerState<'a> {
         if matching_namespace_export.is_some() && matching_global_augmentation.is_some() {
             matching_namespace_export
         } else {
-            return None;
+            None
         }
     }
 

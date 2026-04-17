@@ -848,13 +848,11 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-        if !has_applicable {
-            if let Some(sigs) = &construct_sigs {
-                for sig in sigs {
-                    if sig.type_params.len() == num_type_args {
-                        has_applicable = true;
-                        break;
-                    }
+        if !has_applicable && let Some(sigs) = &construct_sigs {
+            for sig in sigs {
+                if sig.type_params.len() == num_type_args {
+                    has_applicable = true;
+                    break;
                 }
             }
         }

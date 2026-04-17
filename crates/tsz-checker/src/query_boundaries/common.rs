@@ -196,34 +196,31 @@ pub(crate) fn contains_conditional_type(db: &dyn TypeDatabase, type_id: TypeId) 
     }
 
     // Check type application arguments
-    if let Some(app) = tsz_solver::type_queries::get_type_application(db, type_id) {
-        if app
+    if let Some(app) = tsz_solver::type_queries::get_type_application(db, type_id)
+        && app
             .args
             .iter()
             .any(|&arg| contains_conditional_type(db, arg))
-        {
-            return true;
-        }
+    {
+        return true;
     }
 
     // Check intersection members
-    if let Some(members) = tsz_solver::type_queries::get_intersection_members(db, type_id) {
-        if members
+    if let Some(members) = tsz_solver::type_queries::get_intersection_members(db, type_id)
+        && members
             .iter()
             .any(|&member| contains_conditional_type(db, member))
-        {
-            return true;
-        }
+    {
+        return true;
     }
 
     // Check union members
-    if let Some(members) = tsz_solver::type_queries::get_union_members(db, type_id) {
-        if members
+    if let Some(members) = tsz_solver::type_queries::get_union_members(db, type_id)
+        && members
             .iter()
             .any(|&member| contains_conditional_type(db, member))
-        {
-            return true;
-        }
+    {
+        return true;
     }
 
     // Check index access types

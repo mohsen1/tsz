@@ -849,11 +849,7 @@ impl<'a> CheckerState<'a> {
         } else if let Some(surface) =
             self.resolve_js_export_surface_for_module(module_name, Some(self.ctx.current_file_idx))
         {
-            let namespace_type = self
-                .ctx
-                .types
-                .factory()
-                .object(surface.named_exports.clone());
+            let namespace_type = self.ctx.types.factory().object(surface.named_exports);
             self.ctx.namespace_module_names.insert(
                 namespace_type,
                 self.imported_namespace_display_module_name(module_name),

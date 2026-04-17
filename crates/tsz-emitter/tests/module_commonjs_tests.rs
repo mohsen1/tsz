@@ -620,16 +620,16 @@ export const bar = 42;
         panic!("Failed to get source file");
     };
 
-    let (func_exports, other_exports, _default_func_export) =
+    let result =
         collect_export_names_categorized(&parser.arena, &source_file.statements.nodes, false);
 
     assert_eq!(
-        func_exports,
+        result.function_exports,
         vec![("foo".to_string(), "foo".to_string())],
         "Overloaded function should produce only one func_export entry"
     );
     assert_eq!(
-        other_exports,
+        result.other_exports,
         vec!["bar"],
         "Non-function exports should be unaffected"
     );

@@ -133,72 +133,73 @@ impl<'a> CheckerState<'a> {
         // and we're not suppressing missing props.
         // For generic spread types (has_type_params), emit TS2322 instead of TS2741
         // to match tsc's behavior for intrinsic element type mismatches.
-        if !has_later_spreads && !suppress_missing_props && !spread_has_type_params {
-            if let Some(props_shape) =
+        if !has_later_spreads
+            && !suppress_missing_props
+            && !spread_has_type_params
+            && let Some(props_shape) =
                 tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)
-            {
-                let spread_prop_names: rustc_hash::FxHashSet<String> = spread_shape
-                    .properties
-                    .iter()
-                    .map(|p| self.ctx.types.resolve_atom(p.name))
-                    .collect();
-                let mut missing_props: Vec<String> = Vec::new();
-                for req_prop in &props_shape.properties {
-                    if req_prop.optional {
-                        continue;
-                    }
-                    let req_name = self.ctx.types.resolve_atom(req_prop.name).to_string();
-                    if req_name == "key" || req_name == "ref" {
-                        continue;
-                    }
-                    if !spread_prop_names.contains(&req_name)
-                        && !overridden_for_missing.contains(req_name.as_str())
-                    {
-                        missing_props.push(req_name);
-                    }
+        {
+            let spread_prop_names: rustc_hash::FxHashSet<String> = spread_shape
+                .properties
+                .iter()
+                .map(|p| self.ctx.types.resolve_atom(p.name))
+                .collect();
+            let mut missing_props: Vec<String> = Vec::new();
+            for req_prop in &props_shape.properties {
+                if req_prop.optional {
+                    continue;
                 }
+                let req_name = self.ctx.types.resolve_atom(req_prop.name).to_string();
+                if req_name == "key" || req_name == "ref" {
+                    continue;
+                }
+                if !spread_prop_names.contains(&req_name)
+                    && !overridden_for_missing.contains(req_name.as_str())
+                {
+                    missing_props.push(req_name);
+                }
+            }
 
-                if !missing_props.is_empty() {
-                    let spread_name = self.format_type(spread_type);
-                    if missing_props.len() == 1 {
-                        // TS2741: Property 'x' is missing in type 'A' but required in type 'B'.
-                        let message = format_message(
-                            diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                            &[&missing_props[0], &spread_name, &props_display],
-                        );
-                        self.error_at_node(
-                            tag_name_idx,
-                            &message,
-                            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                        );
-                    } else {
-                        // TS2739 (≤4 missing props) or TS2740 (>4 missing props)
-                        let is_truncated = missing_props.len() > 4;
-                        let display_count = if is_truncated { 4 } else { missing_props.len() };
-                        let props_list = missing_props[..display_count].join(", ");
+            if !missing_props.is_empty() {
+                let spread_name = self.format_type(spread_type);
+                if missing_props.len() == 1 {
+                    // TS2741: Property 'x' is missing in type 'A' but required in type 'B'.
+                    let message = format_message(
+                        diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                        &[&missing_props[0], &spread_name, &props_display],
+                    );
+                    self.error_at_node(
+                        tag_name_idx,
+                        &message,
+                        diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                    );
+                } else {
+                    // TS2739 (≤4 missing props) or TS2740 (>4 missing props)
+                    let is_truncated = missing_props.len() > 4;
+                    let display_count = if is_truncated { 4 } else { missing_props.len() };
+                    let props_list = missing_props[..display_count].join(", ");
 
-                        let (message, code) = if is_truncated {
-                            let more_count = missing_props.len() - display_count;
-                            (
+                    let (message, code) = if is_truncated {
+                        let more_count = missing_props.len() - display_count;
+                        (
                                 format_message(
                                     diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
                                     &[&spread_name, &props_display, &props_list, &more_count.to_string()],
                                 ),
                                 diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
                             )
-                        } else {
-                            (
+                    } else {
+                        (
                                 format_message(
                                     diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
                                     &[&spread_name, &props_display, &props_list],
                                 ),
                                 diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
                             )
-                        };
-                        self.error_at_node(tag_name_idx, &message, code);
-                    }
-                    return true;
+                    };
+                    self.error_at_node(tag_name_idx, &message, code);
                 }
+                return true;
             }
         }
 
@@ -248,18 +249,20 @@ impl<'a> CheckerState<'a> {
         // For generic spreads, also check whole-type assignability to catch
         // missing required properties that aren't covered by per-property checks.
         let mut has_type_mismatch = has_unfixable_mismatch;
-        if !has_type_mismatch && spread_has_type_params {
-            if !self.is_assignable_to(resolved_spread, props_type) {
-                has_type_mismatch = true;
-            }
+        if !has_type_mismatch
+            && spread_has_type_params
+            && !self.is_assignable_to(resolved_spread, props_type)
+        {
+            has_type_mismatch = true;
         }
 
         // For generic spreads with type mismatches, only suppress TS2322 if the
         // resolved spread type is assignable to the props type.
-        if has_type_mismatch && spread_has_type_params {
-            if self.is_assignable_to(resolved_spread, props_type) {
-                has_type_mismatch = false;
-            }
+        if has_type_mismatch
+            && spread_has_type_params
+            && self.is_assignable_to(resolved_spread, props_type)
+        {
+            has_type_mismatch = false;
         }
 
         if has_type_mismatch {

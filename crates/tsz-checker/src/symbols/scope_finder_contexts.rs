@@ -1,4 +1,4 @@
-//! Context and enclosure helpers split out of scope_finder.rs.
+//! Context and enclosure helpers split out of `scope_finder.rs`.
 
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use tsz_parser::parser::NodeIndex;
@@ -897,7 +897,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn merge_super_flow_states(
+    const fn merge_super_flow_states(
         &self,
         left: SuperInitFlowState,
         right: SuperInitFlowState,
