@@ -2625,3 +2625,46 @@ fn test_completion_info_auto_import_dependency_filter_ignores_invalid_package_js
         "expected invalid package.json not to filter unrelated package candidates"
     );
 }
+
+#[test]
+fn test_completion_info_auto_import_dependency_filter_ignores_plain_string_literals() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/@types/react/index.d.ts".to_string(),
+        "export declare function useMemo(): void;\n".to_string(),
+    );
+    server
+        .open_files
+        .insert("/package.json".to_string(), "{}".to_string());
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "const pkg = \"react\";\nuseMemo/**/\n".to_string(),
+    );
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 2,
+            "offset": 8,
+            "preferences": {
+                "includeCompletionsForModuleExports": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let completion_body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = completion_body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    assert!(
+        !entries.iter().any(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("useMemo")
+                && entry.get("source").and_then(serde_json::Value::as_str) == Some("react")
+        }),
+        "expected plain string literals not to bypass dependency-based auto-import filtering"
+    );
+}
