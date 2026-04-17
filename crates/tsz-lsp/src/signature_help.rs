@@ -3419,7 +3419,8 @@ impl<'a> SignatureHelpProvider<'a> {
             }
 
             let substitution_pairs = sig.type_param_substitutions.clone();
-            let mut repeated_identifier_type_counts: FxHashMap<String, usize> = FxHashMap::default();
+            let mut repeated_identifier_type_counts: FxHashMap<String, usize> =
+                FxHashMap::default();
             for param in &sig.info.parameters {
                 if let Some((_, ty)) = param.label.rsplit_once(':') {
                     let ty = ty.trim();
@@ -3432,7 +3433,10 @@ impl<'a> SignatureHelpProvider<'a> {
             }
             let mut inferred: FxHashMap<String, String> = FxHashMap::default();
             for (arg_index, arg_type_text) in supplied_argument_types.iter().enumerate() {
-                if arg_type_text.is_empty() || arg_type_text == "error" || arg_type_text == "unknown" {
+                if arg_type_text.is_empty()
+                    || arg_type_text == "error"
+                    || arg_type_text == "unknown"
+                {
                     continue;
                 }
 
@@ -3444,7 +3448,8 @@ impl<'a> SignatureHelpProvider<'a> {
                     continue;
                 };
 
-                let Some((_, param_ty)) = sig.info.parameters[param_idx].label.rsplit_once(':') else {
+                let Some((_, param_ty)) = sig.info.parameters[param_idx].label.rsplit_once(':')
+                else {
                     continue;
                 };
                 let param_ty = param_ty.trim();
@@ -3462,7 +3467,11 @@ impl<'a> SignatureHelpProvider<'a> {
 
                 if Self::is_literal_type_text(arg_type_text)
                     && Self::is_identifier_like_type_name(param_ty)
-                    && repeated_identifier_type_counts.get(param_ty).copied().unwrap_or(0) >= 2
+                    && repeated_identifier_type_counts
+                        .get(param_ty)
+                        .copied()
+                        .unwrap_or(0)
+                        >= 2
                 {
                     inferred
                         .entry(param_ty.to_string())
@@ -3712,7 +3721,10 @@ impl<'a> SignatureHelpProvider<'a> {
     // - Some(false) when parameter type is a pure union of string literals
     //   and does not include the argument literal
     // - None when parameter type is not a pure string-literal union
-    fn string_literal_union_contains(param_type_text: &str, arg_literal_value: &str) -> Option<bool> {
+    fn string_literal_union_contains(
+        param_type_text: &str,
+        arg_literal_value: &str,
+    ) -> Option<bool> {
         let mut seen = false;
         for part in param_type_text
             .split('|')
