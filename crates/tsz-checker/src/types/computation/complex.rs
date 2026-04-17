@@ -432,6 +432,11 @@ impl<'a> CheckerState<'a> {
                     crate::diagnostics::diagnostic_messages::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
                     crate::diagnostics::diagnostic_codes::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
                 );
+                // Resolve type arguments even for untyped `new` calls so that
+                // unresolved names in them still emit TS2304.
+                for &type_arg_idx in &type_args_list.nodes {
+                    self.get_type_of_node(type_arg_idx);
+                }
             }
 
             // Still need to check arguments for definite assignment and other errors
