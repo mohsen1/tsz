@@ -2224,6 +2224,7 @@ impl<'a> CheckerState<'a> {
     fn get_primitive_family(&self, type_id: TypeId) -> TypeId {
         use crate::query_boundaries::common::{
             classify_literal_type, is_string_intrinsic_type, is_template_literal_type,
+            is_unique_symbol_type,
         };
         use tsz_solver::type_queries::LiteralTypeKind;
 
@@ -2232,6 +2233,7 @@ impl<'a> CheckerState<'a> {
             || type_id == TypeId::NUMBER
             || type_id == TypeId::BOOLEAN
             || type_id == TypeId::BIGINT
+            || type_id == TypeId::SYMBOL
         {
             return type_id;
         }
@@ -2243,6 +2245,11 @@ impl<'a> CheckerState<'a> {
             LiteralTypeKind::Boolean(_) => return TypeId::BOOLEAN,
             LiteralTypeKind::BigInt(_) => return TypeId::BIGINT,
             LiteralTypeKind::NotLiteral => {}
+        }
+
+        // Unique symbol literal types belong to the symbol family.
+        if is_unique_symbol_type(self.ctx.types, type_id) {
+            return TypeId::SYMBOL;
         }
 
         // Check template literals and string intrinsics
