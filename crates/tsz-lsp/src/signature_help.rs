@@ -851,6 +851,32 @@ impl<'a> SignatureHelpProvider<'a> {
             &[],
         );
         if signatures.is_empty()
+            && initializer_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+        {
+            let member_name = self
+                .enclosing_object_member_name_within_argument(decl.initializer, cursor_offset)
+                .map(|(name, _)| name)
+                .or_else(|| self.object_member_name_from_argument_text(decl.initializer, cursor_offset));
+            if let Some(member_name) = member_name {
+                if let Some(prop_type) =
+                    self.contextual_property_type_from_type(contextual_type, &member_name)
+                {
+                    signatures = self.get_signatures_from_type(
+                        prop_type,
+                        &checker,
+                        CallKind::Call,
+                        &member_name,
+                        false,
+                        &[],
+                    );
+                } else if let Some(sig_info) =
+                    self.source_contextual_member_signature(&checker, contextual_type, &member_name)
+                {
+                    signatures = vec![self.signature_candidate_from_info(sig_info)];
+                }
+            }
+        }
+        if signatures.is_empty()
             && let Some(type_node) = self.arena.get(decl.type_annotation)
         {
             let start = type_node.pos as usize;
@@ -4362,6 +4388,39 @@ mod signature_help_internal_tests {
         let mut cache = None;
         let help = provider.get_signature_help(root, position, &mut cache);
         assert!(help.is_none(), "declaration marker should not produce signature help");
+    }
+
+    #[test]
+    fn contextual_object_literal_method_from_typed_initializer() {
+        let source = "interface Obj { optionalMethod?: (current: any) => any; }\nconst o: Obj = {\n  optionalMethod(/*m*/) { return {}; }\n};";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let interner = TypeInterner::new();
+        let line_map = LineMap::build(source);
+        let provider = SignatureHelpProvider::new(
+            parser.get_arena(),
+            &binder,
+            &line_map,
+            &interner,
+            source,
+            "test.ts".to_string(),
+        );
+
+        let marker = source.find("/*m*/").expect("marker") as u32;
+        let position = line_map.offset_to_position(marker, source);
+        let mut cache = None;
+        let help = provider
+            .get_signature_help(root, position, &mut cache)
+            .expect("contextual object literal method signature help");
+        assert_eq!(
+            help.signatures[help.active_signature as usize].label,
+            "optionalMethod(current: any): any"
+        );
+        assert_eq!(help.active_parameter, 0);
     }
 }
 
