@@ -1478,6 +1478,32 @@ impl Server {
                     .unwrap_or_default()
             };
             display_string = text::normalize_quickinfo_display_string(&display_string);
+            let base_offset = line_map
+                .position_to_offset(position, &source_text)
+                .unwrap_or(0);
+            let source_bytes = source_text.as_bytes();
+            let in_type_annotation_context = {
+                let mut probe = (base_offset as usize).min(source_bytes.len());
+                let mut saw_colon = false;
+                while probe > 0 {
+                    probe -= 1;
+                    match source_bytes[probe] {
+                        b':' => {
+                            saw_colon = true;
+                            break;
+                        }
+                        b'=' | b';' | b'\n' | b'\r' | b'{' | b'(' => break,
+                        _ => {}
+                    }
+                }
+                saw_colon
+            };
+            if in_type_annotation_context
+                && display_string.starts_with("(property) ")
+                && display_string.contains(".#")
+            {
+                display_string.clear();
+            }
 
             let documentation = if !info.documentation.is_empty() {
                 info.documentation.clone()
@@ -1489,11 +1515,17 @@ impl Server {
                     .unwrap_or_default()
             };
 
-            let kind = if !info.kind.is_empty() {
+            let mut kind = if !info.kind.is_empty() {
                 info.kind.clone()
             } else {
                 "unknown".to_string()
             };
+            if kind == "alias" && display_string.starts_with("(alias) interface ") {
+                kind = "interface".to_string();
+            }
+            if kind == "alias" && in_type_annotation_context {
+                kind = "interface".to_string();
+            }
 
             let kind_modifiers = info.kind_modifiers.clone();
 

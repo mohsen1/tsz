@@ -337,6 +337,15 @@ impl<'a> SignatureHelpProvider<'a> {
             *type_cache = Some(checker.extract_cache());
             return Some(help);
         }
+        // `new` on private/protected constructors should not offer signature help
+        // from out-of-scope locations.
+        if call_kind == CallKind::New
+            && !is_super_call
+            && (checker.is_private_ctor(callee_type) || checker.is_protected_ctor(callee_type))
+        {
+            *type_cache = Some(checker.extract_cache());
+            return None;
+        }
 
         // 6. Resolve the callee name for display
         let callee_name = if is_super_call {
@@ -644,7 +653,14 @@ impl<'a> SignatureHelpProvider<'a> {
                     };
                     if let Some(delim_offset) = delimiter {
                         let delim_pos = (call_start + delim_offset) as u32;
-                        if cursor_offset > delim_pos {
+                        if cursor_offset > delim_pos
+                            && !self.cursor_after_closed_call_delimiter(
+                                call_start,
+                                call_text,
+                                delim_offset,
+                                cursor_offset,
+                            )
+                        {
                             let kind = if node.kind == syntax_kind_ext::NEW_EXPRESSION {
                                 CallKind::New
                             } else {
@@ -724,6 +740,38 @@ impl<'a> SignatureHelpProvider<'a> {
         }
 
         None
+    }
+
+    fn cursor_after_closed_call_delimiter(
+        &self,
+        call_start: usize,
+        call_text: &str,
+        open_rel: usize,
+        cursor_offset: u32,
+    ) -> bool {
+        let bytes = call_text.as_bytes();
+        if open_rel >= bytes.len() || bytes[open_rel] != b'(' {
+            return false;
+        }
+
+        let mut depth = 1i32;
+        let mut cursor = open_rel + 1;
+        while cursor < bytes.len() {
+            match bytes[cursor] {
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let close_pos = (call_start + cursor) as u32;
+                        return cursor_offset > close_pos;
+                    }
+                }
+                _ => {}
+            }
+            cursor += 1;
+        }
+
+        false
     }
 
     fn signature_help_for_contextual_variable_initializer(
@@ -4781,6 +4829,99 @@ mod signature_help_internal_tests {
         assert!(
             help.is_none(),
             "expected no help before '(' while editing identifier, got {}",
+            help.as_ref()
+                .map(|h| h.signatures[h.active_signature as usize].label.as_str())
+                .unwrap_or_default()
+        );
+    }
+
+    #[test]
+    fn no_signature_help_after_closing_paren() {
+        let source = "declare function foo(start: number, end?: number): void;\nfoo(10)";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let interner = TypeInterner::new();
+        let line_map = LineMap::build(source);
+        let provider = SignatureHelpProvider::new(
+            parser.get_arena(),
+            &binder,
+            &line_map,
+            &interner,
+            source,
+            "test.ts".to_string(),
+        );
+
+        let mut cache = None;
+        let help = provider.get_signature_help(root, Position::new(1, 7), &mut cache);
+        assert!(
+            help.is_none(),
+            "expected no help after closing paren, got {}",
+            help.as_ref()
+                .map(|h| h.signatures[h.active_signature as usize].label.as_str())
+                .unwrap_or_default()
+        );
+    }
+
+    #[test]
+    fn no_signature_help_for_private_constructor_new_call() {
+        let source = "class A { private constructor() {} }\nnew A(";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let interner = TypeInterner::new();
+        let line_map = LineMap::build(source);
+        let provider = SignatureHelpProvider::new(
+            parser.get_arena(),
+            &binder,
+            &line_map,
+            &interner,
+            source,
+            "test.ts".to_string(),
+        );
+
+        let mut cache = None;
+        let help = provider.get_signature_help(root, Position::new(1, 6), &mut cache);
+        assert!(
+            help.is_none(),
+            "expected no help for private constructor call, got {}",
+            help.as_ref()
+                .map(|h| h.signatures[h.active_signature as usize].label.as_str())
+                .unwrap_or_default()
+        );
+    }
+
+    #[test]
+    fn no_signature_help_for_protected_constructor_new_call() {
+        let source = "class A { protected constructor() {} }\nnew A(";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let interner = TypeInterner::new();
+        let line_map = LineMap::build(source);
+        let provider = SignatureHelpProvider::new(
+            parser.get_arena(),
+            &binder,
+            &line_map,
+            &interner,
+            source,
+            "test.ts".to_string(),
+        );
+
+        let mut cache = None;
+        let help = provider.get_signature_help(root, Position::new(1, 6), &mut cache);
+        assert!(
+            help.is_none(),
+            "expected no help for protected constructor call, got {}",
             help.as_ref()
                 .map(|h| h.signatures[h.active_signature as usize].label.as_str())
                 .unwrap_or_default()
