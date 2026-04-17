@@ -743,6 +743,17 @@ function patchSessionClient(SessionClient, ts) {
             }
         }
 
+        const fixContainsHashImportSpecifier = (fix) => {
+            if (!fix || !Array.isArray(fix.changes)) return false;
+            return fix.changes.some(change =>
+                Array.isArray(change.textChanges) &&
+                change.textChanges.some(textChange => {
+                    if (!textChange || typeof textChange.newText !== "string") return false;
+                    return /(?:from |require\()(['"])#/.test(textChange.newText);
+                })
+            );
+        };
+
         let finalResult;
         if (tszResult === undefined || tszResult === null) {
             // tsz didn't handle this request - use native
@@ -781,9 +792,19 @@ function patchSessionClient(SessionClient, ts) {
                 const nativeResult = getNative();
                 if (nativeResult && nativeResult.length > 0) {
                     const tszHasImportFix = tszResult.some(f => f.fixName === "import");
-                    if (hasAutoImportExclusionPreferences() && tszHasImportFix) {
+                    const tszHasHashImportFix = tszResult.some(f =>
+                        f.fixName === "import" && fixContainsHashImportSpecifier(f)
+                    );
+                    const preserveAutoImportExcludeSemantics =
+                        hasAutoImportExclusionPreferences() &&
+                        tszResult.some(f =>
+                            f.fixName === "import" ||
+                            f.fixName === "fixClassIncorrectlyImplementsInterface"
+                        );
+                    if (preserveAutoImportExcludeSemantics || tszHasHashImportFix) {
                         // Preserve tsz's include/exclude semantics for auto-import
-                        // patterns instead of reintroducing native-only import paths.
+                        // patterns and package-import-map "#" specifier suggestions
+                        // instead of reintroducing native-only import paths.
                         finalResult = tszResult;
                     } else if (!tszHasImportFix) {
                         const filtered = nativeResult.filter(f => f.fixName !== "import");

@@ -784,6 +784,78 @@ fn get_code_fixes_prefers_paths_mapping_module_specifier_for_node_modules_target
     );
 }
 
+#[test]
+fn get_code_fixes_prefers_package_import_map_specifier_for_non_relative_preference() {
+    let mut server = make_server();
+    server.allow_importing_ts_extensions = true;
+    server.open_files.insert(
+        "/package.json".to_string(),
+        r##"{
+  "type": "module",
+  "imports": {
+    "#src/*": "./SRC/*"
+  }
+}"##
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/src/add.ts".to_string(),
+        "export function add(a: number, b: number) {}".to_string(),
+    );
+    server
+        .open_files
+        .insert("/src/index.ts".to_string(), "add;\n".to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/src/index.ts",
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 4,
+            "errorCodes": [2304],
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "includeCompletionsWithInsertText": true,
+                "importModuleSpecifierPreference": "non-relative"
+            }
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let fixes = body.as_array().expect("expected array response");
+    let module_specifiers: Vec<String> = fixes
+        .iter()
+        .filter(|fix| fix.get("fixName").and_then(serde_json::Value::as_str) == Some("import"))
+        .flat_map(|fix| {
+            fix.get("changes")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .flat_map(|change| {
+            change
+                .get("textChanges")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .filter_map(|text_change| {
+            text_change
+                .get("newText")
+                .and_then(serde_json::Value::as_str)
+        })
+        .filter_map(extract_module_specifier_from_import_change)
+        .collect();
+
+    assert_eq!(module_specifiers, vec!["#src/add.ts".to_string()]);
+}
+
 fn extract_module_specifier_from_import_change(new_text: &str) -> Option<String> {
     let (prefix_len, open_char) = if let Some(idx) = new_text.find("from \"") {
         (idx + "from ".len(), '"')
@@ -1932,6 +2004,142 @@ fn parse_identifier_call_expression_ignores_keywords() {
     assert_eq!(
         parse_identifier_call_expression("fn(): number { return 1; }"),
         None
+    );
+}
+
+#[test]
+fn handle_get_code_fixes_implement_interface_excludes_reexport_file_from_auto_import_patterns() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/src/vs/test.ts".to_string(),
+        "import { Parts } from './parts';\nexport class Extended implements Parts {\n}\n"
+            .to_string(),
+    );
+    server.open_files.insert(
+        "/src/vs/parts.ts".to_string(),
+        "import { Event } from '../thing';\nexport interface Parts {\n    readonly options: Event;\n}\n"
+            .to_string(),
+    );
+    server.open_files.insert(
+        "/src/event/event.ts".to_string(),
+        "export interface Event {\n    (): string;\n}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/src/thing.ts".to_string(),
+        "import { Event } from './event/event';\nexport { Event };\n".to_string(),
+    );
+    server.open_files.insert(
+        "/src/a.ts".to_string(),
+        "import './thing';\ndeclare module './thing' {\n    interface Event {\n        c: string;\n    }\n}\n"
+            .to_string(),
+    );
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/src/vs/test.ts",
+            "startLine": 2,
+            "startOffset": 14,
+            "endLine": 2,
+            "endOffset": 22,
+            "errorCodes": [2420],
+            "preferences": {
+                "autoImportFileExcludePatterns": ["src/thing.ts"]
+            }
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions array");
+    let action = actions
+        .iter()
+        .find(|action| {
+            action.get("fixName").and_then(serde_json::Value::as_str)
+                == Some("fixClassIncorrectlyImplementsInterface")
+        })
+        .expect("expected implement-interface codefix");
+    let new_text = action["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("expected replacement text");
+
+    assert_eq!(
+        new_text,
+        "import { Event } from '../event/event';\nimport { Parts } from './parts';\nexport class Extended implements Parts {\n    options: Event;\n}\n"
+    );
+}
+
+#[test]
+fn handle_get_code_fixes_implement_interface_skips_unusable_reexport_chain() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/src/vs/test.ts".to_string(),
+        "import { Parts } from './parts';\nexport class Extended implements Parts {\n}\n"
+            .to_string(),
+    );
+    server.open_files.insert(
+        "/src/vs/parts.ts".to_string(),
+        "import { Event } from '../thing';\nexport interface Parts {\n    readonly options: Event;\n}\n"
+            .to_string(),
+    );
+    server.open_files.insert(
+        "/src/event/event.ts".to_string(),
+        "export interface Event {\n    (): string;\n}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/src/thing.ts".to_string(),
+        "import { Event } from '../event/event';\nexport { Event };\n".to_string(),
+    );
+    server.open_files.insert(
+        "/src/a.ts".to_string(),
+        "import './thing';\ndeclare module './thing' {\n    interface Event {\n        c: string;\n    }\n}\n"
+            .to_string(),
+    );
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/src/vs/test.ts",
+            "startLine": 2,
+            "startOffset": 14,
+            "endLine": 2,
+            "endOffset": 22,
+            "errorCodes": [2420],
+            "preferences": {
+                "autoImportFileExcludePatterns": ["src/thing.ts"]
+            }
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions array");
+    let action = actions
+        .iter()
+        .find(|action| {
+            action.get("fixName").and_then(serde_json::Value::as_str)
+                == Some("fixClassIncorrectlyImplementsInterface")
+        })
+        .expect("expected implement-interface codefix");
+    let new_text = action["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("expected replacement text");
+
+    assert_eq!(
+        new_text,
+        "import { Parts } from './parts';\nexport class Extended implements Parts {\n    options: Event;\n}\n"
     );
 }
 
