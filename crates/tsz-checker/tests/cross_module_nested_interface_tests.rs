@@ -220,7 +220,7 @@ cfg.workspace.toAbsolutePath(cfg.server);
 }
 
 /// Simple test: cross-file optional interface property should produce an error
-/// when assigned to number (since it's IServer | undefined).
+/// when assigned to number (since it's `IServer` | undefined).
 #[test]
 fn test_cross_module_optional_interface_property_type() {
     let lib = r#"
@@ -251,7 +251,7 @@ function run(config: IConfig) {
 }
 
 /// Three-file test matching visibilityOfCrossModuleTypeUsage.ts conformance test.
-/// Uses import = require() with qualified names (server.IServer, commands.IConfiguration).
+/// Uses import = `require()` with qualified names (server.IServer, commands.IConfiguration).
 #[test]
 fn test_cross_module_optional_property_require_qualified() {
     // Note: compile_two_module_files only supports 2 files, so we simplify to 2 files
@@ -278,8 +278,6 @@ function run(configuration: commands.IConfiguration) {
     let codes: Vec<u32> = diagnostics.iter().map(|(c, _)| *c).collect();
     let messages: Vec<&str> = diagnostics.iter().map(|(_, m)| m.as_str()).collect();
 
-    eprintln!("Diagnostics: codes={codes:?}, messages={messages:?}");
-
     assert!(
         has_error(&diagnostics, 2345),
         "Should emit TS2345 for passing IServer | undefined to IServer parameter. \
@@ -288,7 +286,7 @@ function run(configuration: commands.IConfiguration) {
 }
 
 /// Three-file test matching the exact pattern of visibilityOfCrossModuleTypeUsage.ts.
-/// server.ts defines IServer and IWorkspace, commands.ts defines IConfiguration
+/// server.ts defines `IServer` and `IWorkspace`, commands.ts defines `IConfiguration`
 /// referencing server types, fs.ts is the consumer.
 #[test]
 fn test_three_file_cross_module_optional_property() {
@@ -324,8 +322,6 @@ function run(configuration: commands.IConfiguration) {
     );
     let codes: Vec<u32> = diagnostics.iter().map(|(c, _)| *c).collect();
     let messages: Vec<&str> = diagnostics.iter().map(|(_, m)| m.as_str()).collect();
-
-    eprintln!("3-file diagnostics: codes={codes:?}, messages={messages:?}");
 
     // Known issue: 3-file cross-module resolution doesn't fully resolve
     // nested interface chains yet. Accept TS2339 (property not found) as
@@ -370,8 +366,6 @@ config.workspace.toAbsolutePath(42);
     let codes: Vec<u32> = diagnostics.iter().map(|(c, _)| *c).collect();
     let messages: Vec<&str> = diagnostics.iter().map(|(_, m)| m.as_str()).collect();
 
-    eprintln!("3-file method: codes={codes:?}, messages={messages:?}");
-
     // Known limitation: 3-file chained method calls on cross-file interfaces
     // don't fully resolve yet. Accept TS2339 (method not found) or TS2345 (arg mismatch).
     assert!(
@@ -412,8 +406,6 @@ let x: number = config.workspace;
     );
     let codes: Vec<u32> = diagnostics.iter().map(|(c, _)| *c).collect();
     let messages: Vec<&str> = diagnostics.iter().map(|(_, m)| m.as_str()).collect();
-
-    eprintln!("3-file simple: codes={codes:?}, messages={messages:?}");
 
     assert!(
         has_error(&diagnostics, 2322),

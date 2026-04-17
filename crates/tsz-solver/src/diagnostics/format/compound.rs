@@ -1002,17 +1002,30 @@ impl<'a> TypeFormatter<'a> {
             let inner = self.format(elements[0].type_id);
             return inner.into_owned();
         }
-        let formatted: Vec<String> = elements
+        // Format each element's type independently, then apply namespace
+        // disambiguation across elements whose display names collide —
+        // e.g. `[Foo.Yep, Bar.Yep]` instead of `[Yep, Yep]` when two different
+        // named types share the same short name.
+        let type_strs: Vec<String> = elements
             .iter()
             .map(|e| {
-                let rest = if e.rest { "..." } else { "" };
-                // Rest elements are never printed with `?` in tsc
-                let optional = if e.optional && !e.rest { "?" } else { "" };
-                let type_str: String = if e.optional && !e.rest {
+                if e.optional && !e.rest {
                     self.format_stripping_undefined(e.type_id)
                 } else {
                     self.format(e.type_id).into_owned()
-                };
+                }
+            })
+            .collect();
+        let type_ids: Vec<TypeId> = elements.iter().map(|e| e.type_id).collect();
+        let disambiguated = self.disambiguate_union_member_names(&type_ids, type_strs);
+
+        let formatted: Vec<String> = elements
+            .iter()
+            .zip(disambiguated)
+            .map(|(e, type_str)| {
+                let rest = if e.rest { "..." } else { "" };
+                // Rest elements are never printed with `?` in tsc
+                let optional = if e.optional && !e.rest { "?" } else { "" };
                 if let Some(name_atom) = e.name {
                     let name = self.atom(name_atom);
                     format!("{rest}{name}{optional}: {type_str}")

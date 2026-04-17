@@ -25794,7 +25794,7 @@ async function normalAwait() {
 /// Module elements inside function bodies should get specific grammar errors
 /// (TS1231-TS1235, TS1258) from the checker, not just TS1184 from the parser.
 /// Previously the parser emitted TS1184 for export/declare in block context,
-/// which set has_syntax_parse_errors and suppressed the checker's specific codes.
+/// which set `has_syntax_parse_errors` and suppressed the checker's specific codes.
 #[test]
 fn module_elements_in_wrong_context_emit_specific_codes() {
     let source = r#"
