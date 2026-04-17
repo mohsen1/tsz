@@ -1926,3 +1926,115 @@ fn handle_get_code_fixes_implements_same_file_interface_with_negative_literal_un
         "expected generated member text in codefix, got: {new_text}"
     );
 }
+
+#[test]
+fn handle_get_code_fixes_prefers_add_missing_async_for_promise_assignability() {
+    let mut server = make_server();
+    let content = "interface Stuff {\n    b: () => Promise<string>;\n}\n\nfunction foo(): Stuff | Date {\n    return {\n        b: () => \"hello\",\n    }\n}\n";
+    server
+        .open_files
+        .insert("/index.ts".to_string(), content.to_string());
+
+    let line_map = LineMap::build(content);
+    let start = content
+        .find("hello")
+        .expect("expected marker text for async fix") as u32;
+    let end = start + "hello".len() as u32;
+    let start_pos = line_map.offset_to_position(start, content);
+    let end_pos = line_map.offset_to_position(end, content);
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/index.ts",
+            "startLine": start_pos.line + 1,
+            "startOffset": start_pos.character + 1,
+            "endLine": end_pos.line + 1,
+            "endOffset": end_pos.character + 1,
+            "errorCodes": [2322]
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions array");
+    let first = actions
+        .first()
+        .expect("expected at least one codefix action for assignability mismatch");
+    assert_eq!(
+        first.get("fixId").and_then(serde_json::Value::as_str),
+        Some("addMissingAsync"),
+        "expected addMissingAsync to be prioritized, got: {actions:?}"
+    );
+    assert_eq!(
+        first.get("description").and_then(serde_json::Value::as_str),
+        Some("Add async modifier to containing function")
+    );
+    let new_text = first["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("expected replacement text");
+    assert!(
+        new_text.contains("b: async () => \"hello\""),
+        "expected async arrow update, got: {new_text}"
+    );
+}
+
+#[test]
+fn handle_get_code_fixes_prefers_add_missing_async_for_underscore_arrow_parameter() {
+    let mut server = make_server();
+    let content = "interface Stuff {\n    b: () => Promise<string>;\n}\n\nfunction foo(): Stuff | Date {\n    return {\n        b: _ => \"hello\",\n    }\n}\n";
+    server
+        .open_files
+        .insert("/index.ts".to_string(), content.to_string());
+
+    let line_map = LineMap::build(content);
+    let start = content
+        .find("hello")
+        .expect("expected marker text for async fix") as u32;
+    let end = start + "hello".len() as u32;
+    let start_pos = line_map.offset_to_position(start, content);
+    let end_pos = line_map.offset_to_position(end, content);
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/index.ts",
+            "startLine": start_pos.line + 1,
+            "startOffset": start_pos.character + 1,
+            "endLine": end_pos.line + 1,
+            "endOffset": end_pos.character + 1,
+            "errorCodes": [2322]
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions array");
+    let first = actions
+        .first()
+        .expect("expected at least one codefix action for assignability mismatch");
+    assert_eq!(
+        first.get("fixId").and_then(serde_json::Value::as_str),
+        Some("addMissingAsync"),
+        "expected addMissingAsync to be prioritized, got: {actions:?}"
+    );
+    let new_text = first["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("expected replacement text");
+    assert!(
+        new_text.contains("b: async (_) => \"hello\""),
+        "expected async underscored-parameter arrow update, got: {new_text}"
+    );
+}
