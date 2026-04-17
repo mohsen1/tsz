@@ -25897,3 +25897,23 @@ new Foo();
          The require() result should be the constructable class. Got diagnostics: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_no_false_ts2339_on_generic_class_computed_property_self_reference() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+declare const rC: RC<"a">;
+rC.x
+declare class RC<T extends "a" | "b"> {
+    x: T;
+    [rC.x]: "b";
+}
+        "#,
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "TS2339 should not be emitted for property access on a generic class \
+         used in its own computed property name. The property 'x' exists on \
+         the class instance type. Got diagnostics: {diagnostics:?}"
+    );
+}

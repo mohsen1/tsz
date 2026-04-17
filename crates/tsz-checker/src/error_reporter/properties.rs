@@ -458,6 +458,25 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Suppress TS2339 when evaluating a computed property name expression
+        // during class instance type building. When a class has a self-referential
+        // computed property (e.g., `[rC.x]` inside `declare class RC<T> { x: T;
+        // [rC.x]: "b"; }` where `rC: RC<"a">`), the class instance type isn't
+        // fully built yet, causing property access on the incomplete type to fail.
+        // This is a transient state — the property will be found once the class
+        // is fully built. Suppressing here avoids false positives while the
+        // computed property name is being evaluated for class member resolution.
+        if self.ctx.checking_computed_property_name.is_some()
+            && !self.ctx.class_instance_resolution_set.is_empty()
+            && tsz_solver::type_queries::get_application_info(
+                self.ctx.types.as_type_database(),
+                type_id,
+            )
+            .is_some()
+        {
+            return;
+        }
+
         // Suppress TS2339 when the object is a type parameter whose constraint
         // resolved to ERROR or is self-referential/circular.
         //
