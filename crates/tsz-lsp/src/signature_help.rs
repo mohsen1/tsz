@@ -1777,6 +1777,17 @@ impl<'a> SignatureHelpProvider<'a> {
             param_labels.push(param_label);
         }
 
+        // Inferred tuple wrappers may degrade `(...a: [])` to `(...a: any[])`.
+        // Align with tsserver display by rendering this synthetic single-rest
+        // parameter shape as a zero-parameter callable.
+        if parameters.len() == 1 {
+            let only = &parameters[0];
+            if only.is_rest && only.name == "a" && only.label == "...a: any[]" {
+                parameters.clear();
+                param_labels.clear();
+            }
+        }
+
         // Build prefix and suffix
         // For return type display:
         // - Type predicate → "paramName is Type" or "this is Type"

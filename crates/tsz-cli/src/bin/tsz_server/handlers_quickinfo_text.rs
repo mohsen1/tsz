@@ -159,6 +159,7 @@ pub(super) fn normalize_quickinfo_display_string(display: &str) -> String {
     };
     let normalized = normalize_call_signature_colon_spacing(&normalized);
     let normalized = normalize_single_rest_tuple_function_params(&normalized);
+    let normalized = normalize_single_any_rest_param_function_params(&normalized);
     let normalized = normalize_single_call_signature_object_types(&normalized);
     normalize_single_index_signature_objects(&normalized)
 }
@@ -337,6 +338,10 @@ fn normalize_single_rest_tuple_function_params(display: &str) -> String {
     }
 
     out
+}
+
+fn normalize_single_any_rest_param_function_params(display: &str) -> String {
+    display.replace("(...a: any[])", "()")
 }
 
 fn find_matching_brace(text: &str, open_brace: usize) -> Option<usize> {
@@ -873,5 +878,12 @@ mod tests {
             normalized,
             "var fnVariadicWrapped: (str: string, ...num: number[]) => void"
         );
+    }
+
+    #[test]
+    fn normalize_quickinfo_display_string_collapses_single_any_rest_param() {
+        let display = "var fnNoParamsWrapped: (...a: any[]) => void";
+        let normalized = normalize_quickinfo_display_string(display);
+        assert_eq!(normalized, "var fnNoParamsWrapped: () => void");
     }
 }
