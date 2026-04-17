@@ -80,19 +80,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Check CallableFunction/NewableFunction when strictBindCallApply is enabled.
-        // These types provide proper typing for .call()/.apply()/.bind().
-        // TypeScript requires them whenever --noLib is explicitly set, even if the
-        // user manually defines Function, because the user is then responsible for
-        // the whole built-in global surface. Outside --noLib, tsc only requires them
-        // when Function itself is also missing.
-        if self.ctx.compiler_options.strict_bind_call_apply
-            && (self.ctx.capabilities.no_lib || !self.ctx.has_name_in_lib("Function"))
-        {
-            for &type_name in FUNCTION_AUX_TYPES {
-                if !self.ctx.has_name_in_lib(type_name) {
-                    self.error_global_type_missing_at_position(type_name, String::new(), 0, 0);
-                }
+        // Check CallableFunction/NewableFunction. tsc always requires these aux
+        // types to be available; a restricted `--lib` (e.g. `@lib: es2015.core`
+        // alone) that does not include them must report them as missing at
+        // position 0. Previously this was guarded behind strict_bind_call_apply
+        // which made us miss TS2318 in lib-restriction tests like
+        // modularizeLibrary_ErrorFromUsingES6ArrayWithOnlyES6ArrayLib.
+        for &type_name in FUNCTION_AUX_TYPES {
+            if !self.ctx.has_name_in_lib(type_name) {
+                self.error_global_type_missing_at_position(type_name, String::new(), 0, 0);
             }
         }
         // Check for feature-specific global types that may be missing
