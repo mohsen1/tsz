@@ -41,6 +41,95 @@ pub(super) fn identifier_at(source_text: &str, offset: u32) -> Option<String> {
     (end > start).then(|| source_text[start as usize..end as usize].to_string())
 }
 
+/// Return marker comment bounds at `offset` when `source[offset..]` starts with `/*...*/`.
+/// The returned tuple is `(start, end_exclusive)`.
+pub(super) fn marker_comment_bounds_at(source_text: &str, offset: u32) -> Option<(u32, u32)> {
+    let bytes = source_text.as_bytes();
+    let len = bytes.len() as u32;
+    if offset + 1 >= len {
+        return None;
+    }
+    if bytes[offset as usize] != b'/' || bytes[(offset + 1) as usize] != b'*' {
+        return None;
+    }
+    let mut cursor = offset + 2;
+    while cursor + 1 < len {
+        if bytes[cursor as usize] == b'*' && bytes[(cursor + 1) as usize] == b'/' {
+            return Some((offset, cursor + 2));
+        }
+        cursor += 1;
+    }
+    None
+}
+
+/// Return marker comment bounds near `offset` when `offset` lands inside a
+/// fourslash marker comment.
+pub(super) fn marker_comment_bounds_around(source_text: &str, offset: u32) -> Option<(u32, u32)> {
+    let bytes = source_text.as_bytes();
+    let len = bytes.len() as u32;
+    if len < 4 {
+        return None;
+    }
+
+    let start_search = offset.saturating_sub(8);
+    let end_search = (offset + 1).min(len.saturating_sub(2));
+    for start in start_search..=end_search {
+        if let Some((marker_start, marker_end)) = marker_comment_bounds_at(source_text, start)
+            && marker_end.saturating_sub(marker_start) <= 32
+        {
+            if offset >= marker_start && offset < marker_end {
+                return Some((marker_start, marker_end));
+            }
+        }
+    }
+    None
+}
+
+/// Heuristic: detect whether `offset` is inside a type annotation context
+/// (`foo: Type`) by scanning backward to the nearest top-level `:` delimiter.
+pub(super) fn is_type_annotation_context(source_text: &str, offset: u32) -> bool {
+    let bytes = source_text.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+    let len = bytes.len() as u32;
+    let probe = nearest_identifier_offset(source_text, offset).unwrap_or(offset);
+    let mut cursor = probe.min(len.saturating_sub(1)) as i32;
+
+    while cursor >= 0 {
+        let byte = bytes[cursor as usize];
+        if byte.is_ascii_whitespace() {
+            cursor -= 1;
+            continue;
+        }
+
+        if byte == b'/'
+            && cursor > 0
+            && bytes[(cursor - 1) as usize] == b'*'
+        {
+            cursor -= 2;
+            while cursor >= 1 {
+                if bytes[(cursor - 1) as usize] == b'/' && bytes[cursor as usize] == b'*' {
+                    cursor -= 2;
+                    break;
+                }
+                cursor -= 1;
+            }
+            continue;
+        }
+
+        match byte {
+            b':' => return true,
+            b'=' | b';' | b'\n' | b'\r' | b'{' | b'(' | b',' => return false,
+            _ => {}
+        }
+
+        cursor -= 1;
+    }
+
+    false
+}
+
 /// Clean a raw JSDoc comment (`/** ... */`) into plain text.
 pub(super) fn clean_jsdoc_comment(raw: &str) -> String {
     let inner = raw
@@ -885,5 +974,27 @@ mod tests {
         let display = "var fnNoParamsWrapped: (...a: any[]) => void";
         let normalized = normalize_quickinfo_display_string(display);
         assert_eq!(normalized, "var fnNoParamsWrapped: () => void");
+    }
+
+    #[test]
+    fn marker_comment_bounds_at_finds_simple_marker() {
+        let source = "x/*1*/y";
+        let (start, end) = marker_comment_bounds_at(source, 1).expect("marker should be found");
+        assert_eq!((start, end), (1, 6));
+    }
+
+    #[test]
+    fn marker_comment_bounds_around_handles_offset_inside_marker() {
+        let source = "x/*1*/y";
+        let (start, end) =
+            marker_comment_bounds_around(source, 3).expect("marker should be found");
+        assert_eq!((start, end), (1, 6));
+    }
+
+    #[test]
+    fn is_type_annotation_context_detects_marker_after_type_reference() {
+        let source = "const i: foo/*m*/ = { x: 1 };";
+        let marker_start = source.find("/*m*/").expect("marker") as u32;
+        assert!(is_type_annotation_context(source, marker_start));
     }
 }
