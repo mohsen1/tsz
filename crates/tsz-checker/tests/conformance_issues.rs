@@ -25917,3 +25917,20 @@ declare class RC<T extends "a" | "b"> {
          the class instance type. Got diagnostics: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_no_false_ts2339_interface_self_referencing_computed_property() {
+    let source = r#"
+declare const rI: RI<"a">;
+rI.x;
+interface RI<T extends "a" | "b"> {
+    x: T;
+    [rI.x]: "b";
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "TS2339 should not be emitted for self-referencing computed property in interface. Got: {diagnostics:?}"
+    );
+}
