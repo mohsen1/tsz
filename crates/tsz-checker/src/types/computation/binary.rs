@@ -2230,6 +2230,8 @@ impl<'a> CheckerState<'a> {
         if right_type == TypeId::UNKNOWN {
             self.error_is_of_type_unknown(right_idx);
         } else if !self.is_valid_in_operator_rhs(right_type) {
+            // Route through the check_assignable_or_report(...) gateway family
+            // so computation-layer mismatches stay on the centralized path.
             let _ = self.check_assignable_or_report_at_exact_anchor(
                 right_type,
                 TypeId::OBJECT,
