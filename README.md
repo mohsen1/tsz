@@ -55,7 +55,7 @@ language service feature coverage (completions, quickinfo, go-to-definition, etc
 
 <!-- FOURSLASH_START -->
 ```
-Progress: [████████████░░░░░░░░] 58.5% (3,839 / 6,562 tests)
+Progress: [████████████░░░░░░░░] 58.5% (3,840 / 6,562 tests)
 ```
 <!-- FOURSLASH_END -->
 
