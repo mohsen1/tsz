@@ -34994,6 +34994,48 @@ fn test_ts1194_no_error_nested_in_declare_namespace() {
     );
 }
 
+#[test]
+fn test_ts1194_no_error_in_block_within_namespace() {
+    // When export declarations are inside a block `{}` within a namespace,
+    // tsc reports context errors (TS1231-1235) but does NOT additionally
+    // emit TS1194 or TS1319. The block-context diagnostics take priority.
+    let source = r#"
+        namespace P {
+            {
+                export { };
+            }
+        }
+    "#;
+
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = crate::binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = crate::checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    crate::test_fixtures::setup_lib_contexts(&mut checker);
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<_> = checker.ctx.diagnostics.iter().collect();
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 1194),
+        "Should NOT emit TS1194 for export in block within namespace, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 1319),
+        "Should NOT emit TS1319 for export in block within namespace, got: {diagnostics:?}"
+    );
+}
+
 // =============================================================================
 // Reverse Mapped Type Modifier Preservation Tests
 // =============================================================================
