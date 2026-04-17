@@ -591,12 +591,11 @@ impl<'a> CheckerState<'a> {
             };
 
             match stmt_node.kind {
-                syntax_kind_ext::IMPORT_DECLARATION => {
+                syntax_kind_ext::IMPORT_DECLARATION
                     if Self::statement_contains_any(stmt_text, &import_patterns)
-                        && self.emit_ts1262_at_first_await(start, stmt_text)
-                    {
-                        return;
-                    }
+                        && self.emit_ts1262_at_first_await(start, stmt_text) =>
+                {
+                    return;
                 }
                 syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
                     let has_await_import_equals = stmt_text.contains("import await =");

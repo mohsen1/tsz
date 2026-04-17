@@ -165,11 +165,7 @@ impl Server {
                         }));
                     }
                     b'>' => depth += 1,
-                    b'<' => {
-                        if depth > 0 {
-                            depth -= 1;
-                        }
-                    }
+                    b'<' if depth > 0 => depth -= 1,
                     _ => {}
                 }
             }
@@ -1108,21 +1104,13 @@ impl Server {
     /// expressions with constructors.
     fn get_effective_decl(decl: &str, source: &str, decl_offset: usize) -> Option<String> {
         // Only apply to variable declarations
-        let rest = if let Some(r) = decl.strip_prefix("var ") {
-            r
-        } else if let Some(r) = decl.strip_prefix("let ") {
-            r
-        } else if let Some(r) = decl.strip_prefix("const ") {
-            r
-        } else if let Some(r) = decl.strip_prefix("export var ") {
-            r
-        } else if let Some(r) = decl.strip_prefix("export let ") {
-            r
-        } else if let Some(r) = decl.strip_prefix("export const ") {
-            r
-        } else {
-            return None;
-        };
+        let rest = decl
+            .strip_prefix("var ")
+            .or_else(|| decl.strip_prefix("let "))
+            .or_else(|| decl.strip_prefix("const "))
+            .or_else(|| decl.strip_prefix("export var "))
+            .or_else(|| decl.strip_prefix("export let "))
+            .or_else(|| decl.strip_prefix("export const "))?;
 
         // Find the `=` in the declaration (skip the variable name)
         let eq_pos = rest.find('=')?;
@@ -1275,11 +1263,7 @@ impl Server {
         while i < chars.len() {
             match chars[i] {
                 '<' => angle_depth += 1,
-                '>' => {
-                    if angle_depth > 0 {
-                        angle_depth -= 1;
-                    }
-                }
+                '>' if angle_depth > 0 => angle_depth -= 1,
                 '(' if angle_depth == 0 => return Some(i),
                 _ => {}
             }
@@ -1503,11 +1487,7 @@ impl Server {
                     }
                     match bytes[j] {
                         b'{' | b'(' | b'[' => depth += 1,
-                        b'}' | b')' | b']' => {
-                            if depth > 0 {
-                                depth -= 1;
-                            }
-                        }
+                        b'}' | b')' | b']' if depth > 0 => depth -= 1,
                         _ => {}
                     }
                     j += 1;

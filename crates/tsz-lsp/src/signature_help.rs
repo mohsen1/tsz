@@ -1653,10 +1653,11 @@ impl<'a> SignatureHelpProvider<'a> {
 
         if let Some(last_end) = last_non_omitted_end {
             let end = (cursor_offset as usize).min(self.source_text.len());
-            if last_end < end && seen_non_omitted > 0 {
-                if !self.has_comma_between(last_end as u32, cursor_offset) {
-                    return (seen_non_omitted - 1) as u32;
-                }
+            if last_end < end
+                && seen_non_omitted > 0
+                && !self.has_comma_between(last_end as u32, cursor_offset)
+            {
+                return (seen_non_omitted - 1) as u32;
             }
         }
 
@@ -1753,9 +1754,7 @@ impl<'a> SignatureHelpProvider<'a> {
         data: &CallExprData,
         cursor_offset: u32,
     ) -> Option<TypeArgumentContext> {
-        if data.type_arguments.is_none() {
-            return None;
-        }
+        data.type_arguments.as_ref()?;
 
         let call_node = self.arena.get(call_idx)?;
         let call_start = call_node.pos as usize;
@@ -2853,12 +2852,7 @@ impl<'a> SignatureHelpProvider<'a> {
             return;
         }
 
-        for (param, type_text) in signature
-            .info
-            .parameters
-            .iter_mut()
-            .zip(param_type_texts.into_iter())
-        {
+        for (param, type_text) in signature.info.parameters.iter_mut().zip(param_type_texts) {
             if let Some(type_text) = type_text {
                 let optional = if param.is_optional && !self.is_js_like_file() {
                     "?"
@@ -3672,7 +3666,7 @@ impl<'a> SignatureHelpProvider<'a> {
         penalty
     }
 
-    fn primitive_mask(kind: PrimitiveKind) -> u8 {
+    const fn primitive_mask(kind: PrimitiveKind) -> u8 {
         match kind {
             PrimitiveKind::String => 0b0001,
             PrimitiveKind::Number => 0b0010,

@@ -285,8 +285,7 @@ fn resolve_external_enum_member(
                 } else {
                     // Auto-incremented: find base and add offset
                     let mut auto_result = Some(member_idx as f64);
-                    let mut offset = 1u32;
-                    for i in (0..member_idx).rev() {
+                    for (offset, i) in (1u32..).zip((0..member_idx).rev()) {
                         let prev_idx = candidate_enum.members.nodes[i];
                         let prev_node = arena.get(prev_idx)?;
                         let prev_data = arena.get_enum_member(prev_node)?;
@@ -301,7 +300,6 @@ fn resolve_external_enum_member(
                             .map(|base| base + offset as f64);
                             break;
                         }
-                        offset += 1;
                     }
                     auto_result
                 };
@@ -363,8 +361,7 @@ fn resolve_enum_member_value(
         // Auto-incremented member: find the nearest prior member with an initializer
         // and count the offset
         let mut auto_result = Some(target_idx as f64);
-        let mut offset = 1u32;
-        for i in (0..target_idx).rev() {
+        for (offset, i) in (1u32..).zip((0..target_idx).rev()) {
             let prev_idx = target_enum_data.members.nodes[i];
             let prev_node = arena.get(prev_idx)?;
             let prev_data = arena.get_enum_member(prev_node)?;
@@ -379,7 +376,6 @@ fn resolve_enum_member_value(
                 .map(|base| base + offset as f64);
                 break;
             }
-            offset += 1;
         }
         auto_result
     };

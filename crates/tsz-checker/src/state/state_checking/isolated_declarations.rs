@@ -28,12 +28,12 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             match node.kind {
-                syntax_kind_ext::VARIABLE_STATEMENT => {
-                    if is_script || self.is_declaration_exported(self.ctx.arena, stmt_idx) {
-                        self.check_isolated_decl_variable_statement(stmt_idx);
-                        // Also check for expando assignments on variable-declared functions
-                        self.check_isolated_decl_expando_variable(stmt_idx, stmts);
-                    }
+                syntax_kind_ext::VARIABLE_STATEMENT
+                    if is_script || self.is_declaration_exported(self.ctx.arena, stmt_idx) =>
+                {
+                    self.check_isolated_decl_variable_statement(stmt_idx);
+                    // Also check for expando assignments on variable-declared functions
+                    self.check_isolated_decl_expando_variable(stmt_idx, stmts);
                 }
                 syntax_kind_ext::EXPORT_DECLARATION => {
                     if let Some(export_decl) = self.ctx.arena.get_export_decl(node) {
@@ -60,21 +60,21 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-                syntax_kind_ext::FUNCTION_DECLARATION => {
-                    if is_script || self.is_declaration_exported(self.ctx.arena, stmt_idx) {
-                        self.check_isolated_decl_function(stmt_idx);
-                        self.check_isolated_decl_expando_function(stmt_idx, stmts);
-                    }
+                syntax_kind_ext::FUNCTION_DECLARATION
+                    if is_script || self.is_declaration_exported(self.ctx.arena, stmt_idx) =>
+                {
+                    self.check_isolated_decl_function(stmt_idx);
+                    self.check_isolated_decl_expando_function(stmt_idx, stmts);
                 }
-                syntax_kind_ext::CLASS_DECLARATION => {
-                    if is_script || self.is_declaration_exported(self.ctx.arena, stmt_idx) {
-                        self.check_isolated_decl_class(stmt_idx);
-                    }
+                syntax_kind_ext::CLASS_DECLARATION
+                    if is_script || self.is_declaration_exported(self.ctx.arena, stmt_idx) =>
+                {
+                    self.check_isolated_decl_class(stmt_idx);
                 }
-                syntax_kind_ext::ENUM_DECLARATION => {
-                    if is_script || self.is_declaration_exported(self.ctx.arena, stmt_idx) {
-                        self.check_isolated_decl_enum(stmt_idx);
-                    }
+                syntax_kind_ext::ENUM_DECLARATION
+                    if is_script || self.is_declaration_exported(self.ctx.arena, stmt_idx) =>
+                {
+                    self.check_isolated_decl_enum(stmt_idx);
                 }
                 _ => {}
             }
@@ -94,16 +94,15 @@ impl<'a> CheckerState<'a> {
                 syntax_kind_ext::IMPORT_DECLARATION
                 | syntax_kind_ext::EXPORT_DECLARATION
                 | syntax_kind_ext::EXPORT_ASSIGNMENT => return true,
-                k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                k if (k == syntax_kind_ext::VARIABLE_STATEMENT
                     || k == syntax_kind_ext::FUNCTION_DECLARATION
                     || k == syntax_kind_ext::CLASS_DECLARATION
                     || k == syntax_kind_ext::INTERFACE_DECLARATION
                     || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                    || k == syntax_kind_ext::ENUM_DECLARATION =>
+                    || k == syntax_kind_ext::ENUM_DECLARATION)
+                    && self.is_declaration_exported(self.ctx.arena, stmt_idx) =>
                 {
-                    if self.is_declaration_exported(self.ctx.arena, stmt_idx) {
-                        return true;
-                    }
+                    return true;
                 }
                 _ => {}
             }
@@ -1453,10 +1452,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             match node.kind {
-                syntax_kind_ext::VARIABLE_STATEMENT => {
-                    if self.is_declaration_exported(self.ctx.arena, stmt_idx) {
-                        self.scan_for_class_expressions(stmt_idx);
-                    }
+                syntax_kind_ext::VARIABLE_STATEMENT
+                    if self.is_declaration_exported(self.ctx.arena, stmt_idx) =>
+                {
+                    self.scan_for_class_expressions(stmt_idx);
                 }
                 syntax_kind_ext::EXPORT_DECLARATION => {
                     // Unwrap EXPORT_DECLARATION to check the inner variable statement

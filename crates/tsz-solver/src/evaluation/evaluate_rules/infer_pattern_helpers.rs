@@ -326,23 +326,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     bindings.extend(combined);
                     true
                 }
-                Some(TypeData::Object(_)) | Some(TypeData::ObjectWithIndex(_)) => {
-                    // Check if the Object is structurally the Function interface
-                    // (lowered without call signatures due to cross-arena splitting)
+                Some(TypeData::Object(_)) | Some(TypeData::ObjectWithIndex(_))
                     if crate::type_queries::is_function_interface_structural(
                         self.interner(),
                         source,
-                    ) {
-                        let function_params = vec![crate::types::ParamInfo {
-                            name: None,
-                            type_id: TypeId::ANY,
-                            optional: false,
-                            rest: true,
-                        }];
-                        match_params_and_return(source, &function_params, TypeId::ANY, bindings)
-                    } else {
-                        false
-                    }
+                    ) =>
+                {
+                    let function_params = vec![crate::types::ParamInfo {
+                        name: None,
+                        type_id: TypeId::ANY,
+                        optional: false,
+                        rest: true,
+                    }];
+                    match_params_and_return(source, &function_params, TypeId::ANY, bindings)
                 }
                 _ => false,
             };
@@ -489,21 +485,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         bindings.extend(combined);
                         true
                     }
-                    Some(TypeData::Object(_)) | Some(TypeData::ObjectWithIndex(_)) => {
+                    Some(TypeData::Object(_)) | Some(TypeData::ObjectWithIndex(_))
                         if crate::type_queries::is_function_interface_structural(
                             self.interner(),
                             source,
-                        ) {
-                            let function_params = vec![crate::types::ParamInfo {
-                                name: None,
-                                type_id: TypeId::ANY,
-                                optional: false,
-                                rest: true,
-                            }];
-                            match_params_tuple(&function_params, &[], bindings)
-                        } else {
-                            false
-                        }
+                        ) =>
+                    {
+                        let function_params = vec![crate::types::ParamInfo {
+                            name: None,
+                            type_id: TypeId::ANY,
+                            optional: false,
+                            rest: true,
+                        }];
+                        match_params_tuple(&function_params, &[], bindings)
                     }
                     _ => false,
                 };
