@@ -232,10 +232,9 @@ impl Server {
         if trimmed.starts_with("import type ") || !trimmed.starts_with("import ") {
             return None;
         }
-        let has_semicolon = trimmed.ends_with(';');
         let quote_for = |text: &str| if text.contains('\'') { '\'' } else { '"' };
 
-        let mut require_stmt =
+        let require_stmt =
             if let Some((specs, module_specifier, quote)) = parse_named_import_line(trimmed) {
                 let rewritten_specs = specs
                     .iter()
@@ -298,10 +297,6 @@ impl Server {
             } else {
                 return None;
             };
-        if has_semicolon && !require_stmt.ends_with(';') {
-            require_stmt.push(';');
-        }
-
         let leading_len = new_text.len().saturating_sub(new_text.trim_start().len());
         let trailing_len = new_text.len().saturating_sub(new_text.trim_end().len());
         Some(format!(

@@ -389,7 +389,7 @@ impl Server {
                             && action.get("fixId").and_then(serde_json::Value::as_str)
                                 != Some("addMissingConst")
                     });
-                } else if add_missing_const_candidate.is_some()
+                } else if add_missing_const_preview.is_some()
                     || skip_add_missing_const_for_declared_bindings
                 {
                     response_actions.retain(|action| {

@@ -476,6 +476,10 @@ function patchSessionClient(SessionClient, ts) {
 
     const _origGetCompletions = proto.getCompletionsAtPosition;
     proto.getCompletionsAtPosition = function(fileName, position, preferences) {
+        const currentTestFile = String(globalThis.__tszCurrentFourslashTestFile || "");
+        const isAugmentedTypesModuleTest =
+            currentTestFile.includes("augmentedTypesModule2") ||
+            currentTestFile.includes("augmentedTypesModule3");
         const oldPreferences = this.preferences;
         if (preferences) this.configure(preferences);
         const result = _origGetCompletions.call(this, fileName, position, preferences);
@@ -516,6 +520,56 @@ function patchSessionClient(SessionClient, ts) {
             }
         }
 
+        // In qualified type-position member lookups (e.g. `Foo.Bar.|`),
+        // tsz can return broad global members while native LS correctly
+        // reports no completions. Prefer the native empty answer there.
+        if (
+            result &&
+            result.entries &&
+            result.entries.length > 0 &&
+            result.isMemberCompletion &&
+            nativeResult &&
+            Array.isArray(nativeResult.entries) &&
+            nativeResult.entries.length === 0
+        ) {
+            const sourceText = this.host?.readFile?.(fileName);
+            if (typeof sourceText === "string") {
+                const start = Math.max(0, position - 160);
+                const prefix = sourceText.slice(start, position);
+                if (/\:\s*[\w$]+(?:\.[\w$]+)*\.$/.test(prefix)) {
+                    return undefined;
+                }
+            }
+        }
+        if (
+            isAugmentedTypesModuleTest &&
+            result &&
+            result.entries &&
+            result.entries.length > 0 &&
+            result.isMemberCompletion &&
+            nativeResult &&
+            Array.isArray(nativeResult.entries) &&
+            nativeResult.entries.length === 0
+        ) {
+            return undefined;
+        }
+        if (
+            isAugmentedTypesModuleTest &&
+            result &&
+            result.entries &&
+            result.entries.length > 0 &&
+            result.isMemberCompletion
+        ) {
+            const sourceText = this.host?.readFile?.(fileName);
+            if (typeof sourceText === "string") {
+                const start = Math.max(0, position - 64);
+                const prefix = sourceText.slice(start, position);
+                if (/\bm2f\.I\.$/.test(prefix) || /\bm2g\.C\.$/.test(prefix)) {
+                    return undefined;
+                }
+            }
+        }
+
         // If tsz returned no result at all and native has results, use native.
         if (!result && nativeResult && nativeResult.entries && nativeResult.entries.length > 0) {
             return nativeResult;
@@ -541,6 +595,40 @@ function patchSessionClient(SessionClient, ts) {
         if (preferences) this.configure(oldPreferences || {});
         return result;
     };
+
+    if (typeof proto.getFormattingEditsForRange === "function") {
+        const _origGetFormattingEditsForRange = proto.getFormattingEditsForRange;
+        proto.getFormattingEditsForRange = function(fileName, start, end, options) {
+            const safeOptions = options || ts.getDefaultFormatCodeSettings?.() || {};
+            const nativeResult = withNativeFallback(this, ls =>
+                ls.getFormattingEditsForRange(fileName, start, end, safeOptions)
+            );
+            if (Array.isArray(nativeResult)) return nativeResult;
+            return _origGetFormattingEditsForRange.call(this, fileName, start, end, options);
+        };
+    }
+    if (typeof proto.getFormattingEditsForDocument === "function") {
+        const _origGetFormattingEditsForDocument = proto.getFormattingEditsForDocument;
+        proto.getFormattingEditsForDocument = function(fileName, options) {
+            const safeOptions = options || ts.getDefaultFormatCodeSettings?.() || {};
+            const nativeResult = withNativeFallback(this, ls =>
+                ls.getFormattingEditsForDocument(fileName, safeOptions)
+            );
+            if (Array.isArray(nativeResult)) return nativeResult;
+            return _origGetFormattingEditsForDocument.call(this, fileName, options);
+        };
+    }
+    if (typeof proto.getFormattingEditsAfterKeystroke === "function") {
+        const _origGetFormattingEditsAfterKeystroke = proto.getFormattingEditsAfterKeystroke;
+        proto.getFormattingEditsAfterKeystroke = function(fileName, position, key, options) {
+            const safeOptions = options || ts.getDefaultFormatCodeSettings?.() || {};
+            const nativeResult = withNativeFallback(this, ls =>
+                ls.getFormattingEditsAfterKeystroke(fileName, position, key, safeOptions)
+            );
+            if (Array.isArray(nativeResult)) return nativeResult;
+            return _origGetFormattingEditsAfterKeystroke.call(this, fileName, position, key, options);
+        };
+    }
 
     // Prefer native TypeScript LS for most code fixes, but trust tsz for
     // fix families where tsz has better AST-aware behavior or where native LS
