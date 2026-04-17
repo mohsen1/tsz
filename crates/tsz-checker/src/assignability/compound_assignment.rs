@@ -209,15 +209,40 @@ impl<'a> CheckerState<'a> {
                 // Widen literal types to base types and enum members to
                 // parent enums, matching tsc behavior for messages like
                 // "Operator '+=' cannot be applied to types 'boolean' and 'number'."
-                let left_diag = self.widen_enum_member_type(
-                    crate::query_boundaries::common::widen_literal_type(
-                        self.ctx.types,
-                        left_read_type,
-                    ),
-                );
-                let right_diag = self.widen_enum_member_type(
-                    crate::query_boundaries::common::widen_literal_type(self.ctx.types, right_type),
-                );
+                //
+                // Exception: tsc preserves literal types when mixing bigint with
+                // number-family operands (e.g. `bigInt += 2` shows `'bigint' and '2'`,
+                // not `'bigint' and 'number'`), so the user can see the offending
+                // numeric literal.
+                let widen_common = |t: TypeId| -> TypeId {
+                    crate::query_boundaries::common::widen_literal_type(self.ctx.types, t)
+                };
+                // For the bigint/number mix detection, prefer the narrow literal
+                // taken from the source expression — `right_type` may already be
+                // contextually widened to `number` against a bigint LHS.
+                let left_narrow = self
+                    .literal_type_from_initializer(left_idx)
+                    .unwrap_or(left_read_type);
+                let right_narrow = self
+                    .literal_type_from_initializer(right_idx)
+                    .unwrap_or(right_type);
+                let is_bigint_number_mix = {
+                    let lw = widen_common(left_narrow);
+                    let rw = widen_common(right_narrow);
+                    let is_num_fam = |t: TypeId| t == TypeId::NUMBER || t == TypeId::BIGINT;
+                    is_num_fam(lw) && is_num_fam(rw) && lw != rw
+                };
+                let (left_diag, right_diag) = if is_bigint_number_mix {
+                    (
+                        self.widen_enum_member_type(left_narrow),
+                        self.widen_enum_member_type(right_narrow),
+                    )
+                } else {
+                    (
+                        self.widen_enum_member_type(widen_common(left_read_type)),
+                        self.widen_enum_member_type(widen_common(right_type)),
+                    )
+                };
                 let left_str = self.format_type(left_diag);
                 let right_str = self.format_type(right_diag);
                 let message = format!(
