@@ -859,6 +859,13 @@ pub struct CheckerContext<'a> {
     /// Built from the arena's `source_files` during checker construction.
     pub module_specifiers: FxHashMap<u32, String>,
 
+    /// Maps `file_id` -> module specifier preserving any directory prefix,
+    /// used by diagnostic cross-module disambiguation. tsc's diagnostic output
+    /// uses the project-relative path (e.g. `src/library-a/index`) rather
+    /// than the basename so that two files sharing the same basename can be
+    /// told apart in `import("<path>").X` messages.
+    pub module_path_specifiers: FxHashMap<u32, String>,
+
     /// Maps class instance `TypeIds` to their class declaration `NodeIndex`.
     /// Used by `get_class_decl_from_type` to correctly identify the class
     /// for derived classes that have no private/protected members (and thus no brand).

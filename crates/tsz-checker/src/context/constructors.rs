@@ -113,6 +113,7 @@ impl<'a> CheckerContext<'a> {
             js_export_surface_resolution_set: FxHashSet::default(),
             expando_property_resolution_set: FxHashSet::default(),
             module_specifiers: FxHashMap::default(),
+            module_path_specifiers: FxHashMap::default(),
             class_instance_type_to_decl: FxHashMap::default(),
             class_instance_type_cache: FxHashMap::default(),
             class_constructor_type_cache: FxHashMap::default(),

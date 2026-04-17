@@ -1089,7 +1089,7 @@ impl<'a> CheckerState<'a> {
 
         // TS2741: Property 'x' is missing in type 'A' but required in type 'B'.
         let widened_source = self.widen_type_for_display(source_type);
-        let (src_str, tgt_str_qualified) = if depth == 0 {
+        let (mut src_str, mut tgt_str_qualified) = if depth == 0 {
             let src = if source_type == TypeId::OBJECT {
                 "{}".to_string()
             } else {
@@ -1102,6 +1102,16 @@ impl<'a> CheckerState<'a> {
         } else {
             self.format_type_pair_diagnostic(widened_source, target)
         };
+        // When source and target collapse to the same short name (e.g. two
+        // same-named classes from different modules), re-qualify them so the
+        // reader can tell them apart. The formatter's pair-disambiguation
+        // path adds namespace or `import("<specifier>")` prefixes only when
+        // the bare names collide.
+        if src_str == tgt_str_qualified && widened_source != target {
+            let (da, db) = self.format_type_pair_diagnostic(widened_source, target);
+            src_str = da;
+            tgt_str_qualified = db;
+        }
         let message = format_message(
             diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
             &[&prop_name, &src_str, &tgt_str_qualified],

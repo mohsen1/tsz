@@ -55,6 +55,12 @@ pub struct TypeFormatter<'a> {
     def_store: Option<&'a DefinitionStore>,
     /// Maps `file_id` -> module specifier for import-qualified type display.
     module_specifiers: Option<&'a FxHashMap<u32, String>>,
+    /// Maps `file_id` -> full project-relative stripped path for cross-module
+    /// diagnostic disambiguation (e.g. `src/library-a/index`). When this is
+    /// set it overrides `module_specifiers` for
+    /// `import_qualified_name_for_type` so the `import("<path>")` qualifier
+    /// distinguishes two files that share the same basename.
+    module_path_specifiers: Option<&'a FxHashMap<u32, String>>,
     /// Maps object `TypeId` -> module name for namespace types that were
     /// created as plain objects but should display as `typeof import("module")`.
     namespace_module_names: Option<&'a FxHashMap<TypeId, String>>,
@@ -98,6 +104,7 @@ impl<'a> TypeFormatter<'a> {
             symbol_arena: None,
             def_store: None,
             module_specifiers: None,
+            module_path_specifiers: None,
             namespace_module_names: None,
             current_file_id: None,
             max_depth: 8,
@@ -123,6 +130,7 @@ impl<'a> TypeFormatter<'a> {
             symbol_arena: Some(symbol_arena),
             def_store: None,
             module_specifiers: None,
+            module_path_specifiers: None,
             namespace_module_names: None,
             current_file_id: None,
             max_depth: 8,
@@ -150,6 +158,18 @@ impl<'a> TypeFormatter<'a> {
         module_specifiers: &'a FxHashMap<u32, String>,
     ) -> Self {
         self.module_specifiers = Some(module_specifiers);
+        self
+    }
+
+    /// Add full-path module specifier map used by diagnostic cross-module
+    /// disambiguation. Separate from `with_module_specifiers` because the
+    /// existing map preserves the basename shape expected by declaration
+    /// emit / JS export tracking.
+    pub const fn with_module_path_specifiers(
+        mut self,
+        module_path_specifiers: &'a FxHashMap<u32, String>,
+    ) -> Self {
+        self.module_path_specifiers = Some(module_path_specifiers);
         self
     }
 
