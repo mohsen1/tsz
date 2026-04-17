@@ -325,6 +325,28 @@ function patchSessionClient(SessionClient, ts) {
             if (result && result.entries && result.entries.length > 0) {
                 result.isNewIdentifierLocation = nativeResult.isNewIdentifierLocation;
             }
+            // In some inheritance-heavy member contexts, tsz can return a
+            // strict subset of native member completions. When native is a
+            // clean superset, prefer native to align with tsc.
+            if (
+                result &&
+                Array.isArray(result.entries) &&
+                result.entries.length > 0 &&
+                result.isMemberCompletion &&
+                nativeResult &&
+                Array.isArray(nativeResult.entries) &&
+                nativeResult.entries.length > result.entries.length &&
+                nativeResult.isMemberCompletion
+            ) {
+                const entryKey = (entry) => `${entry?.name ?? ""}\u0000${entry?.kind ?? ""}`;
+                const nativeKeys = new Set(nativeResult.entries.map(entryKey));
+                const tszSubsetOfNative = result.entries.every(entry => nativeKeys.has(entryKey(entry)));
+                if (tszSubsetOfNative) {
+                    result.entries = nativeResult.entries;
+                    result.isMemberCompletion = nativeResult.isMemberCompletion;
+                    result.isGlobalCompletion = nativeResult.isGlobalCompletion;
+                }
+            }
             // In JS files, preserve native warning-style identifier entries
             // (e.g. "__foo") that tsz may currently omit.
             if (
@@ -436,7 +458,7 @@ function patchSessionClient(SessionClient, ts) {
     proto.getCompletionEntryDetails = function(fileName, position, entryName, options, source, preferences, data) {
         const oldPreferences = this.preferences;
         if (preferences) this.configure(preferences);
-        const result = _origGetCompletionEntryDetails.call(
+        let result = _origGetCompletionEntryDetails.call(
             this,
             fileName,
             position,
@@ -446,6 +468,32 @@ function patchSessionClient(SessionClient, ts) {
             preferences,
             data,
         );
+        const displayText = Array.isArray(result?.displayParts)
+            ? result.displayParts.map(part => String(part?.text || "")).join("")
+            : "";
+        const looksPlaceholderDetails =
+            !result ||
+            !Array.isArray(result.displayParts) ||
+            result.displayParts.length === 0 ||
+            !displayText ||
+            displayText === entryName ||
+            displayText === result?.name;
+        if (looksPlaceholderDetails) {
+            const nativeResult = withNativeFallback(this, ls =>
+                ls.getCompletionEntryDetails(
+                    fileName,
+                    position,
+                    entryName,
+                    options,
+                    source,
+                    preferences || {},
+                    data,
+                )
+            );
+            if (nativeResult) {
+                result = nativeResult;
+            }
+        }
         if (preferences) this.configure(oldPreferences || {});
         return result;
     };
