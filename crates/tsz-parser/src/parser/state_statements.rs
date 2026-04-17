@@ -2555,12 +2555,24 @@ impl ParserState {
         let is_yield_as_generator_name =
             is_async_generator_declaration && self.is_token(SyntaxKind::YieldKeyword);
         let reserved_word_function_name = self.is_reserved_word() && !is_yield_as_generator_name;
+        let function_keyword_as_name =
+            reserved_word_function_name && self.is_token(SyntaxKind::FunctionKeyword);
         let name = if reserved_word_function_name {
             let name_start = self.token_pos();
             let name_end = self.token_end();
             let atom = self.scanner.get_token_atom();
             let text = self.scanner.get_token_value_ref().to_string();
             self.error_reserved_word_identifier();
+            // tsc emits TS1359 + TS1003 specifically when the function name is
+            // itself the `function` keyword (e.g. `function function() {}`).
+            // For other reserved words (e.g. `throw`, `while`) tsc keeps the
+            // legacy "'=>' expected" recovery instead.
+            if function_keyword_as_name {
+                self.parse_error_at_current_token(
+                    "Identifier expected.",
+                    diagnostic_codes::IDENTIFIER_EXPECTED,
+                );
+            }
             self.arena.add_identifier(
                 SyntaxKind::Identifier as u16,
                 name_start,
@@ -2600,7 +2612,13 @@ impl ParserState {
             params
         };
 
-        if reserved_word_function_name && self.is_token(SyntaxKind::OpenBraceToken) {
+        // For reserved-word function names other than `function` itself,
+        // tsc emits TS1005 ("'=>' expected") when the body opens — matches
+        // its arrow-recovery diagnostics for `function throw() {}` etc.
+        if reserved_word_function_name
+            && !function_keyword_as_name
+            && self.is_token(SyntaxKind::OpenBraceToken)
+        {
             self.parse_error_at_current_token("'=>' expected.", diagnostic_codes::EXPECTED);
         }
 
