@@ -25992,3 +25992,48 @@ interface RI<T extends "a" | "b"> {
         "TS2339 should not be emitted for self-referencing computed property in interface. Got: {diagnostics:?}"
     );
 }
+
+#[test]
+#[ignore] // VuexStoreOptions pattern: nested modules through mapped types with constrained type params
+fn test_no_false_ts18046_nested_mapped_type_with_constrained_state() {
+    // When State extends Record<string, unknown> and we have nested modules
+    // through a mapped type, the nested module's State should be inferred
+    // from its sibling state() function, not fall back to the constraint.
+    //
+    // The bug: binary operations (like +, ++, --) trigger TS18046 "is of type unknown"
+    // because the State type parameter falls back to `unknown` (value type of
+    // Record<string, unknown>) instead of being inferred from the state() return type.
+    let source = r#"
+type StateFunction<State> = (s: State) => any;
+
+type Options<State, Modules> = {
+  state?: () => State;
+  mutations?: Record<string, StateFunction<State>>;
+  modules?: {
+    [k in keyof Modules]: Options<Modules[k], never>;
+  };
+};
+
+declare function create<
+  State extends Record<string, unknown>,
+  Modules extends Record<string, Record<string, unknown>>
+>(options: Options<State, Modules>): void;
+
+create({
+  modules: {
+    foo: {
+      state() { return { bar2: 1 }; },
+      mutations: { inc: (state) => state.bar2++ },
+    },
+  },
+});
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 18046),
+        "TS18046 should not be emitted for nested module callbacks. \
+         The state parameter should be inferred as {{ bar2: number }} from \
+         the sibling state() method, not fall back to 'unknown' from the \
+         Record<string, unknown> constraint. Got: {diagnostics:?}"
+    );
+}
