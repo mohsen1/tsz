@@ -313,6 +313,14 @@ function patchSessionClient(SessionClient, ts) {
             }
         } catch { /* ignore */ }
 
+        // Class-member snippet completions (override/implement stubs) are
+        // heavily preference-driven; prefer native LS for exact tsserver shape.
+        if (preferences?.includeCompletionsWithClassMemberSnippets && nativeResult) {
+            return nativeResult.entries && nativeResult.entries.length > 0
+                ? nativeResult
+                : undefined;
+        }
+
         if (result && result.entries && result.entries.length === 0) {
             // tsz returned empty entries. If native LS has results, use them.
             if (nativeResult && nativeResult.entries && nativeResult.entries.length > 0) {
@@ -466,6 +474,20 @@ function patchSessionClient(SessionClient, ts) {
     // Same preference forwarding for completion details.
     const _origGetCompletionEntryDetails = proto.getCompletionEntryDetails;
     proto.getCompletionEntryDetails = function(fileName, position, entryName, options, source, preferences, data) {
+        if (preferences?.includeCompletionsWithClassMemberSnippets) {
+            const nativeResult = withNativeFallback(this, ls =>
+                ls.getCompletionEntryDetails(
+                    fileName,
+                    position,
+                    entryName,
+                    options,
+                    source,
+                    preferences || {},
+                    data,
+                )
+            );
+            if (nativeResult) return nativeResult;
+        }
         const oldPreferences = this.preferences;
         if (preferences) this.configure(preferences);
         let result = _origGetCompletionEntryDetails.call(
