@@ -103,10 +103,7 @@ pub(super) fn is_type_annotation_context(source_text: &str, offset: u32) -> bool
             continue;
         }
 
-        if byte == b'/'
-            && cursor > 0
-            && bytes[(cursor - 1) as usize] == b'*'
-        {
+        if byte == b'/' && cursor > 0 && bytes[(cursor - 1) as usize] == b'*' {
             cursor -= 2;
             while cursor >= 1 {
                 if bytes[(cursor - 1) as usize] == b'/' && bytes[cursor as usize] == b'*' {
@@ -986,8 +983,7 @@ mod tests {
     #[test]
     fn marker_comment_bounds_around_handles_offset_inside_marker() {
         let source = "x/*1*/y";
-        let (start, end) =
-            marker_comment_bounds_around(source, 3).expect("marker should be found");
+        let (start, end) = marker_comment_bounds_around(source, 3).expect("marker should be found");
         assert_eq!((start, end), (1, 6));
     }
 

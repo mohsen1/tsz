@@ -810,7 +810,9 @@ fn get_code_fixes_auto_import_package_root_path_type_module_prefers_main_subpath
 }"#
         .to_string(),
     );
-    server.open_files.insert("/index.ts".to_string(), "foo".to_string());
+    server
+        .open_files
+        .insert("/index.ts".to_string(), "foo".to_string());
 
     let req = TsServerRequest {
         seq: 1,
