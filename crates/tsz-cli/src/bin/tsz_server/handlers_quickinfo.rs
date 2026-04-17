@@ -1476,19 +1476,21 @@ impl Server {
                         .and_then(|range| line_map.position_to_offset(range.start, &source_text))
                 })
                 .unwrap_or(0);
-            let in_type_annotation_context = text::is_type_annotation_context(&source_text, base_offset) || {
-                let idx = (base_offset as usize).min(source_text.len());
-                let line_start = source_text[..idx].rfind('\n').map_or(0, |i| i + 1);
-                let line_end = source_text[idx..]
-                    .find('\n')
-                    .map_or(source_text.len(), |rel| idx + rel);
-                let before = &source_text[line_start..idx];
-                let after = &source_text[idx..line_end];
-                let colon_idx = before.rfind(':');
-                let eq_idx = before.rfind('=');
-                let colon_after_assignment = colon_idx.is_some_and(|colon| eq_idx.is_none_or(|eq| colon > eq));
-                colon_after_assignment && after.contains('=')
-            };
+            let in_type_annotation_context =
+                text::is_type_annotation_context(&source_text, base_offset) || {
+                    let idx = (base_offset as usize).min(source_text.len());
+                    let line_start = source_text[..idx].rfind('\n').map_or(0, |i| i + 1);
+                    let line_end = source_text[idx..]
+                        .find('\n')
+                        .map_or(source_text.len(), |rel| idx + rel);
+                    let before = &source_text[line_start..idx];
+                    let after = &source_text[idx..line_end];
+                    let colon_idx = before.rfind(':');
+                    let eq_idx = before.rfind('=');
+                    let colon_after_assignment =
+                        colon_idx.is_some_and(|colon| eq_idx.is_none_or(|eq| colon > eq));
+                    colon_after_assignment && after.contains('=')
+                };
             if in_type_annotation_context
                 && display_string.starts_with("(property) ")
                 && display_string.contains(".#")
