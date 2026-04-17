@@ -80,6 +80,11 @@ impl<'a> HoverProvider<'a> {
                 return Some(hover);
             }
         }
+        // `Foo.#prop` in type references is invalid and tsserver reports no quick info.
+        // Suppress hover here to match that behavior.
+        if self.is_private_identifier_in_type_context(node_idx) {
+            return None;
+        }
 
         if !crate::utils::is_symbol_query_node(self.arena, node_idx)
             && (is_comment_context(self.source_text, offset)
@@ -722,6 +727,38 @@ impl<'a> HoverProvider<'a> {
             }
             node_idx = ext.parent;
         }
+    }
+
+    fn is_private_identifier_in_type_context(&self, node_idx: NodeIndex) -> bool {
+        use tsz_scanner::SyntaxKind;
+
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind != SyntaxKind::PrivateIdentifier as u16 {
+            return false;
+        }
+
+        let mut current = node_idx;
+        let mut depth = 0usize;
+        while current.is_some() && depth < 128 {
+            let Some(ext) = self.arena.get_extended(current) else {
+                break;
+            };
+            if !ext.parent.is_some() {
+                break;
+            }
+            current = ext.parent;
+            let Some(parent) = self.arena.get(current) else {
+                break;
+            };
+            if parent.is_type_node() {
+                return true;
+            }
+            depth += 1;
+        }
+
+        false
     }
 
     /// Build the display string in tsserver quickinfo format.
