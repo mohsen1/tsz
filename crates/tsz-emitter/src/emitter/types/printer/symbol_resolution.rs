@@ -673,6 +673,7 @@ impl<'a> TypePrinter<'a> {
             TypeId::FUNCTION => "Function".to_string(),
             TypeId::BOOLEAN_TRUE => "true".to_string(),
             TypeId::BOOLEAN_FALSE => "false".to_string(),
+            TypeId::PROMISE_BASE => "Promise".to_string(),
             _ => "any".to_string(),
         }
     }

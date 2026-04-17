@@ -20,4 +20,8 @@ pub struct TypeCacheView {
     /// Maps `DefId.0` -> type parameters (from `TypeEnvironment`).
     /// Paired with `def_types` for type alias application evaluation.
     pub def_type_params: FxHashMap<u32, Vec<TypeParamInfo>>,
+    /// Maps `DefId` -> symbol name string.
+    /// Fallback for `print_lazy_type` when the symbol lives in a lib binder
+    /// that is not merged into the current file's `symbol_arena`.
+    pub def_to_name: FxHashMap<DefId, String>,
 }
