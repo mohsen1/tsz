@@ -17,6 +17,13 @@ use tsz_solver::{
     TypeParamInfo, Visibility,
 };
 
+/// Bookkeeping record for a single type parameter pushed into
+/// `type_parameter_scope`: the parameter name, its previous binding in that
+/// scope (so `pop_type_parameters` can restore it), and a flag indicating
+/// whether the push shadowed an enclosing class's type parameter (so the pop
+/// can restore the class scope entry too).
+type ScopeUpdate = (String, Option<TypeId>, bool);
+
 #[inline]
 pub(in crate::types_domain) const fn can_skip_base_instantiation(
     base_type_param_count: usize,
@@ -2046,19 +2053,19 @@ impl<'a> CheckerState<'a> {
             let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
                 continue;
             };
-            if stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT {
-                if let Some(return_data) = self.ctx.arena.get_return_statement(stmt_node) {
-                    if return_data.expression.is_none() {
-                        continue; // empty return is fine
-                    }
-                    let Some(expr_node) = self.ctx.arena.get(return_data.expression) else {
-                        return false;
-                    };
-                    if expr_node.kind != SyntaxKind::ThisKeyword as u16 {
-                        return false; // returns something other than `this`
-                    }
-                    found_return = true;
+            if stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT
+                && let Some(return_data) = self.ctx.arena.get_return_statement(stmt_node)
+            {
+                if return_data.expression.is_none() {
+                    continue; // empty return is fine
                 }
+                let Some(expr_node) = self.ctx.arena.get(return_data.expression) else {
+                    return false;
+                };
+                if expr_node.kind != SyntaxKind::ThisKeyword as u16 {
+                    return false; // returns something other than `this`
+                }
+                found_return = true;
             }
         }
         found_return
@@ -2224,11 +2231,10 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns `(type_params, scope_updates)` — identical shape to `push_type_parameters`.
     /// The caller must pass `scope_updates` to `pop_type_parameters` when done.
-    #[allow(clippy::type_complexity)]
     pub(in crate::types_domain) fn push_jsdoc_class_template_type_params(
         &mut self,
         class_idx: NodeIndex,
-    ) -> (Vec<TypeParamInfo>, Vec<(String, Option<TypeId>, bool)>) {
+    ) -> (Vec<TypeParamInfo>, Vec<ScopeUpdate>) {
         if !self.is_js_file() {
             return (Vec::new(), Vec::new());
         }

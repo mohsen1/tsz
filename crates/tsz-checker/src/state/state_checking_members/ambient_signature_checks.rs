@@ -1109,16 +1109,15 @@ impl<'a> CheckerState<'a> {
                 };
                 if let Some(modifier_idx) =
                     self.find_first_parameter_property_modifier(&param.modifiers)
+                    && let Some(mod_node) = self.ctx.arena.get(modifier_idx)
                 {
-                    if let Some(mod_node) = self.ctx.arena.get(modifier_idx) {
-                        self.ctx.error(
+                    self.ctx.error(
                             mod_node.pos,
                             mod_node.end - mod_node.pos,
                             diagnostic_messages::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED
                                 .to_string(),
                             diagnostic_codes::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED,
                         );
-                    }
                 }
             }
         }

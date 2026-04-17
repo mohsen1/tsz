@@ -299,14 +299,11 @@ impl<'a> CheckerState<'a> {
                 if self.ctx.referenced_as_property.borrow().contains(&sym_id) {
                     continue;
                 }
-            } else {
-                #[allow(clippy::nonminimal_bool)]
-                if referenced
-                    && !self.is_self_reference_only_symbol_use(&name, decl_idx, flags)
-                    && !(is_param_decl && self.is_parameter_only_type_referenced(&name, decl_idx))
-                {
-                    continue;
-                }
+            } else if referenced
+                && !self.is_self_reference_only_symbol_use(&name, decl_idx, flags)
+                && !(is_param_decl && self.is_parameter_only_type_referenced(&name, decl_idx))
+            {
+                continue;
             }
 
             // Skip exported symbols — they may be used externally

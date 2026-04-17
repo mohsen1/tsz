@@ -199,10 +199,11 @@ impl<'a> DeclarationEmitter<'a> {
                     .entry(export_name.clone())
                     .or_insert_with(|| (String::new(), Vec::new()));
                 entry.1.push(stmt_idx);
-                if let Some(ref ln) = local_name {
-                    if *ln != export_name && export_targets.contains_key(ln) {
-                        entry.0 = ln.clone();
-                    }
+                if let Some(ref ln) = local_name
+                    && *ln != export_name
+                    && export_targets.contains_key(ln)
+                {
+                    entry.0 = ln.clone();
                 }
                 continue;
             }
@@ -578,28 +579,24 @@ impl<'a> DeclarationEmitter<'a> {
                 };
                 // Handle shorthand properties: `{ FancyError }` -> name is `FancyError`
                 if member_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
-                    if let Some(data) = self.arena.get_shorthand_property(member_node) {
-                        if let Some(name) = self.get_identifier_text(data.name) {
-                            if export_targets.contains_key(&name) {
-                                names.insert(name);
-                                found_any = true;
-                            }
-                        }
+                    if let Some(data) = self.arena.get_shorthand_property(member_node)
+                        && let Some(name) = self.get_identifier_text(data.name)
+                        && export_targets.contains_key(&name)
+                    {
+                        names.insert(name);
+                        found_any = true;
                     }
                 }
                 // Handle property assignments: `{ FancyError: FancyError }`
-                else if member_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
-                    if let Some(prop) = self.arena.get_property_assignment(member_node) {
-                        if let Some(prop_name) = self.get_identifier_text(prop.name) {
-                            if let Some(init_name) = self.get_identifier_text(prop.initializer) {
-                                if prop_name == init_name && export_targets.contains_key(&prop_name)
-                                {
-                                    names.insert(prop_name);
-                                    found_any = true;
-                                }
-                            }
-                        }
-                    }
+                else if member_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                    && let Some(prop) = self.arena.get_property_assignment(member_node)
+                    && let Some(prop_name) = self.get_identifier_text(prop.name)
+                    && let Some(init_name) = self.get_identifier_text(prop.initializer)
+                    && prop_name == init_name
+                    && export_targets.contains_key(&prop_name)
+                {
+                    names.insert(prop_name);
+                    found_any = true;
                 }
             }
             if found_any {

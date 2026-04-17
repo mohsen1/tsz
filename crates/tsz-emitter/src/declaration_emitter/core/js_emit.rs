@@ -134,10 +134,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
         self.write(": ");
         // Emit type parameters from AST
-        if let Some(ref type_params) = func.type_parameters {
-            if !type_params.nodes.is_empty() {
-                self.emit_type_parameters(type_params);
-            }
+        if let Some(ref type_params) = func.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.emit_type_parameters(type_params);
         }
         // Emit parameters from AST
         self.write("(");
@@ -1552,10 +1552,10 @@ impl<'a> DeclarationEmitter<'a> {
             let right_name = &right_ident.escaped_text;
 
             // Look up in exports table of the left symbol.
-            if let Some(exports) = &left_sym.exports {
-                if let Some(sym_id) = exports.get(right_name) {
-                    return Some(sym_id);
-                }
+            if let Some(exports) = &left_sym.exports
+                && let Some(sym_id) = exports.get(right_name)
+            {
+                return Some(sym_id);
             }
             None
         } else {

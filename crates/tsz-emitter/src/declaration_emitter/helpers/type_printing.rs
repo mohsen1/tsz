@@ -333,12 +333,11 @@ impl<'a> DeclarationEmitter<'a> {
                         b'<' => depth += 1,
                         b'>' => {
                             depth -= 1;
-                            if depth == 0 {
-                                if let Some(name) =
+                            if depth == 0
+                                && let Some(name) =
                                     Self::extract_type_param_name(&text[current_start..j])
-                                {
-                                    param_names.push(name);
-                                }
+                            {
+                                param_names.push(name);
                             }
                         }
                         b',' if depth == 1 => {
@@ -549,15 +548,14 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         // Try the non-resolved symbol if it differs.
-        if original_sym_id != sym_id {
-            if let Some(path) =
+        if original_sym_id != sym_id
+            && let Some(path) =
                 self.resolve_symbol_module_path_from_source(sym_id, binder, current_path)
-            {
-                if self.symbol_is_globally_accessible(binder, sym_id, original_sym_id) {
-                    return None;
-                }
-                return Some(path);
+        {
+            if self.symbol_is_globally_accessible(binder, sym_id, original_sym_id) {
+                return None;
             }
+            return Some(path);
         }
 
         // Fall back to the raw import text for imported symbols when we
@@ -599,18 +597,18 @@ impl<'a> DeclarationEmitter<'a> {
                     .unwrap_or(&alias_symbol.escaped_name);
                 if alias_import_name == target_name && alias_symbol.import_module.is_some() {
                     // Verify the alias points to the same foreign module.
-                    if let Some(current_path) = &self.current_file_path {
-                        if let Some(source_arena) = binder.symbol_arenas.get(&original_sym_id) {
-                            let arena_addr = std::sync::Arc::as_ptr(source_arena) as usize;
-                            if let Some(source_path) = self.arena_to_path.get(&arena_addr) {
-                                let rel = self.calculate_relative_path(current_path, source_path);
-                                let stripped = self.strip_ts_extensions(&rel);
-                                if alias_symbol.import_module.as_deref() == Some(&stripped)
-                                    || alias_symbol.import_module.as_deref()
-                                        == Some(source_path.as_str())
-                                {
-                                    return true;
-                                }
+                    if let Some(current_path) = &self.current_file_path
+                        && let Some(source_arena) = binder.symbol_arenas.get(&original_sym_id)
+                    {
+                        let arena_addr = std::sync::Arc::as_ptr(source_arena) as usize;
+                        if let Some(source_path) = self.arena_to_path.get(&arena_addr) {
+                            let rel = self.calculate_relative_path(current_path, source_path);
+                            let stripped = self.strip_ts_extensions(&rel);
+                            if alias_symbol.import_module.as_deref() == Some(&stripped)
+                                || alias_symbol.import_module.as_deref()
+                                    == Some(source_path.as_str())
+                            {
+                                return true;
                             }
                         }
                     }

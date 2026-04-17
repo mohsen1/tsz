@@ -457,9 +457,7 @@ impl<'a> FlowAnalyzer<'a> {
         if let Some(predicates) = self.call_type_predicates
             && let Some((predicate, params)) = predicates.get(&condition.0)
         {
-            let Some(node_types) = self.node_types else {
-                return None;
-            };
+            let node_types = self.node_types?;
             let callee_idx = self.skip_parens_and_assertions(call.expression);
             let mut resolved_predicate = node_types
                 .get(&callee_idx.0)

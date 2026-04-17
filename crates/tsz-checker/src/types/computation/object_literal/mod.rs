@@ -134,7 +134,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a function node is a "set" method inside an Object.defineProperty descriptor.
     /// This is used to suppress TS7006 for setter parameters since they are contextually typed
-    /// from the getter (same as true SET_ACCESSOR nodes).
+    /// from the getter (same as true `SET_ACCESSOR` nodes).
     pub(crate) fn is_object_define_property_setter(&mut self, func_idx: NodeIndex) -> bool {
         // func_idx is the METHOD_DECLARATION node itself
         let Some(func_node) = self.ctx.arena.get(func_idx) else {

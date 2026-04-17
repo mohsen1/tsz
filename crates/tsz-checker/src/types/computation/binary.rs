@@ -100,10 +100,8 @@ impl<'a> CheckerState<'a> {
             .arena
             .get(logical_idx)
             .is_some_and(|node| node.kind == syntax_kind_ext::BINARY_EXPRESSION);
-        if !is_binary {
-            if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
-                return cached;
-            }
+        if !is_binary && let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+            return cached;
         }
         if let Some(node) = self.ctx.arena.get(logical_idx)
             && node.kind == syntax_kind_ext::BINARY_EXPRESSION
@@ -1539,16 +1537,15 @@ impl<'a> CheckerState<'a> {
                                 tsz_solver::remove_nullish(self.ctx.types, left_type);
                             if !evaluator.is_arithmetic_operand(left_stripped)
                                 && !self.is_enum_type(left_stripped)
+                                && let Some(node) = self.ctx.arena.get(left_idx)
                             {
-                                if let Some(node) = self.ctx.arena.get(left_idx) {
-                                    let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
-                                    self.ctx.error(
-                                        node.pos,
-                                        node.end - node.pos,
-                                        message,
-                                        2362, // TS2362
-                                    );
-                                }
+                                let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                                self.ctx.error(
+                                    node.pos,
+                                    node.end - node.pos,
+                                    message,
+                                    2362, // TS2362
+                                );
                             }
                         }
                         if right_is_boxed && let Some(node) = self.ctx.arena.get(right_idx) {
@@ -1564,16 +1561,15 @@ impl<'a> CheckerState<'a> {
                                 tsz_solver::remove_nullish(self.ctx.types, right_type);
                             if !evaluator.is_arithmetic_operand(right_stripped)
                                 && !self.is_enum_type(right_stripped)
+                                && let Some(node) = self.ctx.arena.get(right_idx)
                             {
-                                if let Some(node) = self.ctx.arena.get(right_idx) {
-                                    let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
-                                    self.ctx.error(
-                                        node.pos,
-                                        node.end - node.pos,
-                                        message,
-                                        2363, // TS2363
-                                    );
-                                }
+                                let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                                self.ctx.error(
+                                    node.pos,
+                                    node.end - node.pos,
+                                    message,
+                                    2363, // TS2363
+                                );
                             }
                         }
                     }

@@ -1130,10 +1130,8 @@ impl<'a> CheckerState<'a> {
             // the emitter can resolve return types for static methods.
             // Skip when overloads exist to avoid interfering with TS2394
             // overload compatibility checking (which reads node_types).
-            if !has_overloads {
-                if let Some(impl_idx) = method.impl_member_idx {
-                    self.ctx.node_types.insert(impl_idx.0, type_id);
-                }
+            if !has_overloads && let Some(impl_idx) = method.impl_member_idx {
+                self.ctx.node_types.insert(impl_idx.0, type_id);
             }
             properties.insert(
                 name,
@@ -2280,8 +2278,7 @@ impl<'a> CheckerState<'a> {
                 // Use "typeof ClassName" format to match tsc's message
                 let class_name = arg_symbol.escaped_name.clone();
                 let msg = format!(
-                    "Argument of type 'typeof {}' is not assignable to parameter of type 'new (...args: any[]) => any'.",
-                    class_name
+                    "Argument of type 'typeof {class_name}' is not assignable to parameter of type 'new (...args: any[]) => any'."
                 );
                 use crate::diagnostics::diagnostic_codes;
                 self.ctx.error(
@@ -2362,10 +2359,9 @@ impl<'a> CheckerState<'a> {
                                 let ident = self.ctx.arena.get_identifier(expr_node)?;
                                 self.ctx.binder.file_locals.get(&ident.escaped_text)
                             })
+                            && ref_sym == target_sym
                         {
-                            if ref_sym == target_sym {
-                                return true;
-                            }
+                            return true;
                         }
                     }
                 }

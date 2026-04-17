@@ -7,6 +7,7 @@
 //! - `collect_generic_constructor_this_properties` — scans generic constructor bodies
 //! - `extract_generic_this_assignment` — extracts name/type from `this.prop = rhs`
 
+use super::complex_constructors::PrototypeMembers;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -219,42 +220,45 @@ impl<'a> CheckerState<'a> {
         // 1. Method bindings (added directly as instance properties)
         // 2. this.prop assignments inside prototype methods (typed as T | undefined)
         let mut has_prototype_evidence = false;
-        if let Some(ref func_name_s) = func_name_str {
-            if let Some(sym_id) = sym_id {
-                let symbol = self.ctx.binder.get_symbol(sym_id);
-                let value_decl = symbol.map(|s| s.value_declaration).unwrap_or(expr_idx);
-                let (method_bindings, this_props, prototype_evidence) = self
-                    .collect_prototype_members_and_this_properties(value_decl, func_name_s, sym_id);
-                has_prototype_evidence = prototype_evidence;
+        if let Some(ref func_name_s) = func_name_str
+            && let Some(sym_id) = sym_id
+        {
+            let symbol = self.ctx.binder.get_symbol(sym_id);
+            let value_decl = symbol.map(|s| s.value_declaration).unwrap_or(expr_idx);
+            let PrototypeMembers {
+                method_bindings,
+                this_props,
+                has_evidence: prototype_evidence,
+            } = self.collect_prototype_members_and_this_properties(value_decl, func_name_s, sym_id);
+            has_prototype_evidence = prototype_evidence;
 
-                // Add prototype methods as instance properties
-                for (name, prop) in method_bindings {
-                    properties.entry(name).or_insert(prop);
-                }
+            // Add prototype methods as instance properties
+            for (name, prop) in method_bindings {
+                properties.entry(name).or_insert(prop);
+            }
 
-                // Add this-properties from prototype methods (with | undefined)
-                for (name, mut prop) in this_props {
-                    let factory = self.ctx.types.factory();
-                    let widened_prop_type = factory.union2(prop.type_id, TypeId::UNDEFINED);
-                    if let Some(existing) = properties.get_mut(&name) {
-                        if existing.write_type == TypeId::ANY {
-                            existing.type_id = factory.union2(existing.type_id, widened_prop_type);
-                        }
-                    } else {
-                        prop.type_id = widened_prop_type;
-                        prop.write_type = prop.type_id;
-                        properties.insert(name, prop);
+            // Add this-properties from prototype methods (with | undefined)
+            for (name, mut prop) in this_props {
+                let factory = self.ctx.types.factory();
+                let widened_prop_type = factory.union2(prop.type_id, TypeId::UNDEFINED);
+                if let Some(existing) = properties.get_mut(&name) {
+                    if existing.write_type == TypeId::ANY {
+                        existing.type_id = factory.union2(existing.type_id, widened_prop_type);
                     }
+                } else {
+                    prop.type_id = widened_prop_type;
+                    prop.write_type = prop.type_id;
+                    properties.insert(name, prop);
                 }
+            }
 
-                for (name, prop) in self.collect_define_property_bindings_on_function_prototype(
-                    value_decl,
-                    func_name_s,
-                    sym_id,
-                ) {
-                    has_prototype_evidence = true;
-                    properties.entry(name).or_insert(prop);
-                }
+            for (name, prop) in self.collect_define_property_bindings_on_function_prototype(
+                value_decl,
+                func_name_s,
+                sym_id,
+            ) {
+                has_prototype_evidence = true;
+                properties.entry(name).or_insert(prop);
             }
         }
 

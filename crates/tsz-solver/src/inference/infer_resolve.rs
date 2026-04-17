@@ -614,18 +614,17 @@ impl<'a> InferenceContext<'a> {
             // sameMap(candidates, getWidenedLiteralType)). This ensures the tournament
             // operates on widened types (number, string) not literals (3, "").
             let has_non_fresh = filtered_no_never.iter().any(|c| !c.is_fresh_literal);
-            #[allow(clippy::redundant_clone)]
-            let widened_candidates: Vec<TypeId> = if !preserve_literals
-                && !is_const
-                && !has_non_fresh
-            {
-                candidate_types
-                    .iter()
-                    .map(|&ty| crate::operations::widening::widen_literal_type(self.interner, ty))
-                    .collect()
-            } else {
-                candidate_types.clone()
-            };
+            let should_widen = !preserve_literals && !is_const && !has_non_fresh;
+            let widened_candidates: Vec<TypeId> = candidate_types
+                .iter()
+                .map(|&ty| {
+                    if should_widen {
+                        crate::operations::widening::widen_literal_type(self.interner, ty)
+                    } else {
+                        ty
+                    }
+                })
+                .collect();
             // Match tsc's unionObjectAndArrayLiteralCandidates: before running the
             // common-supertype tournament, union all object and array literal
             // candidates into a single union candidate. This ensures that for

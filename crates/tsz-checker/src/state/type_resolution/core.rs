@@ -51,24 +51,24 @@ impl<'a> CheckerState<'a> {
                 // Apply type arguments to import types: import("./foo").Bar<{x: number}>
                 // Without this, the type parameter T remains uninstantiated and
                 // assignability checks fail with false TS2322 errors.
-                if has_type_args && resolved != TypeId::ERROR {
-                    if let Some(args) = &type_ref.type_arguments {
-                        // Validate type arguments against constraints (TS2344)
-                        if !self.is_inside_type_parameter_declaration(idx) {
-                            if let Some(sym_id) =
-                                self.resolve_import_type_target_symbol(call_idx, type_name_idx)
-                            {
-                                self.validate_type_reference_type_arguments(sym_id, args, idx);
-                            }
-                        }
-                        let type_args: Vec<TypeId> = args
-                            .nodes
-                            .iter()
-                            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
-                            .collect();
-                        if !type_args.is_empty() {
-                            return self.ctx.types.application(resolved, type_args);
-                        }
+                if has_type_args
+                    && resolved != TypeId::ERROR
+                    && let Some(args) = &type_ref.type_arguments
+                {
+                    // Validate type arguments against constraints (TS2344)
+                    if !self.is_inside_type_parameter_declaration(idx)
+                        && let Some(sym_id) =
+                            self.resolve_import_type_target_symbol(call_idx, type_name_idx)
+                    {
+                        self.validate_type_reference_type_arguments(sym_id, args, idx);
+                    }
+                    let type_args: Vec<TypeId> = args
+                        .nodes
+                        .iter()
+                        .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                        .collect();
+                    if !type_args.is_empty() {
+                        return self.ctx.types.application(resolved, type_args);
                     }
                 }
                 return resolved;
@@ -395,17 +395,15 @@ impl<'a> CheckerState<'a> {
                     // TS2315: Type parameters are not generic — they cannot be
                     // used with type arguments (e.g., `U<string>` where U is a
                     // type parameter).
-                    if has_type_args {
-                        if let Some(args) = &type_ref.type_arguments {
-                            self.error_at_node_msg(
-                                type_name_idx,
-                                crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
-                                &[name],
-                            );
-                            // Still resolve type arguments for noUnusedLocals (TS6133)
-                            for &arg_idx in &args.nodes {
-                                let _ = self.get_type_from_type_node(arg_idx);
-                            }
+                    if has_type_args && let Some(args) = &type_ref.type_arguments {
+                        self.error_at_node_msg(
+                            type_name_idx,
+                            crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
+                            &[name],
+                        );
+                        // Still resolve type arguments for noUnusedLocals (TS6133)
+                        for &arg_idx in &args.nodes {
+                            let _ = self.get_type_from_type_node(arg_idx);
                         }
                     }
                 }

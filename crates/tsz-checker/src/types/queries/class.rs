@@ -553,7 +553,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn jsdoc_type_expr_mentions_name(type_expr: &str, name: &str) -> bool {
-        fn is_ident_char(ch: char) -> bool {
+        const fn is_ident_char(ch: char) -> bool {
             ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
         }
 

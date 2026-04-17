@@ -1376,28 +1376,30 @@ impl<'a> CheckerState<'a> {
         if (!left_calls || !right_calls) && (!left_ctors || !right_ctors) {
             return false;
         }
-        if left_calls && right_calls {
-            if self.any_signatures_comparable(
+        if left_calls
+            && right_calls
+            && self.any_signatures_comparable(
                 &left_shape.call_signatures,
                 &right_shape.call_signatures,
-            ) {
-                return true;
-            }
+            )
+        {
+            return true;
         }
-        if left_ctors && right_ctors {
-            if self.any_signatures_comparable(
+        if left_ctors
+            && right_ctors
+            && self.any_signatures_comparable(
                 &left_shape.construct_signatures,
                 &right_shape.construct_signatures,
-            ) {
-                return true;
-            }
+            )
+        {
+            return true;
         }
         false
     }
 
     /// Check if any pair of signatures (one from each side) is related in a
     /// single direction across all shared-arity params and the return type.
-    /// Generic signatures (with non-empty type_params) are always treated as
+    /// Generic signatures (with non-empty `type_params`) are always treated as
     /// comparable to preserve tsc's permissive behavior for constraints that
     /// resolve via apparent types.
     pub(crate) fn any_signatures_comparable(

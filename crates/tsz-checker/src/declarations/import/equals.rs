@@ -255,12 +255,11 @@ impl<'a> CheckerState<'a> {
                         // Check if this is an ambient module (declare module "...") or namespace
                         if let Some(module_decl) = self.ctx.arena.get_module(node)
                             && let Some(name_node) = self.ctx.arena.get(module_decl.name)
+                            && name_node.kind == SyntaxKind::StringLiteral as u16
                         {
-                            if name_node.kind == SyntaxKind::StringLiteral as u16 {
-                                // This is an ambient module: declare module "foo"
-                                if let Some(name_literal) = self.ctx.arena.get_literal(name_node) {
-                                    containing_module_name = Some(name_literal.text.clone());
-                                }
+                            // This is an ambient module: declare module "foo"
+                            if let Some(name_literal) = self.ctx.arena.get_literal(name_node) {
+                                containing_module_name = Some(name_literal.text.clone());
                             }
                         }
                         break;
@@ -347,31 +346,28 @@ impl<'a> CheckerState<'a> {
 
             // TS2876: rewriteRelativeImportExtensions — specifier looks like a
             // file name but actually resolves to a directory index file.
-            if let Some(module_name) = require_module_specifier.as_deref() {
-                if self.ctx.compiler_options.rewrite_relative_import_extensions
-                    && !import.is_type_only
-                    && !self.ctx.is_declaration_file()
-                    && super::declaration::should_rewrite_module_specifier(module_name)
-                    && self.resolved_via_directory_index(module_name)
-                {
-                    let resolved_display = self.resolved_file_display_path(module_name);
-                    use crate::diagnostics::{
-                        diagnostic_codes, diagnostic_messages, format_message,
-                    };
-                    let message = format_message(
+            if let Some(module_name) = require_module_specifier.as_deref()
+                && self.ctx.compiler_options.rewrite_relative_import_extensions
+                && !import.is_type_only
+                && !self.ctx.is_declaration_file()
+                && super::declaration::should_rewrite_module_specifier(module_name)
+                && self.resolved_via_directory_index(module_name)
+            {
+                let resolved_display = self.resolved_file_display_path(module_name);
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                let message = format_message(
                         diagnostic_messages::THIS_RELATIVE_IMPORT_PATH_IS_UNSAFE_TO_REWRITE_BECAUSE_IT_LOOKS_LIKE_A_FILE_NAME,
                         &[&resolved_display],
                     );
-                    // Emit on the string literal (import.module_specifier
-                    // is the StringLiteral for require() imports).
-                    if let Some(node) = self.ctx.arena.get(import.module_specifier) {
-                        self.error_at_position(
+                // Emit on the string literal (import.module_specifier
+                // is the StringLiteral for require() imports).
+                if let Some(node) = self.ctx.arena.get(import.module_specifier) {
+                    self.error_at_position(
                             node.pos,
                             node.end.saturating_sub(node.pos),
                             &message,
                             diagnostic_codes::THIS_RELATIVE_IMPORT_PATH_IS_UNSAFE_TO_REWRITE_BECAUSE_IT_LOOKS_LIKE_A_FILE_NAME,
                         );
-                    }
                 }
             }
         }

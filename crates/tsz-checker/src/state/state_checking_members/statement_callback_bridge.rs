@@ -226,24 +226,23 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         .arena
                         .get(export_decl.export_clause)
                         .is_some_and(|n| n.kind != syntax_kind_ext::NAMED_EXPORTS);
-                if is_star_export {
-                    if let Some(spec_node) = self.ctx.arena.get(export_decl.module_specifier)
-                        && let Some(literal) = self.ctx.arena.get_literal(spec_node)
-                    {
-                        let module_name = literal.text.clone();
-                        if self.target_module_has_export_equals(&module_name) {
-                            // tsc uses the resolved module symbol name (without ./ prefix)
-                            let display_name = module_name
-                                .strip_prefix("./")
-                                .or_else(|| module_name.strip_prefix("../"))
-                                .unwrap_or(&module_name);
-                            let quoted = format!("\"{}\"", display_name);
-                            self.error_at_node_msg(
+                if is_star_export
+                    && let Some(spec_node) = self.ctx.arena.get(export_decl.module_specifier)
+                    && let Some(literal) = self.ctx.arena.get_literal(spec_node)
+                {
+                    let module_name = literal.text.clone();
+                    if self.target_module_has_export_equals(&module_name) {
+                        // tsc uses the resolved module symbol name (without ./ prefix)
+                        let display_name = module_name
+                            .strip_prefix("./")
+                            .or_else(|| module_name.strip_prefix("../"))
+                            .unwrap_or(&module_name);
+                        let quoted = format!("\"{display_name}\"");
+                        self.error_at_node_msg(
                                 export_decl.module_specifier,
                                 crate::diagnostics::diagnostic_codes::MODULE_USES_EXPORT_AND_CANNOT_BE_USED_WITH_EXPORT,
                                 &[&quoted],
                             );
-                        }
                     }
                 }
             }
@@ -1301,8 +1300,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
     /// TS1184: Check if a declaration with `declare` modifier is inside a block context
     /// (function body, bare block, etc.) where it's not allowed.
     /// This covers variable statements, class declarations, and enum declarations.
-    /// Function declarations are handled separately in DeclarationChecker::check_function_declaration.
-    /// Module/namespace declarations are handled in DeclarationChecker::check_module_declaration.
+    /// Function declarations are handled separately in `DeclarationChecker::check_function_declaration`.
+    /// Module/namespace declarations are handled in `DeclarationChecker::check_module_declaration`.
     fn check_grammar_declare_in_block_context(&mut self, stmt_idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 

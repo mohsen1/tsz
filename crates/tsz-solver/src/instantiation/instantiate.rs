@@ -1464,7 +1464,6 @@ pub fn instantiate_type(
     match interner.lookup(type_id) {
         // Fast path: TypeParameter directly in the substitution — return immediately.
         // This is the most common leaf case in mapped type template instantiation.
-        #[allow(clippy::collapsible_if)]
         Some(TypeData::TypeParameter(info)) => {
             if let Some(result) = substitution.get(info.name) {
                 return result;

@@ -564,16 +564,15 @@ impl<'a> CheckerState<'a> {
             let func_def_id = self.ctx.get_or_create_def_id(func_sym_id);
             if let Some(candidate_def_id) =
                 crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
+                && candidate_def_id == func_def_id
             {
-                if candidate_def_id == func_def_id {
-                    return true;
-                }
+                return true;
             }
             // Also check if the type_id was already cached as the symbol type
-            if let Some(&cached) = self.ctx.symbol_types.get(&func_sym_id) {
-                if type_id == cached {
-                    return true;
-                }
+            if let Some(&cached) = self.ctx.symbol_types.get(&func_sym_id)
+                && type_id == cached
+            {
+                return true;
             }
         }
 

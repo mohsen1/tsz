@@ -6,6 +6,9 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+/// Name, optional constraint, and optional default for one type parameter in a declaration.
+type TypeParamProfile = (String, Option<TypeId>, Option<TypeId>);
+
 impl<'a> CheckerState<'a> {
     /// Compare interface type parameters across declarations for declaration-merge compatibility.
     ///
@@ -40,17 +43,17 @@ impl<'a> CheckerState<'a> {
             // TSC uses isTypeIdenticalTo for constraint comparison (not assignability).
             // Only mismatch when BOTH have constraints and they differ.
             // If one has a constraint and the other doesn't, tsc considers them compatible.
-            if let (Some(fc), Some(sc)) = (first_constraint, second_constraint) {
-                if fc != sc {
-                    return false;
-                }
+            if let (Some(fc), Some(sc)) = (first_constraint, second_constraint)
+                && fc != sc
+            {
+                return false;
             }
 
             // Defaults: only mismatch when BOTH have defaults and they differ.
-            if let (Some(fd), Some(sd)) = (first_default, second_default) {
-                if fd != sd {
-                    return false;
-                }
+            if let (Some(fd), Some(sd)) = (first_default, second_default)
+                && fd != sd
+            {
+                return false;
             }
         }
 
@@ -69,8 +72,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         decls: &[NodeIndex],
     ) -> bool {
-        #[allow(clippy::type_complexity)]
-        let profiles: Vec<Vec<(String, Option<TypeId>, Option<TypeId>)>> = decls
+        let profiles: Vec<Vec<TypeParamProfile>> = decls
             .iter()
             .filter_map(|&d| self.interface_type_parameter_profile(d))
             .collect();
@@ -94,26 +96,23 @@ impl<'a> CheckerState<'a> {
 
         for i in 0..profiles.len() {
             for j in (i + 1)..profiles.len() {
-                let min_len = profiles[i].len().min(profiles[j].len());
-                #[allow(clippy::needless_range_loop)] // pos indexes into two different slices
-                for pos in 0..min_len {
-                    let (name_i, constraint_i, default_i) = &profiles[i][pos];
-                    let (name_j, constraint_j, default_j) = &profiles[j][pos];
-
+                for ((name_i, constraint_i, default_i), (name_j, constraint_j, default_j)) in
+                    profiles[i].iter().zip(profiles[j].iter())
+                {
                     if name_i != name_j {
                         return false;
                     }
 
-                    if let (Some(ci), Some(cj)) = (constraint_i, constraint_j) {
-                        if ci != cj {
-                            return false;
-                        }
+                    if let (Some(ci), Some(cj)) = (constraint_i, constraint_j)
+                        && ci != cj
+                    {
+                        return false;
                     }
 
-                    if let (Some(di), Some(dj)) = (default_i, default_j) {
-                        if di != dj {
-                            return false;
-                        }
+                    if let (Some(di), Some(dj)) = (default_i, default_j)
+                        && di != dj
+                    {
+                        return false;
                     }
                 }
             }
@@ -149,16 +148,16 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
 
-            if let (Some(fc), Some(sc)) = (first_constraint, second_constraint) {
-                if fc != sc {
-                    return false;
-                }
+            if let (Some(fc), Some(sc)) = (first_constraint, second_constraint)
+                && fc != sc
+            {
+                return false;
             }
 
-            if let (Some(fd), Some(sd)) = (first_default, second_default) {
-                if fd != sd {
-                    return false;
-                }
+            if let (Some(fd), Some(sd)) = (first_default, second_default)
+                && fd != sd
+            {
+                return false;
             }
         }
 
@@ -167,11 +166,10 @@ impl<'a> CheckerState<'a> {
 
     /// Collect type parameter names and constraint type ids from an interface
     /// or class declaration.
-    #[allow(clippy::type_complexity)]
     fn interface_type_parameter_profile(
         &mut self,
         decl_idx: NodeIndex,
-    ) -> Option<Vec<(String, Option<TypeId>, Option<TypeId>)>> {
+    ) -> Option<Vec<TypeParamProfile>> {
         let node = self.ctx.arena.get(decl_idx)?;
         // Handle both interface and class declarations
         let list = if let Some(interface) = self.ctx.arena.get_interface(node) {

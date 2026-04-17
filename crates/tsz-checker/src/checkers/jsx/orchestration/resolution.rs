@@ -644,16 +644,16 @@ impl<'a> CheckerState<'a> {
                                 } else {
                                     continue;
                                 };
-                                if gen_ctx && inferred_generic_props.is_none() {
-                                    if let Some(value_node) = self.ctx.arena.get(attr_value_idx)
-                                        && matches!(
-                                            value_node.kind,
-                                            syntax_kind_ext::ARROW_FUNCTION
-                                                | syntax_kind_ext::FUNCTION_EXPRESSION
-                                        )
-                                    {
-                                        continue;
-                                    }
+                                if gen_ctx
+                                    && inferred_generic_props.is_none()
+                                    && let Some(value_node) = self.ctx.arena.get(attr_value_idx)
+                                    && matches!(
+                                        value_node.kind,
+                                        syntax_kind_ext::ARROW_FUNCTION
+                                            | syntax_kind_ext::FUNCTION_EXPRESSION
+                                    )
+                                {
+                                    continue;
                                 }
                                 let attr_request = if let Some(props_type) = inferred_generic_props
                                 {
@@ -724,42 +724,40 @@ impl<'a> CheckerState<'a> {
                                 } else {
                                     generic_attr_fallback
                                 };
-                                if gen_ctx {
-                                    if let Some(value_node) = self.ctx.arena.get(attr_value_idx)
-                                        && matches!(
-                                            value_node.kind,
-                                            syntax_kind_ext::ARROW_FUNCTION
-                                                | syntax_kind_ext::FUNCTION_EXPRESSION
-                                        )
-                                    {
-                                        let has_function_context = attr_request
-                                            .contextual_type
-                                            .is_some_and(|ctx_type| {
-                                                let ctx_type = self
-                                                    .resolve_type_for_property_access(ctx_type);
-                                                tsz_solver::type_queries::get_function_shape(
+                                if gen_ctx
+                                    && let Some(value_node) = self.ctx.arena.get(attr_value_idx)
+                                    && matches!(
+                                        value_node.kind,
+                                        syntax_kind_ext::ARROW_FUNCTION
+                                            | syntax_kind_ext::FUNCTION_EXPRESSION
+                                    )
+                                {
+                                    let has_function_context =
+                                        attr_request.contextual_type.is_some_and(|ctx_type| {
+                                            let ctx_type =
+                                                self.resolve_type_for_property_access(ctx_type);
+                                            tsz_solver::type_queries::get_function_shape(
+                                                self.ctx.types,
+                                                ctx_type,
+                                            )
+                                            .is_some()
+                                                || tsz_solver::type_queries::get_call_signatures(
                                                     self.ctx.types,
                                                     ctx_type,
                                                 )
-                                                .is_some()
-                                                    || tsz_solver::type_queries::get_call_signatures(
-                                                        self.ctx.types,
-                                                        ctx_type,
-                                                    )
-                                                    .is_some_and(|sigs| !sigs.is_empty())
-                                            });
-                                        if !has_function_context {
-                                            // Preserve transport for generic callback attrs
-                                            // even when we cannot recover a concrete function
-                                            // context yet.
-                                            let callback_request =
-                                                request.read().contextual(TypeId::ANY);
-                                            self.compute_type_of_node_with_request(
-                                                attr_value_idx,
-                                                &callback_request,
-                                            );
-                                            continue;
-                                        }
+                                                .is_some_and(|sigs| !sigs.is_empty())
+                                        });
+                                    if !has_function_context {
+                                        // Preserve transport for generic callback attrs
+                                        // even when we cannot recover a concrete function
+                                        // context yet.
+                                        let callback_request =
+                                            request.read().contextual(TypeId::ANY);
+                                        self.compute_type_of_node_with_request(
+                                            attr_value_idx,
+                                            &callback_request,
+                                        );
+                                        continue;
                                     }
                                 }
                                 self.compute_type_of_node_with_request(

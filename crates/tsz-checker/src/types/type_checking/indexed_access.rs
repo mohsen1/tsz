@@ -10,7 +10,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 /// Check if a property with the given name is private or protected on the given type.
-/// Delegates to the solver's type query via query_boundaries.
+/// Delegates to the solver's type query via `query_boundaries`.
 fn has_nonpublic_property(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId, name: &str) -> bool {
     crate::query_boundaries::common::has_nonpublic_property(db, type_id, name)
 }
@@ -604,15 +604,15 @@ impl<'a> CheckerState<'a> {
                     // the inferred type parameter `Head` is constrained to `keyof ObjT` in the
                     // true branch. If our index type matches such an infer parameter, suppress
                     // TS2536.
-                    if let Some(ref idx_name) = index_name {
-                        if self.extends_type_has_infer_keyof_constraint(
+                    if let Some(ref idx_name) = index_name
+                        && self.extends_type_has_infer_keyof_constraint(
                             cond.extends_type,
                             idx_name,
                             object_type,
                             object_type_for_check,
-                        ) {
-                            return true;
-                        }
+                        )
+                    {
+                        return true;
                     }
                 }
             }
@@ -681,7 +681,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Collect all INFER_TYPE node indices in a subtree, using parent-tracking.
+    /// Collect all `INFER_TYPE` node indices in a subtree, using parent-tracking.
     /// Walks all nodes whose parent chain leads back to `root_idx`.
     fn collect_infer_nodes_in_subtree(&self, root_idx: NodeIndex) -> Vec<NodeIndex> {
         let mut result = Vec::new();
@@ -1975,19 +1975,19 @@ impl<'a> CheckerState<'a> {
         for &tp in &type_params_to_check {
             if let Some(constraint) =
                 crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, tp)
+                && has_nonpublic_property(self.ctx.types, constraint, property_name)
+                && !emitted
             {
-                if has_nonpublic_property(self.ctx.types, constraint, property_name) && !emitted {
-                    let message = format_message(
+                let message = format_message(
                         diagnostic_messages::PRIVATE_OR_PROTECTED_MEMBER_CANNOT_BE_ACCESSED_ON_A_TYPE_PARAMETER,
                         &[property_name],
                     );
-                    self.error_at_node(
+                self.error_at_node(
                         error_node,
                         &message,
                         diagnostic_codes::PRIVATE_OR_PROTECTED_MEMBER_CANNOT_BE_ACCESSED_ON_A_TYPE_PARAMETER,
                     );
-                    emitted = true;
-                }
+                emitted = true;
             }
         }
     }

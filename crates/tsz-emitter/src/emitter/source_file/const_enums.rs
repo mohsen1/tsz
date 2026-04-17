@@ -321,18 +321,18 @@ impl<'a> Printer<'a> {
         if node.kind == SyntaxKind::Identifier as u16 {
             return self.get_identifier_text_idx(idx);
         }
-        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            if let Some(qn) = self.arena.get_qualified_name(node) {
-                let left = self.qualified_name_to_string(qn.left);
-                let right = self.get_identifier_text_idx(qn.right);
-                if left.is_empty() {
-                    return right;
-                }
-                if right.is_empty() {
-                    return left;
-                }
-                return format!("{left}.{right}");
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME
+            && let Some(qn) = self.arena.get_qualified_name(node)
+        {
+            let left = self.qualified_name_to_string(qn.left);
+            let right = self.get_identifier_text_idx(qn.right);
+            if left.is_empty() {
+                return right;
             }
+            if right.is_empty() {
+                return left;
+            }
+            return format!("{left}.{right}");
         }
         String::new()
     }

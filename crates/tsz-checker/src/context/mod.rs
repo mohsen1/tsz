@@ -49,6 +49,30 @@ pub use tsz_common::checker_options::CheckerOptions;
 pub use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::node::NodeArena;
 
+/// Global cross-binder index: identifier name → list of `(file_idx, SymbolId)`
+/// where the name appears in a binder's `file_locals`.
+pub type GlobalFileLocalsIndex = Arc<FxHashMap<String, Vec<(usize, SymbolId)>>>;
+
+/// Per-module export map: export name → list of `(file_idx, SymbolId)` where
+/// the export is declared. The value shape inside a `GlobalModuleExportsIndex`.
+pub type ModuleExportsByName = FxHashMap<String, Vec<(usize, SymbolId)>>;
+
+/// Owned (non-`Arc`) form of the cross-binder module exports index.
+/// Used while the index is being built before it is wrapped in `Arc`.
+pub type ModuleExportsIndexMap = FxHashMap<String, ModuleExportsByName>;
+
+/// Global cross-binder index: module specifier → export name → list of
+/// `(file_idx, SymbolId)` where the export is declared.
+pub type GlobalModuleExportsIndex = Arc<ModuleExportsIndexMap>;
+
+/// Global cross-binder index: module specifier → list of `(file_idx, augmentation)`
+/// entries that contribute to that module's merged type.
+pub type GlobalModuleAugmentationsIndex = Arc<FxHashMap<String, Vec<(usize, ModuleAugmentation)>>>;
+
+/// Global cross-binder index: module specifier → list of `(symbol, file_idx)`
+/// identifying the symbols targeted by each augmentation of that module.
+pub type GlobalAugmentationTargetsIndex = Arc<FxHashMap<String, Vec<(SymbolId, usize)>>>;
+
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
 ///
 /// Prevents stack overflow when resolving deeply recursive or circular
@@ -56,11 +80,11 @@ use tsz_parser::parser::node::NodeArena;
 /// nested namespace exports). Matches `MAX_INSTANTIATION_DEPTH` (50).
 pub(crate) const MAX_SYMBOL_RESOLUTION_DEPTH: u32 = 50;
 
-type ResolvedModulePathMap = FxHashMap<(usize, String), usize>;
-type ResolvedModuleErrorMap = FxHashMap<(usize, String), ResolutionError>;
-type ResolvedModuleRequestPathMap =
+pub type ResolvedModulePathMap = FxHashMap<(usize, String), usize>;
+pub type ResolvedModuleErrorMap = FxHashMap<(usize, String), ResolutionError>;
+pub type ResolvedModuleRequestPathMap =
     FxHashMap<(usize, String, Option<ResolutionModeOverride>), usize>;
-type ResolvedModuleRequestErrorMap =
+pub type ResolvedModuleRequestErrorMap =
     FxHashMap<(usize, String, Option<ResolutionModeOverride>), ResolutionError>;
 
 /// Represents a failed module resolution with specific error details.
@@ -176,7 +200,7 @@ pub struct PendingImplicitAnyVar {
 /// (0) as the sentinel for "not cached".
 ///
 /// Memory: 4 bytes per arena node (one `u32`). For a 50k-node file this is
-/// only 200KB, far less than the HashMap overhead for the same entry count.
+/// only 200KB, far less than the `HashMap` overhead for the same entry count.
 #[derive(Clone, Debug)]
 pub struct NodeTypeCache {
     data: Vec<TypeId>,
@@ -193,7 +217,7 @@ impl NodeTypeCache {
 
     /// Create an empty cache (zero capacity).
     #[inline]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { data: Vec::new() }
     }
 
@@ -206,7 +230,7 @@ impl NodeTypeCache {
 
     /// Insert a type for a raw node index.
     ///
-    /// Rejects sentinel values (u32::MAX / NodeIndex::NONE) to prevent
+    /// Rejects sentinel values (`u32::MAX` / `NodeIndex::NONE`) to prevent
     /// multi-GB allocations from bogus indices.
     #[inline]
     pub fn insert(&mut self, key: u32, value: TypeId) {
@@ -225,19 +249,19 @@ impl NodeTypeCache {
     #[inline]
     pub fn contains_key(&self, key: &u32) -> bool {
         let idx = *key as usize;
-        self.data.get(idx).map_or(false, |t| *t != TypeId::NONE)
+        self.data.get(idx).is_some_and(|t| *t != TypeId::NONE)
     }
 
     /// Remove a cached type, returning the old value if present.
     #[inline]
     pub fn remove(&mut self, key: &u32) -> Option<TypeId> {
         let idx = *key as usize;
-        if let Some(slot) = self.data.get_mut(idx) {
-            if *slot != TypeId::NONE {
-                let old = *slot;
-                *slot = TypeId::NONE;
-                return Some(old);
-            }
+        if let Some(slot) = self.data.get_mut(idx)
+            && *slot != TypeId::NONE
+        {
+            let old = *slot;
+            *slot = TypeId::NONE;
+            return Some(old);
         }
         None
     }
@@ -257,7 +281,7 @@ impl NodeTypeCache {
     }
 
     /// Iterate over all cached (key, value) pairs.
-    /// Used by TypeCache merge and emitter export.
+    /// Used by `TypeCache` merge and emitter export.
     pub fn iter(&self) -> impl Iterator<Item = (u32, TypeId)> + '_ {
         self.data
             .iter()
@@ -334,9 +358,9 @@ impl Default for NodeTypeCache {
 /// - `2` = cached as `true` (narrowable)
 ///
 /// This replaces `RefCell<FxHashMap<u32, bool>>` on the flow analysis hot
-/// path, eliminating HashMap hashing/probing overhead and RefCell borrow
+/// path, eliminating `HashMap` hashing/probing overhead and `RefCell` borrow
 /// tracking (~15ns per access saved). Memory: 1 byte per arena node (50KB
-/// for a 50k-node file vs ~200+ bytes of HashMap overhead per entry).
+/// for a 50k-node file vs ~200+ bytes of `HashMap` overhead per entry).
 #[derive(Clone, Debug)]
 pub struct NarrowableIdentifierCache {
     data: Vec<u8>,
@@ -357,7 +381,7 @@ impl NarrowableIdentifierCache {
 
     /// Create an empty cache.
     #[inline]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { data: Vec::new() }
     }
 
@@ -399,8 +423,8 @@ impl Default for NarrowableIdentifierCache {
 /// (0) as the sentinel for "not cached".
 ///
 /// Memory: 4 bytes per symbol. For a file with 5000 symbols this is
-/// only 20KB, far less than the HashMap overhead for the same entry count.
-/// Eliminates FxHashMap hashing/probing on the hottest checker path
+/// only 20KB, far less than the `HashMap` overhead for the same entry count.
+/// Eliminates `FxHashMap` hashing/probing on the hottest checker path
 /// (`get_type_of_symbol`).
 #[derive(Clone, Debug)]
 pub struct SymbolTypeCache {
@@ -418,7 +442,7 @@ impl SymbolTypeCache {
 
     /// Create an empty cache (zero capacity).
     #[inline]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { data: Vec::new() }
     }
 
@@ -443,19 +467,19 @@ impl SymbolTypeCache {
     #[inline]
     pub fn contains_key(&self, key: &SymbolId) -> bool {
         let idx = key.0 as usize;
-        self.data.get(idx).map_or(false, |t| *t != TypeId::NONE)
+        self.data.get(idx).is_some_and(|t| *t != TypeId::NONE)
     }
 
     /// Remove a cached type, returning the old value if present.
     #[inline]
     pub fn remove(&mut self, key: &SymbolId) -> Option<TypeId> {
         let idx = key.0 as usize;
-        if let Some(slot) = self.data.get_mut(idx) {
-            if *slot != TypeId::NONE {
-                let old = *slot;
-                *slot = TypeId::NONE;
-                return Some(old);
-            }
+        if let Some(slot) = self.data.get_mut(idx)
+            && *slot != TypeId::NONE
+        {
+            let old = *slot;
+            *slot = TypeId::NONE;
+            return Some(old);
         }
         None
     }
@@ -729,7 +753,7 @@ pub struct CheckerContext<'a> {
     pub request_cache_counters: RequestCacheCounters,
 
     /// Cached type environment for resolving Ref types during assignability checks.
-    /// Used by FlowAnalyzer (via borrowed reference) for type narrowing during control flow analysis.
+    /// Used by `FlowAnalyzer` (via borrowed reference) for type narrowing during control flow analysis.
     pub type_environment: RefCell<TypeEnvironment>,
 
     /// Recursion guard for application evaluation.
@@ -774,7 +798,7 @@ pub struct CheckerContext<'a> {
     /// Cache for `is_narrowable_identifier` results.
     /// This is pure (depends only on AST structure), so it never needs invalidation.
     /// Avoids 4-5 binder/arena lookups per call on the hot cached-node path.
-    /// Uses a dense flat array (1 byte per node) instead of FxHashMap.
+    /// Uses a dense flat array (1 byte per node) instead of `FxHashMap`.
     pub narrowable_identifier_cache: RefCell<NarrowableIdentifierCache>,
 
     /// Cache for switch-reference relevance checks.
@@ -1089,7 +1113,7 @@ pub struct CheckerContext<'a> {
 
     /// Stack of nodes being resolved.
     /// Also used for circular reference detection via linear scan (the stack is
-    /// typically 0-5 elements deep, where linear scan beats FxHashSet lookup).
+    /// typically 0-5 elements deep, where linear scan beats `FxHashSet` lookup).
     pub node_resolution_stack: Vec<NodeIndex>,
 
     /// Closures where implicit any (TS7006/TS7031) checks have already been performed.
@@ -1339,13 +1363,12 @@ pub struct CheckerContext<'a> {
     /// Constructed once in `set_all_binders` from all binders' `file_locals`.
     /// Eliminates O(N) scans in `resolve_identifier_symbol_from_all_binders`
     /// and related cross-file symbol lookup hot paths.
-    pub global_file_locals_index: Option<Arc<FxHashMap<String, Vec<(usize, SymbolId)>>>>,
+    pub global_file_locals_index: Option<GlobalFileLocalsIndex>,
 
     /// Pre-built global index: (`module_specifier`, `export_name`) -> list of (`file_idx`, SymbolId).
     /// Constructed once in `set_all_binders` from all binders' `module_exports`.
     /// Eliminates O(N) scans in `resolve_import_from_ambient_module`.
-    pub global_module_exports_index:
-        Option<Arc<FxHashMap<String, FxHashMap<String, Vec<(usize, SymbolId)>>>>>,
+    pub global_module_exports_index: Option<GlobalModuleExportsIndex>,
 
     /// Pre-built global index of all declared/ambient module names across all binders.
     /// Split into exact names (O(1) lookup) and wildcard patterns (small linear scan).
@@ -1361,14 +1384,13 @@ pub struct CheckerContext<'a> {
     /// Merges all binders' `module_augmentations` into a single lookup table.
     /// Eliminates O(N) scans when resolving module augmentations for interface
     /// declaration merging (`interface_type.rs`, computed.rs).
-    pub global_module_augmentations_index:
-        Option<Arc<FxHashMap<String, Vec<(usize, ModuleAugmentation)>>>>,
+    pub global_module_augmentations_index: Option<GlobalModuleAugmentationsIndex>,
 
     /// Pre-built global index: `module_specifier` -> Vec<(SymbolId, `file_idx`)>.
     /// Merges all binders' `augmentation_target_modules` (reverse map: symbol -> module)
     /// into a forward lookup: module -> symbols. Eliminates O(N) scans when finding
     /// augmentation symbols for a given module specifier (`interface_type.rs`).
-    pub global_augmentation_targets_index: Option<Arc<FxHashMap<String, Vec<(SymbolId, usize)>>>>,
+    pub global_augmentation_targets_index: Option<GlobalAugmentationTargetsIndex>,
 
     /// Pre-built global index: module name -> list of binder indices that have that module
     /// in their `module_exports`. Eliminates O(N) binder scans when looking up which
@@ -1566,7 +1588,7 @@ pub struct CheckerContext<'a> {
     /// Key: (`node_position`, `symbol_id`)
     pub emitted_ts2454_errors: FxHashSet<(u32, SymbolId)>,
 
-    /// Track which (interface_type, property_name, is_number_index) combinations
+    /// Track which (`interface_type`, `property_name`, `is_number_index`) combinations
     /// have already emitted TS2411 errors for merged interface declarations.
     /// When the same property appears in multiple declaration bodies (e.g., `1` in one
     /// body and `'1'` in another), we only report the error once.
@@ -1623,18 +1645,16 @@ pub struct ProjectEnv {
     pub global_symbol_file_index: Option<Arc<FxHashMap<SymbolId, usize>>>,
     /// Pre-computed global `file_locals` index: name -> Vec<(`file_idx`, SymbolId)>.
     /// Built once from all binders; shared across all checkers via `Arc`.
-    pub global_file_locals_index: Option<Arc<FxHashMap<String, Vec<(usize, SymbolId)>>>>,
+    pub global_file_locals_index: Option<GlobalFileLocalsIndex>,
     /// Pre-computed global `module_exports` index: (specifier, `export_name`) -> Vec<(`file_idx`, SymbolId)>.
     /// Built once from all binders; shared across all checkers via `Arc`.
-    pub global_module_exports_index:
-        Option<Arc<FxHashMap<String, FxHashMap<String, Vec<(usize, SymbolId)>>>>>,
+    pub global_module_exports_index: Option<GlobalModuleExportsIndex>,
     /// Pre-computed global module augmentations index: specifier -> Vec<(`file_idx`, `ModuleAugmentation`)>.
     /// Built once from all binders; shared across all checkers via `Arc`.
-    pub global_module_augmentations_index:
-        Option<Arc<FxHashMap<String, Vec<(usize, ModuleAugmentation)>>>>,
+    pub global_module_augmentations_index: Option<GlobalModuleAugmentationsIndex>,
     /// Pre-computed global augmentation targets index: specifier -> Vec<(SymbolId, `file_idx`)>.
     /// Built once from all binders; shared across all checkers via `Arc`.
-    pub global_augmentation_targets_index: Option<Arc<FxHashMap<String, Vec<(SymbolId, usize)>>>>,
+    pub global_augmentation_targets_index: Option<GlobalAugmentationTargetsIndex>,
     /// Pre-computed global module binder index: module name -> Vec<`binder_idx`>.
     /// Built once from all binders; shared across all checkers via `Arc`.
     pub global_module_binder_index: Option<Arc<FxHashMap<String, Vec<usize>>>>,
@@ -1663,7 +1683,7 @@ pub struct ProjectEnv {
     /// when the project topology is unchanged.
     pub last_skeleton_fingerprint: Option<u64>,
     /// Shared `DefinitionStore` for parallel checking.
-    /// When set, all parallel checkers share this store for globally unique DefIds.
+    /// When set, all parallel checkers share this store for globally unique `DefIds`.
     pub shared_definition_store: Option<Arc<DefinitionStore>>,
 }
 
@@ -1795,8 +1815,7 @@ impl ProjectEnv {
     /// When these fields are `Some`, `set_all_binders` skips re-computing them.
     pub fn build_global_indices(&mut self) {
         let mut file_locals_index: FxHashMap<String, Vec<(usize, SymbolId)>> = FxHashMap::default();
-        let mut module_exports_index: FxHashMap<String, FxHashMap<String, Vec<(usize, SymbolId)>>> =
-            FxHashMap::default();
+        let mut module_exports_index: ModuleExportsIndexMap = FxHashMap::default();
         let mut module_augs_index: FxHashMap<String, Vec<(usize, ModuleAugmentation)>> =
             FxHashMap::default();
         let mut aug_targets_index: FxHashMap<String, Vec<(SymbolId, usize)>> = FxHashMap::default();

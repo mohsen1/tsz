@@ -172,13 +172,12 @@ impl<'a> CheckerState<'a> {
             };
             if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
                 // Check if the module name is a string literal
-                if let Some(module_data) = self.ctx.arena.get_module(parent_node) {
-                    if let Some(name_node) = self.ctx.arena.get(module_data.name) {
-                        if name_node.is_string_literal() {
-                            // declare module "..." -- NOT a pure namespace
-                            return false;
-                        }
-                    }
+                if let Some(module_data) = self.ctx.arena.get_module(parent_node)
+                    && let Some(name_node) = self.ctx.arena.get(module_data.name)
+                    && name_node.is_string_literal()
+                {
+                    // declare module "..." -- NOT a pure namespace
+                    return false;
                 }
                 // Found an identifier-named module declaration (namespace)
                 found_ambient_namespace = true;
@@ -1442,9 +1441,7 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::node_flags;
         use tsz_parser::parser::syntax_kind_ext;
 
-        let Some(source_file) = self.ctx.arena.source_files.first() else {
-            return None;
-        };
+        let source_file = self.ctx.arena.source_files.first()?;
 
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {

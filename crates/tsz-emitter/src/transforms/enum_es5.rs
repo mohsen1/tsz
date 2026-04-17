@@ -818,46 +818,46 @@ impl<'a> EnumES5Transformer<'a> {
         }
         // For string literal member names, use source text to preserve Unicode escapes
         // (e.g., "gold \u2730" must stay as-is, not be decoded to the literal char).
-        if node.kind == SyntaxKind::StringLiteral as u16 {
-            if let Some(source_text) = self.source_text {
-                let start = node.pos as usize;
-                let end = node.end as usize;
-                if end <= source_text.len() {
-                    let raw = &source_text[start..end];
-                    let is_single_quoted = raw.starts_with('\'');
-                    let inner = raw
-                        .strip_prefix('"')
-                        .or_else(|| raw.strip_prefix('\''))
-                        .and_then(|s| s.strip_suffix('"').or_else(|| s.strip_suffix('\'')))
-                        .unwrap_or(raw);
-                    if is_single_quoted {
-                        let mut converted = String::with_capacity(inner.len());
-                        let mut chars = inner.chars().peekable();
-                        while let Some(c) = chars.next() {
-                            if c == '\\' {
-                                if let Some(&next) = chars.peek() {
-                                    if next == '\'' {
-                                        converted.push('\'');
-                                        chars.next();
-                                    } else {
-                                        converted.push('\\');
-                                        converted.push(next);
-                                        chars.next();
-                                    }
+        if node.kind == SyntaxKind::StringLiteral as u16
+            && let Some(source_text) = self.source_text
+        {
+            let start = node.pos as usize;
+            let end = node.end as usize;
+            if end <= source_text.len() {
+                let raw = &source_text[start..end];
+                let is_single_quoted = raw.starts_with('\'');
+                let inner = raw
+                    .strip_prefix('"')
+                    .or_else(|| raw.strip_prefix('\''))
+                    .and_then(|s| s.strip_suffix('"').or_else(|| s.strip_suffix('\'')))
+                    .unwrap_or(raw);
+                if is_single_quoted {
+                    let mut converted = String::with_capacity(inner.len());
+                    let mut chars = inner.chars().peekable();
+                    while let Some(c) = chars.next() {
+                        if c == '\\' {
+                            if let Some(&next) = chars.peek() {
+                                if next == '\'' {
+                                    converted.push('\'');
+                                    chars.next();
                                 } else {
                                     converted.push('\\');
+                                    converted.push(next);
+                                    chars.next();
                                 }
-                            } else if c == '"' {
-                                converted.push('\\');
-                                converted.push('"');
                             } else {
-                                converted.push(c);
+                                converted.push('\\');
                             }
+                        } else if c == '"' {
+                            converted.push('\\');
+                            converted.push('"');
+                        } else {
+                            converted.push(c);
                         }
-                        return IRNode::RawStringLiteral(converted.into());
                     }
-                    return IRNode::RawStringLiteral(inner.to_string().into());
+                    return IRNode::RawStringLiteral(converted.into());
                 }
+                return IRNode::RawStringLiteral(inner.to_string().into());
             }
         }
         IRNode::StringLiteral(member_name.to_string().into())

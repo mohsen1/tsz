@@ -99,7 +99,7 @@ impl<'a> CheckerContext<'a> {
     /// Resolve a `SymbolId` to its owning file index.
     ///
     /// Checks the shared `global_symbol_file_index` first (pre-built, read-only,
-    /// no RefCell overhead), then falls back to the local `cross_file_symbol_targets`
+    /// no `RefCell` overhead), then falls back to the local `cross_file_symbol_targets`
     /// overlay for dynamically-discovered mappings. Returns `None` if the symbol
     /// has no known cross-file owner.
     pub fn resolve_symbol_file_index(&self, sym_id: SymbolId) -> Option<usize> {
@@ -492,8 +492,8 @@ impl<'a> CheckerContext<'a> {
         // Fallback: build all indices from scratch (legacy path for tests and
         // callers that don't use ProjectEnv).
         let mut file_locals_index: FxHashMap<String, Vec<(usize, SymbolId)>> = FxHashMap::default();
-        let mut module_exports_index: FxHashMap<String, FxHashMap<String, Vec<(usize, SymbolId)>>> =
-            FxHashMap::default();
+        // outer_key = module specifier, inner = export name
+        let mut module_exports_index: crate::context::ModuleExportsIndexMap = FxHashMap::default();
         let mut module_binder_index: FxHashMap<String, Vec<usize>> = FxHashMap::default();
 
         let has_skeleton_declared_modules = self.global_declared_modules.is_some();
@@ -703,7 +703,7 @@ impl<'a> CheckerContext<'a> {
     /// Set resolved module paths keyed by the full driver lookup request.
     pub fn set_resolved_module_request_paths(
         &mut self,
-        paths: Arc<FxHashMap<(usize, String, Option<ResolutionModeOverride>), usize>>,
+        paths: Arc<crate::context::ResolvedModuleRequestPathMap>,
     ) {
         self.resolved_module_request_paths = Some(paths);
     }
@@ -718,7 +718,7 @@ impl<'a> CheckerContext<'a> {
     /// Populated by the driver when `ModuleResolver` returns specific errors (TS2834, TS2835, TS2792, etc.).
     pub fn set_resolved_module_errors(
         &mut self,
-        errors: Arc<FxHashMap<(usize, String), ResolutionError>>,
+        errors: Arc<crate::context::ResolvedModuleErrorMap>,
     ) {
         self.resolved_module_errors = Some(errors);
     }
@@ -726,7 +726,7 @@ impl<'a> CheckerContext<'a> {
     /// Set resolved module errors keyed by the full driver lookup request.
     pub fn set_resolved_module_request_errors(
         &mut self,
-        errors: Arc<FxHashMap<(usize, String, Option<ResolutionModeOverride>), ResolutionError>>,
+        errors: Arc<crate::context::ResolvedModuleRequestErrorMap>,
     ) {
         self.resolved_module_request_errors = Some(errors);
     }
@@ -1550,12 +1550,12 @@ mod index_tests {
 
     /// Build the global module augmentation indices from a list of binders
     /// (same logic as `set_all_binders` but isolated for testing).
+    type ModuleAugsIndex = rustc_hash::FxHashMap<String, Vec<(usize, ModuleAugmentation)>>;
+    type AugTargetsIndex = rustc_hash::FxHashMap<String, Vec<(SymbolId, usize)>>;
+
     fn build_module_augmentation_indices(
         binders: &[Arc<BinderState>],
-    ) -> (
-        rustc_hash::FxHashMap<String, Vec<(usize, ModuleAugmentation)>>,
-        rustc_hash::FxHashMap<String, Vec<(SymbolId, usize)>>,
-    ) {
+    ) -> (ModuleAugsIndex, AugTargetsIndex) {
         use rustc_hash::FxHashMap;
         let mut module_augs_index: FxHashMap<String, Vec<(usize, ModuleAugmentation)>> =
             FxHashMap::default();

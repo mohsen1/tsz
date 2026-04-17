@@ -577,35 +577,34 @@ impl<'a> CheckerState<'a> {
                             // (e.g., `class Symbol` shadowing `declare var Symbol: SymbolConstructor`),
                             // the class itself is constructable but tsc uses the lib variable's
                             // annotated type. Check if the shadowed lib type is non-constructable.
-                            if skip_constructor_check {
-                                if let Some((lib_type, lib_type_name)) =
+                            if skip_constructor_check
+                                && let Some((lib_type, lib_type_name)) =
                                     self.shadowed_lib_variable_type(sym_to_check)
-                                {
-                                    // Use strict constructor check matching tsc's
-                                    // isConstructorType: only construct signatures
-                                    // count, NOT prototype property presence.
-                                    // SymbolConstructor has `readonly prototype: Symbol`
-                                    // but no construct signatures — tsc emits TS2507.
-                                    let lib_has_construct_sigs =
-                                        class_query::construct_signatures_for_type(
-                                            self.ctx.types,
-                                            lib_type,
-                                        )
-                                        .is_some_and(|sigs| !sigs.is_empty());
-                                    if lib_type != TypeId::ERROR && !lib_has_construct_sigs {
-                                        use crate::diagnostics::{
-                                            diagnostic_codes, diagnostic_messages, format_message,
-                                        };
-                                        let message = format_message(
+                            {
+                                // Use strict constructor check matching tsc's
+                                // isConstructorType: only construct signatures
+                                // count, NOT prototype property presence.
+                                // SymbolConstructor has `readonly prototype: Symbol`
+                                // but no construct signatures — tsc emits TS2507.
+                                let lib_has_construct_sigs =
+                                    class_query::construct_signatures_for_type(
+                                        self.ctx.types,
+                                        lib_type,
+                                    )
+                                    .is_some_and(|sigs| !sigs.is_empty());
+                                if lib_type != TypeId::ERROR && !lib_has_construct_sigs {
+                                    use crate::diagnostics::{
+                                        diagnostic_codes, diagnostic_messages, format_message,
+                                    };
+                                    let message = format_message(
                                             diagnostic_messages::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
                                             &[&lib_type_name],
                                         );
-                                        self.error_at_node(
-                                            expr_idx,
-                                            &message,
-                                            diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
-                                        );
-                                    }
+                                    self.error_at_node(
+                                        expr_idx,
+                                        &message,
+                                        diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+                                    );
                                 }
                             }
 
@@ -1247,10 +1246,11 @@ impl<'a> CheckerState<'a> {
             };
             let type_name = ident.escaped_text.as_str().to_string();
 
-            if let Some(lib_type) = self.resolve_lib_type_by_name(&type_name) {
-                if lib_type != TypeId::UNKNOWN && lib_type != TypeId::ERROR {
-                    return Some((self.resolve_ref_type(lib_type), type_name));
-                }
+            if let Some(lib_type) = self.resolve_lib_type_by_name(&type_name)
+                && lib_type != TypeId::UNKNOWN
+                && lib_type != TypeId::ERROR
+            {
+                return Some((self.resolve_ref_type(lib_type), type_name));
             }
         }
 

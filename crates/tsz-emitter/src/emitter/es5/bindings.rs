@@ -124,7 +124,7 @@ impl<'a> Printer<'a> {
                         self.write(" = ");
                         self.write_helper("__addDisposableResource");
                         self.write("(");
-                        self.write(&env_name);
+                        self.write(env_name);
                         self.write(", ");
                         self.emit(decl.initializer);
                         self.write(", ");

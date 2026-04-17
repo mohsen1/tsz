@@ -214,9 +214,9 @@ impl<'a> CheckerState<'a> {
 
     /// Recursive check for Promise fulfillment cycles.
     ///
-    /// Tracks visited DefIds (type alias identities) rather than TypeIds, since
+    /// Tracks visited `DefIds` (type alias identities) rather than `TypeIds`, since
     /// a recursive type alias like `type T1 = 1 | Promise<T1>` produces
-    /// different TypeIds at different evaluation stages but shares the same DefId.
+    /// different `TypeIds` at different evaluation stages but shares the same DefId.
     fn has_promise_fulfillment_cycle(
         &mut self,
         type_id: TypeId,
@@ -249,35 +249,34 @@ impl<'a> CheckerState<'a> {
         };
 
         // Also check if the evaluated form reveals a Lazy(DefId)
-        if target != type_id {
-            if let query::PromiseTypeKind::Lazy(def_id) =
+        if target != type_id
+            && let query::PromiseTypeKind::Lazy(def_id) =
                 query::classify_promise_type(self.ctx.types, target)
-            {
-                if !visited_defs.insert(def_id) {
-                    return true;
-                }
-                if let Some(body) = self.ctx.definition_store.get_body(def_id) {
-                    return self.has_promise_fulfillment_cycle(body, visited_defs, depth + 1);
-                }
-                return false;
+        {
+            if !visited_defs.insert(def_id) {
+                return true;
             }
+            if let Some(body) = self.ctx.definition_store.get_body(def_id) {
+                return self.has_promise_fulfillment_cycle(body, visited_defs, depth + 1);
+            }
+            return false;
         }
 
         match query::classify_promise_type(self.ctx.types, target) {
             query::PromiseTypeKind::Union(members) => {
                 for member in members {
-                    if let Some(inner) = self.promise_like_return_type_argument(member) {
-                        if self.has_promise_fulfillment_cycle(inner, visited_defs, depth + 1) {
-                            return true;
-                        }
+                    if let Some(inner) = self.promise_like_return_type_argument(member)
+                        && self.has_promise_fulfillment_cycle(inner, visited_defs, depth + 1)
+                    {
+                        return true;
                     }
                 }
             }
             _ => {
-                if let Some(inner) = self.promise_like_return_type_argument(target) {
-                    if self.has_promise_fulfillment_cycle(inner, visited_defs, depth + 1) {
-                        return true;
-                    }
+                if let Some(inner) = self.promise_like_return_type_argument(target)
+                    && self.has_promise_fulfillment_cycle(inner, visited_defs, depth + 1)
+                {
+                    return true;
                 }
             }
         }

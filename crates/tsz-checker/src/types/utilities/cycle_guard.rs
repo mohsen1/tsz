@@ -45,7 +45,7 @@ thread_local! {
 }
 
 /// Clear both cycle-detection visited sets.
-/// Called between compilation sessions to prevent stale NodeIndex values.
+/// Called between compilation sessions to prevent stale `NodeIndex` values.
 pub(crate) fn clear_visited_sets() {
     CONST_ENUM_VISITED.with(|v| v.borrow_mut().clear());
     NON_CONST_ENUM_VISITED.with(|v| v.borrow_mut().clear());

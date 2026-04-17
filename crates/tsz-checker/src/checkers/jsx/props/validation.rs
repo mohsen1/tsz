@@ -212,7 +212,7 @@ impl<'a> CheckerState<'a> {
                     return Some(text.to_string());
                 }
             }
-            return None;
+            None
         };
 
         if let Some(text) = alias_target_text_for_symbol(self.ctx.binder, self.ctx.arena) {

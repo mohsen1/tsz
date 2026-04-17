@@ -244,22 +244,16 @@ fn find_expression_start(_expr_text: &str, full_text: &str, dot_pos: usize) -> u
 
         match ch {
             b')' => paren_depth += 1,
+            b'(' if paren_depth > 0 => paren_depth -= 1,
             b'(' => {
-                if paren_depth > 0 {
-                    paren_depth -= 1;
-                } else {
-                    pos += 1;
-                    break;
-                }
+                pos += 1;
+                break;
             }
             b']' => bracket_depth += 1,
+            b'[' if bracket_depth > 0 => bracket_depth -= 1,
             b'[' => {
-                if bracket_depth > 0 {
-                    bracket_depth -= 1;
-                } else {
-                    pos += 1;
-                    break;
-                }
+                pos += 1;
+                break;
             }
             b'.' => {
                 // Continue scanning (property access chain)

@@ -234,58 +234,57 @@ impl<'a> FlowAnalyzer<'a> {
             //   -> Apply the inner predicate in the SAME sense.
             // For `assert(!isB(foo))`: predicate_target is `!isB(foo)` (PREFIX_UNARY).
             //   -> Look through `!`, apply inner predicate in the INVERTED sense.
-            if signature.predicate.asserts {
-                if let Some(pred_node) = self.arena.get(predicate_target) {
-                    // Determine if we have a negation and find the inner call expression.
-                    let (inner_call_node_idx, negate) =
-                        if pred_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
-                            if let Some(unary) = self.arena.get_unary_expr(pred_node)
-                                && unary.operator == SyntaxKind::ExclamationToken as u16
-                            {
-                                (unary.operand, true)
-                            } else {
-                                (predicate_target, false)
-                            }
+            if signature.predicate.asserts
+                && let Some(pred_node) = self.arena.get(predicate_target)
+            {
+                // Determine if we have a negation and find the inner call expression.
+                let (inner_call_node_idx, negate) =
+                    if pred_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+                        if let Some(unary) = self.arena.get_unary_expr(pred_node)
+                            && unary.operator == SyntaxKind::ExclamationToken as u16
+                        {
+                            (unary.operand, true)
                         } else {
-                            // Positive case: the predicate_target IS the call expression
                             (predicate_target, false)
-                        };
+                        }
+                    } else {
+                        // Positive case: the predicate_target IS the call expression
+                        (predicate_target, false)
+                    };
 
-                    // Check if the (inner) expression is a call with a type predicate
-                    if let Some(call_node) = self.arena.get(inner_call_node_idx)
-                        && let Some(inner_call) = self.arena.get_call_expr(call_node)
-                        && let Some(inner_callee_type) = node_types.get(&inner_call.expression.0)
-                        && let Some(inner_sig) =
-                            self.predicate_signature_for_type(*inner_callee_type)
-                        && let Some(inner_target) = self.predicate_target_expression(
-                            inner_call,
-                            &inner_sig.predicate,
-                            &inner_sig.params,
-                        )
-                        && self.is_matching_reference(inner_target, target)
-                    {
-                        // Found a type guard call targeting our variable.
-                        // Resolve generic predicates and apply narrowing.
-                        let resolved_inner_pred = self.resolve_generic_predicate(
-                            &inner_sig.predicate,
-                            &inner_sig.params,
-                            inner_call,
-                            *inner_callee_type,
-                            node_types,
-                        );
-                        // For positive: same sense as is_true_branch.
-                        // For negated: invert the sense.
-                        let effective_branch = if negate {
-                            !is_true_branch
-                        } else {
-                            is_true_branch
-                        };
-                        return Some(self.apply_type_predicate_narrowing(
-                            type_id,
-                            &resolved_inner_pred,
-                            effective_branch,
-                        ));
-                    }
+                // Check if the (inner) expression is a call with a type predicate
+                if let Some(call_node) = self.arena.get(inner_call_node_idx)
+                    && let Some(inner_call) = self.arena.get_call_expr(call_node)
+                    && let Some(inner_callee_type) = node_types.get(&inner_call.expression.0)
+                    && let Some(inner_sig) = self.predicate_signature_for_type(*inner_callee_type)
+                    && let Some(inner_target) = self.predicate_target_expression(
+                        inner_call,
+                        &inner_sig.predicate,
+                        &inner_sig.params,
+                    )
+                    && self.is_matching_reference(inner_target, target)
+                {
+                    // Found a type guard call targeting our variable.
+                    // Resolve generic predicates and apply narrowing.
+                    let resolved_inner_pred = self.resolve_generic_predicate(
+                        &inner_sig.predicate,
+                        &inner_sig.params,
+                        inner_call,
+                        *inner_callee_type,
+                        node_types,
+                    );
+                    // For positive: same sense as is_true_branch.
+                    // For negated: invert the sense.
+                    let effective_branch = if negate {
+                        !is_true_branch
+                    } else {
+                        is_true_branch
+                    };
+                    return Some(self.apply_type_predicate_narrowing(
+                        type_id,
+                        &resolved_inner_pred,
+                        effective_branch,
+                    ));
                 }
             }
 
@@ -993,18 +992,18 @@ impl<'a> FlowAnalyzer<'a> {
         // For FUNCTION symbols (e.g., JS constructor functions with @constructor),
         // resolve the function's type and extract the instance type from construct
         // signatures or prototype property.
-        if (symbol.flags & symbol_flags::FUNCTION) != 0 {
-            if let Some(env) = &self.type_environment {
-                let env_borrow = env.borrow();
-                if let Some(func_type) = env_borrow.get(symbol_ref)
-                    && let Some(instance_type) =
-                        crate::query_boundaries::flow_analysis::instance_type_from_constructor(
-                            self.interner,
-                            func_type,
-                        )
-                {
-                    return Some(instance_type);
-                }
+        if (symbol.flags & symbol_flags::FUNCTION) != 0
+            && let Some(env) = &self.type_environment
+        {
+            let env_borrow = env.borrow();
+            if let Some(func_type) = env_borrow.get(symbol_ref)
+                && let Some(instance_type) =
+                    crate::query_boundaries::flow_analysis::instance_type_from_constructor(
+                        self.interner,
+                        func_type,
+                    )
+            {
+                return Some(instance_type);
             }
         }
 
@@ -1060,9 +1059,7 @@ impl<'a> FlowAnalyzer<'a> {
 
         // The type annotation is a TypeReference node; find its identifier
         let type_ref_node = self.arena.get(var_decl.type_annotation)?;
-        let Some(type_ref) = self.arena.get_type_ref(type_ref_node) else {
-            return None;
-        };
+        let type_ref = self.arena.get_type_ref(type_ref_node)?;
         let type_name_idx = type_ref.type_name;
 
         // Resolve the type name identifier to a symbol
@@ -1445,10 +1442,10 @@ impl<'a> FlowAnalyzer<'a> {
     /// where flow analysis runs before the identifier's type is cached.
     ///
     /// Handles:
-    ///   - `: null`      → TypeId::NULL
-    ///   - `: undefined` → TypeId::UNDEFINED
-    ///   - no annotation, but initializer is `null` literal → TypeId::NULL
-    ///   - no annotation, but initializer is `undefined` identifier → TypeId::UNDEFINED
+    ///   - `: null`      → `TypeId::NULL`
+    ///   - `: undefined` → `TypeId::UNDEFINED`
+    ///   - no annotation, but initializer is `null` literal → `TypeId::NULL`
+    ///   - no annotation, but initializer is `undefined` identifier → `TypeId::UNDEFINED`
     fn resolve_const_identifier_type(
         &self,
         idx: NodeIndex,

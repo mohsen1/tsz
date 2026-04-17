@@ -293,26 +293,24 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 .arena
                 .get_composite_type(parent_node)
                 .is_some_and(|ct| ct.types.nodes.first().copied() == Some(idx));
-            if is_first_in_intersection {
-                if let Some(gp_ext) = self.ctx.arena.get_extended(parent) {
-                    if let Some(gp_node) = self.ctx.arena.get(gp_ext.parent) {
-                        if gp_node.kind == syntax_kind_ext::UNION_TYPE {
-                            self.ctx.error(
+            if is_first_in_intersection
+                && let Some(gp_ext) = self.ctx.arena.get_extended(parent)
+                && let Some(gp_node) = self.ctx.arena.get(gp_ext.parent)
+                && gp_node.kind == syntax_kind_ext::UNION_TYPE
+            {
+                self.ctx.error(
                                 full_start,
                                 length,
                                 "Function type notation must be parenthesized when used in a union type.".to_string(),
                                 crate::diagnostics::diagnostic_codes::FUNCTION_TYPE_NOTATION_MUST_BE_PARENTHESIZED_WHEN_USED_IN_A_UNION_TYPE,
                             );
-                        }
-                    }
-                }
             }
         }
     }
 
     /// Recursively scan a type node subtree for unparenthesized function/constructor
     /// types in union/intersection contexts. This is needed because function type
-    /// return types are processed through TypeLowering, which doesn't trigger the
+    /// return types are processed through `TypeLowering`, which doesn't trigger the
     /// grammar checks that `compute_type` normally runs.
     pub(super) fn check_nested_function_types_in_type(&mut self, root: NodeIndex) {
         if root.is_none() {

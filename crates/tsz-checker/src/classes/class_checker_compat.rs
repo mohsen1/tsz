@@ -314,12 +314,10 @@ impl<'a> CheckerState<'a> {
                                         self.ctx.arena.get_type_parameter(tp_node)
                                     && let Some(name_node) = self.ctx.arena.get(tp_data.name)
                                     && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                                {
-                                    if let Some(&tp_type_id) =
+                                    && let Some(&tp_type_id) =
                                         self.ctx.type_parameter_scope.get(&ident.escaped_text)
-                                    {
-                                        tp_type_ids.push(tp_type_id);
-                                    }
+                                {
+                                    tp_type_ids.push(tp_type_id);
                                 }
                             }
                             if tp_type_ids.is_empty() {

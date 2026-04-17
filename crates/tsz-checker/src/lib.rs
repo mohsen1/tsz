@@ -15,6 +15,7 @@
 
 #![allow(dead_code)]
 #![allow(clippy::collapsible_if)]
+#![allow(clippy::collapsible_match)]
 #![allow(clippy::doc_markdown)]
 #![allow(clippy::let_and_return)]
 #![allow(clippy::missing_const_for_fn)]
@@ -26,7 +27,6 @@
 
 extern crate self as tsz_checker;
 
-#[allow(clippy::type_complexity)]
 pub mod context;
 pub mod dispatch;
 mod dispatch_helpers;

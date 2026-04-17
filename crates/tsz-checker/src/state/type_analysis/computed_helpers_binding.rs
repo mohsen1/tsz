@@ -431,29 +431,26 @@ impl<'a> CheckerState<'a> {
             // prescan of a method whose return type references the same class).
             // The re-entrant get_class_instance_type hits the in-progress guard and
             // returns ERROR/ANY, which would corrupt the previously-cached correct type.
-            if instance_type == TypeId::ANY || instance_type == TypeId::ERROR {
-                if let Some(&existing) = self.ctx.symbol_instance_types.get(&sym_id) {
-                    if existing != TypeId::ANY && existing != TypeId::ERROR {
-                        // Keep the existing valid type; skip the degraded overwrite.
-                        let ctor_type = self.get_class_constructor_type(decl_idx, class);
-                        self.ctx.symbol_types.insert(sym_id, ctor_type);
+            if (instance_type == TypeId::ANY || instance_type == TypeId::ERROR)
+                && let Some(&existing) = self.ctx.symbol_instance_types.get(&sym_id)
+                && existing != TypeId::ANY
+                && existing != TypeId::ERROR
+            {
+                // Keep the existing valid type; skip the degraded overwrite.
+                let ctor_type = self.get_class_constructor_type(decl_idx, class);
+                self.ctx.symbol_types.insert(sym_id, ctor_type);
 
-                        let ctor_type = if flags & symbol_flags::FUNCTION != 0 {
-                            self.merge_function_call_signatures_into_class(ctor_type, declarations)
-                        } else {
-                            ctor_type
-                        };
+                let ctor_type = if flags & symbol_flags::FUNCTION != 0 {
+                    self.merge_function_call_signatures_into_class(ctor_type, declarations)
+                } else {
+                    ctor_type
+                };
 
-                        if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
-                            != 0
-                        {
-                            let merged =
-                                self.merge_namespace_exports_into_constructor(sym_id, ctor_type);
-                            return (merged, Vec::new());
-                        }
-                        return (ctor_type, Vec::new());
-                    }
+                if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0 {
+                    let merged = self.merge_namespace_exports_into_constructor(sym_id, ctor_type);
+                    return (merged, Vec::new());
                 }
+                return (ctor_type, Vec::new());
             }
             self.ctx.symbol_instance_types.insert(sym_id, instance_type);
 
@@ -637,10 +634,11 @@ impl<'a> CheckerState<'a> {
                 drop(checker);
 
                 // Now safe to mutate self
-                if let Some(inst) = cross_instance_type {
-                    if inst != TypeId::ANY && inst != TypeId::ERROR {
-                        self.ctx.symbol_instance_types.insert(sym_id, inst);
-                    }
+                if let Some(inst) = cross_instance_type
+                    && inst != TypeId::ANY
+                    && inst != TypeId::ERROR
+                {
+                    self.ctx.symbol_instance_types.insert(sym_id, inst);
                 }
                 for (k, v) in child_instance_types {
                     self.ctx.symbol_instance_types.entry_or_insert(k, v);

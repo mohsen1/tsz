@@ -1004,20 +1004,19 @@ impl<'a> CheckerState<'a> {
         module_specifier: &str,
         resolution_mode: Option<crate::context::ResolutionModeOverride>,
     ) -> Option<tsz_binder::SymbolTable> {
-        if let Some(mode) = resolution_mode {
-            if let Some(target_idx) = self.ctx.resolve_import_target_from_file_with_mode(
+        if let Some(mode) = resolution_mode
+            && let Some(target_idx) = self.ctx.resolve_import_target_from_file_with_mode(
                 self.ctx.current_file_idx,
                 module_specifier,
                 Some(mode),
-            ) {
-                if let Some(exports) = self.resolve_cross_file_namespace_exports_for_file(
-                    target_idx,
-                    Some(module_specifier),
-                ) {
-                    return Some(exports);
-                }
-                return Some(tsz_binder::SymbolTable::new());
+            )
+        {
+            if let Some(exports) = self
+                .resolve_cross_file_namespace_exports_for_file(target_idx, Some(module_specifier))
+            {
+                return Some(exports);
             }
+            return Some(tsz_binder::SymbolTable::new());
         }
         self.resolve_effective_module_exports(module_specifier)
     }

@@ -378,12 +378,11 @@ impl<'a> TypePrinter<'a> {
         // Get the last segment of the module path (e.g., "url" from "@types/url")
         let module_last = module_path.rsplit('/').next().unwrap_or(module_path);
         // Check if qualified name starts with `<module_last>.`
-        if let Some(rest) = qualified_name.strip_prefix(module_last) {
-            if let Some(stripped) = rest.strip_prefix('.') {
-                if !stripped.is_empty() {
-                    return stripped;
-                }
-            }
+        if let Some(rest) = qualified_name.strip_prefix(module_last)
+            && let Some(stripped) = rest.strip_prefix('.')
+            && !stripped.is_empty()
+        {
+            return stripped;
         }
         qualified_name
     }
@@ -431,17 +430,15 @@ impl<'a> TypePrinter<'a> {
         if self
             .has_local_import_alias_resolver
             .is_some_and(|resolver| resolver(sym_id))
+            && let Some(arena) = self.symbol_arena
+            && let Some(sym) = arena.get(sym_id)
         {
-            if let Some(arena) = self.symbol_arena
-                && let Some(sym) = arena.get(sym_id)
-            {
-                let name = &sym.escaped_name;
-                return Some(if needs_typeof {
-                    format!("typeof {name}")
-                } else {
-                    name.clone()
-                });
-            }
+            let name = &sym.escaped_name;
+            return Some(if needs_typeof {
+                format!("typeof {name}")
+            } else {
+                name.clone()
+            });
         }
 
         if !needs_typeof
