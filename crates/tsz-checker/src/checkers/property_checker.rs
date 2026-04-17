@@ -149,7 +149,20 @@ impl<'a> CheckerState<'a> {
         // Property accesses like `this.x` go through the solver's property resolution
         // pipeline, which never marks binder symbols. Without this, private members
         // accessed via `this.x` would be falsely reported as unused (TS6133).
-        if let Some(&class_sym_id) = self.ctx.binder.node_symbols.get(&class_idx.0)
+        //
+        // Skip the mark when the access is the direct LHS of an assignment
+        // (`this.x = expr`). tsc only treats READS as references for noUnusedLocals;
+        // a write-only property still triggers TS6133 ("declared but its value is
+        // never read"). The property access node is the parent of `error_node`
+        // (which is the property-name identifier).
+        let is_write_target = self
+            .ctx
+            .arena
+            .get_extended(error_node)
+            .map(|ext| self.property_access_is_direct_write_target(ext.parent))
+            .unwrap_or(false);
+        if !is_write_target
+            && let Some(&class_sym_id) = self.ctx.binder.node_symbols.get(&class_idx.0)
             && let Some(class_symbol) = self.ctx.binder.get_symbol(class_sym_id)
             && let Some(ref members) = class_symbol.members
             && let Some(member_sym_id) = members.get(property_name)
