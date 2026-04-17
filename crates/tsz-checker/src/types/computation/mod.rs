@@ -25,6 +25,7 @@ pub(crate) mod array_literal;
 pub(crate) mod binary;
 pub(crate) mod call;
 pub(crate) mod call_display;
+pub(crate) mod call_finalize;
 pub(crate) mod call_helpers;
 pub(crate) mod call_inference;
 pub(crate) mod call_result;
