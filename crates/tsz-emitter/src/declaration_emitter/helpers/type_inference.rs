@@ -68,6 +68,20 @@ impl<'a> DeclarationEmitter<'a> {
             .find_map(|decl_idx| self.get_node_type_or_names(&[decl_idx]))
     }
 
+    /// Look up the cached type for a node via its symbol in `symbol_types`.
+    /// Unlike `get_type_via_symbol`, this directly queries `symbol_types` without
+    /// recursing through declarations — necessary for parameters whose types are
+    /// stored by `cache_parameter_types` in `symbol_types` rather than `node_types`.
+    pub(crate) fn get_symbol_cached_type(
+        &self,
+        node_id: NodeIndex,
+    ) -> Option<tsz_solver::types::TypeId> {
+        let cache = self.type_cache.as_ref()?;
+        let binder = self.binder?;
+        let sym_id = binder.get_node_symbol(node_id)?;
+        cache.symbol_types.get(&sym_id).copied()
+    }
+
     pub(crate) fn infer_fallback_type_text(&self, node_id: NodeIndex) -> Option<String> {
         self.infer_fallback_type_text_at(node_id, self.indent_level)
     }
@@ -289,7 +303,7 @@ impl<'a> DeclarationEmitter<'a> {
             if asserted_type.kind == SyntaxKind::ConstKeyword as u16 {
                 return None;
             }
-            return self.emit_type_node_text(assertion.type_node);
+            return self.emit_type_node_text_normalized(assertion.type_node);
         }
 
         None
@@ -1139,6 +1153,24 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         type_idx: NodeIndex,
     ) -> Option<String> {
+        self.emit_type_node_text_impl(type_idx, true)
+    }
+
+    // Like `emit_type_node_text` but omits `source_file_text` from the scratch
+    // emitter so that string literals are normalized to double quotes.
+    // tsc normalizes quotes in type assertions (e.g. `x as T<'a'>` → `T<"a">`).
+    pub(in crate::declaration_emitter) fn emit_type_node_text_normalized(
+        &self,
+        type_idx: NodeIndex,
+    ) -> Option<String> {
+        self.emit_type_node_text_impl(type_idx, false)
+    }
+
+    fn emit_type_node_text_impl(
+        &self,
+        type_idx: NodeIndex,
+        preserve_source_quotes: bool,
+    ) -> Option<String> {
         self.arena.get(type_idx)?;
 
         let mut scratch = if let (Some(type_cache), Some(type_interner), Some(binder)) =
@@ -1157,7 +1189,9 @@ impl<'a> DeclarationEmitter<'a> {
         scratch.source_is_declaration_file = self.source_is_declaration_file;
         scratch.source_is_js_file = self.source_is_js_file;
         scratch.current_source_file_idx = self.current_source_file_idx;
-        scratch.source_file_text = self.source_file_text.clone();
+        if preserve_source_quotes {
+            scratch.source_file_text = self.source_file_text.clone();
+        }
         scratch.current_file_path = self.current_file_path.clone();
         scratch.current_arena = self.current_arena.clone();
         scratch.arena_to_path = self.arena_to_path.clone();

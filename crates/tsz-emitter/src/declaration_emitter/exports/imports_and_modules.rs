@@ -692,7 +692,21 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     self.write(": ");
                     self.write(&converted);
-                } else if let Some(type_id) = self.get_node_type_or_names(&[param_idx, param.name])
+                } else if let Some(type_id) = self
+                    .get_node_type_or_names(&[param_idx, param.name])
+                    .or_else(|| {
+                        // Parameters with binding-pattern names store their inferred type in
+                        // symbol_types (via cache_parameter_types), not in node_types.
+                        // Try the parameter node's symbol first, then the name node's symbol.
+                        let name_node = self.arena.get(param.name)?;
+                        (name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                            || name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN)
+                            .then(|| {
+                                self.get_symbol_cached_type(param_idx)
+                                    .or_else(|| self.get_symbol_cached_type(param.name))
+                            })
+                            .flatten()
+                    })
                 {
                     // Inferred type from type cache
                     self.write(": ");

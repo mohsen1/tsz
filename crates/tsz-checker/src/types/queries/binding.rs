@@ -127,6 +127,12 @@ impl<'a> CheckerState<'a> {
                     properties.push(prop_info);
                 }
             }
+            // An empty object binding pattern `{}` provides no structural constraints.
+            // Return ANY so callers (e.g. function_type.rs) fall back to the initializer
+            // type (`any`, `{a: number}`, etc.) instead of synthesising a useless `{}`.
+            if properties.is_empty() {
+                return TypeId::ANY;
+            }
             return factory.object(properties);
         } else if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
             let Some(pattern_data) = self.ctx.arena.get_binding_pattern(pattern_node) else {
@@ -194,18 +200,26 @@ impl<'a> CheckerState<'a> {
                         );
                     }
 
-                    let is_optional =
-                        element_data.initializer.is_some() || element_data.dot_dot_dot_token;
+                    let is_rest = element_data.dot_dot_dot_token;
+                    // Rest elements are never optional — `get_binding_element_type_with_request`
+                    // already returns the array type (e.g. `any[]`) for rest elements.
+                    // Only non-rest elements with a default initializer are optional.
+                    let is_optional = element_data.initializer.is_some() && !is_rest;
 
                     elements.push(tsz_solver::TupleElement {
                         type_id: element_type,
                         optional: is_optional,
-                        rest: element_data.dot_dot_dot_token,
+                        rest: is_rest,
                         name: None,
                     });
                 }
             }
 
+            // An empty array binding pattern `[]` provides no structural constraints.
+            // Return ANY so callers fall back to the initializer type instead of `[]`.
+            if elements.is_empty() {
+                return TypeId::ANY;
+            }
             return factory.tuple(elements);
         }
         TypeId::ANY
