@@ -785,6 +785,83 @@ fn get_code_fixes_prefers_paths_mapping_module_specifier_for_node_modules_target
 }
 
 #[test]
+fn get_code_fixes_auto_import_package_root_path_type_module_prefers_main_subpath() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/pkg/package.json".to_string(),
+        r#"{
+    "name": "pkg",
+    "version": "1.0.0",
+    "main": "lib",
+    "type": "module"
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/node_modules/pkg/lib/index.js".to_string(),
+        "export function foo() {}".to_string(),
+    );
+    server.open_files.insert(
+        "/package.json".to_string(),
+        r#"{
+    "dependencies": {
+       "pkg": "*"
+    }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert("/index.ts".to_string(), "foo".to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/index.ts",
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 4,
+            "errorCodes": [2304],
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "includeCompletionsWithInsertText": true
+            }
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let fixes = body.as_array().expect("expected array response");
+    let module_specifiers: Vec<String> = fixes
+        .iter()
+        .filter(|fix| fix.get("fixName").and_then(serde_json::Value::as_str) == Some("import"))
+        .flat_map(|fix| {
+            fix.get("changes")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .flat_map(|change| {
+            change
+                .get("textChanges")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .filter_map(|text_change| {
+            text_change
+                .get("newText")
+                .and_then(serde_json::Value::as_str)
+        })
+        .filter_map(extract_module_specifier_from_import_change)
+        .collect();
+
+    assert_eq!(module_specifiers, vec!["pkg/lib".to_string()]);
+}
+
+#[test]
 fn get_code_fixes_prefers_package_import_map_specifier_for_non_relative_preference() {
     let mut server = make_server();
     server.allow_importing_ts_extensions = true;

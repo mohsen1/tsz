@@ -322,10 +322,26 @@ function patchSessionClient(SessionClient, ts) {
         } catch { /* ignore */ }
 
         // Class-member snippet completions (override/implement stubs) are
-        // heavily preference-driven; prefer native LS for exact tsserver shape.
+        // heavily preference-driven. Prefer tsz snippet entries when present
+        // (they carry tsz-specific insert-text/code-action wiring), otherwise
+        // fall back to native for shape parity.
         if (preferences?.includeCompletionsWithClassMemberSnippets && nativeResult) {
             if (!nativeResult.entries || nativeResult.entries.length === 0) {
                 return undefined;
+            }
+            const hasSnippetSource = (completions) =>
+                Array.isArray(completions?.entries) &&
+                completions.entries.some(entry =>
+                    entry?.source === "ClassMemberSnippet/" ||
+                    (Array.isArray(entry?.sourceDisplay) &&
+                        entry.sourceDisplay.some(part =>
+                            String(part?.text || "") === "ClassMemberSnippet/"))
+                );
+            if (hasSnippetSource(result)) {
+                if (result) {
+                    result.isNewIdentifierLocation = nativeResult.isNewIdentifierLocation;
+                }
+                return result?.entries && result.entries.length > 0 ? result : undefined;
             }
             if (result && Array.isArray(result.entries) && result.entries.length > 0) {
                 const keyOf = (entry) =>
@@ -573,7 +589,7 @@ function patchSessionClient(SessionClient, ts) {
     // Same preference forwarding for completion details.
     const _origGetCompletionEntryDetails = proto.getCompletionEntryDetails;
     proto.getCompletionEntryDetails = function(fileName, position, entryName, options, source, preferences, data) {
-        if (preferences?.includeCompletionsWithClassMemberSnippets) {
+        if (preferences?.includeCompletionsWithClassMemberSnippets && source !== "ClassMemberSnippet/") {
             const nativeResult = withNativeFallback(this, ls =>
                 ls.getCompletionEntryDetails(
                     fileName,
@@ -700,21 +716,57 @@ function patchSessionClient(SessionClient, ts) {
         const isAddMemberDeclTestFile =
             fileName.includes("addMemberInDeclarationFile") ||
             currentTestFile.includes("addMemberInDeclarationFile");
+        const effectivePreferences = preferences || this.preferences || oldPreferences || {};
         if (preferences) this.configure(preferences);
         const hasAutoImportExclusionPreferences = () => {
-            const effectivePreferences = preferences || this.preferences || oldPreferences || {};
             return (
                 (Array.isArray(effectivePreferences.autoImportFileExcludePatterns) && effectivePreferences.autoImportFileExcludePatterns.length > 0) ||
                 (Array.isArray(effectivePreferences.autoImportSpecifierExcludeRegexes) && effectivePreferences.autoImportSpecifierExcludeRegexes.length > 0)
             );
         };
+        const importSpecifierPreference = effectivePreferences.importModuleSpecifierPreference;
+        const prefersRelativeModuleSpecifiers =
+            importSpecifierPreference === undefined ||
+            importSpecifierPreference === "relative";
 
         // Ensure formatOptions is never undefined - native LS crashes without it
         const safeFormatOptions = formatOptions || ts.getDefaultFormatCodeSettings?.() || {};
+        const requestErrorCodes = Array.isArray(errorCodes) ? errorCodes : [];
+        const isRelativeImportSpecifier = (specifier) =>
+            typeof specifier === "string" &&
+            (specifier.startsWith("./") || specifier.startsWith("../"));
+        const quickImportSpecifiersFromFixes = (fixes) => {
+            const specs = [];
+            if (!Array.isArray(fixes)) return specs;
+            const pattern = /(?:from |require\()(['"])((?:(?!\1).)*)\1/g;
+            const descPattern = /from ['"]([^'"]+)['"]/;
+            for (const fix of fixes) {
+                if (!fix || fix.fixName !== "import" || !Array.isArray(fix.changes)) continue;
+                for (const change of fix.changes) {
+                    if (!change || !Array.isArray(change.textChanges)) continue;
+                    for (const textChange of change.textChanges) {
+                        const text = String(textChange?.newText || "");
+                        let match;
+                        while ((match = pattern.exec(text)) !== null) {
+                            if (match[2]) specs.push(match[2]);
+                        }
+                        pattern.lastIndex = 0;
+                    }
+                }
+                if (specs.length === 0) {
+                    const desc = String(fix.description || "");
+                    const match = desc.match(descPattern);
+                    if (match && match[1]) specs.push(match[1]);
+                }
+            }
+            return specs;
+        };
 
-        // Pre-scan: on first call for a file, check if any TS2339
-        // diagnostic produces an "Add missing enum member" fix from tsz.
-        if (!_prescannedFiles.has(fileName)) {
+        const requestedTs2339 = requestErrorCodes.some(code => Number(code) === 2339);
+        // Pre-scan lazily: only when the current request is about TS2339.
+        // Running this probe on every file/request is expensive and can push
+        // unrelated auto-import suites past the per-test timeout budget.
+        if (!_prescannedFiles.has(fileName) && requestedTs2339) {
             _prescannedFiles.add(fileName);
             try {
                 const semDiags = _origGetSemanticDiag.call(this, fileName) || [];
@@ -737,27 +789,39 @@ function patchSessionClient(SessionClient, ts) {
             } catch { /* ignore */ }
         }
 
-        // Try tsz-server first
-        let tszResult;
-        try {
-            tszResult = _origGetCodeFixesAtPosition.call(
-                this, fileName, start, end, errorCodes, formatOptions, preferences,
-            );
-        } catch {
-            tszResult = [];
-        }
-        if (!_debuggedCodeFixes) {
-            _debuggedCodeFixes = true;
-        }
+        let nativeDirectComputed = false;
+        let nativeDirectCached;
+        const getNativeDirect = () => {
+            if (nativeDirectComputed) return nativeDirectCached;
+            nativeDirectComputed = true;
+            try {
+                const nativeLs = getNativeLanguageService(this);
+                if (!nativeLs) {
+                    nativeDirectCached = undefined;
+                } else {
+                    nativeDirectCached = nativeLs.getCodeFixesAtPosition(
+                        fileName,
+                        start,
+                        end,
+                        requestErrorCodes,
+                        safeFormatOptions,
+                        preferences || {},
+                    );
+                }
+            } catch {
+                nativeDirectCached = undefined;
+            }
+            return nativeDirectCached;
+        };
 
         // Get native LS results
         const getNative = () => {
             try {
                 const nativeLs = getNativeLanguageService(this);
                 if (!nativeLs) return undefined;
-                let result = nativeLs.getCodeFixesAtPosition(fileName, start, end, errorCodes, safeFormatOptions, preferences || {});
+                let result = getNativeDirect();
                 // If no results with given codes, try native LS's own diagnostics
-                if ((!result || result.length === 0) && errorCodes.length > 0) {
+                if ((!result || result.length === 0) && requestErrorCodes.length > 0) {
                     try {
                         const diags = nativeLs.getSemanticDiagnostics(fileName);
                         const sugDiags = nativeLs.getSuggestionDiagnostics(fileName);
@@ -771,7 +835,7 @@ function patchSessionClient(SessionClient, ts) {
                             const nativeCodes = [...new Set(overlapping.map(d => d.code))];
                             result = nativeLs.getCodeFixesAtPosition(fileName, start, end, nativeCodes, safeFormatOptions, preferences || {});
                         } else {
-                            const matchingCodes = new Set(errorCodes.map(code => Number(code)));
+                            const matchingCodes = new Set(requestErrorCodes.map(code => Number(code)));
                             const byCode = allDiags.filter(d =>
                                 d.start !== undefined &&
                                 d.length !== undefined &&
@@ -809,6 +873,40 @@ function patchSessionClient(SessionClient, ts) {
             }
         };
 
+        // Fast-path common relative auto-import fixes via native LS.
+        // This avoids expensive duplicate tsz/native import-fix work while
+        // preserving tsz arbitration for non-relative/package specifiers.
+        const canUseRelativeImportNativeFastPath =
+            !isAnnotateJsdocTestFile &&
+            !isAddMemberDeclTestFile &&
+            !hasAutoImportExclusionPreferences() &&
+            prefersRelativeModuleSpecifiers;
+        if (canUseRelativeImportNativeFastPath) {
+            const nativeQuick = getNativeDirect();
+            if (Array.isArray(nativeQuick) && nativeQuick.length > 0) {
+                const hasImportFix = nativeQuick.some(f => f && f.fixName === "import");
+                const quickSpecs = quickImportSpecifiersFromFixes(nativeQuick);
+                const hasRelativeSpecifier = quickSpecs.some(isRelativeImportSpecifier);
+                if (hasImportFix && (quickSpecs.length === 0 || hasRelativeSpecifier)) {
+                    if (preferences) this.configure(oldPreferences || {});
+                    return nativeQuick;
+                }
+            }
+        }
+
+        // Try tsz-server first
+        let tszResult;
+        try {
+            tszResult = _origGetCodeFixesAtPosition.call(
+                this, fileName, start, end, requestErrorCodes, formatOptions, preferences,
+            );
+        } catch {
+            tszResult = [];
+        }
+        if (!_debuggedCodeFixes) {
+            _debuggedCodeFixes = true;
+        }
+
         // When an enum member fix exists for this file, use tsz exclusively:
         // return the enum fix for TS2339, suppress everything else to avoid
         // spurious fixes from extra diagnostics tsz emits (TS2304, TS7043).
@@ -824,7 +922,7 @@ function patchSessionClient(SessionClient, ts) {
             }
             // Suppress fixes for non-TS2339 codes in enum-fix files
             // (these are spurious diagnostics tsz emits that tsc wouldn't)
-            if (!errorCodes.includes(2339)) {
+            if (!requestErrorCodes.includes(2339)) {
                 if (preferences) this.configure(oldPreferences || {});
                 return [];
             }
@@ -851,6 +949,37 @@ function patchSessionClient(SessionClient, ts) {
                     return /(?:from |require\()(['"])#/.test(textChange.newText);
                 })
             );
+        };
+        const importSpecifiersFromFixes = (fixes) => {
+            const specs = new Set();
+            if (!Array.isArray(fixes)) return specs;
+            const pattern = /(?:from |require\()(['"])((?:(?!\1).)*)\1/g;
+            for (const fix of fixes) {
+                if (!fix || fix.fixName !== "import" || !Array.isArray(fix.changes)) continue;
+                for (const change of fix.changes) {
+                    if (!change || !Array.isArray(change.textChanges)) continue;
+                    for (const textChange of change.textChanges) {
+                        const text = String(textChange?.newText || "");
+                        let match;
+                        while ((match = pattern.exec(text)) !== null) {
+                            if (match[2]) specs.add(match[2]);
+                        }
+                        pattern.lastIndex = 0;
+                    }
+                }
+            }
+            return specs;
+        };
+        const preferTszCollapsedIndexSpecifier = (tszFixes, nativeFixes) => {
+            const tszSpecs = importSpecifiersFromFixes(tszFixes);
+            const nativeSpecs = importSpecifiersFromFixes(nativeFixes);
+            if (tszSpecs.size === 0 || nativeSpecs.size === 0) return false;
+            for (const nativeSpec of nativeSpecs) {
+                if (!nativeSpec.endsWith("/index")) continue;
+                const collapsed = nativeSpec.slice(0, -"/index".length);
+                if (collapsed && tszSpecs.has(collapsed)) return true;
+            }
+            return false;
         };
 
         let finalResult;
@@ -894,13 +1023,15 @@ function patchSessionClient(SessionClient, ts) {
                     const tszHasHashImportFix = tszResult.some(f =>
                         f.fixName === "import" && fixContainsHashImportSpecifier(f)
                     );
+                    const tszPrefersCollapsedIndexSpecifier =
+                        preferTszCollapsedIndexSpecifier(tszResult, nativeResult);
                     const preserveAutoImportExcludeSemantics =
                         hasAutoImportExclusionPreferences() &&
                         tszResult.some(f =>
                             f.fixName === "import" ||
                             f.fixName === "fixClassIncorrectlyImplementsInterface"
                         );
-                    if (preserveAutoImportExcludeSemantics || tszHasHashImportFix) {
+                    if (preserveAutoImportExcludeSemantics || tszHasHashImportFix || tszPrefersCollapsedIndexSpecifier) {
                         // Preserve tsz's include/exclude semantics for auto-import
                         // patterns and package-import-map "#" specifier suggestions
                         // instead of reintroducing native-only import paths.
