@@ -1769,7 +1769,14 @@ impl<'a> CheckerState<'a> {
                 TypeId::ANY
             } else if has_type_annotation || has_contextual_return || jsdoc_return_context.is_some()
             {
-                return_type
+                // Use the pre-evaluation annotated return type when available.
+                // evaluate_application_type() (line 1305) expands Application
+                // types (e.g., Promise<U>) into structural object forms, which
+                // destroys the Application wrapper needed for correct type
+                // display in TS2322 messages. The annotated type preserves
+                // the original Application so the formatter can show
+                // "Promise<U>" instead of just "Promise".
+                annotated_return_type.unwrap_or(return_type)
             } else {
                 // When the return type was purely inferred from the body (no
                 // annotation, no contextual type, no JSDoc @returns), push ANY

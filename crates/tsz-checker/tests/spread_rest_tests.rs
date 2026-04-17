@@ -1225,6 +1225,69 @@ for ([{ ...y }] of [[{ abc: 1 }]]) ;
     );
 }
 
+#[test]
+fn test_ts2783_spread_overwrites_property_in_function_arg() {
+    // When an object literal has an explicit property followed by a spread
+    // that contains the same required property, TS2783 should fire.
+    let source = r#"
+interface Opts {
+    editor: string;
+    char?: string;
+}
+declare function run(opts: Opts): void;
+function test(opts: Opts) {
+    run({
+        editor: "hello",
+        ...opts,
+    });
+}
+"#;
+    let diagnostics = check_source(source);
+    let ts2783_count = diagnostics.iter().filter(|d| d.code == 2783).count();
+    assert!(
+        ts2783_count >= 1,
+        "Expected TS2783 for spread overwriting explicit property in function arg, got {ts2783_count}. Diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_ts2783_spread_overwrites_in_this_context() {
+    // TS2783 should fire when an object literal in a method body
+    // has an explicit property that is overwritten by spreading
+    // a property from `this`, where the this type provides concrete types.
+    let source = r#"
+interface Opts {
+    editor: string;
+    char?: string;
+}
+declare function create(config: {
+    run: (this: { options: Opts }) => void;
+}): void;
+create({
+    run() {
+        const result = {
+            editor: "hello",
+            ...this.options,
+        };
+    }
+});
+"#;
+    let diagnostics = check_source(source);
+    let ts2783_count = diagnostics.iter().filter(|d| d.code == 2783).count();
+    assert!(
+        ts2783_count >= 1,
+        "Expected TS2783 for spread from this.options overwriting explicit property, got {ts2783_count}. Diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Confirm TS2698 still fires in expression context (spreading a non-object).
 #[test]
 fn test_object_spread_of_non_object_in_expression_emits_ts2698() {
