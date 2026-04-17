@@ -1786,6 +1786,30 @@ impl<'a> SignatureHelpProvider<'a> {
         byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
     }
 
+    fn preceded_by_declaration_keyword(&self, probe: usize) -> bool {
+        const DECLARATION_KEYWORDS: [&str; 7] = [
+            "function",
+            "class",
+            "interface",
+            "type",
+            "enum",
+            "namespace",
+            "module",
+        ];
+        let bytes = self.source_text.as_bytes();
+        DECLARATION_KEYWORDS.iter().any(|keyword| {
+            let kw = keyword.as_bytes();
+            if probe < kw.len() {
+                return false;
+            }
+            let start = probe - kw.len();
+            if &bytes[start..probe] != kw {
+                return false;
+            }
+            start == 0 || !Self::is_ascii_identifier_byte(bytes[start - 1])
+        })
+    }
+
     fn find_textual_call_trigger(&self, cursor_offset: u32) -> Option<TextualTypeArgumentTrigger> {
         let bytes = self.source_text.as_bytes();
         if bytes.is_empty() {
@@ -1835,6 +1859,9 @@ impl<'a> SignatureHelpProvider<'a> {
         let mut probe = name_start;
         while probe > 0 && bytes[probe - 1].is_ascii_whitespace() {
             probe -= 1;
+        }
+        if self.preceded_by_declaration_keyword(probe) {
+            return None;
         }
         let call_kind = if probe >= 3 {
             let prefix = &self.source_text[probe - 3..probe];
@@ -1909,6 +1936,9 @@ impl<'a> SignatureHelpProvider<'a> {
         let mut probe = name_start;
         while probe > 0 && bytes[probe - 1].is_ascii_whitespace() {
             probe -= 1;
+        }
+        if self.preceded_by_declaration_keyword(probe) {
+            return None;
         }
         let call_kind = if probe >= 3 {
             let prefix = &self.source_text[probe - 3..probe];
@@ -4305,6 +4335,33 @@ mod signature_help_internal_tests {
             help.signatures[help.active_signature as usize].label,
             "cb2(): void"
         );
+    }
+
+    #[test]
+    fn textual_type_argument_trigger_skips_function_declaration_name() {
+        let source = "function f</**/\nx";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let interner = TypeInterner::new();
+        let line_map = LineMap::build(source);
+        let provider = SignatureHelpProvider::new(
+            parser.get_arena(),
+            &binder,
+            &line_map,
+            &interner,
+            source,
+            "test.ts".to_string(),
+        );
+
+        let marker = source.find("/**/").expect("marker") as u32;
+        let position = line_map.offset_to_position(marker, source);
+        let mut cache = None;
+        let help = provider.get_signature_help(root, position, &mut cache);
+        assert!(help.is_none(), "declaration marker should not produce signature help");
     }
 }
 
