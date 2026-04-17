@@ -839,75 +839,26 @@ impl DocumentFormattingProvider {
         let lines: Vec<&str> = source_text.lines().collect();
         let start_line = range.start.line as usize;
         let end_line = (range.end.line as usize).min(lines.len().saturating_sub(1));
-
         if start_line > end_line || start_line >= lines.len() {
             return Ok(vec![]);
         }
 
-        // Extract the range of lines and format them
-        let range_text: String = lines[start_line..=end_line].join("\n");
+        // Preserve lexical indentation context by formatting the full document,
+        // then keeping only edits that intersect the requested line range.
         let formatted = Self::format_text(
-            &range_text,
+            source_text,
             &FormattingOptions {
-                // Don't add final newline for range formatting
                 insert_final_newline: Some(false),
                 trim_final_newlines: Some(false),
                 ..options.clone()
             },
         );
-
-        let formatted_lines: Vec<&str> = formatted.lines().collect();
-
-        let mut edits = Vec::new();
-        let max_lines = lines[start_line..=end_line]
-            .len()
-            .min(formatted_lines.len());
-
-        for i in 0..max_lines {
-            let orig_line = lines[start_line + i];
-            let fmt_line = formatted_lines.get(i).copied().unwrap_or("");
-            if orig_line != fmt_line {
-                edits.push(TextEdit::new(
-                    Range::new(
-                        Position::new((start_line + i) as u32, 0),
-                        Position::new((start_line + i) as u32, orig_line.len() as u32),
-                    ),
-                    fmt_line.to_string(),
-                ));
-            }
-        }
-
-        // Handle line count differences
-        let orig_count = end_line - start_line + 1;
-        if formatted_lines.len() < orig_count {
-            // Remove extra lines
-            let last_fmt = formatted_lines.len().saturating_sub(1);
-            let last_fmt_len = formatted_lines.last().map_or(0, |l| l.len()) as u32;
-            edits.push(TextEdit::new(
-                Range::new(
-                    Position::new((start_line + last_fmt) as u32, last_fmt_len),
-                    Position::new(end_line as u32, lines[end_line].len() as u32),
-                ),
-                String::new(),
-            ));
-        } else if formatted_lines.len() > orig_count {
-            // Insert extra lines
-            let extra: Vec<&str> = formatted_lines[orig_count..].to_vec();
-            let mut new_text = String::new();
-            for line in &extra {
-                new_text.push('\n');
-                new_text.push_str(line);
-            }
-            let end_char = lines[end_line].len() as u32;
-            edits.push(TextEdit::new(
-                Range::new(
-                    Position::new(end_line as u32, end_char),
-                    Position::new(end_line as u32, end_char),
-                ),
-                new_text,
-            ));
-        }
-
+        let mut edits = Self::compute_line_edits(source_text, &formatted)?;
+        edits.retain(|edit| {
+            let edit_start = edit.range.start.line as usize;
+            let edit_end = edit.range.end.line as usize;
+            edit_end >= start_line && edit_start <= end_line
+        });
         Ok(edits)
     }
 
