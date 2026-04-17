@@ -418,7 +418,13 @@ impl<'a> SignatureHelpProvider<'a> {
         // overwrite labels with raw source text containing type parameter names.
         // When explicit type arguments are provided, we substitute with the
         // actual type argument text; otherwise we use defaults/constraints/unknown.
+        let supplied_argument_types = self.argument_type_texts(&call_site, &mut checker);
+
         if !in_type_argument_list {
+            self.infer_type_param_substitutions_from_arguments(
+                &mut signatures,
+                &supplied_argument_types,
+            );
             for sig in &mut signatures {
                 if !sig.type_param_substitutions.is_empty() {
                     apply_type_param_substitution(&mut sig.info, &sig.type_param_substitutions);
@@ -437,8 +443,6 @@ impl<'a> SignatureHelpProvider<'a> {
                 active_parameter,
             );
         }
-
-        let supplied_argument_types = self.argument_type_texts(&call_site, &mut checker);
 
         // Extract and save the updated cache for future queries
         *type_cache = Some(checker.extract_cache());
@@ -3398,6 +3402,166 @@ impl<'a> SignatureHelpProvider<'a> {
         types
     }
 
+    fn infer_type_param_substitutions_from_arguments(
+        &self,
+        signatures: &mut [SignatureCandidate],
+        supplied_argument_types: &[String],
+    ) {
+        if supplied_argument_types.is_empty() {
+            return;
+        }
+
+        for sig in signatures.iter_mut() {
+            if (sig.type_params.is_empty() && sig.type_param_substitutions.is_empty())
+                || sig.info.parameters.is_empty()
+            {
+                continue;
+            }
+
+            let substitution_pairs = sig.type_param_substitutions.clone();
+            let mut repeated_identifier_type_counts: FxHashMap<String, usize> = FxHashMap::default();
+            for param in &sig.info.parameters {
+                if let Some((_, ty)) = param.label.rsplit_once(':') {
+                    let ty = ty.trim();
+                    if Self::is_identifier_like_type_name(ty) {
+                        *repeated_identifier_type_counts
+                            .entry(ty.to_string())
+                            .or_insert(0) += 1;
+                    }
+                }
+            }
+            let mut inferred: FxHashMap<String, String> = FxHashMap::default();
+            for (arg_index, arg_type_text) in supplied_argument_types.iter().enumerate() {
+                if arg_type_text.is_empty() || arg_type_text == "error" || arg_type_text == "unknown" {
+                    continue;
+                }
+
+                let param_idx = if arg_index < sig.info.parameters.len() {
+                    arg_index
+                } else if sig.has_rest {
+                    sig.info.parameters.len().saturating_sub(1)
+                } else {
+                    continue;
+                };
+
+                let Some((_, param_ty)) = sig.info.parameters[param_idx].label.rsplit_once(':') else {
+                    continue;
+                };
+                let param_ty = param_ty.trim();
+                if sig.type_params.iter().any(|tp| tp == param_ty)
+                    || sig
+                        .type_param_substitutions
+                        .iter()
+                        .any(|(name, _)| name == param_ty)
+                {
+                    inferred
+                        .entry(param_ty.to_string())
+                        .or_insert_with(|| arg_type_text.clone());
+                    continue;
+                }
+
+                if Self::is_literal_type_text(arg_type_text)
+                    && Self::is_identifier_like_type_name(param_ty)
+                    && repeated_identifier_type_counts.get(param_ty).copied().unwrap_or(0) >= 2
+                {
+                    inferred
+                        .entry(param_ty.to_string())
+                        .or_insert_with(|| arg_type_text.clone());
+                    continue;
+                }
+
+                for (type_param_name, current_substitution) in &substitution_pairs {
+                    if param_ty == current_substitution
+                        && Self::is_literal_narrowing_for_base_type(
+                            arg_type_text,
+                            current_substitution,
+                        )
+                    {
+                        inferred
+                            .entry(type_param_name.clone())
+                            .or_insert_with(|| arg_type_text.clone());
+                    }
+                }
+            }
+
+            if inferred.is_empty() {
+                continue;
+            }
+
+            for (name, substitution) in inferred {
+                if let Some(existing) = sig
+                    .type_param_substitutions
+                    .iter_mut()
+                    .find(|(existing_name, _)| *existing_name == name)
+                {
+                    existing.1 = substitution;
+                } else {
+                    sig.type_param_substitutions.push((name, substitution));
+                }
+            }
+        }
+    }
+
+    fn is_identifier_like_type_name(type_name: &str) -> bool {
+        if type_name.is_empty() || type_name.contains('.') || type_name.contains('<') {
+            return false;
+        }
+        let mut chars = type_name.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        if !(first.is_ascii_alphabetic() || first == '_') {
+            return false;
+        }
+        if !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+            return false;
+        }
+        !matches!(
+            type_name,
+            "string"
+                | "number"
+                | "boolean"
+                | "bigint"
+                | "symbol"
+                | "any"
+                | "unknown"
+                | "never"
+                | "void"
+                | "object"
+                | "null"
+                | "undefined"
+                | "true"
+                | "false"
+        )
+    }
+
+    fn is_literal_type_text(type_text: &str) -> bool {
+        let trimmed = type_text.trim();
+        Self::string_literal_value(trimmed).is_some()
+            || Self::is_numeric_literal_type(trimmed)
+            || Self::is_bigint_literal_type(trimmed)
+            || trimmed == "true"
+            || trimmed == "false"
+    }
+
+    fn is_literal_narrowing_for_base_type(arg_type_text: &str, base_type_text: &str) -> bool {
+        let base = base_type_text.trim();
+        let arg = arg_type_text.trim();
+        if Self::string_literal_value(arg).is_some() {
+            return base == "string";
+        }
+        if Self::is_bigint_literal_type(arg) {
+            return base == "bigint";
+        }
+        if arg == "true" || arg == "false" {
+            return base == "boolean";
+        }
+        if Self::is_numeric_literal_type(arg) {
+            return base == "number";
+        }
+        false
+    }
+
     fn argument_type_penalty(
         &self,
         sig: &SignatureCandidate,
@@ -4312,7 +4476,7 @@ mod signature_help_internal_tests {
             (
                 "declare function foo<T>(x: T, y: T): T;\ndeclare function bar<U>(x: U, y: U): U;\nfoo(bar,)",
                 Position::new(2, 8),
-                "foo(x: unknown, y: unknown): unknown",
+                "foo(x: <U>(x: U, y: U) => U, y: <U>(x: U, y: U) => U): <U>(x: U, y: U) => U",
             ),
         ];
 
@@ -4547,6 +4711,67 @@ mod signature_help_internal_tests {
         assert_eq!(
             bye_call.signatures[bye_call.active_signature as usize].parameters[0].name,
             "y"
+        );
+    }
+
+    #[test]
+    fn generic_inference_uses_argument_literal_for_signature_display() {
+        let source = "declare function f<T extends string>(a: T, b: T, c: T): void;\nf(\"x\", );";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let interner = TypeInterner::new();
+        let line_map = LineMap::build(source);
+        let provider = SignatureHelpProvider::new(
+            parser.get_arena(),
+            &binder,
+            &line_map,
+            &interner,
+            source,
+            "test.ts".to_string(),
+        );
+
+        let mut cache = None;
+        let help = provider
+            .get_signature_help(root, Position::new(1, 7), &mut cache)
+            .expect("signature help for generic inference");
+        assert_eq!(
+            help.signatures[help.active_signature as usize].label,
+            "f(a: \"x\", b: \"x\", c: \"x\"): void"
+        );
+    }
+
+    #[test]
+    fn no_signature_help_while_editing_identifier_before_call_open_paren() {
+        let source = "/**\n * @param start The start\n * @param end The end\n * More text\n */\ndeclare function foo(start: number, end?: number);\n\nfo";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let interner = TypeInterner::new();
+        let line_map = LineMap::build(source);
+        let provider = SignatureHelpProvider::new(
+            parser.get_arena(),
+            &binder,
+            &line_map,
+            &interner,
+            source,
+            "test.ts".to_string(),
+        );
+
+        let mut cache = None;
+        let help = provider.get_signature_help(root, Position::new(7, 2), &mut cache);
+        assert!(
+            help.is_none(),
+            "expected no help before '(' while editing identifier, got {}",
+            help.as_ref()
+                .map(|h| h.signatures[h.active_signature as usize].label.as_str())
+                .unwrap_or_default()
         );
     }
 }
