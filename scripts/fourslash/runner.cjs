@@ -699,8 +699,16 @@ function patchSessionClient(SessionClient, ts) {
             // but preserve tsz's "no import fix" behavior (e.g. autoImportFileExcludePatterns).
             const nativeResult = getNative();
             if (nativeResult && nativeResult.length > 0) {
-                const nonImportFixes = nativeResult.filter(f => f.fixName !== "import");
-                finalResult = nonImportFixes.length > 0 ? nonImportFixes : [];
+                const hasAutoImportExclusionPreferences = !!preferences && (
+                    (Array.isArray(preferences.autoImportFileExcludePatterns) && preferences.autoImportFileExcludePatterns.length > 0) ||
+                    (Array.isArray(preferences.autoImportSpecifierExcludeRegexes) && preferences.autoImportSpecifierExcludeRegexes.length > 0)
+                );
+                if (hasAutoImportExclusionPreferences) {
+                    const nonImportFixes = nativeResult.filter(f => f.fixName !== "import");
+                    finalResult = nonImportFixes.length > 0 ? nonImportFixes : [];
+                } else {
+                    finalResult = nativeResult;
+                }
             } else {
                 finalResult = [];
             }

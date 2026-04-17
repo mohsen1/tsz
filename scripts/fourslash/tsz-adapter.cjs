@@ -276,6 +276,7 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
             this._client = null;
             this._openedFiles = new Set();
             this._allKnownFiles = null;
+            this._includeDiscoveredFiles = false;
         }
 
         getFourslashInferredCompilerOptions() {
@@ -398,20 +399,22 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
                     openKnownFile(path, /*fileContent*/ undefined, /*kindName*/ undefined);
                     openAncestorConfigs(path);
                 }
-                if (!Array.isArray(this._allKnownFiles)) {
-                    const discovered = this.sys.readDirectory(
-                        virtualFileSystemRoot,
-                        [".ts", ".tsx", ".d.ts", ".js", ".jsx", ".mts", ".cts", ".json"],
-                        /*exclude*/ undefined,
-                        /*include*/ undefined,
-                        /*depth*/ undefined,
-                    );
-                    this._allKnownFiles = Array.isArray(discovered) ? discovered : [];
-                }
-                for (const path of this._allKnownFiles) {
-                    if (!shouldTrackForServer(path)) continue;
-                    openKnownFile(path, /*fileContent*/ undefined, /*kindName*/ undefined);
-                    openAncestorConfigs(path);
+                if (this._includeDiscoveredFiles) {
+                    if (!Array.isArray(this._allKnownFiles)) {
+                        const discovered = this.sys.readDirectory(
+                            virtualFileSystemRoot,
+                            [".ts", ".tsx", ".d.ts", ".js", ".jsx", ".mts", ".cts", ".json"],
+                            /*exclude*/ undefined,
+                            /*include*/ undefined,
+                            /*depth*/ undefined,
+                        );
+                        this._allKnownFiles = Array.isArray(discovered) ? discovered : [];
+                    }
+                    for (const path of this._allKnownFiles) {
+                        if (!shouldTrackForServer(path)) continue;
+                        openKnownFile(path, /*fileContent*/ undefined, /*kindName*/ undefined);
+                        openAncestorConfigs(path);
+                    }
                 }
             }
         }
@@ -567,6 +570,18 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
                     );
                     if (!hasExplicitRenamePreferences && !hasBooleanPreferences) {
                         return originalGetRenameInfo(fileName, position, preferences, findInStrings, findInComments);
+                    }
+
+                    // Rename across package links may require files outside the test's
+                    // explicit script set; hydrate discovered files only for this call.
+                    this._host._includeDiscoveredFiles = true;
+                    try {
+                        const snapshot = this._host.getScriptSnapshot(fileName);
+                        const currentContent =
+                            snapshot ? ts.getSnapshotText(snapshot) : this._host.readFile(fileName);
+                        this._host.openFile(fileName, currentContent, /*scriptKindName*/ undefined);
+                    } finally {
+                        this._host._includeDiscoveredFiles = false;
                     }
 
                     const args = {
