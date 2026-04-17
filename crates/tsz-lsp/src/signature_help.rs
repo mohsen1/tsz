@@ -856,7 +856,9 @@ impl<'a> SignatureHelpProvider<'a> {
             let member_name = self
                 .enclosing_object_member_name_within_argument(decl.initializer, cursor_offset)
                 .map(|(name, _)| name)
-                .or_else(|| self.object_member_name_from_argument_text(decl.initializer, cursor_offset));
+                .or_else(|| {
+                    self.object_member_name_from_argument_text(decl.initializer, cursor_offset)
+                });
             if let Some(member_name) = member_name {
                 if let Some(prop_type) =
                     self.contextual_property_type_from_type(contextual_type, &member_name)
@@ -906,12 +908,8 @@ impl<'a> SignatureHelpProvider<'a> {
 
         let active_signature =
             self.select_active_signature(&signatures, arg_count, active_parameter, &[]);
-        let active_parameter = self.clamp_active_parameter(
-            &signatures,
-            active_signature,
-            active_parameter,
-            arg_count,
-        );
+        let active_parameter =
+            self.clamp_active_parameter(&signatures, active_signature, active_parameter, arg_count);
 
         Some(SignatureHelp {
             signatures: signatures.into_iter().map(|sig| sig.info).collect(),
@@ -941,10 +939,12 @@ impl<'a> SignatureHelpProvider<'a> {
             self.enclosing_object_member_name_within_argument(arg_node_idx, cursor_offset)
         {
             let member_node = self.arena.get(member_idx)?;
-            if let Some(prop_type) = self.contextual_property_type_from_type(outer_param_type, &member_name) {
+            if let Some(prop_type) =
+                self.contextual_property_type_from_type(outer_param_type, &member_name)
+            {
                 (prop_type, member_name, member_node.pos)
-            } else if let Some(sig_info) = self
-                .source_contextual_member_signature(checker, outer_param_type, &member_name)
+            } else if let Some(sig_info) =
+                self.source_contextual_member_signature(checker, outer_param_type, &member_name)
             {
                 source_signature = Some(sig_info);
                 (TypeId::ERROR, member_name, member_node.pos)
@@ -955,10 +955,12 @@ impl<'a> SignatureHelpProvider<'a> {
             && let Some(member_name) =
                 self.object_member_name_from_argument_text(arg_node_idx, cursor_offset)
         {
-            if let Some(prop_type) = self.contextual_property_type_from_type(outer_param_type, &member_name) {
+            if let Some(prop_type) =
+                self.contextual_property_type_from_type(outer_param_type, &member_name)
+            {
                 (prop_type, member_name, arg_node.pos)
-            } else if let Some(sig_info) = self
-                .source_contextual_member_signature(checker, outer_param_type, &member_name)
+            } else if let Some(sig_info) =
+                self.source_contextual_member_signature(checker, outer_param_type, &member_name)
             {
                 source_signature = Some(sig_info);
                 (TypeId::ERROR, member_name, arg_node.pos)
@@ -1056,9 +1058,10 @@ impl<'a> SignatureHelpProvider<'a> {
             return None;
         }
         let prefix = &self.source_text[start..end];
-        let colon_candidate = prefix
-            .rfind(':')
-            .and_then(|idx| self.identifier_before_offset(prefix, idx).map(|name| (idx, name)));
+        let colon_candidate = prefix.rfind(':').and_then(|idx| {
+            self.identifier_before_offset(prefix, idx)
+                .map(|name| (idx, name))
+        });
         let paren_candidate = prefix.rfind('(').and_then(|idx| {
             let name = self.identifier_before_offset(prefix, idx)?;
             if name == "function" {
@@ -1119,7 +1122,9 @@ impl<'a> SignatureHelpProvider<'a> {
                 &shape.call_signatures
             };
             for sig in signatures {
-                if let Some(found) = self.parameter_type_and_name_from_params(&sig.params, arg_index) {
+                if let Some(found) =
+                    self.parameter_type_and_name_from_params(&sig.params, arg_index)
+                {
                     return Some(found);
                 }
             }
@@ -1168,7 +1173,8 @@ impl<'a> SignatureHelpProvider<'a> {
         argument_idx: NodeIndex,
         cursor_offset: u32,
     ) -> Option<(String, NodeIndex)> {
-        let mut current = find_node_at_or_before_offset(self.arena, cursor_offset, self.source_text);
+        let mut current =
+            find_node_at_or_before_offset(self.arena, cursor_offset, self.source_text);
         while current.is_some() {
             if current == argument_idx {
                 break;
@@ -1224,7 +1230,9 @@ impl<'a> SignatureHelpProvider<'a> {
             .or_else(|| visitor::intersection_list_id(self.interner, container_type_id))
         {
             for &member in self.interner.type_list(list_id).iter() {
-                if let Some(member_type) = self.contextual_property_type_from_type(member, prop_name) {
+                if let Some(member_type) =
+                    self.contextual_property_type_from_type(member, prop_name)
+                {
                     return Some(member_type);
                 }
             }
@@ -1418,7 +1426,11 @@ impl<'a> SignatureHelpProvider<'a> {
         None
     }
 
-    fn find_unmatched_open_paren_before(&self, lower_bound: u32, cursor_offset: u32) -> Option<u32> {
+    fn find_unmatched_open_paren_before(
+        &self,
+        lower_bound: u32,
+        cursor_offset: u32,
+    ) -> Option<u32> {
         let bytes = self.source_text.as_bytes();
         if bytes.is_empty() {
             return None;
@@ -4452,7 +4464,10 @@ mod signature_help_internal_tests {
         let position = line_map.offset_to_position(marker, source);
         let mut cache = None;
         let help = provider.get_signature_help(root, position, &mut cache);
-        assert!(help.is_none(), "declaration marker should not produce signature help");
+        assert!(
+            help.is_none(),
+            "declaration marker should not produce signature help"
+        );
     }
 
     #[test]
