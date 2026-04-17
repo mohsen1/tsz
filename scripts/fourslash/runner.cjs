@@ -631,6 +631,17 @@ function patchSessionClient(SessionClient, ts) {
                 result.isMemberCompletion = nativeResult.isMemberCompletion;
                 result.isGlobalCompletion = nativeResult.isGlobalCompletion;
             }
+            // Some contextual completions currently fall back to broad global
+            // identifier sets in tsz while native returns focused entries.
+            if (nativeResult.entries && nativeResult.entries.length > 0 &&
+                result && result.entries &&
+                !nativeResult.isGlobalCompletion &&
+                result.isGlobalCompletion &&
+                nativeResult.entries.length * 3 < result.entries.length) {
+                result.entries = nativeResult.entries;
+                result.isMemberCompletion = nativeResult.isMemberCompletion;
+                result.isGlobalCompletion = nativeResult.isGlobalCompletion;
+            }
         }
 
         // In qualified type-position member lookups (e.g. `Foo.Bar.|`),
