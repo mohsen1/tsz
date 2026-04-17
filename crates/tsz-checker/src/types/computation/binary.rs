@@ -2270,14 +2270,7 @@ impl<'a> CheckerState<'a> {
         }
 
         match op {
-            "+" => {
-                let left_ok = evaluator.is_arithmetic_operand(left)
-                    || left_is_index_access && self.is_assignable_to(left, TypeId::NUMBER);
-                let right_ok = evaluator.is_arithmetic_operand(right)
-                    || right_is_index_access && self.is_assignable_to(right, TypeId::NUMBER);
-                left_ok && right_ok
-            }
-            "-" | "*" | "/" | "%" | "**" => {
+            "+" | "-" | "*" | "/" | "%" | "**" => {
                 let left_ok = evaluator.is_arithmetic_operand(left)
                     || left_is_index_access && self.is_assignable_to(left, TypeId::NUMBER);
                 let right_ok = evaluator.is_arithmetic_operand(right)
