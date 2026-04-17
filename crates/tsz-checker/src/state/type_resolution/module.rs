@@ -244,6 +244,17 @@ impl<'a> CheckerState<'a> {
         if let TypeSymbolResolution::Type(sym_id) =
             self.resolve_identifier_symbol_in_type_position(name_idx)
         {
+            // For named imports from export= modules, tsc resolves through
+            // getPropertyOfType(getTypeOfSymbol(exportValue), name) and combines
+            // the value meaning (property) with the type meaning (namespace member).
+            // When both exist and the property type differs from the interface,
+            // the merged symbol has a different this-type binding, causing structural
+            // subtyping differences. Match this by using the property type.
+            let prop_result =
+                self.resolve_export_equals_property_type_for_named_import(name_idx, name);
+            if let Some(prop_type) = prop_result {
+                return Some(prop_type);
+            }
             let mut result = self.type_reference_symbol_type(sym_id);
             if let Some(module_specifier) = self.resolve_named_import_module_for_local_name(name) {
                 result = self.apply_module_augmentations(&module_specifier, name, result);
@@ -258,6 +269,85 @@ impl<'a> CheckerState<'a> {
             return Some(type_id);
         }
         None
+    }
+
+    /// For named imports from `export =` modules, check if the exported value's
+    /// type has a property matching the import name. Returns the property type
+    /// when a conflict exists between a namespace type member and a value property.
+    fn resolve_export_equals_property_type_for_named_import(
+        &mut self,
+        name_idx: NodeIndex,
+        _name: &str,
+    ) -> Option<TypeId> {
+        use crate::module_resolution::module_specifier_candidates;
+        use tsz_solver::operations::property::PropertyAccessResult;
+
+        // Find the original import alias symbol by name in file_locals.
+        // We can't use resolve_identifier because it resolves through
+        // aliases and returns the target symbol.
+        let name_str = self
+            .ctx
+            .arena
+            .get(name_idx)
+            .and_then(|n| self.ctx.arena.get_identifier(n))
+            .map(|id| id.escaped_text.as_str())?;
+        let alias_sym_id = self.ctx.binder.file_locals.get(name_str)?;
+        let lib_binders = self.get_lib_binders();
+        let symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(alias_sym_id, &lib_binders)?;
+
+        if symbol.flags & symbol_flags::ALIAS == 0 {
+            return None;
+        }
+        let module_name = symbol.import_module.as_ref()?;
+        let import_name = symbol.import_name.as_ref()?;
+        if import_name == "default" {
+            return None;
+        }
+
+        // Find the export= symbol in the module
+        let export_equals_sym = {
+            let mut found = None;
+            for candidate in module_specifier_candidates(module_name) {
+                if let Some(exports) = self.ctx.binder.module_exports.get(&candidate) {
+                    if let Some(sym_id) = exports.get("export=") {
+                        found = Some(sym_id);
+                        break;
+                    }
+                }
+            }
+            if found.is_none() {
+                if let Some(all_binders) = &self.ctx.all_binders {
+                    for binder in all_binders.iter() {
+                        for candidate in module_specifier_candidates(module_name) {
+                            if let Some(exports) = binder.module_exports.get(&candidate) {
+                                if let Some(sym_id) = exports.get("export=") {
+                                    found = Some(sym_id);
+                                    break;
+                                }
+                            }
+                        }
+                        if found.is_some() {
+                            break;
+                        }
+                    }
+                }
+            }
+            found?
+        };
+
+        let export_type = self.get_type_of_symbol(export_equals_sym);
+        if export_type == TypeId::ERROR || export_type == TypeId::ANY {
+            return None;
+        }
+
+        // Check if the exported value's type has a property matching the import name
+        match self.resolve_property_access_with_env(export_type, import_name) {
+            PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+            _ => None,
+        }
     }
 
     pub(crate) fn resolve_named_import_module_for_local_name(
