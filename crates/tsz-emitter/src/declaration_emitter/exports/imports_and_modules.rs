@@ -1131,20 +1131,20 @@ impl<'a> DeclarationEmitter<'a> {
                             // Only emit it for constructor parameter properties
                             // (which is handled separately and already skips it).
                         }
-                        k if k == SyntaxKind::PrivateKeyword as u16 => {
-                            if !self.in_constructor_params {
-                                self.write("private ");
-                            }
+                        k if k == SyntaxKind::PrivateKeyword as u16
+                            && !self.in_constructor_params =>
+                        {
+                            self.write("private ");
                         }
-                        k if k == SyntaxKind::ProtectedKeyword as u16 => {
-                            if !self.in_constructor_params {
-                                self.write("protected ");
-                            }
+                        k if k == SyntaxKind::ProtectedKeyword as u16
+                            && !self.in_constructor_params =>
+                        {
+                            self.write("protected ");
                         }
-                        k if k == SyntaxKind::ReadonlyKeyword as u16 => {
-                            if !self.in_constructor_params {
-                                self.write("readonly ");
-                            }
+                        k if k == SyntaxKind::ReadonlyKeyword as u16
+                            && !self.in_constructor_params =>
+                        {
+                            self.write("readonly ");
                         }
                         k if k == SyntaxKind::StaticKeyword as u16 => self.write("static "),
                         k if k == SyntaxKind::AbstractKeyword as u16 => self.write("abstract "),

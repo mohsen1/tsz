@@ -1033,11 +1033,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
 
         match key {
-            TypeData::TypeParameter(ref info) => {
-                if !seen.contains(&info.name) {
-                    seen.insert(info.name);
-                    params.push(*info);
-                }
+            TypeData::TypeParameter(ref info) if !seen.contains(&info.name) => {
+                seen.insert(info.name);
+                params.push(*info);
             }
             TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(shape_id);

@@ -194,6 +194,40 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
     const LanguageServiceAdapterHost = Harness.LanguageService.LanguageServiceAdapterHost;
     const virtualFileSystemRoot = Harness.virtualFileSystemRoot;
 
+    function estimateJsdocInferActionLabels(content, startLineOneBased) {
+        const lines = content.split(/\r?\n/);
+        if (!lines.length) return [];
+
+        let lineIdx = Math.min(
+            Math.max((startLineOneBased ?? 1) - 1, 0),
+            lines.length - 1,
+        );
+        while (lineIdx > 0 && !lines[lineIdx].includes("/**")) {
+            lineIdx--;
+        }
+        if (!lines[lineIdx].includes("/**")) return [];
+
+        let blockEnd = lineIdx;
+        while (blockEnd < lines.length && !lines[blockEnd].includes("*/")) {
+            blockEnd++;
+        }
+        if (blockEnd >= lines.length) return [];
+
+        const targetLine = lines.slice(blockEnd + 1).find(line => line.trim().length > 0);
+        if (!targetLine) return [];
+
+        const open = targetLine.indexOf("(");
+        const close = targetLine.lastIndexOf(")");
+        if (open < 0 || close <= open) return [];
+
+        return targetLine.slice(open + 1, close)
+            .split(",")
+            .map(segment => segment.trim())
+            .filter(segment => segment.length > 0 && !segment.includes(":"))
+            .map(segment => segment.replace(/^\.\.\./, "").replace(/[^A-Za-z0-9_$].*$/, ""))
+            .filter(label => label.length > 0);
+    }
+
     /**
      * Host for the SessionClient that sends messages to tsz-server.
      *

@@ -101,16 +101,14 @@ fn resolve_entity_chain_has_value(
             continue;
         };
         match inner.kind {
-            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                if rest.is_empty() {
-                    if let Some(vs) = arena.get_variable(inner) {
-                        let mut names = Vec::new();
-                        for &di in &vs.declarations.nodes {
-                            collect_declaration_names(arena, di, &mut names);
-                        }
-                        if names.iter().any(|n| n == target_name) {
-                            return true;
-                        }
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT && rest.is_empty() => {
+                if let Some(vs) = arena.get_variable(inner) {
+                    let mut names = Vec::new();
+                    for &di in &vs.declarations.nodes {
+                        collect_declaration_names(arena, di, &mut names);
+                    }
+                    if names.iter().any(|n| n == target_name) {
+                        return true;
                     }
                 }
             }

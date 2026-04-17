@@ -2080,11 +2080,7 @@ impl ParserState {
             match ch {
                 b'[' => in_character_class = true,
                 b'(' => paren_depth += 1,
-                b')' => {
-                    if paren_depth > 0 {
-                        paren_depth -= 1;
-                    }
-                }
+                b')' if paren_depth > 0 => paren_depth -= 1,
                 _ => {}
             }
         }

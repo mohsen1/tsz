@@ -47,16 +47,15 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 // Declarations that can have an `export` modifier
-                k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                k if (k == syntax_kind_ext::VARIABLE_STATEMENT
                     || k == syntax_kind_ext::FUNCTION_DECLARATION
                     || k == syntax_kind_ext::CLASS_DECLARATION
                     || k == syntax_kind_ext::INTERFACE_DECLARATION
                     || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                    || k == syntax_kind_ext::ENUM_DECLARATION =>
+                    || k == syntax_kind_ext::ENUM_DECLARATION)
+                    && self.is_declaration_exported(self.ctx.arena, stmt_idx) =>
                 {
-                    if self.is_declaration_exported(self.ctx.arena, stmt_idx) {
-                        is_error = true;
-                    }
+                    is_error = true;
                 }
                 _ => {}
             }

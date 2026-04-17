@@ -131,7 +131,6 @@ impl Server {
                 Self::apply_add_missing_function_declaration_fallback_anywhere(&content);
             let add_missing_function_declaration_candidate =
                 add_missing_function_declaration_preview
-                    .clone()
                     .or_else(|| add_missing_function_declaration_anywhere.clone());
             let has_mixed_declared_binding_assignment =
                 Self::has_mixed_declared_binding_assignment(&content);
@@ -359,8 +358,7 @@ impl Server {
                 })
                 .collect();
             let includes_cannot_find_name = error_codes
-                .iter()
-                .any(|code| *code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME)
+                .contains(&tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME)
                 || (error_codes.is_empty() && has_cannot_find_name_diag);
             if includes_cannot_find_name {
                 let should_prune_binding_fix = |action: &serde_json::Value| {
@@ -778,8 +776,7 @@ impl Server {
             }
             if response_actions.is_empty()
                 && includes_cannot_find_name
-                && let Some((name, updated_content)) =
-                    add_missing_function_declaration_candidate.clone()
+                && let Some((name, updated_content)) = add_missing_function_declaration_candidate
                 && let Some((start_off, end_off, replacement)) =
                     Self::compute_minimal_edit(&content, &updated_content)
             {

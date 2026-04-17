@@ -84,14 +84,13 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             crate::visitor::keyof_inner_type(self.checker.interner, self.target)
         {
             match value {
-                LiteralValue::String(name) => {
+                LiteralValue::String(name)
                     if self
                         .checker
                         .try_get_keyof_keys(target_operand)
-                        .is_some_and(|keys| keys.contains(name))
-                    {
-                        return SubtypeResult::True;
-                    }
+                        .is_some_and(|keys| keys.contains(name)) =>
+                {
+                    return SubtypeResult::True;
                 }
                 LiteralValue::Number(_) => {
                     let evaluated_target = self.checker.evaluate_type(self.target);

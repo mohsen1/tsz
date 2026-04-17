@@ -432,20 +432,8 @@ pub(super) fn import_spec_sort_key(
     ignore_case: bool,
 ) -> (u8, String, u8, String) {
     let group = match type_order {
-        "last" => {
-            if spec.is_type_only {
-                1
-            } else {
-                0
-            }
-        }
-        "first" => {
-            if spec.is_type_only {
-                0
-            } else {
-                1
-            }
-        }
+        "last" if spec.is_type_only => 1,
+        "first" if !spec.is_type_only => 1,
         _ => 0,
     };
     let (folded, case_rank, original) = if ignore_case {

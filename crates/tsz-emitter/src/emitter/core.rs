@@ -1786,23 +1786,19 @@ impl<'a> Printer<'a> {
             k if k == syntax_kind_ext::METHOD_SIGNATURE => {
                 self.emit_method_signature(node);
             }
-            k if k == syntax_kind_ext::CALL_SIGNATURE => {
+            k if k == syntax_kind_ext::CALL_SIGNATURE && self.ctx.flags.in_declaration_emit => {
                 // Call signatures are TypeScript-only - emit only in declaration mode (.d.ts)
-                if self.ctx.flags.in_declaration_emit {
-                    self.emit_call_signature(node);
-                }
+                self.emit_call_signature(node);
             }
-            k if k == syntax_kind_ext::CONSTRUCT_SIGNATURE => {
+            k if k == syntax_kind_ext::CONSTRUCT_SIGNATURE
+                && self.ctx.flags.in_declaration_emit =>
+            {
                 // Construct signatures are TypeScript-only - emit only in declaration mode (.d.ts)
-                if self.ctx.flags.in_declaration_emit {
-                    self.emit_construct_signature(node);
-                }
+                self.emit_construct_signature(node);
             }
-            k if k == syntax_kind_ext::INDEX_SIGNATURE => {
+            k if k == syntax_kind_ext::INDEX_SIGNATURE && self.ctx.flags.in_declaration_emit => {
                 // Index signatures are TypeScript-only - emit only in declaration mode (.d.ts)
-                if self.ctx.flags.in_declaration_emit {
-                    self.emit_index_signature(node);
-                }
+                self.emit_index_signature(node);
             }
 
             // Template literals
