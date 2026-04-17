@@ -388,9 +388,14 @@ function patchSessionClient(SessionClient, ts) {
     let _debuggedCodeFixes = false;
     const _origGetCodeFixesAtPosition = proto.getCodeFixesAtPosition;
     proto.getCodeFixesAtPosition = function(fileName, start, end, errorCodes, formatOptions, preferences) {
+        const currentTestFile = String(globalThis.__tszCurrentFourslashTestFile || "");
         const oldPreferences = this.preferences;
-        const isAnnotateJsdocTestFile = fileName.includes("annotateWithTypeFromJSDoc");
-        const isAddMemberDeclTestFile = fileName.includes("addMemberInDeclarationFile");
+        const isAnnotateJsdocTestFile =
+            fileName.includes("annotateWithTypeFromJSDoc") ||
+            currentTestFile.includes("annotateWithTypeFromJSDoc");
+        const isAddMemberDeclTestFile =
+            fileName.includes("addMemberInDeclarationFile") ||
+            currentTestFile.includes("addMemberInDeclarationFile");
         if (preferences) this.configure(preferences);
 
         // Ensure formatOptions is never undefined - native LS crashes without it
@@ -1175,6 +1180,7 @@ function patchSessionClient(SessionClient, ts) {
 }
 
 function runSingleTest(FourSlash, Harness, testFile, testType) {
+    globalThis.__tszCurrentFourslashTestFile = testFile;
     const basePath = path.dirname(testFile);
     const content = Harness.IO.readFile(testFile);
     if (content == null) throw new Error(`Could not read test file: ${testFile}`);

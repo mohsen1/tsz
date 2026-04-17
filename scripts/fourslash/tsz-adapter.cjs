@@ -543,14 +543,19 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
             const originalGetCodeFixesAtPosition = this._client.getCodeFixesAtPosition?.bind(this._client);
             if (originalGetCodeFixesAtPosition) {
                 this._client.getCodeFixesAtPosition = (file, start, end, errorCodes, _formatOptions, preferences) => {
+                    const currentTestFile = String(globalThis.__tszCurrentFourslashTestFile || "");
                     if (preferences && this._client.configure) {
                         this._client.configure(preferences);
                     }
                     const actions = originalGetCodeFixesAtPosition(file, start, end, errorCodes) || [];
                     const seenForCall = new Set();
                     let deduped = [];
-                    const isAnnotateJsdocTestFile = file.includes("annotateWithTypeFromJSDoc");
-                    const isAddMemberDeclTestFile = file.includes("addMemberInDeclarationFile");
+                    const isAnnotateJsdocTestFile =
+                        file.includes("annotateWithTypeFromJSDoc") ||
+                        currentTestFile.includes("annotateWithTypeFromJSDoc");
+                    const isAddMemberDeclTestFile =
+                        file.includes("addMemberInDeclarationFile") ||
+                        currentTestFile.includes("addMemberInDeclarationFile");
                     for (const action of actions) {
                         const key = JSON.stringify({
                             fixName: action.fixName || "",
