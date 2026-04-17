@@ -421,6 +421,7 @@ fn find_tsz_binary() -> String {
     // Try common build locations relative to workspace root
     let candidates = [
         ".target/dist-fast/tsz",
+        ".target/debug/tsz",
         ".target/release/tsz",
         "target/release/tsz",
         "target/debug/tsz",
