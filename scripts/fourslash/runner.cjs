@@ -541,9 +541,15 @@ function patchSessionClient(SessionClient, ts) {
         return result;
     };
 
-    // Always prefer native TypeScript LS for code fixes since tsz-server's code
-    // fix implementation is incomplete.  Fall back to tsz-server only when the
-    // native LS returns nothing.
+    // Prefer native TypeScript LS for most code fixes, but trust tsz for
+    // fix families where tsz has better AST-aware behavior or where native LS
+    // does not preserve expected fix metadata in fourslash.
+    const tszTrustedFixNames = new Set([
+        "addMissingNewOperator",
+        "addConvertToUnknownForNonOverlappingTypes",
+        "addMissingConst",
+        "fixMissingFunctionDeclaration",
+    ]);
     const _origGetCodeFixesAtPosition = proto.getCodeFixesAtPosition;
     proto.getCodeFixesAtPosition = function(fileName, start, end, errorCodes, formatOptions, preferences) {
         const oldPreferences = this.preferences;
@@ -598,8 +604,13 @@ function patchSessionClient(SessionClient, ts) {
             // tsz explicitly returned no fixes — trust it (e.g. autoImportFileExcludePatterns)
             finalResult = [];
         } else {
-            const nativeResult = getNative();
-            finalResult = (nativeResult && nativeResult.length > 0) ? nativeResult : tszResult;
+            const tszHasTrustedFix = tszResult.some(f => tszTrustedFixNames.has(f.fixName));
+            if (tszHasTrustedFix) {
+                finalResult = tszResult;
+            } else {
+                const nativeResult = getNative();
+                finalResult = (nativeResult && nativeResult.length > 0) ? nativeResult : tszResult;
+            }
         }
 
         if (preferences) this.configure(oldPreferences || {});
