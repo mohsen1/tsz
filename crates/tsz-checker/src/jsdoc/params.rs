@@ -1861,6 +1861,97 @@ impl<'a> CheckerState<'a> {
         Some(comment_pos + (tag_pos + "@type".len() + fn_rel) as u32)
     }
 
+    /// Extract the return type string from `@type {function(): ReturnType}`.
+    /// Returns `Some(return_type_str)` if the JSDoc `@type` is a function type
+    /// with an explicit return type annotation.
+    pub(crate) fn jsdoc_type_tag_function_return_type(jsdoc: &str) -> Option<String> {
+        let expr = Self::jsdoc_extract_type_tag_expr_braceless(jsdoc)?;
+        let expr = expr.trim();
+        let rest = expr.strip_prefix("function")?;
+        let rest = rest.trim_start();
+        if !rest.starts_with('(') {
+            return None;
+        }
+        let rest = &rest[1..];
+        let mut depth = 1u32;
+        let mut close_idx = None;
+        for (i, ch) in rest.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close_idx = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let close_idx = close_idx?;
+        let after_close = rest[close_idx + 1..].trim_start();
+        let ret_str = after_close.strip_prefix(':')?;
+        let ret_str = ret_str.trim();
+        if ret_str.is_empty() {
+            return None;
+        }
+        Some(ret_str.to_string())
+    }
+
+    /// Find the source position and length of the return type in
+    /// `@type {function(): ReturnType}` within the comment starting at `comment_pos`.
+    pub(crate) fn jsdoc_type_tag_function_return_type_span_in_source(
+        source_text: &str,
+        comment_pos: u32,
+    ) -> Option<(u32, u32)> {
+        let comment_start = comment_pos as usize;
+        let comment_text = source_text.get(comment_start..)?;
+        let comment_end = comment_text.find("*/")?;
+        let comment_text = &comment_text[..comment_end];
+        let tag_pos = comment_text.find("@type")?;
+        let rest = &comment_text[tag_pos + "@type".len()..];
+        let fn_rel = rest.find("function")?;
+        let after_fn = &rest[fn_rel + "function".len()..];
+        let paren_start = after_fn.find('(')?;
+        let after_paren = &after_fn[paren_start + 1..];
+        let mut depth = 1u32;
+        let mut close_idx = None;
+        for (i, ch) in after_paren.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close_idx = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let close_idx = close_idx?;
+        let after_close = &after_paren[close_idx + 1..];
+        let colon_rel = after_close.find(':')?;
+        let ret_part = &after_close[colon_rel + 1..];
+        let leading_ws = ret_part.len() - ret_part.trim_start().len();
+        let ret_trimmed = ret_part.trim();
+        let ret_end = ret_trimmed.find('}').unwrap_or(ret_trimmed.len());
+        let ret_type_str = ret_trimmed[..ret_end].trim_end();
+        let abs_start = comment_start
+            + tag_pos
+            + "@type".len()
+            + fn_rel
+            + "function".len()
+            + paren_start
+            + 1
+            + close_idx
+            + 1
+            + colon_rel
+            + 1
+            + leading_ws;
+        Some((abs_start as u32, ret_type_str.len() as u32))
+    }
+
     pub(crate) fn jsdoc_extract_type_tag_expr_braceless(jsdoc: &str) -> Option<String> {
         for raw_line in jsdoc.lines() {
             let trimmed = raw_line.trim().trim_start_matches('*').trim();
