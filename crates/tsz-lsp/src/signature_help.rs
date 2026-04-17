@@ -3304,15 +3304,26 @@ impl<'a> SignatureHelpProvider<'a> {
                     let arg_type_id = checker.get_type_of_node(arg_idx);
                     let arg_type = checker.resolve_lazy_type(arg_type_id);
                     let mut text = checker.format_type(arg_type);
+                    let start = arg_node.pos as usize;
+                    let end = (arg_node.end as usize).min(self.source_text.len());
+                    let raw_literal = if start < end {
+                        Some(self.source_text[start..end].trim())
+                    } else {
+                        None
+                    };
+                    // Preserve source literal text when available so overload
+                    // scoring can distinguish e.g. '' from "hi" | "bye".
+                    if let Some(raw) = raw_literal
+                        && Self::string_literal_value(raw).is_some()
+                    {
+                        text = raw.to_string();
+                    }
                     if text == "any" || text == "unknown" || text == "error" {
-                        let start = arg_node.pos as usize;
-                        let end = (arg_node.end as usize).min(self.source_text.len());
-                        if start < end {
-                            let raw = self.source_text[start..end].trim();
+                        if let Some(raw) = raw_literal {
                             if Self::is_numeric_literal_type(raw) {
                                 text = "number".to_string();
-                            } else if raw.starts_with('"') || raw.starts_with('\'') {
-                                text = "string".to_string();
+                            } else if Self::string_literal_value(raw).is_some() {
+                                text = raw.to_string();
                             } else if raw == "true" || raw == "false" {
                                 text = "boolean".to_string();
                             }
@@ -3345,15 +3356,24 @@ impl<'a> SignatureHelpProvider<'a> {
                     let expr_type_id = checker.get_type_of_node(expr_idx);
                     let expr_type = checker.resolve_lazy_type(expr_type_id);
                     let mut text = checker.format_type(expr_type);
+                    let start = expr_node.pos as usize;
+                    let end = (expr_node.end as usize).min(self.source_text.len());
+                    let raw_literal = if start < end {
+                        Some(self.source_text[start..end].trim())
+                    } else {
+                        None
+                    };
+                    if let Some(raw) = raw_literal
+                        && Self::string_literal_value(raw).is_some()
+                    {
+                        text = raw.to_string();
+                    }
                     if text == "any" || text == "unknown" || text == "error" {
-                        let start = expr_node.pos as usize;
-                        let end = (expr_node.end as usize).min(self.source_text.len());
-                        if start < end {
-                            let raw = self.source_text[start..end].trim();
+                        if let Some(raw) = raw_literal {
                             if Self::is_numeric_literal_type(raw) {
                                 text = "number".to_string();
-                            } else if raw.starts_with('"') || raw.starts_with('\'') {
-                                text = "string".to_string();
+                            } else if Self::string_literal_value(raw).is_some() {
+                                text = raw.to_string();
                             } else if raw == "true" || raw == "false" {
                                 text = "boolean".to_string();
                             }
@@ -3397,6 +3417,16 @@ impl<'a> SignatureHelpProvider<'a> {
             let Some((_, param_ty)) = sig.info.parameters[param_idx].label.rsplit_once(':') else {
                 continue;
             };
+            let param_ty = param_ty.trim();
+            if let Some(arg_string_literal) = Self::string_literal_value(arg_type_text)
+                && let Some(matches) =
+                    Self::string_literal_union_contains(param_ty, arg_string_literal)
+            {
+                if !matches {
+                    penalty += 1;
+                }
+                continue;
+            }
             let Some(param_mask) = Self::primitive_kind_mask_from_type_text(param_ty) else {
                 continue;
             };
@@ -3485,6 +3515,41 @@ impl<'a> SignatureHelpProvider<'a> {
             return false;
         };
         !stripped.is_empty() && stripped.chars().all(|ch| ch.is_ascii_digit() || ch == '-')
+    }
+
+    fn string_literal_value(text: &str) -> Option<&str> {
+        let trimmed = text.trim();
+        if trimmed.len() < 2 {
+            return None;
+        }
+        let bytes = trimmed.as_bytes();
+        let quote = bytes[0];
+        if (quote == b'"' || quote == b'\'') && bytes[trimmed.len() - 1] == quote {
+            return Some(&trimmed[1..trimmed.len() - 1]);
+        }
+        None
+    }
+
+    // Returns:
+    // - Some(true) when parameter type is a pure union of string literals
+    //   and includes the argument literal
+    // - Some(false) when parameter type is a pure union of string literals
+    //   and does not include the argument literal
+    // - None when parameter type is not a pure string-literal union
+    fn string_literal_union_contains(param_type_text: &str, arg_literal_value: &str) -> Option<bool> {
+        let mut seen = false;
+        for part in param_type_text
+            .split('|')
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+        {
+            let literal = Self::string_literal_value(part)?;
+            seen = true;
+            if literal == arg_literal_value {
+                return Some(true);
+            }
+        }
+        seen.then_some(false)
     }
 
     fn apply_signature_docs(&self, signatures: &mut [SignatureCandidate], docs: &SignatureDocs) {
@@ -4421,6 +4486,53 @@ mod signature_help_internal_tests {
             "optionalMethod(current: any): any"
         );
         assert_eq!(help.active_parameter, 0);
+    }
+
+    #[test]
+    fn overload_selection_prefers_matching_string_literal_signatures() {
+        let source = "function x1(x: \"hi\");\nfunction x1(y: \"bye\");\nfunction x1(z: string);\nfunction x1(a: any) {}\nx1('');\nx1('hi');\nx1('bye');";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let interner = TypeInterner::new();
+        let line_map = LineMap::build(source);
+        let provider = SignatureHelpProvider::new(
+            parser.get_arena(),
+            &binder,
+            &line_map,
+            &interner,
+            source,
+            "test.ts".to_string(),
+        );
+
+        let mut cache = None;
+
+        let empty_call = provider
+            .get_signature_help(root, Position::new(4, 4), &mut cache)
+            .expect("signature help for x1('')");
+        assert_eq!(
+            empty_call.signatures[empty_call.active_signature as usize].parameters[0].name,
+            "z"
+        );
+
+        let hi_call = provider
+            .get_signature_help(root, Position::new(5, 6), &mut cache)
+            .expect("signature help for x1('hi')");
+        assert_eq!(
+            hi_call.signatures[hi_call.active_signature as usize].parameters[0].name,
+            "x"
+        );
+
+        let bye_call = provider
+            .get_signature_help(root, Position::new(6, 7), &mut cache)
+            .expect("signature help for x1('bye')");
+        assert_eq!(
+            bye_call.signatures[bye_call.active_signature as usize].parameters[0].name,
+            "y"
+        );
     }
 }
 
