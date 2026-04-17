@@ -2044,3 +2044,24 @@ fn(a);
         "Expected 'number[]' as target type, got: {msg}"
     );
 }
+
+#[test]
+fn no_ts2339_for_computed_property_with_circular_class_reference() {
+    let diags = check_source_diagnostics(
+        r#"
+declare const rC: RC<"a">;
+rC.x;
+declare class RC<T extends "a" | "b"> {
+    x: T;
+    [rC.x]: "b";
+}
+"#,
+    );
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for property access on class with circular computed property, got: {:?}",
+        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
