@@ -203,7 +203,7 @@ impl<'a> TypeVisitor for InstanceofLeftOperandVisitor<'a> {
 }
 
 struct SymbolLikeVisitor<'a> {
-    _db: &'a dyn TypeDatabase,
+    db: &'a dyn TypeDatabase,
 }
 
 impl<'a> TypeVisitor for SymbolLikeVisitor<'a> {
@@ -219,16 +219,24 @@ impl<'a> TypeVisitor for SymbolLikeVisitor<'a> {
     }
 
     fn visit_ref(&mut self, _symbol_ref: u32) -> bool {
-        // Named type references (interfaces, classes) are NOT symbol-like.
-        // The `Symbol` wrapper object type (from lib.d.ts) is not the same
-        // as the `symbol` primitive — only the primitive is valid for
-        // computed property names. Unique symbols are handled by
-        // visit_unique_symbol below.
         false
     }
 
     fn visit_unique_symbol(&mut self, _symbol_ref: u32) -> bool {
         true
+    }
+
+    fn visit_type_parameter(&mut self, param_info: &crate::TypeParamInfo) -> bool {
+        if let Some(constraint) = param_info.constraint {
+            self.visit_type(self.db, constraint)
+        } else {
+            false
+        }
+    }
+
+    fn visit_union(&mut self, list_id: u32) -> bool {
+        let members = self.db.type_list(crate::TypeListId(list_id));
+        members.iter().any(|&m| self.visit_type(self.db, m))
     }
 
     fn default_output() -> bool {
@@ -990,7 +998,7 @@ impl<'a> BinaryOpEvaluator<'a> {
         if type_id == TypeId::SYMBOL {
             return true;
         }
-        let mut visitor = SymbolLikeVisitor { _db: self.interner };
+        let mut visitor = SymbolLikeVisitor { db: self.interner };
         visitor.visit_type(self.interner, type_id)
     }
 
