@@ -1199,6 +1199,38 @@ impl Server {
             {
                 continue;
             }
+            if candidate.module_specifier.starts_with('.') {
+                if is_path_excluded_with_patterns(
+                    &candidate.module_specifier,
+                    auto_import_file_exclude_patterns,
+                ) {
+                    continue;
+                }
+                if let Some(target_path) =
+                    resolve_module_path(current_file_path, &candidate.module_specifier, &files)
+                    && is_path_excluded_with_patterns(
+                        &target_path,
+                        auto_import_file_exclude_patterns,
+                    )
+                {
+                    continue;
+                }
+            } else {
+                if is_path_excluded_with_patterns(
+                    &candidate.module_specifier,
+                    auto_import_file_exclude_patterns,
+                ) {
+                    continue;
+                }
+                let synthetic_node_modules_path =
+                    format!("/node_modules/{}", candidate.module_specifier);
+                if is_path_excluded_with_patterns(
+                    &synthetic_node_modules_path,
+                    auto_import_file_exclude_patterns,
+                ) {
+                    continue;
+                }
+            }
             if Self::is_js_like_file(current_file_path) {
                 candidate.module_specifier =
                     Self::normalize_commonjs_module_specifier(&candidate.module_specifier);

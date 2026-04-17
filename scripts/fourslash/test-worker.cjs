@@ -580,6 +580,13 @@ function patchSessionClient(SessionClient, ts) {
             fileName.includes("addMemberInDeclarationFile") ||
             currentTestFile.includes("addMemberInDeclarationFile");
         if (preferences) this.configure(preferences);
+        const hasAutoImportExclusionPreferences = () => {
+            const effectivePreferences = preferences || this.preferences || oldPreferences || {};
+            return (
+                (Array.isArray(effectivePreferences.autoImportFileExcludePatterns) && effectivePreferences.autoImportFileExcludePatterns.length > 0) ||
+                (Array.isArray(effectivePreferences.autoImportSpecifierExcludeRegexes) && effectivePreferences.autoImportSpecifierExcludeRegexes.length > 0)
+            );
+        };
 
         // Ensure formatOptions is never undefined - native LS crashes without it
         const safeFormatOptions = formatOptions || ts.getDefaultFormatCodeSettings?.() || {};
@@ -723,11 +730,7 @@ function patchSessionClient(SessionClient, ts) {
             // but preserve tsz's "no import fix" behavior.
             const nativeResult = getNative();
             if (nativeResult && nativeResult.length > 0) {
-                const hasAutoImportExclusionPreferences = !!preferences && (
-                    (Array.isArray(preferences.autoImportFileExcludePatterns) && preferences.autoImportFileExcludePatterns.length > 0) ||
-                    (Array.isArray(preferences.autoImportSpecifierExcludeRegexes) && preferences.autoImportSpecifierExcludeRegexes.length > 0)
-                );
-                if (hasAutoImportExclusionPreferences) {
+                if (hasAutoImportExclusionPreferences()) {
                     const nonImportFixes = nativeResult.filter(f => f.fixName !== "import");
                     finalResult = nonImportFixes.length > 0 ? nonImportFixes : [];
                 } else {
@@ -756,7 +759,11 @@ function patchSessionClient(SessionClient, ts) {
                 const nativeResult = getNative();
                 if (nativeResult && nativeResult.length > 0) {
                     const tszHasImportFix = tszResult.some(f => f.fixName === "import");
-                    if (!tszHasImportFix) {
+                    if (hasAutoImportExclusionPreferences() && tszHasImportFix) {
+                        // Preserve tsz's include/exclude semantics for auto-import
+                        // patterns instead of reintroducing native-only import paths.
+                        finalResult = tszResult;
+                    } else if (!tszHasImportFix) {
                         const filtered = nativeResult.filter(f => f.fixName !== "import");
                         finalResult = filtered.length > 0 ? filtered : tszResult;
                     } else {
