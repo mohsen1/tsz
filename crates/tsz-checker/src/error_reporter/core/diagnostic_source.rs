@@ -540,7 +540,7 @@ impl<'a> CheckerState<'a> {
         if annotation.contains("`${") {
             return true;
         }
-        if annotation.contains('&') {
+        if annotation.contains('&') && !annotation.starts_with("keyof ") {
             return !annotation.starts_with("null |") && !annotation.starts_with("undefined |");
         }
 
@@ -1343,6 +1343,10 @@ impl<'a> CheckerState<'a> {
             {
                 // Fall through to use the TypeFormatter, which correctly displays
                 // `TypeData::Enum` as qualified `W.a` style names.
+            } else if display.starts_with("keyof ") && display_target == target {
+                // For keyof annotations, use the TypeFormatter so that distribution
+                // rules apply (e.g. `keyof (T | U)` → `keyof T & keyof U`).
+                return self.format_type_for_assignability_message(display_target);
             } else if display_target == target {
                 // Only use annotation text when we didn't strip nullable members;
                 // otherwise the annotation includes null/undefined that tsc omits.

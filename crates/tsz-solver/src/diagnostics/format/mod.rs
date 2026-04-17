@@ -857,6 +857,66 @@ impl<'a> TypeFormatter<'a> {
                 }
             }
             TypeData::KeyOf(operand) => {
+                // tsc distributes `keyof` over union and intersection of non-structural types:
+                //   keyof (A | B)  →  keyof A & keyof B
+                //   keyof (A & B)  →  keyof A | keyof B
+                // This applies when the union/intersection members are opaque (type params,
+                // named/lazy refs, or applications), not concrete structural types like `{}`.
+                // Exception: if any member is a structural object or intrinsic, preserve the
+                // undistributed form (e.g. `keyof (T & {})` stays as-is).
+                let distributed = match self.interner.lookup(*operand) {
+                    Some(TypeData::Union(list_id)) => {
+                        let members = self.interner.type_list(list_id);
+                        let parts: Vec<String> = members
+                            .iter()
+                            .map(|&m| {
+                                let inner = self.format(m);
+                                // Add parens around complex member types
+                                let member_needs_parens = matches!(
+                                    self.interner.lookup(m),
+                                    Some(
+                                        TypeData::Union(_)
+                                            | TypeData::Intersection(_)
+                                            | TypeData::Conditional(_)
+                                    )
+                                );
+                                if member_needs_parens {
+                                    format!("keyof ({inner})")
+                                } else {
+                                    format!("keyof {inner}")
+                                }
+                            })
+                            .collect();
+                        Some(parts.join(" & "))
+                    }
+                    Some(TypeData::Intersection(list_id)) => {
+                        let members = self.interner.type_list(list_id);
+                        let parts: Vec<String> = members
+                            .iter()
+                            .map(|&m| {
+                                let inner = self.format(m);
+                                let member_needs_parens = matches!(
+                                    self.interner.lookup(m),
+                                    Some(
+                                        TypeData::Union(_)
+                                            | TypeData::Intersection(_)
+                                            | TypeData::Conditional(_)
+                                    )
+                                );
+                                if member_needs_parens {
+                                    format!("keyof ({inner})")
+                                } else {
+                                    format!("keyof {inner}")
+                                }
+                            })
+                            .collect();
+                        Some(parts.join(" | "))
+                    }
+                    _ => None,
+                };
+                if let Some(s) = distributed {
+                    return s.into();
+                }
                 let operand_str = self.format(*operand);
                 let needs_parens = matches!(
                     self.interner.lookup(*operand),
