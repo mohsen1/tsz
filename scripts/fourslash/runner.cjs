@@ -186,6 +186,7 @@ async function runSequential(opts, testsToRun) {
         }
 
         try {
+            globalThis.__tszCurrentFourslashTestFile = testFile;
             const basePath = path.dirname(testFile);
             const content = Harness.IO.readFile(testFile);
             if (content == null) throw new Error(`Could not read test file: ${testFile}`);
