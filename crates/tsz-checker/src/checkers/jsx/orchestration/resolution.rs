@@ -1218,6 +1218,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn get_jsx_element_type(&mut self, node_idx: NodeIndex) -> TypeId {
         self.check_jsx_factory_in_scope(node_idx);
         self.check_jsx_fragment_factory(node_idx);
+        self.check_jsx_import_source(node_idx);
 
         // Try to resolve JSX.Element from the JSX namespace
         if let Some(element_sym_id) = self.get_jsx_namespace_export_symbol_id("Element") {
