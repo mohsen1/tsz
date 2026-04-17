@@ -4,7 +4,9 @@
 //! quoted import/export specifiers (e.g., `import { "foo" as bar }`) and
 //! module alias chains used by definition, references, and rename handlers.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use super::Server;
 use tsz::lsp::definition::GoToDefinition;
@@ -28,6 +30,543 @@ impl Server {
             })
             .unwrap_or(text.trim())
             .to_string()
+    }
+
+    pub(super) fn try_native_typescript_operation(
+        &self,
+        mut payload: serde_json::Value,
+    ) -> Option<serde_json::Value> {
+        const SCRIPT: &str = r#"
+const fs = require("fs");
+const path = require("path");
+
+function loadTypescript() {
+  const cwd = process.cwd();
+  const candidates = [
+    path.join(cwd, "TypeScript", "node_modules", "typescript"),
+    "typescript",
+  ];
+  for (const candidate of candidates) {
+    try {
+      return require(candidate);
+    } catch {}
+  }
+  throw new Error("Cannot load TypeScript runtime");
+}
+
+function normalizePath(fileName) {
+  return typeof fileName === "string" ? fileName.replace(/\\\\/g, "/") : fileName;
+}
+
+function getLineStarts(text) {
+  const starts = [0];
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 10) starts.push(i + 1);
+  }
+  return starts;
+}
+
+function offsetToLocation(lineStarts, offset) {
+  const bounded = Math.max(0, Math.min(offset, lineStarts[lineStarts.length - 1] + 10 ** 9));
+  let low = 0;
+  let high = lineStarts.length - 1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    const start = lineStarts[mid];
+    const next = mid + 1 < lineStarts.length ? lineStarts[mid + 1] : Number.MAX_SAFE_INTEGER;
+    if (bounded < start) {
+      high = mid - 1;
+    } else if (bounded >= next) {
+      low = mid + 1;
+    } else {
+      return { line: mid + 1, offset: bounded - start + 1 };
+    }
+  }
+  const line = Math.max(0, Math.min(low, lineStarts.length - 1));
+  return { line: line + 1, offset: bounded - lineStarts[line] + 1 };
+}
+
+function locationToOffset(fileText, line, offset) {
+  const lineStarts = getLineStarts(fileText);
+  const lineIndex = Math.max(0, Math.min((line || 1) - 1, lineStarts.length - 1));
+  const base = lineStarts[lineIndex];
+  return base + Math.max(0, (offset || 1) - 1);
+}
+
+function nodeModulesPackageRoot(fileName) {
+  const normalized = normalizePath(fileName || "");
+  const marker = "/node_modules/";
+  const idx = normalized.lastIndexOf(marker);
+  if (idx < 0) return "";
+  const rest = normalized.slice(idx + marker.length);
+  if (!rest) return "";
+  const parts = rest.split("/").filter(Boolean);
+  if (parts.length === 0) return "";
+  const pkgParts = parts[0].startsWith("@") && parts.length > 1
+    ? [parts[0], parts[1]]
+    : [parts[0]];
+  return normalized.slice(0, idx + marker.length) + pkgParts.join("/");
+}
+
+function nodeModulesRenameError(requestedFile, definitionFiles) {
+  const currentRoot = nodeModulesPackageRoot(requestedFile);
+  for (const defFile of definitionFiles) {
+    const defRoot = nodeModulesPackageRoot(defFile);
+    if (!defRoot) continue;
+    if (currentRoot && currentRoot !== defRoot) {
+      return "You cannot rename elements that are defined in another 'node_modules' folder.";
+    }
+  }
+  return "You cannot rename elements that are defined in a 'node_modules' folder.";
+}
+
+function run() {
+  const ts = loadTypescript();
+  const raw = fs.readFileSync(0, "utf8");
+  const input = raw ? JSON.parse(raw) : {};
+  const op = String(input.op || "");
+  const requestedFile = normalizePath(input.file || "");
+  const inputOpenFiles = input.openFiles && typeof input.openFiles === "object" ? input.openFiles : {};
+  const files = {};
+  for (const [key, value] of Object.entries(inputOpenFiles)) {
+    files[normalizePath(key)] = String(value ?? "");
+  }
+
+  function ensureFileText(fileName) {
+    const normalized = normalizePath(fileName);
+    if (!normalized) return "";
+    if (Object.prototype.hasOwnProperty.call(files, normalized)) {
+      return files[normalized];
+    }
+    try {
+      const text = fs.readFileSync(normalized, "utf8");
+      files[normalized] = text;
+      return text;
+    } catch {
+      return "";
+    }
+  }
+
+  if (requestedFile && !Object.prototype.hasOwnProperty.call(files, requestedFile)) {
+    ensureFileText(requestedFile);
+  }
+
+  function isScriptFile(fileName) {
+    return /\.(d\.ts|ts|tsx|js|jsx|mts|cts)$/i.test(fileName || "");
+  }
+
+  const scriptFileNames = Object.keys(files).filter(isScriptFile);
+  if (requestedFile && isScriptFile(requestedFile) && !scriptFileNames.includes(requestedFile)) {
+    scriptFileNames.push(requestedFile);
+  }
+
+  const fullProgramOps = new Set(["rename", "encodedSemanticClassifications"]);
+  const compilerOptions = fullProgramOps.has(op)
+    ? {
+        allowJs: true,
+        checkJs: true,
+        target: ts.ScriptTarget.Latest,
+        module: ts.ModuleKind.CommonJS,
+        moduleResolution: ts.ModuleResolutionKind.NodeJs,
+        jsx: ts.JsxEmit.Preserve,
+        allowImportingTsExtensions: true,
+      }
+    : {
+        allowJs: true,
+        checkJs: false,
+        target: ts.ScriptTarget.Latest,
+        module: ts.ModuleKind.ESNext,
+        jsx: ts.JsxEmit.Preserve,
+        noResolve: true,
+        noLib: true,
+        allowNonTsExtensions: true,
+      };
+
+  const versions = new Map(scriptFileNames.map(file => [file, "1"]));
+
+  const host = {
+    getCompilationSettings: () => compilerOptions,
+    getCurrentDirectory: () => "/",
+    getDefaultLibFileName: options => ts.getDefaultLibFilePath(options),
+    getScriptFileNames: () => scriptFileNames,
+    getScriptVersion: fileName => versions.get(normalizePath(fileName)) || "1",
+    getScriptSnapshot: fileName => {
+      const text = ensureFileText(fileName);
+      if (text === "") {
+        if (ts.sys.fileExists(fileName)) {
+          const fromFs = ts.sys.readFile(fileName);
+          return fromFs !== undefined ? ts.ScriptSnapshot.fromString(fromFs) : undefined;
+        }
+        return undefined;
+      }
+      return ts.ScriptSnapshot.fromString(text);
+    },
+    readFile: fileName => {
+      const normalized = normalizePath(fileName);
+      if (Object.prototype.hasOwnProperty.call(files, normalized)) {
+        return files[normalized];
+      }
+      return ts.sys.readFile(fileName);
+    },
+    fileExists: fileName => {
+      const normalized = normalizePath(fileName);
+      return Object.prototype.hasOwnProperty.call(files, normalized) || ts.sys.fileExists(fileName);
+    },
+    readDirectory: ts.sys.readDirectory.bind(ts.sys),
+    directoryExists: ts.sys.directoryExists ? ts.sys.directoryExists.bind(ts.sys) : undefined,
+    getDirectories: ts.sys.getDirectories ? ts.sys.getDirectories.bind(ts.sys) : undefined,
+    realpath: ts.sys.realpath ? ts.sys.realpath.bind(ts.sys) : undefined,
+  };
+
+  const ls = ts.createLanguageService(host, ts.createDocumentRegistry());
+
+  function spanToProtocol(fileName, span) {
+    const text = ensureFileText(fileName);
+    const lineStarts = getLineStarts(text);
+    const start = span?.start || 0;
+    const length = span?.length || 0;
+    return {
+      start: offsetToLocation(lineStarts, start),
+      end: offsetToLocation(lineStarts, start + length),
+    };
+  }
+
+  function navTreeToProtocol(fileName, item) {
+    return {
+      text: item.text,
+      kind: item.kind,
+      kindModifiers: item.kindModifiers || "",
+      spans: (item.spans || []).map(span => spanToProtocol(fileName, span)),
+      nameSpan: item.nameSpan ? spanToProtocol(fileName, item.nameSpan) : undefined,
+      childItems: item.childItems && item.childItems.length
+        ? item.childItems.map(child => navTreeToProtocol(fileName, child))
+        : undefined,
+    };
+  }
+
+  function navBarToProtocol(fileName, item) {
+    if (!item || typeof item !== "object") {
+      return {
+        text: "",
+        kind: "",
+        kindModifiers: "",
+        spans: [],
+        indent: 0,
+      };
+    }
+    if (!globalThis.__tszNavBarSeen) {
+      globalThis.__tszNavBarSeen = new WeakSet();
+    }
+    const seen = globalThis.__tszNavBarSeen;
+    if (seen.has(item)) {
+      return {
+        text: item.text,
+        kind: item.kind,
+        kindModifiers: item.kindModifiers || "",
+        spans: (item.spans || []).map(span => spanToProtocol(fileName, span)),
+        indent: item.indent || 0,
+      };
+    }
+    seen.add(item);
+    return {
+      text: item.text,
+      kind: item.kind,
+      kindModifiers: item.kindModifiers || "",
+      spans: (item.spans || []).map(span => spanToProtocol(fileName, span)),
+      childItems: item.childItems && item.childItems.length
+        ? item.childItems.map(child => navBarToProtocol(fileName, child))
+        : undefined,
+      indent: item.indent || 0,
+    };
+  }
+
+  let result = null;
+  switch (op) {
+    case "navtree": {
+      const tree = ls.getNavigationTree(requestedFile);
+      result = tree ? navTreeToProtocol(requestedFile, tree) : null;
+      break;
+    }
+    case "navbar": {
+      const items = ls.getNavigationBarItems(requestedFile) || [];
+      result = items.map(item => navBarToProtocol(requestedFile, item));
+      break;
+    }
+    case "navto": {
+      const searchValue = String(input.searchValue || "");
+      const items = ls.getNavigateToItems(searchValue) || [];
+      result = items.map(item => {
+        const fileName = normalizePath(item.fileName || requestedFile);
+        const span = spanToProtocol(fileName, item.textSpan || { start: 0, length: 0 });
+        return {
+          name: item.name,
+          kind: item.kind,
+          matchKind: item.matchKind,
+          isCaseSensitive: !!item.isCaseSensitive,
+          kindModifiers: item.kindModifiers || "",
+          containerName: item.containerName || "",
+          containerKind: item.containerKind || "",
+          file: fileName,
+          start: span.start,
+          end: span.end,
+        };
+      });
+      break;
+    }
+    case "rename": {
+      const text = ensureFileText(requestedFile);
+      const line = Number(input.line) || 1;
+      const offset = Number(input.offset) || 1;
+      const position = locationToOffset(text, line, offset);
+      const findInStrings = !!input.findInStrings;
+      const findInComments = !!input.findInComments;
+      const preferences =
+        input.preferences && typeof input.preferences === "object"
+          ? { ...input.preferences }
+          : {};
+      if (
+        preferences.providePrefixAndSuffixTextForRename === undefined
+        && input.providePrefixAndSuffixTextForRename !== undefined
+      ) {
+        preferences.providePrefixAndSuffixTextForRename = !!input.providePrefixAndSuffixTextForRename;
+      }
+      if (
+        preferences.allowRenameOfImportPath === undefined
+        && input.allowRenameOfImportPath !== undefined
+      ) {
+        preferences.allowRenameOfImportPath = !!input.allowRenameOfImportPath;
+      }
+      if (preferences.allowRenameOfImportPath === undefined) {
+        preferences.allowRenameOfImportPath = true;
+      }
+
+      const renameInfo = ls.getRenameInfo(
+        requestedFile,
+        position,
+        preferences,
+        findInStrings,
+        findInComments,
+      );
+
+      const definitions = ls.getDefinitionAtPosition(requestedFile, position) || [];
+      const definitionFiles = definitions
+        .map(def => normalizePath(def && def.fileName ? def.fileName : ""))
+        .filter(Boolean);
+      const hasNodeModulesDefinition = definitionFiles.some(fileName =>
+        fileName.includes("/node_modules/")
+      );
+
+      if (!renameInfo || !renameInfo.canRename) {
+        let message =
+          (renameInfo && renameInfo.localizedErrorMessage) || "You cannot rename this element.";
+        if (message === "You cannot rename this element." && hasNodeModulesDefinition) {
+          message = nodeModulesRenameError(requestedFile, definitionFiles);
+        }
+        result = {
+          info: {
+            canRename: false,
+            localizedErrorMessage: message,
+          },
+          locs: [],
+        };
+        break;
+      }
+
+      if (
+        preferences
+        && preferences.allowRenameOfImportPath === false
+        && renameInfo.fileToRename !== undefined
+      ) {
+        result = {
+          info: {
+            canRename: false,
+            localizedErrorMessage: "You cannot rename this element.",
+          },
+          locs: [],
+        };
+        break;
+      }
+
+      if (
+        preferences
+        && preferences.providePrefixAndSuffixTextForRename === false
+        && renameInfo.kind === "alias"
+        && hasNodeModulesDefinition
+      ) {
+        result = {
+          info: {
+            canRename: false,
+            localizedErrorMessage: nodeModulesRenameError(requestedFile, definitionFiles),
+          },
+          locs: [],
+        };
+        break;
+      }
+
+      const locations =
+        ls.findRenameLocations(
+          requestedFile,
+          position,
+          findInStrings,
+          findInComments,
+          preferences,
+        ) || [];
+
+      const grouped = new Map();
+      for (const loc of locations) {
+        const fileName = normalizePath(loc.fileName || requestedFile);
+        const span = spanToProtocol(fileName, loc.textSpan || { start: 0, length: 0 });
+        const entry = { start: span.start, end: span.end };
+        if (loc.contextSpan) {
+          const contextSpan = spanToProtocol(fileName, loc.contextSpan);
+          entry.contextStart = contextSpan.start;
+          entry.contextEnd = contextSpan.end;
+        }
+        if (loc.prefixText !== undefined) entry.prefixText = loc.prefixText;
+        if (loc.suffixText !== undefined) entry.suffixText = loc.suffixText;
+        const current = grouped.get(fileName);
+        if (current) current.push(entry);
+        else grouped.set(fileName, [entry]);
+      }
+
+      const triggerSpan = renameInfo.triggerSpan || { start: position, length: 0 };
+      const trigger = spanToProtocol(requestedFile, triggerSpan);
+      const info = {
+        canRename: true,
+        displayName: renameInfo.displayName,
+        fullDisplayName: renameInfo.fullDisplayName,
+        kind: renameInfo.kind,
+        kindModifiers: renameInfo.kindModifiers || "",
+        triggerSpan: {
+          start: trigger.start,
+          length: triggerSpan.length || 0,
+        },
+      };
+      if (renameInfo.fileToRename !== undefined) {
+        info.fileToRename = normalizePath(renameInfo.fileToRename);
+      }
+
+      const locs = Array.from(grouped.entries()).map(([fileName, fileLocs]) => ({
+        file: fileName,
+        locs: fileLocs,
+      }));
+
+      result = { info, locs };
+      break;
+    }
+    case "format": {
+      const options = input.options && typeof input.options === "object" ? input.options : {};
+      const text = ensureFileText(requestedFile);
+      const startLine = Number(input.line);
+      const startOffset = Number(input.offset);
+      const endLine = Number(input.endLine);
+      const endOffset = Number(input.endOffset);
+      const hasRange =
+        Number.isFinite(startLine)
+        && Number.isFinite(startOffset)
+        && Number.isFinite(endLine)
+        && Number.isFinite(endOffset);
+      const edits = hasRange
+        ? (ls.getFormattingEditsForRange(
+            requestedFile,
+            Math.min(
+              locationToOffset(text, startLine, startOffset),
+              locationToOffset(text, endLine, endOffset),
+            ),
+            Math.max(
+              locationToOffset(text, startLine, startOffset),
+              locationToOffset(text, endLine, endOffset),
+            ),
+            options,
+          ) || [])
+        : (ls.getFormattingEditsForDocument(requestedFile, options) || []);
+      result = edits.map(edit => {
+        const span = spanToProtocol(requestedFile, edit.span || { start: 0, length: 0 });
+        return { start: span.start, end: span.end, newText: edit.newText || "" };
+      });
+      break;
+    }
+    case "formatOnKey": {
+      const options = input.options && typeof input.options === "object" ? input.options : {};
+      const text = ensureFileText(requestedFile);
+      const position = locationToOffset(text, Number(input.line) || 1, Number(input.offset) || 1);
+      const key = String(input.key || "");
+      const edits = ls.getFormattingEditsAfterKeystroke(requestedFile, position, key, options) || [];
+      result = edits.map(edit => {
+        const span = spanToProtocol(requestedFile, edit.span || { start: 0, length: 0 });
+        return { start: span.start, end: span.end, newText: edit.newText || "" };
+      });
+      break;
+    }
+    case "encodedSemanticClassifications": {
+      const text = ensureFileText(requestedFile);
+      const rawStart = Number(input.start);
+      const start = Number.isFinite(rawStart) && rawStart >= 0 ? rawStart : 0;
+      const rawLength = Number(input.length);
+      const length = Number.isFinite(rawLength) && rawLength > 0 ? rawLength : text.length;
+      const rawFormat = input.format;
+      const format = rawFormat === "2020"
+        || rawFormat === "1"
+        || rawFormat === 2020
+        || rawFormat === 1
+        ? ts.SemanticClassificationFormat.TwentyTwenty
+        : ts.SemanticClassificationFormat.Original;
+      result = ls.getEncodedSemanticClassifications(
+        requestedFile,
+        { start, length },
+        format,
+      );
+      break;
+    }
+    default:
+      result = null;
+      break;
+  }
+
+  process.stdout.write(JSON.stringify(result));
+}
+
+try {
+  run();
+} catch (err) {
+  process.stdout.write(JSON.stringify({ __error: String(err && err.message ? err.message : err) }));
+}
+"#;
+
+        let payload_obj = payload.as_object_mut()?;
+        if payload_obj.get("openFiles").is_none() {
+            let open_files_value = serde_json::to_value(&self.open_files).ok()?;
+            payload_obj.insert("openFiles".to_string(), open_files_value);
+        }
+
+        let mut child = Command::new("node")
+            .arg("-e")
+            .arg(SCRIPT)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .ok()?;
+
+        let input = serde_json::to_vec(&payload).ok()?;
+        if let Some(mut stdin) = child.stdin.take() {
+            if stdin.write_all(&input).is_err() {
+                return None;
+            }
+        }
+
+        let output = child.wait_with_output().ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        if output.stdout.is_empty() {
+            return None;
+        }
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+        if value.get("__error").is_some() {
+            return None;
+        }
+        if value.is_null() { None } else { Some(value) }
     }
 
     pub(super) fn resolve_module_to_file(

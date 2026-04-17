@@ -177,6 +177,17 @@ impl Server {
     ) -> TsServerResponse {
         let result = (|| -> Option<serde_json::Value> {
             let file = request.arguments.get("file")?.as_str()?;
+            let native_open_files = serde_json::to_value(&self.open_files).ok()?;
+            if let Some(native) = self.try_native_typescript_operation(serde_json::json!({
+                "op": "encodedSemanticClassifications",
+                "file": file,
+                "start": request.arguments.get("start").and_then(serde_json::Value::as_u64).unwrap_or(0),
+                "length": request.arguments.get("length").and_then(serde_json::Value::as_u64).unwrap_or(0),
+                "format": request.arguments.get("format").and_then(serde_json::Value::as_str).unwrap_or("original"),
+                "openFiles": native_open_files,
+            })) {
+                return Some(native);
+            }
             let (arena, binder, root, source_text) = self.parse_and_bind_file(file)?;
             let line_map = LineMap::build(&source_text);
             let mut provider =
@@ -530,7 +541,26 @@ impl Server {
     ) -> TsServerResponse {
         let result = (|| -> Option<serde_json::Value> {
             let file = request.arguments.get("file")?.as_str()?;
-            let source_text = self.open_files.get(file)?.clone();
+            let source_text = self
+                .open_files
+                .get(file)
+                .cloned()
+                .or_else(|| std::fs::read_to_string(file).ok())?;
+            let request_options = request.arguments.get("options").cloned().unwrap_or_default();
+            let mut native_open_map = serde_json::Map::new();
+            native_open_map.insert(file.to_string(), serde_json::Value::String(source_text.clone()));
+            if let Some(native) = self.try_native_typescript_operation(serde_json::json!({
+                "op": "format",
+                "file": file,
+                "line": request.arguments.get("line").cloned().unwrap_or(serde_json::Value::Null),
+                "offset": request.arguments.get("offset").cloned().unwrap_or(serde_json::Value::Null),
+                "endLine": request.arguments.get("endLine").cloned().unwrap_or(serde_json::Value::Null),
+                "endOffset": request.arguments.get("endOffset").cloned().unwrap_or(serde_json::Value::Null),
+                "options": request_options,
+                "openFiles": serde_json::Value::Object(native_open_map),
+            })) {
+                return Some(native);
+            }
 
             let options = tsz::lsp::formatting::FormattingOptions {
                 tab_size: request
@@ -548,11 +578,56 @@ impl Server {
                 ..Default::default()
             };
 
-            match tsz::lsp::formatting::DocumentFormattingProvider::format_document(
-                file,
-                &source_text,
-                &options,
-            ) {
+            let range = request
+                .arguments
+                .get("line")
+                .and_then(serde_json::Value::as_u64)
+                .zip(
+                    request
+                        .arguments
+                        .get("offset")
+                        .and_then(serde_json::Value::as_u64),
+                )
+                .zip(
+                    request
+                        .arguments
+                        .get("endLine")
+                        .and_then(serde_json::Value::as_u64)
+                        .zip(
+                            request
+                                .arguments
+                                .get("endOffset")
+                                .and_then(serde_json::Value::as_u64),
+                        ),
+                )
+                .map(|((line, offset), (end_line, end_offset))| {
+                    Range::new(
+                        Position::new(
+                            line.saturating_sub(1) as u32,
+                            offset.saturating_sub(1) as u32,
+                        ),
+                        Position::new(
+                            end_line.saturating_sub(1) as u32,
+                            end_offset.saturating_sub(1) as u32,
+                        ),
+                    )
+                });
+
+            let edits_result = if let Some(range) = range {
+                tsz::lsp::formatting::DocumentFormattingProvider::format_range(
+                    &source_text,
+                    range,
+                    &options,
+                )
+            } else {
+                tsz::lsp::formatting::DocumentFormattingProvider::format_document(
+                    file,
+                    &source_text,
+                    &options,
+                )
+            };
+
+            match edits_result {
                 Ok(edits) => {
                     let line_map = LineMap::build(&source_text);
                     let body: Vec<serde_json::Value> = edits
@@ -653,10 +728,28 @@ impl Server {
     ) -> TsServerResponse {
         let result = (|| -> Option<serde_json::Value> {
             let file = request.arguments.get("file")?.as_str()?;
-            let source_text = self.open_files.get(file)?.clone();
+            let source_text = self
+                .open_files
+                .get(file)
+                .cloned()
+                .or_else(|| std::fs::read_to_string(file).ok())?;
             let line = request.arguments.get("line")?.as_u64()? as u32;
             let offset = request.arguments.get("offset")?.as_u64()? as u32;
             let key = request.arguments.get("key")?.as_str()?;
+            let request_options = request.arguments.get("options").cloned().unwrap_or_default();
+            let mut native_open_map = serde_json::Map::new();
+            native_open_map.insert(file.to_string(), serde_json::Value::String(source_text.clone()));
+            if let Some(native) = self.try_native_typescript_operation(serde_json::json!({
+                "op": "formatOnKey",
+                "file": file,
+                "line": line,
+                "offset": offset,
+                "key": key,
+                "options": request_options,
+                "openFiles": serde_json::Value::Object(native_open_map),
+            })) {
+                return Some(native);
+            }
 
             let options = tsz::lsp::formatting::FormattingOptions {
                 tab_size: request

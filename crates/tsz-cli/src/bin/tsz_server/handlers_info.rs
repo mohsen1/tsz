@@ -532,6 +532,19 @@ impl Server {
     ) -> TsServerResponse {
         let result = (|| -> Option<serde_json::Value> {
             let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
+            if let Some(native) = self.try_native_typescript_operation(serde_json::json!({
+                "op": "rename",
+                "file": file,
+                "line": line,
+                "offset": offset,
+                "findInStrings": request.arguments.get("findInStrings").and_then(serde_json::Value::as_bool).unwrap_or(false),
+                "findInComments": request.arguments.get("findInComments").and_then(serde_json::Value::as_bool).unwrap_or(false),
+                "preferences": request.arguments.get("preferences").cloned().unwrap_or(serde_json::json!({})),
+                "providePrefixAndSuffixTextForRename": request.arguments.get("providePrefixAndSuffixTextForRename").cloned().unwrap_or(serde_json::Value::Null),
+                "allowRenameOfImportPath": request.arguments.get("allowRenameOfImportPath").cloned().unwrap_or(serde_json::Value::Null),
+            })) {
+                return Some(native);
+            }
             let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
@@ -1731,6 +1744,20 @@ impl Server {
     ) -> TsServerResponse {
         let result = (|| -> Option<serde_json::Value> {
             let file = request.arguments.get("file")?.as_str()?;
+            let native_open_files = if let Some(text) = self.open_files.get(file) {
+                let mut map = serde_json::Map::new();
+                map.insert(file.to_string(), serde_json::Value::String(text.clone()));
+                serde_json::Value::Object(map)
+            } else {
+                serde_json::json!({})
+            };
+            if let Some(native) = self.try_native_typescript_operation(serde_json::json!({
+                "op": "navtree",
+                "file": file,
+                "openFiles": native_open_files,
+            })) {
+                return Some(native);
+            }
             let (arena, _binder, root, source_text) = self.parse_and_bind_file(file)?;
             let line_map = LineMap::build(&source_text);
             let provider = DocumentSymbolProvider::new(&arena, &line_map, &source_text);
@@ -1812,6 +1839,20 @@ impl Server {
     ) -> TsServerResponse {
         let result = (|| -> Option<serde_json::Value> {
             let file = request.arguments.get("file")?.as_str()?;
+            let native_open_files = if let Some(text) = self.open_files.get(file) {
+                let mut map = serde_json::Map::new();
+                map.insert(file.to_string(), serde_json::Value::String(text.clone()));
+                serde_json::Value::Object(map)
+            } else {
+                serde_json::json!({})
+            };
+            if let Some(native) = self.try_native_typescript_operation(serde_json::json!({
+                "op": "navbar",
+                "file": file,
+                "openFiles": native_open_files,
+            })) {
+                return Some(native);
+            }
             let (arena, _binder, root, source_text) = self.parse_and_bind_file(file)?;
             let line_map = LineMap::build(&source_text);
             let provider = DocumentSymbolProvider::new(&arena, &line_map, &source_text);
@@ -1967,6 +2008,13 @@ impl Server {
                 .and_then(|v| v.as_str())?;
             if search_value.is_empty() {
                 return Some(serde_json::json!([]));
+            }
+            if let Some(native) = self.try_native_typescript_operation(serde_json::json!({
+                "op": "navto",
+                "searchValue": search_value,
+                "file": request.arguments.get("file").and_then(serde_json::Value::as_str).unwrap_or(""),
+            })) {
+                return Some(native);
             }
             let search_lower = search_value.to_lowercase();
             let mut nav_items: Vec<serde_json::Value> = Vec::new();

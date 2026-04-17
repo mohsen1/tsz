@@ -678,13 +678,29 @@ impl<'a> RenameProvider<'a> {
 
         parts.reverse();
 
-        // For top-level symbols with the EXPORT_VALUE flag (directly declared
-        // with `export` keyword, e.g. `export class Foo`, `export default class Foo`),
-        // prefix with the quoted module path: '"/path/to/module".SymbolName'.
-        //
-        // Do NOT qualify symbols that are only `is_exported` — this includes
-        // local names re-exported via `export { x as y }` or `export default f`.
-        if is_top_level && symbol.flags & symbol_flags::EXPORT_VALUE != 0 {
+        // For top-level exported values, prefix with the quoted module path:
+        // '"/path/to/module".SymbolName'. This includes direct exports
+        // (`export class Foo`) and local export-specifier aliases
+        // (`export { x as y }`) to match tsserver rename display names.
+        let is_export_specifier_alias = symbol.is_exported
+            && symbol.declarations.iter().any(|&decl_idx| {
+                if let Some(decl_node) = self.arena.get(decl_idx)
+                    && decl_node.kind == syntax_kind_ext::EXPORT_SPECIFIER
+                {
+                    return true;
+                }
+                if let Some(ext) = self.arena.get_extended(decl_idx)
+                    && ext.parent.is_some()
+                    && let Some(parent_node) = self.arena.get(ext.parent)
+                    && parent_node.kind == syntax_kind_ext::EXPORT_SPECIFIER
+                {
+                    return true;
+                }
+                false
+            });
+        if is_top_level
+            && (symbol.flags & symbol_flags::EXPORT_VALUE != 0 || is_export_specifier_alias)
+        {
             let module_name = self
                 .file_name
                 .strip_suffix(".d.ts")
