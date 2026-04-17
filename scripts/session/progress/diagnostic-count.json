@@ -4,6 +4,11 @@
   "status": "active",
   "sessions": [],
   "known_dead_ends": [],
-  "promising_leads": [],
-  "cross_cutting_blockers": []
+  "promising_leads": [
+    "2026-04-17: assignmentCompatWithCallSignatures3.ts under-emits 6x TS2322 — pattern is non-generic source assigned to generic-target signature (e.g. `b6 = a6` where b6 has `<T extends Base, U extends Derived>(...)` and a6 is concrete). tsc rejects (the source can't satisfy ALL instantiations of T); we accept. Likely lives in solver subtype `compareSignaturesRelated` for generic vs non-generic. This pattern likely affects assignmentCompatWithCallSignatures4/5 and assignmentCompatWithConstructSignatures3/4/5 (same family, ~6 tests). HIGH RISK to implement without careful regression testing — kernel change.",
+    "2026-04-17: mappedTypeErrors.ts has dozens of fingerprint diffs that group into 3 patterns: (1) literal narrowing in TypeApplication args (we keep `Pick<Foo, \"a\" | \"b\">`, tsc shows `Pick<Foo, keyof Foo>` — alias preservation), (2) literal vs widened in property types (we say `{ x: 0; y: 0; }`, tsc says `{ x: number; y: number; }` — widening on display), (3) constraint-failure literal preservation (we say `Type 'string' does not satisfy`, tsc says `Type '\"foo\"' does not satisfy` — keep the failing literal). All 3 patterns overlap with type-display-parity and would benefit from coordinating with that campaign. Note: an active WIP in crates/tsz-checker/src/error_reporter/core/diagnostic_source.rs (uncommitted) is investigating display_alias preservation for Omit<this, K> — appears to address pattern (1)."
+  ],
+  "cross_cutting_blockers": [
+    "2026-04-17: The diagnostic-count campaign overlaps heavily with type-display-parity. Many fingerprint-only differences are message-text issues (literal-vs-widened, alias preservation) that live in display.rs as well as in checker error_reporter widening helpers. Two-campaign coordination needed: type-display-parity owns display.rs widening, diagnostic-count owns checker-side widening helpers (e.g. widen_fresh_object_literal_properties_for_display). Without coordination, both campaigns chase the same fingerprints and step on each other."
+  ]
 }
