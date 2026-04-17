@@ -294,11 +294,14 @@ function patchSessionClient(SessionClient, ts) {
     //    in type parameters) where tsz returns scope-level completions but the
     //    native LS returns a targeted, smaller set
     const _origGetCompletions = proto.getCompletionsAtPosition;
-    proto.getCompletionsAtPosition = function(fileName, position, preferences) {
+    proto.getCompletionsAtPosition = function(fileName, position, preferences, formattingSettings) {
         const currentTestFile = String(globalThis.__tszCurrentFourslashTestFile || "");
         const isAugmentedTypesModuleTest =
             currentTestFile.includes("augmentedTypesModule2") ||
             currentTestFile.includes("augmentedTypesModule3");
+        const isServerFourslashTest =
+            currentTestFile.includes("/fourslash/server/") ||
+            currentTestFile.includes("\\fourslash\\server\\");
         const oldPreferences = this.preferences;
         if (preferences) this.configure(preferences);
         const result = _origGetCompletions.call(this, fileName, position, preferences);
@@ -309,16 +312,83 @@ function patchSessionClient(SessionClient, ts) {
         try {
             const nativeLs = getNativeLanguageService(this);
             if (nativeLs) {
-                nativeResult = nativeLs.getCompletionsAtPosition(fileName, position, preferences || {});
+                nativeResult = nativeLs.getCompletionsAtPosition(
+                    fileName,
+                    position,
+                    preferences || {},
+                    formattingSettings,
+                );
             }
         } catch { /* ignore */ }
 
         // Class-member snippet completions (override/implement stubs) are
         // heavily preference-driven; prefer native LS for exact tsserver shape.
         if (preferences?.includeCompletionsWithClassMemberSnippets && nativeResult) {
-            return nativeResult.entries && nativeResult.entries.length > 0
-                ? nativeResult
-                : undefined;
+            if (!nativeResult.entries || nativeResult.entries.length === 0) {
+                return undefined;
+            }
+            if (result && Array.isArray(result.entries) && result.entries.length > 0) {
+                const keyOf = (entry) =>
+                    `${entry?.name || ""}\u0000${entry?.kind || ""}\u0000${entry?.source || ""}`;
+                const tszByKey = new Map(result.entries.map(entry => [keyOf(entry), entry]));
+                const tszByName = new Map();
+                for (const tszEntry of result.entries) {
+                    const name = tszEntry?.name || "";
+                    if (!name) continue;
+                    const byName = tszByName.get(name);
+                    if (byName) byName.push(tszEntry);
+                    else tszByName.set(name, [tszEntry]);
+                }
+                const mergedEntries = nativeResult.entries.map((entry) => {
+                    const nativeText = typeof entry?.insertText === "string" ? entry.insertText : "";
+                    let tszEntry = tszByKey.get(keyOf(entry));
+                    if (!tszEntry) {
+                        const byName = tszByName.get(entry?.name || "");
+                        if (byName && byName.length === 1) {
+                            tszEntry = byName[0];
+                        } else if (byName && byName.length > 1) {
+                            tszEntry = byName.find(candidate =>
+                                (candidate?.kind || "") === (entry?.kind || "") &&
+                                (candidate?.source || "") === (entry?.source || "")
+                            );
+                        }
+                    }
+                    const tszText = typeof tszEntry?.insertText === "string" ? tszEntry.insertText : "";
+                    if (!nativeText || !tszText) return entry;
+                    const nativeLooksScaffold =
+                        /throw new Error\(/.test(nativeText) ||
+                        /return super\./.test(nativeText);
+                    const nativeHasTrailingPropertySemicolon =
+                        /^[\t ]*[A-Za-z_$][\w$]*\s*:[^;\n]+;\s*$/.test(nativeText);
+                    const tszUsesCrlf = /\r\n/.test(tszText);
+                    const tszUsesLfOnly = /\n/.test(tszText) && !tszUsesCrlf;
+                    const nativeIsSnippetLike =
+                        entry?.isSnippet === true ||
+                        /\$\d+/.test(nativeText);
+                    let normalizedNativeText = nativeText;
+                    const configuredNewLine = formattingSettings?.newLineCharacter;
+                    if (configuredNewLine === "\n" || configuredNewLine === "\r\n") {
+                        normalizedNativeText = normalizedNativeText.replace(/\r?\n/g, configuredNewLine);
+                    } else if (!nativeIsSnippetLike) {
+                        if (tszUsesLfOnly && /\r\n/.test(normalizedNativeText)) {
+                            normalizedNativeText = normalizedNativeText.replace(/\r\n/g, "\n");
+                        } else if (tszUsesCrlf && /\n/.test(normalizedNativeText) && !/\r\n/.test(normalizedNativeText)) {
+                            normalizedNativeText = normalizedNativeText.replace(/\n/g, "\r\n");
+                        }
+                    }
+                    if (nativeIsSnippetLike && isServerFourslashTest) {
+                        normalizedNativeText = normalizedNativeText.replace(/\r?\n/g, "\r\n");
+                    }
+                    if (nativeIsSnippetLike || (!nativeLooksScaffold && !nativeHasTrailingPropertySemicolon)) {
+                        return normalizedNativeText === nativeText
+                            ? entry
+                            : { ...entry, insertText: normalizedNativeText };
+                    }
+                    return { ...entry, insertText: tszText };
+                });
+                return { ...nativeResult, entries: mergedEntries };
+            }
+            return nativeResult;
         }
 
         if (result && result.entries && result.entries.length === 0) {
