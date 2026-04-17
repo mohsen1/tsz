@@ -546,9 +546,16 @@ impl Server {
                 .get(file)
                 .cloned()
                 .or_else(|| std::fs::read_to_string(file).ok())?;
-            let request_options = request.arguments.get("options").cloned().unwrap_or_default();
+            let request_options = request
+                .arguments
+                .get("options")
+                .cloned()
+                .unwrap_or_default();
             let mut native_open_map = serde_json::Map::new();
-            native_open_map.insert(file.to_string(), serde_json::Value::String(source_text.clone()));
+            native_open_map.insert(
+                file.to_string(),
+                serde_json::Value::String(source_text.clone()),
+            );
             if let Some(native) = self.try_native_typescript_operation(serde_json::json!({
                 "op": "format",
                 "file": file,
@@ -736,9 +743,16 @@ impl Server {
             let line = request.arguments.get("line")?.as_u64()? as u32;
             let offset = request.arguments.get("offset")?.as_u64()? as u32;
             let key = request.arguments.get("key")?.as_str()?;
-            let request_options = request.arguments.get("options").cloned().unwrap_or_default();
+            let request_options = request
+                .arguments
+                .get("options")
+                .cloned()
+                .unwrap_or_default();
             let mut native_open_map = serde_json::Map::new();
-            native_open_map.insert(file.to_string(), serde_json::Value::String(source_text.clone()));
+            native_open_map.insert(
+                file.to_string(),
+                serde_json::Value::String(source_text.clone()),
+            );
             if let Some(native) = self.try_native_typescript_operation(serde_json::json!({
                 "op": "formatOnKey",
                 "file": file,
