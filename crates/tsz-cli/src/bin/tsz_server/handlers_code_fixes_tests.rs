@@ -163,7 +163,7 @@ fn rewrite_single_import_to_commonjs_require_converts_named_import() {
         "import { variants } from \"./matrix.js\";\n",
     )
     .expect("expected named import rewrite");
-    assert_eq!(rewritten, "const { variants } = require(\"./matrix\");\n");
+    assert_eq!(rewritten, "const { variants } = require(\"./matrix\")\n");
 }
 
 #[test]
