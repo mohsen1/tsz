@@ -1341,8 +1341,11 @@ impl Server {
                     continue;
                 }
                 for name in Self::find_all_binding_identifiers(lhs) {
-                    if Self::is_value_name_declared_before_offset(content, name.as_str(), line_start)
-                    {
+                    if Self::is_value_name_declared_before_offset(
+                        content,
+                        name.as_str(),
+                        line_start,
+                    ) {
                         saw_declared = true;
                     } else {
                         saw_undeclared = true;
