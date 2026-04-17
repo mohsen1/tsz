@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::code_actions::{ImportCandidate, ImportCandidateKind};
 use crate::completions::{CompletionItem, CompletionItemKind, sort_priority};
@@ -18,6 +18,12 @@ use tsz_parser::{NodeArena, NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 use super::{ExportMatch, ImportKind, ImportTarget, Project, ProjectFile};
+
+#[derive(Default)]
+struct BareSpecifierSourceCache {
+    quoted_literal_match: FxHashMap<String, bool>,
+    import_like_match: FxHashMap<String, bool>,
+}
 
 impl Project {
     pub(crate) fn definition_from_import(
@@ -98,6 +104,8 @@ impl Project {
         }
         let allowed_packages = self.allowed_dependency_package_names(from_file.file_name());
         let existing_imported_packages = Self::imported_package_names(from_file);
+        let mut source_cache = BareSpecifierSourceCache::default();
+        let mut module_specifiers_cache: FxHashMap<String, Vec<String>> = FxHashMap::default();
 
         // Try optimized path for named exports using symbol index
         let candidate_files = self.symbol_index.get_files_with_symbol(missing_name);
@@ -127,6 +135,7 @@ impl Project {
                     from_file.source_text(),
                     allowed_packages.as_ref(),
                     &existing_imported_packages,
+                    &mut source_cache,
                 ) {
                     continue;
                 }
@@ -154,8 +163,11 @@ impl Project {
                 }
             }
 
-            let module_specifiers =
-                self.auto_import_module_specifiers_from_files(from_file.file_name(), &file_name);
+            let module_specifiers = module_specifiers_cache
+                .entry(file_name.clone())
+                .or_insert_with(|| {
+                    self.auto_import_module_specifiers_from_files(from_file.file_name(), &file_name)
+                });
             if module_specifiers.is_empty() {
                 continue;
             }
@@ -166,15 +178,20 @@ impl Project {
                 continue;
             }
 
-            let Some(module_specifier) = module_specifiers.into_iter().find(|module_specifier| {
-                !self.is_auto_import_candidate_excluded(
-                    &file_name,
-                    module_specifier,
-                    from_file.source_text(),
-                    allowed_packages.as_ref(),
-                    &existing_imported_packages,
-                )
-            }) else {
+            let Some(module_specifier) = module_specifiers
+                .iter()
+                .find(|module_specifier| {
+                    !self.is_auto_import_candidate_excluded(
+                        &file_name,
+                        module_specifier,
+                        from_file.source_text(),
+                        allowed_packages.as_ref(),
+                        &existing_imported_packages,
+                        &mut source_cache,
+                    )
+                })
+                .cloned()
+            else {
                 continue;
             };
 
@@ -241,6 +258,8 @@ impl Project {
         }
         let allowed_packages = self.allowed_dependency_package_names(from_file.file_name());
         let existing_imported_packages = Self::imported_package_names(from_file);
+        let mut source_cache = BareSpecifierSourceCache::default();
+        let mut module_specifiers_cache: FxHashMap<String, Vec<String>> = FxHashMap::default();
 
         // Get all symbols that match the prefix using the sorted symbol index
         let matching_symbols = self.symbol_index.get_symbols_with_prefix(prefix);
@@ -267,6 +286,7 @@ impl Project {
                         from_file.source_text(),
                         allowed_packages.as_ref(),
                         &existing_imported_packages,
+                        &mut source_cache,
                     ) {
                         continue;
                     }
@@ -296,8 +316,14 @@ impl Project {
                     }
                 }
 
-                let module_specifiers = self
-                    .auto_import_module_specifiers_from_files(from_file.file_name(), &file_name);
+                let module_specifiers = module_specifiers_cache
+                    .entry(file_name.clone())
+                    .or_insert_with(|| {
+                        self.auto_import_module_specifiers_from_files(
+                            from_file.file_name(),
+                            &file_name,
+                        )
+                    });
                 if module_specifiers.is_empty() {
                     continue;
                 }
@@ -308,16 +334,19 @@ impl Project {
                     continue;
                 }
 
-                let Some(module_specifier) =
-                    module_specifiers.into_iter().find(|module_specifier| {
+                let Some(module_specifier) = module_specifiers
+                    .iter()
+                    .find(|module_specifier| {
                         !self.is_auto_import_candidate_excluded(
                             &file_name,
                             module_specifier,
                             from_file.source_text(),
                             allowed_packages.as_ref(),
                             &existing_imported_packages,
+                            &mut source_cache,
                         )
                     })
+                    .cloned()
                 else {
                     continue;
                 };
@@ -497,6 +526,7 @@ impl Project {
         from_source_text: &str,
         allowed_packages: Option<&FxHashSet<String>>,
         existing_imported_packages: &FxHashSet<String>,
+        source_cache: &mut BareSpecifierSourceCache,
     ) -> bool {
         let Some(package_name) = Self::module_specifier_package_name(module_specifier) else {
             return true;
@@ -506,14 +536,26 @@ impl Project {
             (!package_name.starts_with("node:")).then(|| format!("node:{package_name}"));
         let node_stripped = package_name.strip_prefix("node:");
 
-        let quoted_in_source =
-            Self::source_contains_quoted_package_literal(from_source_text, package_name)
-                || node_prefixed.as_deref().is_some_and(|candidate| {
-                    Self::source_contains_quoted_package_literal(from_source_text, candidate)
-                })
-                || node_stripped.is_some_and(|candidate| {
-                    Self::source_contains_quoted_package_literal(from_source_text, candidate)
-                });
+        let mut cached_quoted_literal_match = |candidate: &str| {
+            if let Some(cached) = source_cache.quoted_literal_match.get(candidate) {
+                return *cached;
+            }
+            let matched = Self::source_contains_quoted_package_literal(from_source_text, candidate);
+            source_cache
+                .quoted_literal_match
+                .insert(candidate.to_string(), matched);
+            matched
+        };
+        let mut cached_import_like_match = |candidate: &str| {
+            if let Some(cached) = source_cache.import_like_match.get(candidate) {
+                return *cached;
+            }
+            let matched = Self::source_contains_import_like_package_usage(from_source_text, candidate);
+            source_cache
+                .import_like_match
+                .insert(candidate.to_string(), matched);
+            matched
+        };
 
         let has_existing_import = existing_imported_packages.contains(package_name)
             || node_prefixed
@@ -525,18 +567,20 @@ impl Project {
         // Guard against stale parser snapshots in edit-heavy server tests:
         // only trust existing-import evidence when the package literal is
         // still present in the current source text.
+        let quoted_in_source = cached_quoted_literal_match(package_name)
+            || node_prefixed
+                .as_deref()
+                .is_some_and(&mut cached_quoted_literal_match)
+            || node_stripped.is_some_and(&mut cached_quoted_literal_match);
         if has_existing_import && quoted_in_source {
             return true;
         }
 
-        let import_like_in_source =
-            Self::source_contains_import_like_package_usage(from_source_text, package_name)
-                || node_prefixed.as_deref().is_some_and(|candidate| {
-                    Self::source_contains_import_like_package_usage(from_source_text, candidate)
-                })
-                || node_stripped.is_some_and(|candidate| {
-                    Self::source_contains_import_like_package_usage(from_source_text, candidate)
-                });
+        let import_like_in_source = cached_import_like_match(package_name)
+            || node_prefixed
+                .as_deref()
+                .is_some_and(&mut cached_import_like_match)
+            || node_stripped.is_some_and(&mut cached_import_like_match);
         if import_like_in_source {
             return true;
         }
@@ -553,6 +597,7 @@ impl Project {
         from_source_text: &str,
         allowed_packages: Option<&FxHashSet<String>>,
         existing_imported_packages: &FxHashSet<String>,
+        source_cache: &mut BareSpecifierSourceCache,
     ) -> bool {
         if self.auto_import_specifier_is_excluded(module_specifier) {
             return true;
@@ -571,6 +616,7 @@ impl Project {
             from_source_text,
             allowed_packages,
             existing_imported_packages,
+            source_cache,
         ) {
             return true;
         }
@@ -591,6 +637,7 @@ impl Project {
         from_source_text: &str,
         allowed_packages: Option<&FxHashSet<String>>,
         existing_imported_packages: &FxHashSet<String>,
+        source_cache: &mut BareSpecifierSourceCache,
     ) -> bool {
         if self.auto_import_specifier_is_excluded(module_specifier) {
             return true;
@@ -605,6 +652,7 @@ impl Project {
             from_source_text,
             allowed_packages,
             existing_imported_packages,
+            source_cache,
         ) {
             return true;
         }
