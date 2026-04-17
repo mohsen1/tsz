@@ -8537,6 +8537,64 @@ let {[foo]: bar} = {bar: "baz"};
     );
 }
 
+/// TS2538 for computed property keys with `any` type in destructuring assignments.
+///
+/// When a computed key in a destructuring ASSIGNMENT pattern has type `any`
+/// (e.g., from calling a non-callable or invalid arithmetic), tsc emits TS2538
+/// "Type 'any' cannot be used as an index type." Previously we only emitted
+/// TS2538 for variable declaration destructuring, not assignment destructuring.
+#[test]
+fn test_ts2538_computed_key_any_type_in_destructuring_assignment() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+let foo = "bar";
+let bar4: any;
+[{[foo()]: bar4}] = [{bar: "bar"}];
+        "#,
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        has_error(&relevant, 2538),
+        "Should emit TS2538 for `any`-typed computed key in destructuring assignment.\nActual errors: {relevant:#?}"
+    );
+}
+
+/// Binary arithmetic with invalid operand types should produce `any` result type.
+///
+/// When `+` is applied to incompatible types (e.g., `1 + {}`), tsc returns
+/// `any` as the expression result type. This ensures downstream checks like
+/// TS2538 see `any` rather than a misleading `number`.
+#[test]
+fn test_binary_plus_invalid_operand_produces_any_result() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+let bar4: any;
+[{[(1 + {})]: bar4}] = [{bar: "bar"}];
+        "#,
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        has_error(&relevant, 2538),
+        "Should emit TS2538 (not TS2537) for `any`-typed result of invalid `1 + {{}}`.\nActual errors: {relevant:#?}"
+    );
+    assert!(
+        !relevant.iter().any(|(code, _)| *code == 2537),
+        "Should NOT emit TS2537 when key type is `any`.\nActual errors: {relevant:#?}"
+    );
+}
+
 /// Issue: Contextual typing for generic function parameters
 ///
 /// From: contextual-typing-generics.md

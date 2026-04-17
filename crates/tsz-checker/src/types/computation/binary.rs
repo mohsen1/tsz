@@ -2081,12 +2081,16 @@ impl<'a> CheckerState<'a> {
                                 );
                             }
                         }
-                        // Result type depends on operator category:
+                        // Result type depends on operator category and error state:
                         // - Equality/relational → boolean
-                        // - Arithmetic (+, -, *, /, %, **) → number
-                        //   (+ could also be string, but number is a safe fallback
-                        //    that avoids cascading TS2322 from boolean)
-                        if is_arithmetic_op {
+                        // - Arithmetic with error (incompatible types) → any
+                        //   tsc returns `any` for failed arithmetic ops so that
+                        //   downstream checks (e.g., TS2538 for destructuring keys)
+                        //   see `any` rather than a misleading concrete type.
+                        // - Arithmetic without error (comparable) → number
+                        if !is_comparable && is_arithmetic_op {
+                            TypeId::ANY
+                        } else if is_arithmetic_op {
                             TypeId::NUMBER
                         } else {
                             TypeId::BOOLEAN
