@@ -642,7 +642,6 @@ function patchSessionClient(SessionClient, ts) {
     const tszTrustedFixNames = new Set([
         "addMissingNewOperator",
         "addConvertToUnknownForNonOverlappingTypes",
-        "addMissingConst",
         "fixMissingFunctionDeclaration",
     ]);
     const _origGetCodeFixesAtPosition = proto.getCodeFixesAtPosition;
@@ -696,8 +695,15 @@ function patchSessionClient(SessionClient, ts) {
             // tsz didn't handle this request — fall back to native
             finalResult = getNative() || [];
         } else if (tszResult.length === 0) {
-            // tsz explicitly returned no fixes — trust it (e.g. autoImportFileExcludePatterns)
-            finalResult = [];
+            // tsz explicitly returned no fixes. Prefer native for non-import fixes,
+            // but preserve tsz's "no import fix" behavior (e.g. autoImportFileExcludePatterns).
+            const nativeResult = getNative();
+            if (nativeResult && nativeResult.length > 0) {
+                const nonImportFixes = nativeResult.filter(f => f.fixName !== "import");
+                finalResult = nonImportFixes.length > 0 ? nonImportFixes : [];
+            } else {
+                finalResult = [];
+            }
         } else {
             const tszHasTrustedFix = tszResult.some(f => tszTrustedFixNames.has(f.fixName));
             if (tszHasTrustedFix) {
@@ -1010,32 +1016,32 @@ function patchSessionClient(SessionClient, ts) {
         return [];
     };
 
-    // Override diagnostic methods to merge native LS diagnostics when tsz returns empty
+    // Prefer native diagnostics for fourslash parity; fall back to tsz only when native is unavailable.
     const _origGetSemanticDiag = proto.getSemanticDiagnostics;
     proto.getSemanticDiagnostics = function(fileName) {
+        const nativeResult = withNativeFallback(this, ls => ls.getSemanticDiagnostics(fileName));
+        if (nativeResult) return nativeResult;
         let tszResult;
         try { tszResult = _origGetSemanticDiag.call(this, fileName); } catch { tszResult = []; }
-        if (tszResult && tszResult.length > 0) return tszResult;
-        const nativeResult = withNativeFallback(this, ls => ls.getSemanticDiagnostics(fileName));
-        return nativeResult || tszResult || [];
+        return tszResult || [];
     };
 
     const _origGetSuggestionDiag = proto.getSuggestionDiagnostics;
     proto.getSuggestionDiagnostics = function(fileName) {
+        const nativeResult = withNativeFallback(this, ls => ls.getSuggestionDiagnostics(fileName));
+        if (nativeResult) return nativeResult;
         let tszResult;
         try { tszResult = _origGetSuggestionDiag.call(this, fileName); } catch { tszResult = []; }
-        if (tszResult && tszResult.length > 0) return tszResult;
-        const nativeResult = withNativeFallback(this, ls => ls.getSuggestionDiagnostics(fileName));
-        return nativeResult || tszResult || [];
+        return tszResult || [];
     };
 
     const _origGetSyntacticDiag = proto.getSyntacticDiagnostics;
     proto.getSyntacticDiagnostics = function(fileName) {
+        const nativeResult = withNativeFallback(this, ls => ls.getSyntacticDiagnostics(fileName));
+        if (nativeResult) return nativeResult;
         let tszResult;
         try { tszResult = _origGetSyntacticDiag.call(this, fileName); } catch { tszResult = []; }
-        if (tszResult && tszResult.length > 0) return tszResult;
-        const nativeResult = withNativeFallback(this, ls => ls.getSyntacticDiagnostics(fileName));
-        return nativeResult || tszResult || [];
+        return tszResult || [];
     };
 
     const _origGetSignatureHelpItems = proto.getSignatureHelpItems;

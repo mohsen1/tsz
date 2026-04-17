@@ -491,7 +491,6 @@ function patchSessionClient(SessionClient, ts) {
     const tszPreferredFixNames = new Set([
         "addMissingNewOperator",
         "addConvertToUnknownForNonOverlappingTypes",
-        "addMissingConst",
         "fixMissingFunctionDeclaration",
     ]);
     const tszSpanSuppressionFixNames = new Set([
@@ -563,7 +562,7 @@ function patchSessionClient(SessionClient, ts) {
         }
 
         // Get native LS results
-        function getNative() {
+        const getNative = () => {
             try {
                 const nativeLs = getNativeLanguageService(this);
                 if (!nativeLs) return undefined;
@@ -619,7 +618,7 @@ function patchSessionClient(SessionClient, ts) {
             } catch {
                 return undefined;
             }
-        }
+        };
 
         // When an enum member fix exists for this file, use tsz exclusively:
         // return the enum fix for TS2339, suppress everything else to avoid
@@ -659,8 +658,15 @@ function patchSessionClient(SessionClient, ts) {
             // tsz didn't handle this request - use native
             finalResult = getNative() || [];
         } else if (tszResult.length === 0) {
-            // tsz explicitly returned no fixes - trust it
-            finalResult = [];
+            // tsz explicitly returned no fixes. Prefer native for non-import fixes,
+            // but preserve tsz's "no import fix" behavior.
+            const nativeResult = getNative();
+            if (nativeResult && nativeResult.length > 0) {
+                const nonImportFixes = nativeResult.filter(f => f.fixName !== "import");
+                finalResult = nonImportFixes.length > 0 ? nonImportFixes : [];
+            } else {
+                finalResult = [];
+            }
         } else {
             // tsz returned something - use native if available (it matches tsc exactly),
             // but fall back to tsz if native has no results.
@@ -1038,53 +1044,44 @@ function patchSessionClient(SessionClient, ts) {
         return [];
     };
 
-    // Override diagnostic methods to merge native LS diagnostics with tsz-server's.
-    // Many code fix tests depend on specific error codes that tsz-server may not emit.
+    // Prefer native diagnostics for fourslash parity; fall back to tsz only when native is unavailable.
     const _origGetSemanticDiag = proto.getSemanticDiagnostics;
     proto.getSemanticDiagnostics = function(fileName) {
+        const nativeResult = withNativeFallback(this, ls => ls.getSemanticDiagnostics(fileName));
+        if (nativeResult) return nativeResult;
         let tszResult;
         try {
             tszResult = _origGetSemanticDiag.call(this, fileName);
         } catch {
             tszResult = [];
         }
-
-        // If tsz returned diagnostics, use them
-        if (tszResult && tszResult.length > 0) return tszResult;
-
-        // Fallback to native LS diagnostics
-        const nativeResult = withNativeFallback(this, ls => ls.getSemanticDiagnostics(fileName));
-        return nativeResult || tszResult || [];
+        return tszResult || [];
     };
 
     const _origGetSuggestionDiag = proto.getSuggestionDiagnostics;
     proto.getSuggestionDiagnostics = function(fileName) {
+        const nativeResult = withNativeFallback(this, ls => ls.getSuggestionDiagnostics(fileName));
+        if (nativeResult) return nativeResult;
         let tszResult;
         try {
             tszResult = _origGetSuggestionDiag.call(this, fileName);
         } catch {
             tszResult = [];
         }
-
-        if (tszResult && tszResult.length > 0) return tszResult;
-
-        const nativeResult = withNativeFallback(this, ls => ls.getSuggestionDiagnostics(fileName));
-        return nativeResult || tszResult || [];
+        return tszResult || [];
     };
 
     const _origGetSyntacticDiag = proto.getSyntacticDiagnostics;
     proto.getSyntacticDiagnostics = function(fileName) {
+        const nativeResult = withNativeFallback(this, ls => ls.getSyntacticDiagnostics(fileName));
+        if (nativeResult) return nativeResult;
         let tszResult;
         try {
             tszResult = _origGetSyntacticDiag.call(this, fileName);
         } catch {
             tszResult = [];
         }
-
-        if (tszResult && tszResult.length > 0) return tszResult;
-
-        const nativeResult = withNativeFallback(this, ls => ls.getSyntacticDiagnostics(fileName));
-        return nativeResult || tszResult || [];
+        return tszResult || [];
     };
 
     // Override getSignatureHelpItems to:
