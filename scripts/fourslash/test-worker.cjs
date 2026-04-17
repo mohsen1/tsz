@@ -325,6 +325,35 @@ function patchSessionClient(SessionClient, ts) {
             if (result && result.entries && result.entries.length > 0) {
                 result.isNewIdentifierLocation = nativeResult.isNewIdentifierLocation;
             }
+            // In JS files, preserve native warning-style identifier entries
+            // (e.g. "__foo") that tsz may currently omit.
+            if (
+                result &&
+                Array.isArray(result.entries) &&
+                result.entries.length > 0 &&
+                nativeResult &&
+                Array.isArray(nativeResult.entries) &&
+                nativeResult.entries.length > 0 &&
+                /\.(?:mjs|cjs|js|jsx)$/i.test(fileName)
+            ) {
+                const jsIdentifierSortText =
+                    ts?.Completions?.SortText?.JavascriptIdentifiers;
+                const seenEntries = new Set(
+                    result.entries.map(entry => `${entry?.name ?? ""}\u0000${entry?.kind ?? ""}`)
+                );
+                for (const nativeEntry of nativeResult.entries) {
+                    const isJsIdentifierWarning =
+                        nativeEntry?.kind === "warning" ||
+                        (jsIdentifierSortText !== undefined &&
+                            nativeEntry?.sortText === jsIdentifierSortText);
+                    if (!isJsIdentifierWarning || !nativeEntry?.name) continue;
+
+                    const key = `${nativeEntry.name}\u0000${nativeEntry.kind ?? ""}`;
+                    if (seenEntries.has(key)) continue;
+                    result.entries.push(nativeEntry);
+                    seenEntries.add(key);
+                }
+            }
             // When the native LS returns a focused member-completion set (e.g.
             // property names from a type constraint) and tsz returns a much
             // larger scope-level set, prefer native LS entries.
