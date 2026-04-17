@@ -213,6 +213,11 @@ impl<'a> SignatureHelpProvider<'a> {
         let Some((call_node_idx, call_site, call_kind)) =
             self.find_containing_call(leaf_node, offset)
         else {
+            if let Some(help) = self.signature_help_for_contextual_variable_initializer(
+                root, leaf_node, offset, type_cache,
+            ) {
+                return Some(help);
+            }
             if let Some(help) = self.signature_help_for_textual_call(root, offset, type_cache) {
                 return Some(help);
             }
@@ -319,6 +324,19 @@ impl<'a> SignatureHelpProvider<'a> {
             (checker.get_type_of_node(callee_expr), access_docs)
         };
         let callee_type = checker.resolve_lazy_type(callee_type);
+        if !in_type_argument_list
+            && call_kind == CallKind::Call
+            && let CallSite::Regular(call_expr) = &call_site
+            && let Some(help) = self.contextual_signature_help_from_call_argument(
+                call_expr,
+                offset,
+                callee_type,
+                &checker,
+            )
+        {
+            *type_cache = Some(checker.extract_cache());
+            return Some(help);
+        }
 
         // 6. Resolve the callee name for display
         let callee_name = if is_super_call {
@@ -702,6 +720,745 @@ impl<'a> SignatureHelpProvider<'a> {
         }
 
         None
+    }
+
+    fn signature_help_for_contextual_variable_initializer(
+        &self,
+        _root: NodeIndex,
+        start_node: NodeIndex,
+        cursor_offset: u32,
+        type_cache: &mut Option<tsz_checker::TypeCache>,
+    ) -> Option<SignatureHelp> {
+        let mut current = start_node;
+        let mut declaration_idx = NodeIndex::NONE;
+        if current.is_some() {
+            while current.is_some() {
+                let node = self.arena.get(current)?;
+                if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                    declaration_idx = current;
+                    break;
+                }
+                current = self.arena.get_extended(current)?.parent;
+            }
+        } else {
+            // Comment-marker cursors can sit outside any concrete syntax node.
+            // In that case, recover by locating the tightest variable declaration
+            // initializer span containing the cursor.
+            let mut best_len = u32::MAX;
+            for (idx, node) in self.arena.nodes.iter().enumerate() {
+                if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+                    continue;
+                }
+                let Some(decl) = self.arena.get_variable_declaration(node) else {
+                    continue;
+                };
+                if !decl.initializer.is_some() {
+                    continue;
+                }
+                let Some(init_node) = self.arena.get(decl.initializer) else {
+                    continue;
+                };
+                if cursor_offset < init_node.pos || cursor_offset > init_node.end {
+                    continue;
+                }
+                let len = node.end.saturating_sub(node.pos);
+                if len < best_len {
+                    best_len = len;
+                    declaration_idx = NodeIndex(idx as u32);
+                }
+            }
+        }
+        if !declaration_idx.is_some() {
+            return None;
+        }
+
+        let decl_node = self.arena.get(declaration_idx)?;
+        let decl = self.arena.get_variable_declaration(decl_node)?;
+        if !decl.type_annotation.is_some() || !decl.initializer.is_some() {
+            return None;
+        }
+        let initializer_node = self.arena.get(decl.initializer)?;
+        if cursor_offset < initializer_node.pos || cursor_offset > initializer_node.end {
+            return None;
+        }
+        let lower_bound = initializer_node.pos;
+        let open_paren = self.find_unmatched_open_paren_before(lower_bound, cursor_offset)?;
+        let active_parameter =
+            self.count_top_level_commas_in_range((open_paren + 1) as usize, cursor_offset as usize);
+        let arg_count = self.textual_argument_count_for_open_paren(open_paren, cursor_offset);
+
+        let var_name = self
+            .arena
+            .get_identifier_text(decl.name)
+            .map(std::string::ToString::to_string)
+            .unwrap_or_default();
+        if var_name.is_empty() {
+            return None;
+        }
+        let contextual_name = self
+            .arena
+            .get(decl.type_annotation)
+            .and_then(|type_node| {
+                if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+                    return None;
+                }
+                let type_ref = self.arena.get_type_ref(type_node)?;
+                self.arena
+                    .get_identifier_text(type_ref.type_name)
+                    .map(std::string::ToString::to_string)
+            })
+            .unwrap_or_else(|| var_name.clone());
+
+        let compiler_options = tsz_checker::context::CheckerOptions {
+            strict: self.strict,
+            no_implicit_any: self.strict,
+            no_implicit_returns: false,
+            no_implicit_this: self.strict,
+            strict_null_checks: self.strict,
+            strict_function_types: self.strict,
+            strict_property_initialization: self.strict,
+            use_unknown_in_catch_variables: self.strict,
+            isolated_modules: false,
+            ..Default::default()
+        };
+        let mut checker = if let Some(cache) = type_cache.take() {
+            CheckerState::with_cache(
+                self.arena,
+                self.binder,
+                self.interner,
+                self.file_name.clone(),
+                cache,
+                compiler_options,
+            )
+        } else {
+            CheckerState::new(
+                self.arena,
+                self.binder,
+                self.interner,
+                self.file_name.clone(),
+                compiler_options,
+            )
+        };
+
+        let contextual_type = checker.get_type_of_node(decl.type_annotation);
+        let contextual_type = checker.resolve_lazy_type(contextual_type);
+        let mut signatures = self.get_signatures_from_type(
+            contextual_type,
+            &checker,
+            CallKind::Call,
+            &contextual_name,
+            false,
+            &[],
+        );
+        if signatures.is_empty()
+            && let Some(type_node) = self.arena.get(decl.type_annotation)
+        {
+            let start = type_node.pos as usize;
+            let end = (type_node.end as usize).min(self.source_text.len());
+            if start < end {
+                let type_text = self.source_text[start..end]
+                    .trim()
+                    .trim_end_matches('=')
+                    .trim_end();
+                if let Some(info) =
+                    self.signature_info_from_member_signature_text(&contextual_name, type_text)
+                {
+                    signatures = vec![self.signature_candidate_from_info(info)];
+                }
+            }
+        }
+        for sig in &mut signatures {
+            if !sig.type_param_substitutions.is_empty() {
+                apply_type_param_substitution(&mut sig.info, &sig.type_param_substitutions);
+            }
+        }
+        if signatures.is_empty() {
+            *type_cache = Some(checker.extract_cache());
+            return None;
+        }
+        *type_cache = Some(checker.extract_cache());
+
+        let active_signature =
+            self.select_active_signature(&signatures, arg_count, active_parameter, &[]);
+        let active_parameter = self.clamp_active_parameter(
+            &signatures,
+            active_signature,
+            active_parameter,
+            arg_count,
+        );
+
+        Some(SignatureHelp {
+            signatures: signatures.into_iter().map(|sig| sig.info).collect(),
+            active_signature,
+            active_parameter,
+            argument_count: arg_count as u32,
+            applicable_span_start: open_paren + 1,
+            applicable_span_length: cursor_offset.saturating_sub(open_paren + 1),
+        })
+    }
+
+    fn contextual_signature_help_from_call_argument(
+        &self,
+        call_expr: &CallExprData,
+        cursor_offset: u32,
+        callee_type: TypeId,
+        checker: &CheckerState<'_>,
+    ) -> Option<SignatureHelp> {
+        let (arg_index, arg_node_idx) =
+            self.argument_index_and_node_at_cursor(call_expr, cursor_offset)?;
+        let (outer_param_type, outer_param_name) =
+            self.parameter_type_and_name_at(callee_type, CallKind::Call, arg_index)?;
+        let arg_node = self.arena.get(arg_node_idx)?;
+        let mut source_signature: Option<SignatureInformation> = None;
+
+        let (context_type, context_name, scan_start) = if let Some((member_name, member_idx)) =
+            self.enclosing_object_member_name_within_argument(arg_node_idx, cursor_offset)
+        {
+            let member_node = self.arena.get(member_idx)?;
+            if let Some(prop_type) = self.contextual_property_type_from_type(outer_param_type, &member_name) {
+                (prop_type, member_name, member_node.pos)
+            } else if let Some(sig_info) = self
+                .source_contextual_member_signature(checker, outer_param_type, &member_name)
+            {
+                source_signature = Some(sig_info);
+                (TypeId::ERROR, member_name, member_node.pos)
+            } else {
+                return None;
+            }
+        } else if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            && let Some(member_name) =
+                self.object_member_name_from_argument_text(arg_node_idx, cursor_offset)
+        {
+            if let Some(prop_type) = self.contextual_property_type_from_type(outer_param_type, &member_name) {
+                (prop_type, member_name, arg_node.pos)
+            } else if let Some(sig_info) = self
+                .source_contextual_member_signature(checker, outer_param_type, &member_name)
+            {
+                source_signature = Some(sig_info);
+                (TypeId::ERROR, member_name, arg_node.pos)
+            } else {
+                return None;
+            }
+        } else {
+            let kind = arg_node.kind;
+            let looks_like_callback = kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                || kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || kind == syntax_kind_ext::ARROW_FUNCTION;
+            if !looks_like_callback {
+                return None;
+            }
+            (
+                outer_param_type,
+                outer_param_name.unwrap_or_else(|| "callback".to_string()),
+                arg_node.pos,
+            )
+        };
+
+        let mut signatures = if let Some(sig_info) = source_signature {
+            vec![self.signature_candidate_from_info(sig_info)]
+        } else {
+            self.get_signatures_from_type(
+                context_type,
+                checker,
+                CallKind::Call,
+                &context_name,
+                false,
+                &[],
+            )
+        };
+        for sig in &mut signatures {
+            if !sig.type_param_substitutions.is_empty() {
+                apply_type_param_substitution(&mut sig.info, &sig.type_param_substitutions);
+            }
+        }
+        if signatures.is_empty() {
+            return None;
+        }
+
+        let open_paren = self.find_unmatched_open_paren_before(scan_start, cursor_offset)?;
+        let contextual_active_parameter =
+            self.count_top_level_commas_in_range((open_paren + 1) as usize, cursor_offset as usize);
+        let arg_count = self.textual_argument_count_for_open_paren(open_paren, cursor_offset);
+        let active_signature =
+            self.select_active_signature(&signatures, arg_count, contextual_active_parameter, &[]);
+        let active_parameter = self.clamp_active_parameter(
+            &signatures,
+            active_signature,
+            contextual_active_parameter,
+            arg_count,
+        );
+
+        Some(SignatureHelp {
+            signatures: signatures.into_iter().map(|sig| sig.info).collect(),
+            active_signature,
+            active_parameter,
+            argument_count: arg_count as u32,
+            applicable_span_start: open_paren + 1,
+            applicable_span_length: cursor_offset.saturating_sub(open_paren + 1),
+        })
+    }
+
+    fn argument_index_and_node_at_cursor(
+        &self,
+        call_expr: &CallExprData,
+        cursor_offset: u32,
+    ) -> Option<(usize, NodeIndex)> {
+        let args = call_expr.arguments.as_ref()?;
+        for (idx, &arg_idx) in args.nodes.iter().enumerate() {
+            let node = self.arena.get(arg_idx)?;
+            if node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                continue;
+            }
+            if cursor_offset > node.pos && cursor_offset <= node.end {
+                return Some((idx, arg_idx));
+            }
+        }
+        None
+    }
+
+    fn object_member_name_from_argument_text(
+        &self,
+        argument_idx: NodeIndex,
+        cursor_offset: u32,
+    ) -> Option<String> {
+        let arg_node = self.arena.get(argument_idx)?;
+        let start = arg_node.pos as usize;
+        let end = (cursor_offset as usize)
+            .min(arg_node.end as usize)
+            .min(self.source_text.len());
+        if start >= end {
+            return None;
+        }
+        let prefix = &self.source_text[start..end];
+        let colon_candidate = prefix
+            .rfind(':')
+            .and_then(|idx| self.identifier_before_offset(prefix, idx).map(|name| (idx, name)));
+        let paren_candidate = prefix.rfind('(').and_then(|idx| {
+            let name = self.identifier_before_offset(prefix, idx)?;
+            if name == "function" {
+                return None;
+            }
+            Some((idx, name))
+        });
+
+        match (colon_candidate, paren_candidate) {
+            (Some((ci, cname)), Some((pi, pname))) => {
+                if pi > ci {
+                    Some(pname)
+                } else {
+                    Some(cname)
+                }
+            }
+            (Some((_, cname)), None) => Some(cname),
+            (None, Some((_, pname))) => Some(pname),
+            (None, None) => None,
+        }
+    }
+
+    fn identifier_before_offset(&self, text: &str, offset: usize) -> Option<String> {
+        if offset == 0 || offset > text.len() {
+            return None;
+        }
+        let bytes = text.as_bytes();
+        let mut end = offset;
+        while end > 0 && bytes[end - 1].is_ascii_whitespace() {
+            end -= 1;
+        }
+        if end == 0 {
+            return None;
+        }
+        let mut start = end;
+        while start > 0 && Self::is_ascii_identifier_byte(bytes[start - 1]) {
+            start -= 1;
+        }
+        (start < end).then(|| text[start..end].to_string())
+    }
+
+    fn parameter_type_and_name_at(
+        &self,
+        type_id: TypeId,
+        call_kind: CallKind,
+        arg_index: usize,
+    ) -> Option<(TypeId, Option<String>)> {
+        if let Some(shape_id) = visitor::function_shape_id(self.interner, type_id) {
+            let shape = self.interner.function_shape(shape_id);
+            return self.parameter_type_and_name_from_params(&shape.params, arg_index);
+        }
+
+        if let Some(shape_id) = visitor::callable_shape_id(self.interner, type_id) {
+            let shape = self.interner.callable_shape(shape_id);
+            let signatures = if call_kind == CallKind::New {
+                &shape.construct_signatures
+            } else {
+                &shape.call_signatures
+            };
+            for sig in signatures {
+                if let Some(found) = self.parameter_type_and_name_from_params(&sig.params, arg_index) {
+                    return Some(found);
+                }
+            }
+        }
+
+        if let Some(list_id) = visitor::union_list_id(self.interner, type_id)
+            .or_else(|| visitor::intersection_list_id(self.interner, type_id))
+        {
+            for &member in self.interner.type_list(list_id).iter() {
+                if let Some(found) = self.parameter_type_and_name_at(member, call_kind, arg_index) {
+                    return Some(found);
+                }
+            }
+        }
+
+        if let Some(app_id) = visitor::application_id(self.interner, type_id) {
+            let app = self.interner.type_application(app_id);
+            return self.parameter_type_and_name_at(app.base, call_kind, arg_index);
+        }
+
+        None
+    }
+
+    fn parameter_type_and_name_from_params(
+        &self,
+        params: &[tsz_solver::ParamInfo],
+        arg_index: usize,
+    ) -> Option<(TypeId, Option<String>)> {
+        if arg_index < params.len() {
+            let param = params[arg_index];
+            let name = param.name.map(|atom| self.interner.resolve_atom(atom));
+            return Some((param.type_id, name));
+        }
+        params.last().and_then(|param| {
+            if param.rest {
+                let name = param.name.map(|atom| self.interner.resolve_atom(atom));
+                Some((param.type_id, name))
+            } else {
+                None
+            }
+        })
+    }
+
+    fn enclosing_object_member_name_within_argument(
+        &self,
+        argument_idx: NodeIndex,
+        cursor_offset: u32,
+    ) -> Option<(String, NodeIndex)> {
+        let mut current = find_node_at_or_before_offset(self.arena, cursor_offset, self.source_text);
+        while current.is_some() {
+            if current == argument_idx {
+                break;
+            }
+            let node = self.arena.get(current)?;
+            if node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                let prop = self.arena.get_property_assignment(node)?;
+                let name = self
+                    .arena
+                    .get_identifier_text(prop.name)
+                    .map(std::string::ToString::to_string)?;
+                return Some((name, current));
+            }
+            if node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                let method = self.arena.get_method_decl(node)?;
+                let name = self
+                    .arena
+                    .get_identifier_text(method.name)
+                    .map(std::string::ToString::to_string)?;
+                return Some((name, current));
+            }
+            current = self.arena.get_extended(current)?.parent;
+        }
+        None
+    }
+
+    fn contextual_property_type_from_type(
+        &self,
+        container_type_id: TypeId,
+        prop_name: &str,
+    ) -> Option<TypeId> {
+        if let Some(shape_id) = visitor::callable_shape_id(self.interner, container_type_id) {
+            let shape = self.interner.callable_shape(shape_id);
+            for prop in &shape.properties {
+                if self.interner.resolve_atom(prop.name) == prop_name {
+                    return Some(prop.type_id);
+                }
+            }
+        }
+
+        if let Some(shape_id) = visitor::object_shape_id(self.interner, container_type_id)
+            .or_else(|| visitor::object_with_index_shape_id(self.interner, container_type_id))
+        {
+            let shape = self.interner.object_shape(shape_id);
+            for prop in &shape.properties {
+                if self.interner.resolve_atom(prop.name) == prop_name {
+                    return Some(prop.type_id);
+                }
+            }
+        }
+
+        if let Some(list_id) = visitor::union_list_id(self.interner, container_type_id)
+            .or_else(|| visitor::intersection_list_id(self.interner, container_type_id))
+        {
+            for &member in self.interner.type_list(list_id).iter() {
+                if let Some(member_type) = self.contextual_property_type_from_type(member, prop_name) {
+                    return Some(member_type);
+                }
+            }
+        }
+
+        if let Some(app_id) = visitor::application_id(self.interner, container_type_id) {
+            let app = self.interner.type_application(app_id);
+            return self.contextual_property_type_from_type(app.base, prop_name);
+        }
+
+        None
+    }
+
+    fn source_contextual_member_signature(
+        &self,
+        checker: &CheckerState<'_>,
+        container_type_id: TypeId,
+        member_name: &str,
+    ) -> Option<SignatureInformation> {
+        let container_type_text = checker.format_type(container_type_id);
+        let interface_name = container_type_text
+            .split('<')
+            .next()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())?;
+        let signature_text =
+            self.source_interface_member_signature_text(interface_name, member_name)?;
+        self.signature_info_from_member_signature_text(member_name, &signature_text)
+    }
+
+    fn source_interface_member_signature_text(
+        &self,
+        interface_name: &str,
+        member_name: &str,
+    ) -> Option<String> {
+        let iface_pattern = format!("interface {interface_name}");
+        let iface_start = self.source_text.find(&iface_pattern)?;
+        let after_iface = &self.source_text[iface_start..];
+        let body_open_rel = after_iface.find('{')?;
+        let body_open = iface_start + body_open_rel;
+        let body_close = self.find_matching_brace_in_source(body_open)?;
+        let body = &self.source_text[body_open + 1..body_close];
+
+        let method_pattern = format!("{member_name}(");
+        if let Some(method_idx) = body.find(&method_pattern) {
+            let tail = &body[method_idx..];
+            let end = tail.find(';').unwrap_or(tail.len());
+            return Some(tail[..end].trim().to_string());
+        }
+
+        let property_pattern = format!("{member_name}:");
+        if let Some(property_idx) = body.find(&property_pattern) {
+            let tail = &body[property_idx + property_pattern.len()..];
+            let end = tail.find(';').unwrap_or(tail.len());
+            return Some(tail[..end].trim().to_string());
+        }
+
+        None
+    }
+
+    fn signature_info_from_member_signature_text(
+        &self,
+        member_name: &str,
+        signature_text: &str,
+    ) -> Option<SignatureInformation> {
+        let trimmed = signature_text.trim().trim_end_matches(';').trim();
+        let (params_text, return_type) = if trimmed.starts_with(member_name) {
+            let open = trimmed.find('(')?;
+            let close = Self::find_matching_paren_in_text(trimmed, open)?;
+            let params = trimmed[open + 1..close].trim();
+            let after = trimmed[close + 1..].trim();
+            let return_type = after.strip_prefix(':')?.trim();
+            (params, return_type)
+        } else {
+            let open = trimmed.find('(')?;
+            let close = Self::find_matching_paren_in_text(trimmed, open)?;
+            let params = trimmed[open + 1..close].trim();
+            let after = trimmed[close + 1..].trim();
+            let return_type = after.strip_prefix("=>")?.trim();
+            (params, return_type)
+        };
+
+        let mut parameters = Vec::new();
+        for (idx, raw) in Self::split_top_level_text(params_text, ',')
+            .into_iter()
+            .enumerate()
+        {
+            let raw = raw.trim();
+            if raw.is_empty() {
+                continue;
+            }
+            let is_rest = raw.starts_with("...");
+            let lhs = if let Some(colon_idx) = Self::find_top_level_char(raw, ':') {
+                raw[..colon_idx].trim()
+            } else {
+                raw
+            };
+            let lhs = lhs.trim_start_matches("...").trim();
+            let is_optional = !is_rest && lhs.ends_with('?');
+            let mut name = lhs.trim_end_matches('?').trim().to_string();
+            if name.is_empty() {
+                name = format!("arg{idx}");
+            }
+            parameters.push(ParameterInformation {
+                name,
+                label: raw.to_string(),
+                documentation: None,
+                is_optional,
+                is_rest,
+            });
+        }
+        let labels: Vec<String> = parameters.iter().map(|p| p.label.clone()).collect();
+        let is_variadic = parameters.iter().any(|p| p.is_rest);
+        let prefix = format!("{member_name}(");
+        let suffix = format!("): {return_type}");
+        Some(SignatureInformation {
+            label: format!("{prefix}{}{}", labels.join(", "), suffix),
+            prefix,
+            suffix,
+            documentation: None,
+            parameters,
+            is_variadic,
+            is_constructor: false,
+            tags: Vec::new(),
+        })
+    }
+
+    fn signature_candidate_from_info(&self, info: SignatureInformation) -> SignatureCandidate {
+        let required_params = info
+            .parameters
+            .iter()
+            .filter(|param| !param.is_optional && !param.is_rest)
+            .count();
+        let total_params = info.parameters.len();
+        let has_rest = info.parameters.iter().any(|param| param.is_rest);
+        let param_names = info
+            .parameters
+            .iter()
+            .map(|param| Some(param.name.clone()))
+            .collect();
+        SignatureCandidate {
+            info,
+            required_params,
+            total_params,
+            has_rest,
+            param_names,
+            type_params: Vec::new(),
+            type_param_substitutions: Vec::new(),
+        }
+    }
+
+    fn find_matching_brace_in_source(&self, open_brace: usize) -> Option<usize> {
+        let bytes = self.source_text.as_bytes();
+        if open_brace >= bytes.len() || bytes[open_brace] != b'{' {
+            return None;
+        }
+        let mut depth = 0i32;
+        for (idx, byte) in bytes.iter().enumerate().skip(open_brace) {
+            match *byte {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(idx);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn find_matching_paren_in_text(text: &str, open_paren: usize) -> Option<usize> {
+        let bytes = text.as_bytes();
+        if open_paren >= bytes.len() || bytes[open_paren] != b'(' {
+            return None;
+        }
+        let mut depth = 0i32;
+        for (idx, byte) in bytes.iter().enumerate().skip(open_paren) {
+            match *byte {
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(idx);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn find_unmatched_open_paren_before(&self, lower_bound: u32, cursor_offset: u32) -> Option<u32> {
+        let bytes = self.source_text.as_bytes();
+        if bytes.is_empty() {
+            return None;
+        }
+        let cursor = cursor_offset.min(bytes.len() as u32);
+        if (cursor as usize) < bytes.len() && bytes[cursor as usize] == b'(' {
+            return Some(cursor);
+        }
+        let mut depth = 0i32;
+        let min = lower_bound.min(bytes.len() as u32) as i64;
+        let mut idx = (cursor as i64).saturating_sub(1);
+        while idx >= min && idx >= 0 {
+            match bytes[idx as usize] {
+                b')' => depth += 1,
+                b'(' => {
+                    if depth == 0 {
+                        return Some(idx as u32);
+                    }
+                    depth -= 1;
+                }
+                _ => {}
+            }
+            idx -= 1;
+        }
+        None
+    }
+
+    fn textual_argument_count_for_open_paren(&self, open_paren: u32, cursor_offset: u32) -> usize {
+        let start = (open_paren + 1).min(self.source_text.len() as u32) as usize;
+        let end = cursor_offset.min(self.source_text.len() as u32) as usize;
+        let text = self.source_text.get(start..end).unwrap_or_default();
+        let active = self.count_top_level_commas_in_range(start, end) as usize;
+        let trimmed = text.trim_end();
+        if trimmed.is_empty() {
+            0
+        } else if trimmed.ends_with(',') {
+            active
+        } else {
+            active + 1
+        }
+    }
+
+    fn clamp_active_parameter(
+        &self,
+        signatures: &[SignatureCandidate],
+        active_signature: u32,
+        active_parameter: u32,
+        arg_count: usize,
+    ) -> u32 {
+        let mut out = active_parameter;
+        if let Some(selected) = signatures.get(active_signature as usize) {
+            if selected.info.parameters.is_empty() {
+                out = 0;
+            } else {
+                let has_rest_param = selected.info.parameters.iter().any(|param| param.is_rest);
+                let max_index = selected.info.parameters.len().saturating_sub(1);
+                if has_rest_param {
+                    if out as usize >= arg_count && out as usize > max_index {
+                        out = max_index as u32;
+                    }
+                } else if out as usize > max_index {
+                    out = max_index as u32;
+                }
+            }
+        }
+        out
     }
 
     /// For a `super` keyword node, walk up to find the enclosing class, then
@@ -3451,6 +4208,103 @@ mod signature_help_internal_tests {
             let actual = &help.signatures[help.active_signature as usize].label;
             assert_eq!(actual, expected_label);
         }
+    }
+
+    #[test]
+    fn contextual_object_member_signature_preferred_over_outer_call() {
+        let source = "interface I { m(n: number, s: string): void; }\ndeclare function takesObj(i: I): void;\ntakesObj({ m: () });";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let interner = TypeInterner::new();
+        let line_map = LineMap::build(source);
+        let provider = SignatureHelpProvider::new(
+            parser.get_arena(),
+            &binder,
+            &line_map,
+            &interner,
+            source,
+            "test.ts".to_string(),
+        );
+        let mut cache = None;
+        let help = provider
+            .get_signature_help(root, Position::new(2, 15), &mut cache)
+            .expect("contextual signature help should be available");
+        let active = &help.signatures[help.active_signature as usize].label;
+        assert_eq!(active, "m(n: number, s: string): void");
+    }
+
+    #[test]
+    fn contextual_variable_initializer_type_alias_and_function_type() {
+        let source = "type Cb = () => void;\nconst cb: Cb = ();\nconst cb2: () => void = ();";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let interner = TypeInterner::new();
+        let line_map = LineMap::build(source);
+        let provider = SignatureHelpProvider::new(
+            parser.get_arena(),
+            &binder,
+            &line_map,
+            &interner,
+            source,
+            "test.ts".to_string(),
+        );
+
+        let mut cache = None;
+        let alias_help = provider
+            .get_signature_help(root, Position::new(1, 16), &mut cache)
+            .expect("alias contextual signature help");
+        assert_eq!(
+            alias_help.signatures[alias_help.active_signature as usize].label,
+            "Cb(): void"
+        );
+
+        let fn_type_help = provider
+            .get_signature_help(root, Position::new(2, 24), &mut cache)
+            .expect("function type contextual signature help");
+        assert_eq!(
+            fn_type_help.signatures[fn_type_help.active_signature as usize].label,
+            "cb2(): void"
+        );
+    }
+
+    #[test]
+    fn contextual_variable_initializer_inside_comment_still_has_help() {
+        let source = "const cb2: () => void = (/*contextualFunctionType*/)";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let interner = TypeInterner::new();
+        let line_map = LineMap::build(source);
+        let provider = SignatureHelpProvider::new(
+            parser.get_arena(),
+            &binder,
+            &line_map,
+            &interner,
+            source,
+            "test.ts".to_string(),
+        );
+
+        let marker = source.find("/*contextualFunctionType*/").expect("marker");
+        let position = line_map.offset_to_position(marker as u32, source);
+        let mut cache = None;
+        let help = provider
+            .get_signature_help(root, position, &mut cache)
+            .expect("function type contextual signature help in comments");
+        assert_eq!(
+            help.signatures[help.active_signature as usize].label,
+            "cb2(): void"
+        );
     }
 }
 
