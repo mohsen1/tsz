@@ -342,6 +342,13 @@ impl<'a> CheckerState<'a> {
             &comments,
             &source_text,
         );
+        self.validate_jsdoc_qualified_value_receiver_at_node(
+            idx,
+            node.pos,
+            type_expr,
+            &comments,
+            &source_text,
+        );
         // Set the anchor position for typedef scoping.
         let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
         let prev_file_name = self.ctx.file_name.clone();
@@ -357,6 +364,160 @@ impl<'a> CheckerState<'a> {
         self.ctx.file_name = prev_file_name;
         self.ctx.current_file_idx = prev_file_idx;
         result
+    }
+
+    /// Emit TS2694 for JSDoc qualified type names `A.B` whose root `A` is
+    /// a plain value (not a namespace/module/type container). tsc's JSDoc
+    /// checker treats this as "Namespace 'A' has no exported member 'B'";
+    /// without this pass we silently accept the unknown member.
+    fn validate_jsdoc_qualified_value_receiver_at_node(
+        &mut self,
+        idx: NodeIndex,
+        anchor_pos: u32,
+        type_expr: &str,
+        comments: &[tsz_common::comments::CommentRange],
+        source_text: &str,
+    ) {
+        use tsz_binder::symbol_flags;
+        // Only handle the simple `A.B` shape. Deeper chains, generics, unions,
+        // imports, or `(...)` groupings go through richer resolution elsewhere.
+        let trimmed = type_expr.trim();
+        if trimmed.contains('<')
+            || trimmed.contains('|')
+            || trimmed.contains('&')
+            || trimmed.contains('(')
+            || trimmed.contains('[')
+            || trimmed.contains(' ')
+            || trimmed.contains('"')
+        {
+            return;
+        }
+        let mut parts = trimmed.split('.');
+        let Some(root) = parts.next().filter(|s| !s.is_empty()) else {
+            return;
+        };
+        let Some(member) = parts.next().filter(|s| !s.is_empty()) else {
+            return;
+        };
+        // Only single-dot A.B; deeper A.B.C handled elsewhere (and varies more).
+        if parts.next().is_some() {
+            return;
+        }
+
+        let Some(sym_id) = self.ctx.binder.file_locals.get(root) else {
+            return;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return;
+        };
+        // JS salsa mode merges expando property assignments from every file
+        // that touches a given identifier (e.g. `Ns.One = ...` in one file,
+        // `/** @type {Ns.One} */` in another). Our per-file
+        // `expando_properties` table doesn't see those cross-file
+        // assignments, so skip the check when the declaring file isn't the
+        // one we're currently processing.
+        if symbol.decl_file_idx != u32::MAX
+            && symbol.decl_file_idx as usize != self.ctx.current_file_idx
+        {
+            return;
+        }
+        // If the root has any "can-hold-members" flags — namespace/module,
+        // type alias, interface, class, enum, or import alias — let the
+        // normal resolution path run. We only want to flag the case where
+        // `A` is a pure runtime value (e.g. `var a = foo();`) and someone
+        // writes `{A.B}` in JSDoc.
+        let member_holder_flags = symbol_flags::MODULE
+            | symbol_flags::NAMESPACE_MODULE
+            | symbol_flags::VALUE_MODULE
+            | symbol_flags::TYPE_ALIAS
+            | symbol_flags::INTERFACE
+            | symbol_flags::CLASS
+            | symbol_flags::ENUM
+            | symbol_flags::ALIAS;
+        if symbol.flags & member_holder_flags != 0 {
+            return;
+        }
+        // Must actually be a value (variable, function, etc.).
+        if symbol.flags & symbol_flags::VALUE == 0 {
+            return;
+        }
+        // CommonJS `var mod = require("./x")` binds `mod` to the module's
+        // exports. Qualified references like `{mod.Foo}` resolve through the
+        // imported module and must not be flagged here.
+        if symbol.import_module.is_some() {
+            return;
+        }
+        // Detect `var mod = require("./x")` in JS salsa mode, which is
+        // handled by the type checker rather than the binder's
+        // `import_module` field.
+        if symbol.declarations.iter().any(|&decl_idx| {
+            if !decl_idx.is_some() {
+                return false;
+            }
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                return false;
+            };
+            var_decl.initializer.is_some()
+                && self
+                    .get_require_module_specifier(var_decl.initializer)
+                    .is_some()
+        }) {
+            return;
+        }
+        // In JS salsa mode, plain values grow namespace-like expando members
+        // via assignments such as `Workspace.Project = ...`. If the symbol has
+        // any such member/export children, the qualified form `A.B` may be a
+        // legitimate expando type reference — let the resolver decide.
+        let has_members = symbol
+            .members
+            .as_ref()
+            .is_some_and(|table| !table.is_empty());
+        let has_exports = symbol
+            .exports
+            .as_ref()
+            .is_some_and(|table| !table.is_empty());
+        if has_members || has_exports {
+            return;
+        }
+        // The binder also tracks `X.prop = value` expando assignments in a
+        // side table keyed by the receiver name. If any expando property was
+        // registered for this root, treat it as namespace-like and skip.
+        if self
+            .ctx
+            .binder
+            .expando_properties
+            .get(root)
+            .is_some_and(|props| props.contains(member) || !props.is_empty())
+        {
+            return;
+        }
+
+        let Some((_, comment_pos)) =
+            self.try_jsdoc_with_ancestor_walk_and_pos(idx, comments, source_text)
+        else {
+            return;
+        };
+        let raw_comment = &source_text[comment_pos as usize..anchor_pos as usize];
+        let Some(type_expr_offset) = raw_comment.find(trimmed) else {
+            return;
+        };
+        // `member` sits at `root.len() + 1` bytes past the start of the type expression
+        // (the +1 skips the `.`).
+        let member_offset = type_expr_offset + root.len() + 1;
+
+        let message = format_message(
+            diagnostic_messages::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+            &[root, member],
+        );
+        self.error_at_position(
+            comment_pos + member_offset as u32,
+            member.len() as u32,
+            &message,
+            diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+        );
     }
 
     fn normalized_jsdoc_lookup_node(&self, idx: NodeIndex) -> NodeIndex {
