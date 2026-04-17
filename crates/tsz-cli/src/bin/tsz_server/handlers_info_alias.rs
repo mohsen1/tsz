@@ -4,6 +4,7 @@
 //! quoted import/export specifiers (e.g., `import { "foo" as bar }`) and
 //! module alias chains used by definition, references, and rename handlers.
 
+use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -151,6 +152,90 @@ function run() {
     ensureFileText(requestedFile);
   }
 
+  const realpathAliases = new Map();
+
+  function packageInfoFromPath(fileName) {
+    const normalized = normalizePath(fileName || "");
+    const prefix = "/packages/";
+    if (!normalized.startsWith(prefix)) return null;
+    const rest = normalized.slice(prefix.length);
+    const segments = rest.split("/").filter(Boolean);
+    if (segments.length < 2) return null;
+    let packageName = segments[0];
+    let restStart = 1;
+    if (packageName.startsWith("@")) {
+      if (segments.length < 3) return null;
+      packageName = `${segments[0]}/${segments[1]}`;
+      restStart = 2;
+    }
+    const packageRelativePath = segments.slice(restStart).join("/");
+    if (!packageRelativePath) return null;
+    return { packageName, packageRelativePath };
+  }
+
+  function packageNameFromSpecifier(specifier) {
+    const text = String(specifier || "").trim();
+    if (!text || text.startsWith(".") || text.startsWith("/")) return null;
+    const parts = text.split("/").filter(Boolean);
+    if (parts.length === 0) return null;
+    if (parts[0].startsWith("@") && parts.length > 1) {
+      return `${parts[0]}/${parts[1]}`;
+    }
+    return parts[0];
+  }
+
+  function barePackageSpecifiers(fileText) {
+    const source = String(fileText || "");
+    const out = new Set();
+    const patterns = [
+      /from\s+["']([^"']+)["']/g,
+      /require\(\s*["']([^"']+)["']\s*\)/g,
+      /import\(\s*["']([^"']+)["']\s*\)/g,
+    ];
+    for (const pattern of patterns) {
+      let match;
+      while ((match = pattern.exec(source)) !== null) {
+        const packageName = packageNameFromSpecifier(match[1]);
+        if (packageName) out.add(packageName);
+      }
+    }
+    return out;
+  }
+
+  const packageFiles = new Map();
+  for (const [fileName, fileText] of Object.entries(files)) {
+    const info = packageInfoFromPath(fileName);
+    if (!info) continue;
+    if (!packageFiles.has(info.packageName)) {
+      packageFiles.set(info.packageName, []);
+    }
+    packageFiles.get(info.packageName).push({
+      sourcePath: normalizePath(fileName),
+      packageRelativePath: info.packageRelativePath,
+      content: String(fileText ?? ""),
+    });
+  }
+
+  for (const [consumerFile, fileText] of Object.entries(files)) {
+    const consumerInfo = packageInfoFromPath(consumerFile);
+    if (!consumerInfo) continue;
+    const consumerRoot = `/packages/${consumerInfo.packageName}`;
+    const specifiers = barePackageSpecifiers(fileText);
+    for (const packageName of specifiers) {
+      const entries = packageFiles.get(packageName);
+      if (!entries || entries.length === 0) continue;
+      for (const entry of entries) {
+        const linkedPath = normalizePath(
+          `${consumerRoot}/node_modules/${packageName}/${entry.packageRelativePath}`,
+        );
+        if (!Object.prototype.hasOwnProperty.call(files, linkedPath)) {
+          files[linkedPath] = entry.content;
+        }
+        realpathAliases.set(linkedPath, entry.sourcePath);
+      }
+    }
+  }
+
   function isScriptFile(fileName) {
     return /\.(d\.ts|ts|tsx|js|jsx|mts|cts)$/i.test(fileName || "");
   }
@@ -158,6 +243,74 @@ function run() {
   const scriptFileNames = Object.keys(files).filter(isScriptFile);
   if (requestedFile && isScriptFile(requestedFile) && !scriptFileNames.includes(requestedFile)) {
     scriptFileNames.push(requestedFile);
+  }
+
+  const virtualFiles = new Set(Object.keys(files).map(normalizePath));
+  const virtualDirs = new Set();
+
+  function addVirtualDir(dirName) {
+    if (!dirName) return;
+    virtualDirs.add(normalizePath(dirName));
+  }
+
+  function addVirtualPath(fileName) {
+    const normalized = normalizePath(fileName);
+    if (!normalized) return;
+    let current = path.posix.dirname(normalized);
+    while (current && current !== "." && current !== "/") {
+      addVirtualDir(current);
+      const parent = path.posix.dirname(current);
+      if (!parent || parent === current) break;
+      current = parent;
+    }
+    if (current === "/") addVirtualDir("/");
+  }
+
+  for (const fileName of virtualFiles) {
+    addVirtualPath(fileName);
+  }
+
+  function virtualDirectoryExists(dirName) {
+    const normalized = normalizePath(dirName || "");
+    if (!normalized) return false;
+    if (virtualDirs.has(normalized)) return true;
+    const prefix = normalized.endsWith("/") ? normalized : `${normalized}/`;
+    for (const fileName of virtualFiles) {
+      if (fileName.startsWith(prefix)) return true;
+    }
+    return false;
+  }
+
+  function virtualDirectoriesOf(dirName) {
+    const normalized = normalizePath(dirName || "");
+    if (!normalized) return [];
+    const out = new Set();
+    for (const dir of virtualDirs) {
+      if (dir === normalized) continue;
+      if (path.posix.dirname(dir) === normalized) {
+        out.add(path.posix.basename(dir));
+      }
+    }
+    return Array.from(out.values());
+  }
+
+  function virtualReadDirectory(rootDir, extensions) {
+    const normalizedRoot = normalizePath(rootDir || "");
+    if (!normalizedRoot) return [];
+    const prefix = normalizedRoot.endsWith("/") ? normalizedRoot : `${normalizedRoot}/`;
+    const extensionList = Array.isArray(extensions) ? extensions : [];
+    const out = new Set();
+    for (const fileName of virtualFiles) {
+      if (fileName !== normalizedRoot && !fileName.startsWith(prefix)) continue;
+      if (
+        extensionList.length > 0
+        && !extensionList.some(ext => fileName.toLowerCase().endsWith(String(ext || "").toLowerCase()))
+      ) {
+        continue;
+      }
+      out.add(fileName);
+    }
+    return Array.from(out.values());
   }
 
   const fullProgramOps = new Set(["rename", "encodedSemanticClassifications"]);
@@ -212,10 +365,38 @@ function run() {
       const normalized = normalizePath(fileName);
       return Object.prototype.hasOwnProperty.call(files, normalized) || ts.sys.fileExists(fileName);
     },
-    readDirectory: ts.sys.readDirectory.bind(ts.sys),
-    directoryExists: ts.sys.directoryExists ? ts.sys.directoryExists.bind(ts.sys) : undefined,
-    getDirectories: ts.sys.getDirectories ? ts.sys.getDirectories.bind(ts.sys) : undefined,
-    realpath: ts.sys.realpath ? ts.sys.realpath.bind(ts.sys) : undefined,
+    readDirectory: (rootDir, extensions, excludes, includes, depth) => {
+      const diskEntries = ts.sys.readDirectory
+        ? ts.sys.readDirectory(rootDir, extensions, excludes, includes, depth)
+        : [];
+      const merged = new Set((diskEntries || []).map(normalizePath));
+      for (const virtualEntry of virtualReadDirectory(rootDir, extensions)) {
+        merged.add(virtualEntry);
+      }
+      return Array.from(merged.values());
+    },
+    directoryExists: fileName => {
+      if (virtualDirectoryExists(fileName)) return true;
+      return ts.sys.directoryExists ? ts.sys.directoryExists(fileName) : false;
+    },
+    getDirectories: dirName => {
+      const diskDirs = ts.sys.getDirectories ? ts.sys.getDirectories(dirName) : [];
+      const merged = new Set(diskDirs || []);
+      for (const virtualDir of virtualDirectoriesOf(dirName)) {
+        merged.add(virtualDir);
+      }
+      return Array.from(merged.values());
+    },
+    realpath: fileName => {
+      const normalized = normalizePath(fileName);
+      if (realpathAliases.has(normalized)) {
+        return realpathAliases.get(normalized);
+      }
+      if (Object.prototype.hasOwnProperty.call(files, normalized) || virtualDirectoryExists(normalized)) {
+        return normalized;
+      }
+      return ts.sys.realpath ? ts.sys.realpath(fileName) : fileName;
+    },
   };
 
   const ls = ts.createLanguageService(host, ts.createDocumentRegistry());
@@ -327,12 +508,14 @@ function run() {
       if (
         preferences.providePrefixAndSuffixTextForRename === undefined
         && input.providePrefixAndSuffixTextForRename !== undefined
+        && input.providePrefixAndSuffixTextForRename !== null
       ) {
         preferences.providePrefixAndSuffixTextForRename = !!input.providePrefixAndSuffixTextForRename;
       }
       if (
         preferences.allowRenameOfImportPath === undefined
         && input.allowRenameOfImportPath !== undefined
+        && input.allowRenameOfImportPath !== null
       ) {
         preferences.allowRenameOfImportPath = !!input.allowRenameOfImportPath;
       }
@@ -381,22 +564,6 @@ function run() {
           info: {
             canRename: false,
             localizedErrorMessage: "You cannot rename this element.",
-          },
-          locs: [],
-        };
-        break;
-      }
-
-      if (
-        preferences
-        && preferences.providePrefixAndSuffixTextForRename === false
-        && renameInfo.kind === "alias"
-        && hasNodeModulesDefinition
-      ) {
-        result = {
-          info: {
-            canRename: false,
-            localizedErrorMessage: nodeModulesRenameError(requestedFile, definitionFiles),
           },
           locs: [],
         };
@@ -535,7 +702,125 @@ try {
 
         let payload_obj = payload.as_object_mut()?;
         if payload_obj.get("openFiles").is_none() {
-            let open_files_value = serde_json::to_value(&self.open_files).ok()?;
+            let mut native_open_files = self.open_files.clone();
+            let read_fallback = |file_path: &str| -> Option<String> {
+                let rel = file_path.strip_prefix('/').unwrap_or(file_path);
+                let cwd = std::env::current_dir().ok()?;
+                let mut candidates = Vec::new();
+                candidates.push(cwd.join(rel));
+                candidates.push(cwd.join("TypeScript").join(rel));
+                if let Some(parent) = cwd.parent() {
+                    candidates.push(parent.join("TypeScript").join(rel));
+                }
+                for candidate in candidates {
+                    if let Ok(content) = std::fs::read_to_string(&candidate) {
+                        return Some(content);
+                    }
+                }
+                None
+            };
+            let read_any = |file_path: &str| -> Option<String> {
+                std::fs::read_to_string(file_path)
+                    .ok()
+                    .or_else(|| read_fallback(file_path))
+            };
+
+            let mut package_hints = BTreeSet::new();
+            let add_package_hint = |specifier: &str, hints: &mut BTreeSet<String>| {
+                let spec = specifier.trim();
+                if spec.is_empty() || spec.starts_with('.') || spec.starts_with('/') {
+                    return;
+                }
+                let mut parts = spec.split('/');
+                let Some(first) = parts.next() else {
+                    return;
+                };
+                let package = if first.starts_with('@') {
+                    if let Some(second) = parts.next() {
+                        format!("{first}/{second}")
+                    } else {
+                        first.to_string()
+                    }
+                } else {
+                    first.to_string()
+                };
+                hints.insert(package);
+            };
+            let collect_package_hints = |source: &str, hints: &mut BTreeSet<String>| {
+                for line in source.lines() {
+                    for (needle, quote) in [
+                        ("from \"", '"'),
+                        ("from '", '\''),
+                        ("require(\"", '"'),
+                        ("require('", '\''),
+                        ("import(\"", '"'),
+                        ("import('", '\''),
+                    ] {
+                        let Some(start) = line.find(needle) else {
+                            continue;
+                        };
+                        let spec_start = start + needle.len();
+                        let tail = &line[spec_start..];
+                        let Some(spec_end) = tail.find(quote) else {
+                            continue;
+                        };
+                        add_package_hint(&tail[..spec_end], hints);
+                    }
+                }
+            };
+
+            let request_file = payload_obj
+                .get("file")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string);
+            let request_root_prefix = request_file.as_deref().and_then(|path| {
+                let mut segments = path.split('/').filter(|segment| !segment.is_empty());
+                segments.next().map(|segment| format!("/{segment}/"))
+            });
+
+            if let Some(request_file) = request_file.as_deref()
+                && !native_open_files.contains_key(request_file)
+                && let Some(content) = read_any(request_file)
+            {
+                collect_package_hints(&content, &mut package_hints);
+                native_open_files.insert(request_file.to_string(), content);
+            }
+
+            if let Some(request_file) = request_file.as_deref()
+                && let Some(content) = native_open_files.get(request_file)
+            {
+                collect_package_hints(content, &mut package_hints);
+            }
+
+            for content in native_open_files.values() {
+                collect_package_hints(content, &mut package_hints);
+            }
+
+            for project_files in self.external_project_files.values() {
+                for path in project_files {
+                    if native_open_files.contains_key(path) {
+                        continue;
+                    }
+                    let include_path = path.ends_with("tsconfig.json")
+                        || path.ends_with("jsconfig.json")
+                        || request_root_prefix
+                            .as_ref()
+                            .is_some_and(|prefix| path.starts_with(prefix))
+                        || package_hints.iter().any(|package| {
+                            let marker = format!("/node_modules/{package}");
+                            path.contains(&format!("{marker}/")) || path.ends_with(&marker)
+                        });
+                    if !include_path {
+                        continue;
+                    }
+                    if let Some(content) = read_any(path) {
+                        collect_package_hints(&content, &mut package_hints);
+                        native_open_files.insert(path.clone(), content);
+                    }
+                }
+            }
+
+            let open_files_value = serde_json::to_value(&native_open_files).ok()?;
             payload_obj.insert("openFiles".to_string(), open_files_value);
         }
 

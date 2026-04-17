@@ -275,6 +275,7 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
             super(cancellationToken, settings);
             this._client = null;
             this._openedFiles = new Set();
+            this._allKnownFiles = null;
         }
 
         getFourslashInferredCompilerOptions() {
@@ -393,6 +394,21 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
                 openKnownFile(fileName, content, scriptKindName);
                 openAncestorConfigs(fileName);
                 for (const path of this.getFilenames()) {
+                    if (!shouldTrackForServer(path)) continue;
+                    openKnownFile(path, /*fileContent*/ undefined, /*kindName*/ undefined);
+                    openAncestorConfigs(path);
+                }
+                if (!Array.isArray(this._allKnownFiles)) {
+                    const discovered = this.sys.readDirectory(
+                        virtualFileSystemRoot,
+                        [".ts", ".tsx", ".d.ts", ".js", ".jsx", ".mts", ".cts", ".json"],
+                        /*exclude*/ undefined,
+                        /*include*/ undefined,
+                        /*depth*/ undefined,
+                    );
+                    this._allKnownFiles = Array.isArray(discovered) ? discovered : [];
+                }
+                for (const path of this._allKnownFiles) {
                     if (!shouldTrackForServer(path)) continue;
                     openKnownFile(path, /*fileContent*/ undefined, /*kindName*/ undefined);
                     openAncestorConfigs(path);
@@ -540,6 +556,90 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
                     return Promise.resolve(response.body || { successMessage: "" });
                 };
             }
+            const originalGetRenameInfo = this._client.getRenameInfo?.bind(this._client);
+            if (originalGetRenameInfo) {
+                this._client.getRenameInfo = (fileName, position, preferences, findInStrings, findInComments) => {
+                    const hasPreferencesObject = !!preferences && typeof preferences === "object";
+                    const hasBooleanPreferences = typeof preferences === "boolean";
+                    const hasExplicitRenamePreferences = hasPreferencesObject && (
+                        preferences.allowRenameOfImportPath !== undefined
+                        || preferences.providePrefixAndSuffixTextForRename !== undefined
+                    );
+                    if (!hasExplicitRenamePreferences && !hasBooleanPreferences) {
+                        return originalGetRenameInfo(fileName, position, preferences, findInStrings, findInComments);
+                    }
+
+                    const args = {
+                        ...this._client.createFileLocationRequestArgs(fileName, position),
+                        findInStrings,
+                        findInComments,
+                    };
+
+                    if (hasBooleanPreferences) {
+                        args.providePrefixAndSuffixTextForRename = !!preferences;
+                        args.preferences = { providePrefixAndSuffixTextForRename: !!preferences };
+                    } else if (hasPreferencesObject) {
+                        args.preferences = { ...preferences };
+                        if (preferences.providePrefixAndSuffixTextForRename !== undefined) {
+                            args.providePrefixAndSuffixTextForRename = !!preferences.providePrefixAndSuffixTextForRename;
+                        }
+                        if (preferences.allowRenameOfImportPath !== undefined) {
+                            args.allowRenameOfImportPath = !!preferences.allowRenameOfImportPath;
+                        }
+                    }
+
+                    const request = this._client.processRequest("rename", args);
+                    const response = this._client.processResponse(request);
+                    const body = response.body || { info: { canRename: false, localizedErrorMessage: "You cannot rename this element." }, locs: [] };
+                    const locations = [];
+                    for (const entry of body.locs || []) {
+                        const entryFileName = entry.file;
+                        for (const { start, end, contextStart, contextEnd, ...prefixSuffixText } of entry.locs || []) {
+                            locations.push({
+                                textSpan: this._client.decodeSpan({ start, end }, entryFileName),
+                                fileName: entryFileName,
+                                ...(contextStart !== undefined
+                                    ? { contextSpan: this._client.decodeSpan({ start: contextStart, end: contextEnd }, entryFileName) }
+                                    : undefined),
+                                ...prefixSuffixText,
+                            });
+                        }
+                    }
+
+                    const renameInfo = body.info?.canRename
+                        ? {
+                            canRename: body.info.canRename,
+                            fileToRename: body.info.fileToRename,
+                            displayName: body.info.displayName,
+                            fullDisplayName: body.info.fullDisplayName,
+                            kind: body.info.kind,
+                            kindModifiers: body.info.kindModifiers,
+                            triggerSpan: (body.info.triggerSpan && body.info.triggerSpan.length
+                                ? ts.createTextSpanFromBounds(
+                                    this._client.lineOffsetToPosition(fileName, body.info.triggerSpan.start, this._client.getLineMap(fileName)),
+                                    this._client.lineOffsetToPosition(fileName, body.info.triggerSpan.start, this._client.getLineMap(fileName))
+                                        + body.info.triggerSpan.length,
+                                )
+                                : ts.createTextSpanFromBounds(position, position)),
+                        }
+                        : {
+                            canRename: false,
+                            localizedErrorMessage: body.info?.localizedErrorMessage,
+                        };
+
+                    this._client.lastRenameEntry = {
+                        renameInfo,
+                        inputs: {
+                            fileName,
+                            position,
+                            findInStrings: !!findInStrings,
+                            findInComments: !!findInComments,
+                        },
+                        locations,
+                    };
+                    return renameInfo;
+                };
+            }
             const originalGetCodeFixesAtPosition = this._client.getCodeFixesAtPosition?.bind(this._client);
             if (originalGetCodeFixesAtPosition) {
                 this._client.getCodeFixesAtPosition = (file, start, end, errorCodes, _formatOptions, preferences) => {
@@ -679,6 +779,15 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
                 this._client.setCompilerOptionsForInferredProjects(
                     ts.optionMapToObject(ts.serializeCompilerOptions(inferredOptions))
                 );
+            }
+            if (typeof this._client.openFile === "function") {
+                const knownFiles = this._host.getScriptFileNames();
+                for (const fileName of knownFiles) {
+                    const snapshot = this._host.getScriptSnapshot(fileName);
+                    if (!snapshot) continue;
+                    const content = ts.getSnapshotText(snapshot);
+                    this._client.openFile(fileName, content);
+                }
             }
         }
 
