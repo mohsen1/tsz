@@ -25897,3 +25897,38 @@ new Foo();
          The require() result should be the constructable class. Got diagnostics: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_no_false_ts2339_for_self_referencing_computed_property_in_generic_class() {
+    let source = r#"
+declare const rC: RC<"a">;
+rC.x;
+declare class RC<T extends "a" | "b"> {
+    x: T;
+    [rC.x]: "b";
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "TS2339 should not be emitted for self-referencing computed property in generic class. \
+         RC<\"a\"> has property 'x', so rC.x inside [rC.x] should resolve. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_no_false_ts2339_interface_self_referencing_computed_property() {
+    let source = r#"
+declare const rI: RI<"a">;
+rI.x;
+interface RI<T extends "a" | "b"> {
+    x: T;
+    [rI.x]: "b";
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "TS2339 should not be emitted for self-referencing computed property in interface. Got: {diagnostics:?}"
+    );
+}
