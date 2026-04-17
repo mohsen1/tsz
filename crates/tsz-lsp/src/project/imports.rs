@@ -502,18 +502,18 @@ impl Project {
             return true;
         };
 
-        let node_prefixed = (!package_name.starts_with("node:")).then(|| format!("node:{package_name}"));
+        let node_prefixed =
+            (!package_name.starts_with("node:")).then(|| format!("node:{package_name}"));
         let node_stripped = package_name.strip_prefix("node:");
 
-        let quoted_in_source = Self::source_contains_quoted_package_literal(from_source_text, package_name)
-            || node_prefixed
-                .as_deref()
-                .is_some_and(|candidate| {
+        let quoted_in_source =
+            Self::source_contains_quoted_package_literal(from_source_text, package_name)
+                || node_prefixed.as_deref().is_some_and(|candidate| {
                     Self::source_contains_quoted_package_literal(from_source_text, candidate)
                 })
-            || node_stripped.is_some_and(|candidate| {
-                Self::source_contains_quoted_package_literal(from_source_text, candidate)
-            });
+                || node_stripped.is_some_and(|candidate| {
+                    Self::source_contains_quoted_package_literal(from_source_text, candidate)
+                });
 
         let has_existing_import = existing_imported_packages.contains(package_name)
             || node_prefixed
@@ -531,11 +531,9 @@ impl Project {
 
         let import_like_in_source =
             Self::source_contains_import_like_package_usage(from_source_text, package_name)
-                || node_prefixed
-                    .as_deref()
-                    .is_some_and(|candidate| {
-                        Self::source_contains_import_like_package_usage(from_source_text, candidate)
-                    })
+                || node_prefixed.as_deref().is_some_and(|candidate| {
+                    Self::source_contains_import_like_package_usage(from_source_text, candidate)
+                })
                 || node_stripped.is_some_and(|candidate| {
                     Self::source_contains_import_like_package_usage(from_source_text, candidate)
                 });
