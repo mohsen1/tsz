@@ -66,3 +66,43 @@ let fooBar: FooBar = mixBar({
         "Did not expect widened fresh object member in intersection display, got: {ts2322}"
     );
 }
+
+#[test]
+fn test_function_expression_generic_return_type_shows_type_args() {
+    let source = r#"
+interface Wrapper<T> {
+    value: T;
+}
+var a = function wrap<U>(x: U): Wrapper<U> { return null; };
+"#;
+    let diags = get_diagnostics(source);
+    let ts2322 = diags
+        .iter()
+        .find(|(code, _)| *code == 2322)
+        .map(|(_, msg)| msg.as_str())
+        .expect("Expected TS2322 for null not assignable to Wrapper<U>");
+    assert!(
+        ts2322.contains("Wrapper<U>"),
+        "Expected 'Wrapper<U>' with type arg in error message, got: {ts2322}"
+    );
+}
+
+#[test]
+fn test_arrow_function_generic_return_type_shows_type_args() {
+    let source = r#"
+interface Wrapper<T> {
+    value: T;
+}
+var a = <U>(x: U): Wrapper<U> => { return null; };
+"#;
+    let diags = get_diagnostics(source);
+    let ts2322 = diags
+        .iter()
+        .find(|(code, _)| *code == 2322)
+        .map(|(_, msg)| msg.as_str())
+        .expect("Expected TS2322 for null not assignable to Wrapper<U>");
+    assert!(
+        ts2322.contains("Wrapper<U>"),
+        "Expected 'Wrapper<U>' with type arg in arrow function error message, got: {ts2322}"
+    );
+}
