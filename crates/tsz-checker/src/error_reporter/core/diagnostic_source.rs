@@ -1349,9 +1349,18 @@ impl<'a> CheckerState<'a> {
                 // Fall through to use the TypeFormatter, which correctly displays
                 // `TypeData::Enum` as qualified `W.a` style names.
             } else if display.starts_with("keyof ") && display_target == target {
-                // For keyof annotations, use the TypeFormatter so that distribution
-                // rules apply (e.g. `keyof (T | U)` → `keyof T & keyof U`).
-                return self.format_type_for_assignability_message(display_target);
+                // For `keyof (A | B)` / `keyof (A & B)`, use the TypeFormatter so
+                // that distribution rules apply (→ `keyof A & keyof B`).
+                // For plain `keyof SomeName`, the annotation text is already correct
+                // (tsc shows `keyof A`, not the expanded literal union). Only route
+                // through TypeFormatter when the operand contains a union/intersection.
+                let operand_text = display.trim_start_matches("keyof ").trim();
+                let needs_distribution = operand_text.contains('|')
+                    || (operand_text.contains('&') && operand_text.starts_with('('));
+                if needs_distribution {
+                    return self.format_type_for_assignability_message(display_target);
+                }
+                return self.format_annotation_like_type(&display);
             } else if display_target == target {
                 // Only use annotation text when we didn't strip nullable members;
                 // otherwise the annotation includes null/undefined that tsc omits.
