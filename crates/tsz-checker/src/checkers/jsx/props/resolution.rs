@@ -173,7 +173,15 @@ impl<'a> CheckerState<'a> {
                         syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
                     )
                 {
-                    None
+                    // Only defer context-sensitive functions (those with unannotated params).
+                    // Non-context-sensitive functions like `() => 10` can contribute to
+                    // Round 1 inference by having their return type extracted.
+                    if crate::computation::contextual::is_contextually_sensitive(self, value_idx) {
+                        None
+                    } else {
+                        // Allow function types since we've already verified it's not context-sensitive
+                        self.collect_jsx_union_resolution_attr_value_type(value_idx, true)
+                    }
                 } else {
                     self.collect_jsx_union_resolution_attr_value_type(value_idx, false)
                 }

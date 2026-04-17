@@ -619,6 +619,25 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // When target (expected return type) is a type param and source (actual return type)
+        // is a concrete type, infer the type param from the source. This handles JSX
+        // intra-expression inference like:
+        //   <Foo a={(x) => 10} b={(arg) => arg.toString()} />
+        // where Props<T> has a: (x: string) => T and b: (arg: T) => void.
+        // The actual return type of `(x) => 10` is `number`, and the expected return
+        // type is `T`, so we infer T = number.
+        if let Some(tp) = common::type_param_info(self.ctx.types, target)
+            && tracked_type_params.contains(&tp.name)
+            && source != TypeId::UNKNOWN
+            && source != TypeId::ERROR
+            && !common::references_any_type_param_named(self.ctx.types, source, tracked_type_params)
+        {
+            if substitution.get(tp.name).is_none() {
+                substitution.insert(tp.name, source);
+            }
+            return;
+        }
+
         // When source (return type) is a union like `E | null`, decompose it
         // and try each non-nullish member against the target contextual type.
         // This handles the common pattern `querySelector<E>(...): E | null`
