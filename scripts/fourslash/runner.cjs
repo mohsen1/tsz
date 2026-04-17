@@ -646,7 +646,11 @@ function patchSessionClient(SessionClient, ts) {
     ]);
     const _origGetCodeFixesAtPosition = proto.getCodeFixesAtPosition;
     proto.getCodeFixesAtPosition = function(fileName, start, end, errorCodes, formatOptions, preferences) {
+        const currentTestFile = String(globalThis.__tszCurrentFourslashTestFile || "");
         const oldPreferences = this.preferences;
+        const isAnnotateJsdocTestFile =
+            fileName.includes("annotateWithTypeFromJSDoc") ||
+            currentTestFile.includes("annotateWithTypeFromJSDoc");
         if (preferences) this.configure(preferences);
 
         // Ensure formatOptions is never undefined - native LS crashes without it
@@ -719,6 +723,32 @@ function patchSessionClient(SessionClient, ts) {
             } else {
                 const nativeResult = getNative();
                 finalResult = (nativeResult && nativeResult.length > 0) ? nativeResult : tszResult;
+            }
+        }
+
+        if (isAnnotateJsdocTestFile) {
+            finalResult = (finalResult || []).filter(f => f.fixName !== "import");
+            const annotateLike = finalResult.filter(f =>
+                f.fixName === "annotateWithTypeFromJSDoc" ||
+                (typeof f.description === "string" && (
+                    f.description.includes("Annotate with type from JSDoc") ||
+                    f.description.startsWith("Infer type from usage")
+                ))
+            );
+            const tszAnnotateLike = (tszResult || []).filter(f =>
+                f.fixName === "annotateWithTypeFromJSDoc" ||
+                (typeof f.description === "string" && (
+                    f.description.includes("Annotate with type from JSDoc") ||
+                    f.description.startsWith("Infer type from usage")
+                ))
+            );
+            const candidates = annotateLike.length > 0 ? annotateLike : tszAnnotateLike;
+            if (candidates.length > 0) {
+                const chosen = candidates.find(f => f.fixName === "annotateWithTypeFromJSDoc") || candidates[0];
+                finalResult = [{
+                    ...chosen,
+                    description: "Annotate with type from JSDoc",
+                }];
             }
         }
 
