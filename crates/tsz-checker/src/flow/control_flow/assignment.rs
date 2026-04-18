@@ -176,8 +176,8 @@ impl<'a> FlowAnalyzer<'a> {
                     if self.is_access_reference(target) {
                         return None;
                     }
+                    use crate::query_boundaries::common::BinaryOpEvaluator;
                     use crate::query_boundaries::type_computation::core::BinaryOpResult;
-                    use tsz_solver::BinaryOpEvaluator;
 
                     // When node_types is not available, use heuristics for flow narrowing
                     if self.node_types.is_none() {

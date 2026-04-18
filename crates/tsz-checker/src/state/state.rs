@@ -92,12 +92,13 @@
 
 use crate::CheckerContext;
 use crate::context::{CheckerOptions, RequestCacheKey, TypingRequest};
+use crate::query_boundaries::common::QueryDatabase;
 use tsz_binder::BinderState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{QueryDatabase, TypeId};
+use tsz_solver::TypeId;
 
 thread_local! {
     /// Shared depth counter for all cross-arena delegation points.

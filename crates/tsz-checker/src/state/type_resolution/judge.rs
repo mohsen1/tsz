@@ -2,9 +2,9 @@
 //!
 //! Provides integration between the Checker and the Solver's Judge trait.
 
+use crate::query_boundaries::common::{DefaultJudge, Judge, JudgeConfig};
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
-use tsz_solver::judge::{DefaultJudge, Judge, JudgeConfig};
 
 impl<'a> CheckerState<'a> {
     /// Execute a closure with a configured Judge instance.

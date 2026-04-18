@@ -98,7 +98,7 @@ impl<'a> CheckerState<'a> {
             // NOTE: Resolve through Lazy(DefId) first so Record<string,T> becomes an
             // ObjectWithIndex shape that the IndexSignatureResolver can inspect.
             {
-                use tsz_solver::IndexSignatureResolver;
+                use crate::query_boundaries::common::IndexSignatureResolver;
                 let resolved = self.resolve_lazy_type(member);
                 let resolved = self.evaluate_type_with_env(resolved);
                 let resolver = IndexSignatureResolver::new(self.ctx.types);

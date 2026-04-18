@@ -3,11 +3,12 @@
 //! arithmetic, comparison, logical, assignment, nullish coalescing, and comma.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::common::BinaryOpEvaluator;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{BinaryOpEvaluator, TypeId};
+use tsz_solver::TypeId;
 
 /// Result of syntactic nullishness analysis, mirroring tsc's `PredicateSemantics`.
 /// This is a purely syntactic check -- it does NOT look at types.
@@ -510,9 +511,9 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         request: &TypingRequest,
     ) -> TypeId {
+        use crate::query_boundaries::common::BinaryOpEvaluator;
         use crate::query_boundaries::type_computation::core::BinaryOpResult;
         use tsz_scanner::SyntaxKind;
-        use tsz_solver::BinaryOpEvaluator;
         let factory = self.ctx.types.factory();
 
         // Hot path: pure `+` chains with stable primitive operands are common in
