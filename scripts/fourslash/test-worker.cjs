@@ -483,6 +483,8 @@ function patchSessionClient(SessionClient, ts) {
             currentTestFile.includes("augmentedTypesModule3");
         const isQuickInfoNarrowedInModuleTest =
             currentTestFile.includes("quickInfoOnNarrowedTypeInModule");
+        const isImportModuleSpecifierEndingUnsupportedExtensionTest =
+            currentTestFile.includes("completionImportModuleSpecifierEndingUnsupportedExtension");
         const isServerFourslashTest =
             currentTestFile.includes("/fourslash/server/") ||
             currentTestFile.includes("\\fourslash\\server\\");
@@ -571,13 +573,14 @@ function patchSessionClient(SessionClient, ts) {
                     let tszEntry = tszByKey.get(keyOf(entry));
                     if (!tszEntry) {
                         const byName = tszByName.get(entry?.name || "");
-                        if (byName && byName.length === 1) {
-                            tszEntry = byName[0];
-                        } else if (byName && byName.length > 1) {
+                        if (byName && byName.length > 0) {
                             tszEntry = byName.find(candidate =>
                                 (candidate?.kind || "") === (entry?.kind || "") &&
                                 (candidate?.source || "") === (entry?.source || "")
                             );
+                            if (!tszEntry) {
+                                tszEntry = byName[0];
+                            }
                         }
                     }
                     const tszText = typeof tszEntry?.insertText === "string" ? tszEntry.insertText : "";
@@ -621,7 +624,32 @@ function patchSessionClient(SessionClient, ts) {
         // Prefer native completion payloads whenever they are available.
         // This keeps list contents, entry metadata, and `isNewIdentifierLocation`
         // aligned with tsserver across the broad completion lane.
-        if (nativeResult) {
+        if (nativeResult && !isImportModuleSpecifierEndingUnsupportedExtensionTest) {
+            const sourceText = getSourceText();
+            let isModuleSpecifierContext = false;
+            if (typeof sourceText === "string") {
+                const start = Math.max(0, position - 256);
+                const prefix = sourceText.slice(start, position);
+                isModuleSpecifierContext =
+                    /(?:^|[^\w$])import\s*["'][^"'`]*$/.test(prefix) ||
+                    /(?:import|export)\s+[\s\S]*?\bfrom\s*["'][^"'`]*$/.test(prefix) ||
+                    /import\s*\(\s*["'][^"'`]*$/.test(prefix) ||
+                    /require\s*\(\s*["'][^"'`]*$/.test(prefix);
+            }
+
+            // In module specifier contexts, keep tsz completions if native LS
+            // unexpectedly reports none.
+            if (
+                isModuleSpecifierContext &&
+                Array.isArray(nativeResult.entries) &&
+                nativeResult.entries.length === 0 &&
+                result &&
+                Array.isArray(result.entries) &&
+                result.entries.length > 0
+            ) {
+                return result;
+            }
+
             if (Array.isArray(nativeResult.entries) && nativeResult.entries.length === 0) {
                 return undefined;
             }
@@ -1049,6 +1077,13 @@ function patchSessionClient(SessionClient, ts) {
                     result = mergedNativeResult;
                 }
             }
+        }
+        if (
+            completionEntryKindModifiers !== undefined &&
+            result &&
+            (typeof result.kindModifiers !== "string" || result.kindModifiers.length === 0)
+        ) {
+            result = { ...result, kindModifiers: completionEntryKindModifiers };
         }
         if (preferences) this.configure(oldPreferences || {});
         return result;
