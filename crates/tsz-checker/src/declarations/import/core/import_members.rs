@@ -781,7 +781,6 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
-
     fn import_binding_is_type_only(&self, module_name: &str, import_name: &str) -> bool {
         self.is_import_specifier_type_only(module_name, import_name)
             || self.is_export_type_only_across_binders(module_name, import_name)
