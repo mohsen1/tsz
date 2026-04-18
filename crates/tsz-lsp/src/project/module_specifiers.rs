@@ -1378,9 +1378,11 @@ impl Project {
         exports_mode: ExportsResolutionMode,
     ) -> Option<String> {
         let package_dir_prefix = format!("{package_dir}/");
-        let target_relative = normalized_target.strip_prefix(&package_dir_prefix)?;
+        let target_relative_with_ext = normalized_target.strip_prefix(&package_dir_prefix)?;
+        let target_runtime_extension = runtime_extension_for_source_path(target_relative_with_ext);
         let target_relative =
-            path_to_string(&strip_js_ts_extension(Path::new(target_relative))).replace('\\', "/");
+            path_to_string(&strip_js_ts_extension(Path::new(target_relative_with_ext)))
+                .replace('\\', "/");
 
         if let Some(exports_target) = exports_value.as_str() {
             let target_pattern = path_to_string(&strip_js_ts_extension(Path::new(exports_target)))
@@ -1430,6 +1432,20 @@ impl Project {
                 && default_targets
                     .iter()
                     .any(|target| !has_source_extension(target));
+            // If the exports key explicitly spells an extension (e.g.
+            // `./b/*.js`), only files whose runtime extension matches that
+            // extension should resolve through this entry. This prevents
+            // `.mts`/`.cts` source files from being routed through a `.js`-
+            // only wildcard, matching Node's resolution semantics.
+            let required_runtime_ext = if key_pattern.ends_with(".js") {
+                Some(".js")
+            } else if key_pattern.ends_with(".mjs") {
+                Some(".mjs")
+            } else if key_pattern.ends_with(".cjs") {
+                Some(".cjs")
+            } else {
+                None
+            };
 
             for target_pattern in type_targets.iter().chain(default_targets.iter()) {
                 let target_pattern = target_pattern.replace('\\', "/");
@@ -1444,13 +1460,19 @@ impl Project {
                     continue;
                 };
 
+                if let Some(required_ext) = required_runtime_ext
+                    && target_runtime_extension != required_ext
+                {
+                    continue;
+                }
+
                 if export_key == "." {
                     return Some(package_specifier.to_string());
                 }
 
                 let mut subpath = apply_wildcard_capture(key_pattern, &capture)?;
                 if should_append_js && !has_source_extension(&subpath) {
-                    subpath.push_str(".js");
+                    subpath.push_str(target_runtime_extension);
                 }
                 if subpath.is_empty() {
                     return Some(package_specifier.to_string());
@@ -2053,6 +2075,26 @@ fn strip_js_ts_extension(path: &Path) -> PathBuf {
     }
 
     path.to_path_buf()
+}
+
+/// Returns the runtime (emit) extension for a source file path, preserving
+/// the ESM/CJS flavor. `.mts`/`.d.mts`/`.mjs` → `.mjs`, `.cts`/`.d.cts`/`.cjs`
+/// → `.cjs`, everything else → `.js`.
+fn runtime_extension_for_source_path(path: &str) -> &'static str {
+    let normalized = path.replace('\\', "/");
+    if normalized.ends_with(".d.mts")
+        || normalized.ends_with(".mts")
+        || normalized.ends_with(".mjs")
+    {
+        return ".mjs";
+    }
+    if normalized.ends_with(".d.cts")
+        || normalized.ends_with(".cts")
+        || normalized.ends_with(".cjs")
+    {
+        return ".cjs";
+    }
+    ".js"
 }
 
 fn has_source_extension(path: &str) -> bool {
