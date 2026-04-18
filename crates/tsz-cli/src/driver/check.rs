@@ -3292,6 +3292,102 @@ let x2: string = f;
         let _ = fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn test_collect_diagnostics_bundler_dual_package_modes_do_not_emit_ts2305() {
+        let dir = std::env::temp_dir().join("tsz_check_bundler_dual_package_modes");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("node_modules/dual")).unwrap();
+
+        let package_json_path = dir.join("node_modules/dual/package.json");
+        let index_js_path = dir.join("node_modules/dual/index.js");
+        let index_d_ts_path = dir.join("node_modules/dual/index.d.ts");
+        let index_cjs_path = dir.join("node_modules/dual/index.cjs");
+        let index_d_cts_path = dir.join("node_modules/dual/index.d.cts");
+        let main_ts_path = dir.join("main.ts");
+        let main_mts_path = dir.join("main.mts");
+        let main_cts_path = dir.join("main.cts");
+
+        fs::write(
+            &package_json_path,
+            r#"{
+  "name": "dual",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.cjs",
+  "types": "index.d.cts",
+  "exports": {
+    ".": {
+      "import": "./index.js",
+      "require": "./index.cjs"
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+        fs::write(&index_js_path, "export const esm = 0;\n").unwrap();
+        fs::write(&index_d_ts_path, "export const esm: number;\n").unwrap();
+        fs::write(&index_cjs_path, "exports.cjs = 0;\n").unwrap();
+        fs::write(&index_d_cts_path, "export const cjs: number;\n").unwrap();
+        fs::write(&main_ts_path, "import { esm, cjs } from \"dual\";\n").unwrap();
+        fs::write(&main_mts_path, "import { esm, cjs } from \"dual\";\n").unwrap();
+        fs::write(&main_cts_path, "import { esm, cjs } from \"dual\";\n").unwrap();
+
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(crate::config::ModuleResolutionKind::Bundler),
+            resolve_package_json_exports: true,
+            module_suffixes: vec![String::new()],
+            printer: tsz::emitter::PrinterOptions {
+                module: ModuleKind::Preserve,
+                target: tsz_common::common::ScriptTarget::ES2015,
+                ..Default::default()
+            },
+            checker: tsz::checker::context::CheckerOptions {
+                module: ModuleKind::Preserve,
+                target: tsz_common::common::ScriptTarget::ES2015,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (
+                    main_ts_path.to_str().unwrap(),
+                    "import { esm, cjs } from \"dual\";\n",
+                ),
+                (
+                    main_mts_path.to_str().unwrap(),
+                    "import { esm, cjs } from \"dual\";\n",
+                ),
+                (
+                    main_cts_path.to_str().unwrap(),
+                    "import { esm, cjs } from \"dual\";\n",
+                ),
+            ],
+            &options,
+            &dir,
+        );
+
+        let import_diags: Vec<_> = diagnostics
+            .iter()
+            .filter(|diag| {
+                let file = Path::new(&diag.file);
+                (file == main_ts_path.as_path()
+                    || file == main_mts_path.as_path()
+                    || file == main_cts_path.as_path())
+                    && diag.code != 2318
+            })
+            .collect();
+
+        assert!(
+            import_diags.iter().all(|diag| diag.code != 2305),
+            "expected no TS2305 for bundler dual-package import/require mode selection, got: {import_diags:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_collect_diagnostics_preserve_symlinks_keeps_original_target_error() {
