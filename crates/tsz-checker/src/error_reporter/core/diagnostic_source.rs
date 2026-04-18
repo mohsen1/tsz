@@ -726,7 +726,8 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn preferred_constructor_display_name(&mut self, type_id: TypeId) -> Option<String> {
         let base_name = self.named_type_display_name(type_id)?;
         let is_callable_or_constructible =
-            tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id).is_some()
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
+                .is_some()
                 || crate::query_boundaries::common::function_shape_for_type(
                     self.ctx.types,
                     type_id,
@@ -999,7 +1000,7 @@ impl<'a> CheckerState<'a> {
         // return the interface name directly. This prevents get_type_of_node from
         // resolving the Lazy to its structural form, losing the name (e.g., showing
         // "{ constraint: Constraint<this>; ... }" instead of "Num").
-        if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, source)
+        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, source)
             && let Some(def) = self.ctx.definition_store.get(def_id)
             && def.kind == tsz_solver::def::DefKind::Interface
             && def.type_params.is_empty()
@@ -1295,7 +1296,8 @@ impl<'a> CheckerState<'a> {
                 // `| undefined` injection.
                 && (!formatted.contains("| undefined") || display.contains("| undefined"))
             {
-                if tsz_solver::type_queries::get_enum_def_id(self.ctx.types, display_type).is_some()
+                if crate::query_boundaries::common::enum_def_id(self.ctx.types, display_type)
+                    .is_some()
                 {
                     return self.format_assignability_type_for_message(display_type, target);
                 }
@@ -1358,7 +1360,7 @@ impl<'a> CheckerState<'a> {
             // and displays as `EnumName.Member` (without `typeof` prefix). Skip the
             // raw annotation text when the target resolves to an enum member type.
             if display.starts_with("typeof ")
-                && tsz_solver::type_queries::get_enum_def_id(self.ctx.types, target).is_some()
+                && crate::query_boundaries::common::enum_def_id(self.ctx.types, target).is_some()
             {
                 // Fall through to use the TypeFormatter, which correctly displays
                 // `TypeData::Enum` as qualified `W.a` style names.
@@ -1434,7 +1436,7 @@ impl<'a> CheckerState<'a> {
             // an unrelated type name (e.g., a DOM interface that shares the
             // same structural shape). Use the assignability formatter which
             // correctly produces namespace-qualified enum names.
-            if tsz_solver::type_queries::get_enum_def_id(self.ctx.types, target).is_some() {
+            if crate::query_boundaries::common::enum_def_id(self.ctx.types, target).is_some() {
                 return self.format_assignability_type_for_message(target, source);
             }
             return fallback;
@@ -1442,7 +1444,7 @@ impl<'a> CheckerState<'a> {
 
         // When the target is an enum type without annotation text, use the
         // assignability formatter for correct qualified enum name display.
-        if tsz_solver::type_queries::get_enum_def_id(self.ctx.types, display_target).is_some() {
+        if crate::query_boundaries::common::enum_def_id(self.ctx.types, display_target).is_some() {
             return self.format_assignability_type_for_message(display_target, source);
         }
 
@@ -1762,7 +1764,7 @@ impl<'a> CheckerState<'a> {
         if tsz_solver::literal_value(self.ctx.types, target).is_some() {
             return true;
         }
-        if tsz_solver::type_queries::get_enum_def_id(self.ctx.types, target).is_some() {
+        if crate::query_boundaries::common::enum_def_id(self.ctx.types, target).is_some() {
             return true;
         }
         if tsz_solver::type_queries::is_symbol_or_unique_symbol(self.ctx.types, target)
@@ -1801,7 +1803,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let target = self.evaluate_type_for_assignability(target);
-        tsz_solver::type_queries::get_enum_def_id(self.ctx.types, target).is_none()
+        crate::query_boundaries::common::enum_def_id(self.ctx.types, target).is_none()
             && crate::query_boundaries::common::union_members(self.ctx.types, target).is_none()
             && crate::query_boundaries::common::intersection_members(self.ctx.types, target)
                 .is_none()
@@ -2080,7 +2082,7 @@ impl<'a> CheckerState<'a> {
         let object_display = self.object_literal_source_type_display(first_arg, Some(target))?;
 
         let members =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, source_type)?;
+            crate::query_boundaries::common::intersection_members(self.ctx.types, source_type)?;
         let mut displays = Vec::with_capacity(members.len());
         let mut replaced_object_member = false;
 

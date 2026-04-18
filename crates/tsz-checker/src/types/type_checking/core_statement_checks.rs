@@ -631,7 +631,7 @@ impl<'a> CheckerState<'a> {
         let is_direct_self_constraint = if constraint_type == provisional_type_id {
             true
         } else {
-            tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, constraint_type)
+            crate::query_boundaries::common::type_param_info(self.ctx.types, constraint_type)
                 .is_some_and(|info| {
                     self.ctx.types.resolve_atom(info.name).as_str() == name.as_str()
                 })
@@ -641,7 +641,7 @@ impl<'a> CheckerState<'a> {
         // where T has been detected as having a circular constraint. In tsc, resolving
         // P's base constraint would recurse into T and detect the same circularity.
         let constraint_is_circular_type_param = !is_direct_self_constraint
-            && tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, constraint_type)
+            && crate::query_boundaries::common::type_param_info(self.ctx.types, constraint_type)
                 .is_some_and(|info| info.constraint == Some(TypeId::UNKNOWN));
 
         if is_direct_self_constraint || constraint_is_circular_type_param {
@@ -670,7 +670,7 @@ impl<'a> CheckerState<'a> {
                 refs_to_check.push(inner);
             }
             refs_to_check.iter().any(|&ref_type| {
-                tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, ref_type)
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, ref_type)
                     .and_then(|def_id| self.ctx.def_to_symbol.borrow().get(&def_id).copied())
                     .is_some_and(|target_sym| self.ctx.circular_type_aliases.contains(&target_sym))
             })
@@ -680,7 +680,7 @@ impl<'a> CheckerState<'a> {
         // is the type parameter being constrained.
         let is_keyof_parent_type_param =
             tsz_solver::keyof_inner_type(self.ctx.types, constraint_type).is_some_and(|inner| {
-                tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, inner)
+                crate::query_boundaries::common::type_param_info(self.ctx.types, inner)
                     .is_some_and(|info| info.name == atom)
             });
         if constraint_refs_circular_alias && !is_keyof_parent_type_param {
@@ -710,7 +710,7 @@ impl<'a> CheckerState<'a> {
             evaluated,
         );
         let is_deferred_index_access =
-            tsz_solver::type_queries::get_index_access_types(self.ctx.types, evaluated)
+            crate::query_boundaries::common::index_access_types(self.ctx.types, evaluated)
                 .is_some_and(|(object_type, index_type)| {
                     crate::query_boundaries::common::type_parameter_constraint(
                         self.ctx.types,
@@ -731,7 +731,7 @@ impl<'a> CheckerState<'a> {
         // but AB only has keys 'a'|'b'). Check the PRE-evaluation indexed access
         // for this pattern and override validity when the index constraint is invalid.
         let has_invalid_index_constraint =
-            tsz_solver::type_queries::get_index_access_types(self.ctx.types, constraint_type)
+            crate::query_boundaries::common::index_access_types(self.ctx.types, constraint_type)
                 .is_some_and(|(object_type, index_type)| {
                     crate::query_boundaries::common::type_parameter_constraint(
                         self.ctx.types,

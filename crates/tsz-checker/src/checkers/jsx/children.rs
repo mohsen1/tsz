@@ -367,7 +367,7 @@ impl<'a> CheckerState<'a> {
         let props_type = self.evaluate_type_with_env(props_type);
 
         if let Some(members) =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, props_type)
+            crate::query_boundaries::common::intersection_members(self.ctx.types, props_type)
         {
             let mut best_member = None;
             let mut best_score = 0;
@@ -445,7 +445,7 @@ impl<'a> CheckerState<'a> {
         props_type: TypeId,
     ) -> Option<TypeId> {
         let members =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, props_type)?;
+            crate::query_boundaries::common::intersection_members(self.ctx.types, props_type)?;
         let mut callable_candidates = Vec::new();
         let mut seen = rustc_hash::FxHashSet::default();
 
@@ -496,7 +496,7 @@ impl<'a> CheckerState<'a> {
         let type_id = self.resolve_type_for_property_access(type_id);
         let type_id = self.evaluate_type_with_env(type_id);
         if let Some((base, args)) =
-            tsz_solver::type_queries::get_application_info(self.ctx.types, type_id)
+            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
             && args.len() == 1
             && self.format_type(base) == "Readonly"
         {

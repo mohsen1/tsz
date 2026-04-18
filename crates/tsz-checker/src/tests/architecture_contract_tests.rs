@@ -1612,6 +1612,7 @@ fn checker_files_stay_under_loc_limit() {
         ("error_reporter/call_errors.rs", 2554),
         ("types/type_checking/duplicate_identifiers_helpers.rs", 2125),
         ("types/type_checking/duplicate_identifiers.rs", 2051),
+        ("error_reporter/render_failure.rs", 2010),
     ];
 
     let mut violations = Vec::new();

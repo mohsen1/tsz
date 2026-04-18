@@ -1485,7 +1485,7 @@ impl<'a> CheckerState<'a> {
                                     )
                                     .map(|shape| shape.return_type)
                                     .or_else(|| {
-                                        tsz_solver::type_queries::get_return_type(self.ctx.types, ty)
+                                        crate::query_boundaries::common::return_type_for_type(self.ctx.types, ty)
                                     })
                                 })
                             })
@@ -1903,7 +1903,7 @@ impl<'a> CheckerState<'a> {
                             let literal_sensitive_return =
                                 tsz_solver::literal_value(self.ctx.types, expected_return_type)
                                     .is_some()
-                                    || tsz_solver::type_queries::get_enum_def_id(
+                                    || crate::query_boundaries::common::enum_def_id(
                                         self.ctx.types,
                                         expected_return_type,
                                     )
@@ -1920,7 +1920,7 @@ impl<'a> CheckerState<'a> {
                                     .is_some_and(|list_id| {
                                         self.ctx.types.type_list(list_id).iter().any(|&member| {
                                             tsz_solver::is_literal_type(self.ctx.types, member)
-                                                || tsz_solver::type_queries::get_enum_def_id(
+                                                || crate::query_boundaries::common::enum_def_id(
                                                     self.ctx.types,
                                                     member,
                                                 )
@@ -1997,10 +1997,10 @@ impl<'a> CheckerState<'a> {
                     let suppress_contextual_return_check = !has_type_annotation
                         && jsdoc_return_context.is_none()
                         && (self.type_has_unresolved_inference_holes(expected_return_type)
-                            || (tsz_solver::type_queries::is_callable_type(
+                            || (crate::query_boundaries::common::is_callable_type(
                                 self.ctx.types,
                                 actual_return,
-                            ) && !tsz_solver::type_queries::is_callable_type(
+                            ) && !crate::query_boundaries::common::is_callable_type(
                                 self.ctx.types,
                                 expected_return_type,
                             ))
@@ -2160,7 +2160,10 @@ impl<'a> CheckerState<'a> {
                                 )
                                 .map(|shape| shape.return_type)
                                 .or_else(|| {
-                                    tsz_solver::type_queries::get_return_type(self.ctx.types, ty)
+                                    crate::query_boundaries::common::return_type_for_type(
+                                        self.ctx.types,
+                                        ty,
+                                    )
                                 })
                             })
                         });

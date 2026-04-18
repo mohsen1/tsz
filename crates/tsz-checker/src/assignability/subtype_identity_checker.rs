@@ -549,17 +549,21 @@ impl<'a> CheckerState<'a> {
     /// for TS2403 redeclaration comparison.
     fn is_this_alias_property(&self, prop_type: TypeId, concrete_this: TypeId) -> bool {
         // Direct ThisType check.
-        if tsz_solver::type_queries::is_this_type(self.ctx.types.as_type_database(), prop_type) {
+        if crate::query_boundaries::common::is_this_type(
+            self.ctx.types.as_type_database(),
+            prop_type,
+        ) {
             return true;
         }
 
         // Lazy(DefId) that resolves to ThisType.
-        if let Some(def_id) =
-            tsz_solver::type_queries::get_lazy_def_id(self.ctx.types.as_type_database(), prop_type)
-        {
+        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(
+            self.ctx.types.as_type_database(),
+            prop_type,
+        ) {
             let env = self.ctx.type_env.borrow();
             if let Some(resolved) = env.get_def(def_id) {
-                if tsz_solver::type_queries::is_this_type(
+                if crate::query_boundaries::common::is_this_type(
                     self.ctx.types.as_type_database(),
                     resolved,
                 ) {

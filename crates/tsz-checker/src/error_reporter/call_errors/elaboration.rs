@@ -107,9 +107,10 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                if let Some(signatures) =
-                    tsz_solver::type_queries::get_call_signatures(self.ctx.types, callee_type)
-                {
+                if let Some(signatures) = crate::query_boundaries::common::call_signatures_for_type(
+                    self.ctx.types,
+                    callee_type,
+                ) {
                     for sig in signatures {
                         if !self.call_signature_accepts_arg_count(&sig, arg_count) {
                             continue;
@@ -224,9 +225,10 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                if let Some(signatures) =
-                    tsz_solver::type_queries::get_call_signatures(self.ctx.types, callee_type)
-                {
+                if let Some(signatures) = crate::query_boundaries::common::call_signatures_for_type(
+                    self.ctx.types,
+                    callee_type,
+                ) {
                     for sig in signatures {
                         if !self.call_signature_accepts_arg_count(&sig, arg_count) {
                             continue;
@@ -466,7 +468,7 @@ impl<'a> CheckerState<'a> {
         // Skip function body elaboration so the standard `diagnose_assignment_failure`
         // path produces TS2739 instead. tsc does the same: it reports missing
         // properties on the callable, not return type mismatches on the function body.
-        if let Some(callable) = tsz_solver::type_queries::get_callable_shape(
+        if let Some(callable) = crate::query_boundaries::common::callable_shape_for_type(
             self.ctx.types.as_type_database(),
             param_type,
         ) && !callable.properties.is_empty()
@@ -1468,10 +1470,10 @@ impl<'a> CheckerState<'a> {
                     let value_is_callable_or_constructor = value_is_bare_identifier
                         && source_prop_type != TypeId::ERROR
                         && source_prop_type != TypeId::ANY
-                        && (tsz_solver::type_queries::has_call_signatures(
+                        && (crate::query_boundaries::common::has_call_signatures(
                             self.ctx.types,
                             source_prop_type,
-                        ) || tsz_solver::type_queries::has_construct_signatures(
+                        ) || crate::query_boundaries::common::has_construct_signatures(
                             self.ctx.types,
                             source_prop_type,
                         ));

@@ -171,7 +171,7 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<String> {
         let mut missing: Vec<String> = Vec::new();
         let type_ids_to_check =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, instance_type)
+            crate::query_boundaries::common::intersection_members(self.ctx.types, instance_type)
                 .unwrap_or_else(|| vec![instance_type]);
 
         for type_id in type_ids_to_check {
@@ -223,7 +223,7 @@ impl<'a> CheckerState<'a> {
         let mut seen = rustc_hash::FxHashSet::default();
 
         if let Some(members) =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, instance_type)
+            crate::query_boundaries::common::intersection_members(self.ctx.types, instance_type)
         {
             for &member_id in members.iter() {
                 if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(

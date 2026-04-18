@@ -1230,9 +1230,10 @@ impl<'a> CheckerState<'a> {
                 } = raw
                 {
                     // Check if this is a callable with ThisType return
-                    if let Some(callable) =
-                        tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id)
-                    {
+                    if let Some(callable) = crate::query_boundaries::common::callable_shape_for_type(
+                        self.ctx.types,
+                        type_id,
+                    ) {
                         for sig in &callable.call_signatures {
                             if tsz_solver::is_this_type(self.ctx.types, sig.return_type) {
                                 return true;
@@ -1542,7 +1543,7 @@ impl<'a> CheckerState<'a> {
         // constructor types (which only have construct/new signatures). TSC anchors
         // class assignments (`x = C;`) at the LHS, not the RHS.
         if target_type == TypeId::VOID
-            && tsz_solver::type_queries::has_call_signatures(self.ctx.types, source_type)
+            && crate::query_boundaries::common::has_call_signatures(self.ctx.types, source_type)
             && self.is_identifier_rhs(right_idx)
         {
             let _ = self.check_assignable_or_report_at_exact_anchor(

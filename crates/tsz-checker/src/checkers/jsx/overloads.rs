@@ -59,8 +59,11 @@ impl<'a> CheckerState<'a> {
         )
         .filter(|s| s.len() >= 2)
         .or_else(|| {
-            tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)
-                .filter(|s| s.len() >= 2)
+            crate::query_boundaries::common::construct_signatures_for_type(
+                self.ctx.types,
+                component_type,
+            )
+            .filter(|s| s.len() >= 2)
         });
         let Some(sigs) = sigs else {
             return;

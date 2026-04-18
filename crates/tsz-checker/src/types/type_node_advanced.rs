@@ -315,7 +315,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 // Suppress TS2339 when the object type is a Lazy type that may resolve to a generic type.
                 // This handles cases where the interface reference needs to be resolved first.
                 let is_lazy_with_potential_generic =
-                    tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, resolved_object)
+                    crate::query_boundaries::common::lazy_def_id(self.ctx.types, resolved_object)
                         .is_some()
                         && crate::query_boundaries::common::contains_type_parameters(
                             self.ctx.types,

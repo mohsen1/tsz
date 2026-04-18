@@ -616,8 +616,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let is_callable =
-            tsz_solver::type_queries::is_callable_type(self.ctx.types.as_type_database(), ty);
+        let is_callable = crate::query_boundaries::common::is_callable_type(
+            self.ctx.types.as_type_database(),
+            ty,
+        );
         let is_awaitable = !is_callable && self.is_awaitable_type(ty);
 
         if !is_callable && !is_awaitable {

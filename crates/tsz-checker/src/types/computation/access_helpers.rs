@@ -363,7 +363,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some((object_type, index_type)) =
-            tsz_solver::type_queries::get_index_access_types(self.ctx.types, ty)
+            crate::query_boundaries::common::index_access_types(self.ctx.types, ty)
             && (self.type_contains_same_type_param_identity(object_type, type_param)
                 || self.type_contains_same_type_param_identity(index_type, type_param))
         {
@@ -554,7 +554,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(members) =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, type_id)
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
         {
             return members
                 .iter()

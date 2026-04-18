@@ -936,11 +936,11 @@ impl<'a> CheckerState<'a> {
     /// Returns (`unquoted_name`, `quoted_name`) for use in the diagnostic message.
     fn extract_mapped_type_property_name(&self, type_id: TypeId) -> Option<(String, String)> {
         let (_base, args) =
-            tsz_solver::type_queries::get_application_info(self.ctx.types, type_id)?;
+            crate::query_boundaries::common::application_info(self.ctx.types, type_id)?;
 
         for &arg_id in &args {
             if let Some(atom) =
-                tsz_solver::type_queries::get_string_literal_value(self.ctx.types, arg_id)
+                crate::query_boundaries::common::string_literal_value(self.ctx.types, arg_id)
             {
                 let name = self.ctx.types.resolve_atom(atom);
                 return Some((name.to_string(), format!("\"{name}\"")));

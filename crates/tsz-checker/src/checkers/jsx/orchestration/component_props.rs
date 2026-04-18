@@ -334,7 +334,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(name) =
-            tsz_solver::type_queries::get_string_literal_value(self.ctx.types, type_id)
+            crate::query_boundaries::common::string_literal_value(self.ctx.types, type_id)
         {
             return Some(self.ctx.types.resolve_atom(name).as_str().to_string());
         }
@@ -342,7 +342,8 @@ impl<'a> CheckerState<'a> {
         let members = crate::query_boundaries::common::union_members(self.ctx.types, type_id)?;
         let mut literal_name = None;
         for member in members {
-            let name = tsz_solver::type_queries::get_string_literal_value(self.ctx.types, member)?;
+            let name =
+                crate::query_boundaries::common::string_literal_value(self.ctx.types, member)?;
             match literal_name {
                 Some(existing) if existing != name => return None,
                 Some(_) => {}

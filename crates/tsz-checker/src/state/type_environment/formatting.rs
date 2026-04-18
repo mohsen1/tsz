@@ -158,7 +158,8 @@ impl<'a> CheckerState<'a> {
             return self.format_type_diagnostic(display_type);
         }
 
-        if let Some(shape) = tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id)
+        if let Some(shape) =
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
             && shape.properties.is_empty()
             && shape.string_index.is_none()
             && shape.number_index.is_none()

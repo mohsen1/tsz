@@ -288,7 +288,7 @@ impl<'a> CheckerState<'a> {
     ) {
         // If the return type is an intersection, walk each member
         if let Some(members_list) =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, return_type)
+            crate::query_boundaries::common::intersection_members(self.ctx.types, return_type)
         {
             for &member_id in members_list.iter() {
                 let name = self.format_single_display_type(member_id);
@@ -376,8 +376,10 @@ impl<'a> CheckerState<'a> {
                     // expansion in diagnostics. The resolve step produces a new TypeId
                     // that loses the Lazy(DefId) wrapper.
                     if resolved != instance_type
-                        && let Some(def_id) =
-                            tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, instance_type)
+                        && let Some(def_id) = crate::query_boundaries::common::lazy_def_id(
+                            self.ctx.types,
+                            instance_type,
+                        )
                     {
                         self.ctx
                             .definition_store
@@ -394,8 +396,10 @@ impl<'a> CheckerState<'a> {
                         )?;
                     let resolved = self.resolve_type_for_property_access(return_type);
                     if resolved != return_type
-                        && let Some(def_id) =
-                            tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, return_type)
+                        && let Some(def_id) = crate::query_boundaries::common::lazy_def_id(
+                            self.ctx.types,
+                            return_type,
+                        )
                     {
                         self.ctx
                             .definition_store
@@ -596,7 +600,7 @@ impl<'a> CheckerState<'a> {
             // This handles anonymous abstract construct signature types like
             // `abstract new (...args: any) => any` from type parameter constraints.
             if let Some(callable_shape) =
-                tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id)
+                crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
                 && callable_shape.is_abstract
             {
                 return true;

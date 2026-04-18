@@ -1189,6 +1189,45 @@ pub(crate) fn is_tuple_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::is_tuple_type(db, type_id)
 }
 
+pub(crate) fn is_intersection_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::is_intersection_type(db, type_id)
+}
+
+pub(crate) fn has_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::has_call_signatures(db, type_id)
+}
+
+pub(crate) fn is_type_query_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::is_type_query_type(db, type_id)
+}
+
+pub(crate) fn needs_evaluation_for_merge(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::needs_evaluation_for_merge(db, type_id)
+}
+
+pub(crate) fn return_type_for_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::get_return_type(db, type_id)
+}
+
+pub(crate) fn type_shape_symbol(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_binder::SymbolId> {
+    tsz_solver::type_queries::get_type_shape_symbol(db, type_id)
+}
+
+pub(crate) fn find_property_by_str(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    name: &str,
+) -> Option<tsz_solver::PropertyInfo> {
+    tsz_solver::type_queries::find_property_in_type_by_str(db, type_id, name)
+}
+
+pub(crate) fn array_applicable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::get_array_applicable_type(db, type_id)
+}
+
 pub(crate) fn is_only_null_or_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_only_null_or_undefined(db, type_id)
 }

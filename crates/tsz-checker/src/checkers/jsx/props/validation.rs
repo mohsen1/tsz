@@ -522,9 +522,13 @@ impl<'a> CheckerState<'a> {
     fn preferred_jsx_missing_props_target(&mut self, props_type: TypeId) -> TypeId {
         let normalized = self.normalize_jsx_required_props_target(props_type);
         let members =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, props_type).or_else(
-                || tsz_solver::type_queries::get_intersection_members(self.ctx.types, normalized),
-            );
+            crate::query_boundaries::common::intersection_members(self.ctx.types, props_type)
+                .or_else(|| {
+                    crate::query_boundaries::common::intersection_members(
+                        self.ctx.types,
+                        normalized,
+                    )
+                });
         let Some(members) = members else {
             return normalized;
         };
@@ -716,9 +720,11 @@ impl<'a> CheckerState<'a> {
             let member = self.resolve_type_for_property_access(member);
             let member = self.evaluate_type_with_env(member);
 
-            has_construct |=
-                tsz_solver::type_queries::get_construct_signatures(self.ctx.types, member)
-                    .is_some_and(|sigs| !sigs.is_empty());
+            has_construct |= crate::query_boundaries::common::construct_signatures_for_type(
+                self.ctx.types,
+                member,
+            )
+            .is_some_and(|sigs| !sigs.is_empty());
             has_call |=
                 crate::query_boundaries::common::function_shape_for_type(self.ctx.types, member)
                     .is_some_and(|shape| !shape.is_constructor)
@@ -761,7 +767,7 @@ impl<'a> CheckerState<'a> {
         !members.into_iter().any(|member| {
             let member = self.resolve_type_for_property_access(member);
             let member = self.evaluate_type_with_env(member);
-            tsz_solver::type_queries::get_construct_signatures(self.ctx.types, member)
+            crate::query_boundaries::common::construct_signatures_for_type(self.ctx.types, member)
                 .is_some_and(|sigs| sigs.iter().any(|sig| !sig.type_params.is_empty()))
         })
     }

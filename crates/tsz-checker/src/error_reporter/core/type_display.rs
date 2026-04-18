@@ -210,7 +210,7 @@ impl<'a> CheckerState<'a> {
                     });
             }
         } else if let Some(shape) =
-            tsz_solver::type_queries::get_callable_shape(self.ctx.types, widened)
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, widened)
         {
             let mut widened_shape = shape.as_ref().clone();
             let mut changed = false;
@@ -501,7 +501,7 @@ impl<'a> CheckerState<'a> {
                 ty
             } else {
                 let evaluated =
-                    if tsz_solver::type_queries::is_index_access_type(self.ctx.types, ty)
+                    if crate::query_boundaries::common::is_index_access_type(self.ctx.types, ty)
                         && crate::query_boundaries::common::contains_type_parameters(
                             self.ctx.types,
                             ty,
@@ -551,7 +551,7 @@ impl<'a> CheckerState<'a> {
                     // syntax. Resolving TypeQuery to the full function type causes double
                     // arrows like `() => () => typeof fn` instead of `() => typeof fn`.
                     let return_type =
-                        if tsz_solver::type_queries::is_type_query_type(
+                        if crate::query_boundaries::common::is_type_query_type(
                             self.ctx.types,
                             shape.return_type,
                         ) || tsz_solver::is_conditional_type(self.ctx.types, shape.return_type)
@@ -721,7 +721,7 @@ impl<'a> CheckerState<'a> {
                 }
             } else {
                 let evaluated =
-                    if tsz_solver::type_queries::is_index_access_type(self.ctx.types, ty)
+                    if crate::query_boundaries::common::is_index_access_type(self.ctx.types, ty)
                         && crate::query_boundaries::common::contains_type_parameters(
                             self.ctx.types,
                             ty,
@@ -739,13 +739,14 @@ impl<'a> CheckerState<'a> {
                 self.normalize_assignability_display_type_inner(evaluated, visiting, depth + 1)
             }
         } else {
-            let evaluated = if tsz_solver::type_queries::is_index_access_type(self.ctx.types, ty)
-                && crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
-            {
-                ty
-            } else {
-                self.evaluate_type_for_assignability(ty)
-            };
+            let evaluated =
+                if crate::query_boundaries::common::is_index_access_type(self.ctx.types, ty)
+                    && crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
+                {
+                    ty
+                } else {
+                    self.evaluate_type_for_assignability(ty)
+                };
 
             if self.should_truncate_assignability_display_type(evaluated, depth) {
                 visiting.remove(&ty);
@@ -782,7 +783,7 @@ impl<'a> CheckerState<'a> {
                 // syntax. Resolving TypeQuery to the full function type causes double
                 // arrows like `() => () => typeof fn` instead of `() => typeof fn`.
                 let return_type =
-                    if tsz_solver::type_queries::is_type_query_type(
+                    if crate::query_boundaries::common::is_type_query_type(
                         self.ctx.types,
                         shape.return_type,
                     ) || tsz_solver::is_conditional_type(self.ctx.types, shape.return_type)
@@ -1144,7 +1145,7 @@ impl<'a> CheckerState<'a> {
             .iter()
             .copied()
             .find(|&member| member != TypeId::STRING)?;
-        if !tsz_solver::type_queries::is_keyof_type(self.ctx.types, other) {
+        if !crate::query_boundaries::common::is_keyof_type(self.ctx.types, other) {
             return None;
         }
 
@@ -1338,7 +1339,7 @@ impl<'a> CheckerState<'a> {
         // For TypeQuery (typeof X), don't use evaluated display - preserve the
         // typeof syntax instead of expanding to the full function type.
         // This prevents double function arrows like `() => () => typeof fn`.
-        if tsz_solver::type_queries::is_type_query_type(self.ctx.types, ty) {
+        if crate::query_boundaries::common::is_type_query_type(self.ctx.types, ty) {
             return false;
         }
 
@@ -1347,17 +1348,22 @@ impl<'a> CheckerState<'a> {
         // the full function type, causing double arrows like `() => () => typeof fn`.
         if let Some(fn_shape) =
             crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
-            && tsz_solver::type_queries::is_type_query_type(self.ctx.types, fn_shape.return_type)
+            && crate::query_boundaries::common::is_type_query_type(
+                self.ctx.types,
+                fn_shape.return_type,
+            )
         {
             return false;
         }
 
         // Also check callable types (single call signature)
-        if let Some(callable) = tsz_solver::type_queries::get_callable_shape(self.ctx.types, ty)
+        if let Some(callable) =
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty)
             && callable.call_signatures.len() == 1
         {
             let sig = &callable.call_signatures[0];
-            if tsz_solver::type_queries::is_type_query_type(self.ctx.types, sig.return_type) {
+            if crate::query_boundaries::common::is_type_query_type(self.ctx.types, sig.return_type)
+            {
                 return false;
             }
         }
@@ -1404,8 +1410,8 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if !tsz_solver::type_queries::is_index_access_type(self.ctx.types, ty)
-            && !tsz_solver::type_queries::is_keyof_type(self.ctx.types, ty)
+        if !crate::query_boundaries::common::is_index_access_type(self.ctx.types, ty)
+            && !crate::query_boundaries::common::is_keyof_type(self.ctx.types, ty)
             && !tsz_solver::type_queries::is_conditional_type(self.ctx.types, ty)
             && !tsz_solver::is_generic_application(self.ctx.types, ty)
         {
@@ -1416,7 +1422,7 @@ impl<'a> CheckerState<'a> {
         // concrete type (union, object, primitive). This makes error messages show
         // the resolved type instead of the raw indexed access syntax.
         // e.g., `Pairs<FooBar>[keyof FooBar]` → `{ key: "foo"; value: string; } | { key: "bar"; value: number; }`
-        if tsz_solver::type_queries::is_index_access_type(self.ctx.types, ty) {
+        if crate::query_boundaries::common::is_index_access_type(self.ctx.types, ty) {
             return true;
         }
 

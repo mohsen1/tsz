@@ -155,10 +155,16 @@ impl<'a> CheckerState<'a> {
             if left_is_symbol || right_is_symbol {
                 let left_is_string_or_any = left_read_type == TypeId::ANY
                     || left_read_type == TypeId::STRING
-                    || tsz_solver::type_queries::is_string_literal(self.ctx.types, left_read_type);
+                    || crate::query_boundaries::checkers::iterable::is_string_literal_type(
+                        self.ctx.types,
+                        left_read_type,
+                    );
                 let right_is_string_or_any = right_type == TypeId::ANY
                     || right_type == TypeId::STRING
-                    || tsz_solver::type_queries::is_string_literal(self.ctx.types, right_type);
+                    || crate::query_boundaries::checkers::iterable::is_string_literal_type(
+                        self.ctx.types,
+                        right_type,
+                    );
                 let should_emit_2469 = (left_is_symbol && right_is_string_or_any)
                     || (right_is_symbol && left_is_string_or_any);
                 if should_emit_2469 {
