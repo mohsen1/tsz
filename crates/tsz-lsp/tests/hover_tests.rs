@@ -617,6 +617,22 @@ fn test_hover_parameter_type() {
 }
 
 #[test]
+fn test_hover_explicit_parameter_annotation_in_narrowing_sample() {
+    let source = r#"type Shape =
+  | { kind: "circle"; radius: number }
+  | { kind: "rectangle"; width: number; height: number };
+
+function area(shape: Shape): number {
+  return 0;
+}"#;
+    let info = get_hover_at(source, 4, 15).expect("Should find hover for annotated parameter");
+    assert_eq!(
+        info.display_string, "(parameter) shape: Shape",
+        "Hover should preserve the explicit parameter annotation in the playground sample"
+    );
+}
+
+#[test]
 fn test_hover_arrow_function() {
     let source = "const add = (a: number, b: number) => a + b;\nadd(1, 2);";
     let info = get_hover_at(source, 1, 0).expect("Should find hover for arrow function");

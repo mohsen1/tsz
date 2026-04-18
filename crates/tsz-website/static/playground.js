@@ -369,6 +369,7 @@ function ensureLspParser() {
 }
 
 function completionKindToMonaco(kind) {
+  if (typeof kind === "number") return kind;
   switch (kind) {
     case "Function": return monaco.languages.CompletionItemKind.Function;
     case "Class": return monaco.languages.CompletionItemKind.Class;
@@ -424,7 +425,11 @@ function registerTszProviders() {
       try {
         const pos = toLspPosition(position);
         const result = parser.getCompletionsAtPosition(pos.line, pos.character);
-        const entries = result && Array.isArray(result.entries) ? result.entries : [];
+        const entries = Array.isArray(result)
+          ? result
+          : result && Array.isArray(result.entries)
+            ? result.entries
+            : [];
         const suggestions = entries.map(entry => {
           const insertText = entry.insert_text || entry.label;
           return {
@@ -715,8 +720,14 @@ exampleSelect.addEventListener("change", () => {
   }
 });
 
-strictCheck.addEventListener("change", () => scheduleCheck());
-soundCheck.addEventListener("change", () => scheduleCheck());
+strictCheck.addEventListener("change", () => {
+  disposeLspParser();
+  scheduleCheck();
+});
+soundCheck.addEventListener("change", () => {
+  disposeLspParser();
+  scheduleCheck();
+});
 
 // ── Init ──
 

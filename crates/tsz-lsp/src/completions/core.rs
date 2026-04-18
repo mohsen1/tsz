@@ -25,6 +25,7 @@ impl<'a> Completions<'a> {
             interner: None,
             file_name: None,
             strict: false,
+            sound_mode: false,
         }
     }
 
@@ -45,6 +46,7 @@ impl<'a> Completions<'a> {
             interner: Some(interner),
             file_name: Some(file_name),
             strict: false,
+            sound_mode: false,
         }
     }
 
@@ -66,6 +68,30 @@ impl<'a> Completions<'a> {
             interner: Some(interner),
             file_name: Some(file_name),
             strict,
+            sound_mode: false,
+        }
+    }
+
+    /// Create a completions provider with explicit strict and sound-mode settings.
+    pub const fn with_options(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        line_map: &'a LineMap,
+        interner: &'a TypeInterner,
+        source_text: &'a str,
+        file_name: String,
+        strict: bool,
+        sound_mode: bool,
+    ) -> Self {
+        Self {
+            arena,
+            binder,
+            line_map,
+            source_text,
+            interner: Some(interner),
+            file_name: Some(file_name),
+            strict,
+            sound_mode,
         }
     }
 
