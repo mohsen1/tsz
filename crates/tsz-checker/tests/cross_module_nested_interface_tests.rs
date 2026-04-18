@@ -445,6 +445,40 @@ ws.toAbsolutePath(123);
     );
 }
 
+/// Test `import X = require('./mod')` qualified type name resolution.
+/// When module uses ES-style exports (no `export=`), the qualified name
+/// `X.SomeInterface` should still resolve correctly for type annotations.
+#[test]
+fn test_import_equals_require_qualified_type_resolution() {
+    let lib = r#"
+export interface IServer {}
+export interface IWorkspace {
+    toAbsolutePath(server: IServer): string;
+}
+export interface IConfiguration {
+    workspace: IWorkspace;
+    server?: IServer;
+}
+"#;
+
+    let consumer = r#"
+import commands = require("./lib");
+function run(configuration: commands.IConfiguration) {
+    var x = configuration.workspace.toAbsolutePath(configuration.server);
+}
+"#;
+
+    let diagnostics = compile_two_module_files("lib.ts", lib, "consumer.ts", consumer);
+    let codes: Vec<u32> = diagnostics.iter().map(|(c, _)| *c).collect();
+    let messages: Vec<&str> = diagnostics.iter().map(|(_, m)| m.as_str()).collect();
+
+    assert!(
+        has_error(&diagnostics, 2345),
+        "import = require() qualified type: passing IServer|undefined to IServer should emit TS2345. \
+         Got codes: {codes:?}, messages: {messages:?}"
+    );
+}
+
 /// Test namespace import optional property access.
 /// When accessing an optional property via namespace import, the type should include undefined.
 /// This is a key bug: namespace imports lose optional property types.

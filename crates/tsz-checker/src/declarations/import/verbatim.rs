@@ -5,6 +5,32 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> CheckerState<'a> {
+    fn binder_symbol_is_type_only(
+        &self,
+        binder: &tsz_binder::BinderState,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        use tsz_binder::symbol_flags;
+
+        const PURE_TYPE: u32 = symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS;
+        const VALUE: u32 = symbol_flags::VARIABLE
+            | symbol_flags::FUNCTION
+            | symbol_flags::CLASS
+            | symbol_flags::ENUM
+            | symbol_flags::ENUM_MEMBER
+            | symbol_flags::VALUE_MODULE;
+
+        let Some(sym) = binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let flags = sym.flags;
+
+        sym.is_type_only
+            || ((flags & PURE_TYPE) != 0 && (flags & VALUE) == 0)
+            || ((flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
+                && !self.symbol_has_runtime_value_in_binder(binder, sym_id))
+    }
+
     pub(crate) fn symbol_has_runtime_value_in_binder(
         &self,
         binder: &tsz_binder::BinderState,
@@ -206,39 +232,74 @@ impl<'a> CheckerState<'a> {
         module_name: &str,
         import_name: &str,
     ) -> bool {
-        use tsz_binder::symbol_flags;
-
-        const PURE_TYPE: u32 = symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS;
-        const VALUE: u32 = symbol_flags::VARIABLE
-            | symbol_flags::FUNCTION
-            | symbol_flags::CLASS
-            | symbol_flags::ENUM
-            | symbol_flags::ENUM_MEMBER
-            | symbol_flags::VALUE_MODULE;
-
         let normalized = module_name.trim_matches('"').trim_matches('\'');
+
+        let import_names = if import_name == "default" {
+            ["default", "export="]
+        } else {
+            [import_name, import_name]
+        };
 
         if let Some(target_idx) = self.ctx.resolve_import_target(normalized)
             && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
-            && let Some(sym_id) = target_binder.file_locals.get(import_name)
-            && let Some(sym) = target_binder.get_symbol(sym_id)
         {
-            let flags = sym.flags;
-            return ((flags & PURE_TYPE) != 0 && (flags & VALUE) == 0)
-                || ((flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
-                    && !self.symbol_has_runtime_value_in_binder(target_binder, sym_id));
+            if self.file_has_jsdoc_typedef_namespace_root(target_idx as usize, import_name) {
+                return true;
+            }
+
+            if let Some(sym_id) = target_binder.file_locals.get(import_name)
+                && self.binder_symbol_is_type_only(target_binder, sym_id)
+            {
+                return true;
+            }
+
+            let target_file_name = self
+                .ctx
+                .get_arena_for_file(target_idx as u32)
+                .source_files
+                .first()
+                .map(|sf| sf.file_name.as_str())
+                .unwrap_or("");
+
+            for key in [module_name, normalized, target_file_name] {
+                if key.is_empty() {
+                    continue;
+                }
+                if let Some(exports) = target_binder.module_exports.get(key) {
+                    for candidate_name in import_names {
+                        if let Some(sym_id) = exports.get(candidate_name)
+                            && self.binder_symbol_is_type_only(target_binder, sym_id)
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
         }
 
         for candidate in crate::module_resolution::module_specifier_candidates(module_name) {
             if let Some(exports) = self.ctx.binder.module_exports.get(&candidate)
-                && let Some(sym_id) = exports.get(import_name)
-                && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+                && import_names
+                    .iter()
+                    .filter_map(|name| exports.get(name))
+                    .any(|sym_id| self.binder_symbol_is_type_only(self.ctx.binder, sym_id))
             {
-                let flags = sym.flags;
-                return ((flags & PURE_TYPE) != 0 && (flags & VALUE) == 0)
-                    || ((flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
-                        != 0
-                        && !self.symbol_has_runtime_value_in_binder(self.ctx.binder, sym_id));
+                return true;
+            }
+        }
+
+        if let Some(all_binders) = &self.ctx.all_binders {
+            for binder in all_binders.iter() {
+                for candidate in crate::module_resolution::module_specifier_candidates(module_name) {
+                    if let Some(exports) = binder.module_exports.get(&candidate)
+                        && import_names
+                            .iter()
+                            .filter_map(|name| exports.get(name))
+                            .any(|sym_id| self.binder_symbol_is_type_only(binder, sym_id))
+                    {
+                        return true;
+                    }
+                }
             }
         }
 

@@ -147,9 +147,18 @@ impl<'a> CheckerState<'a> {
             if matches_by_name || matches_binding_pattern {
                 continue;
             }
-            let (message, code) = if has_implicit_arguments_candidate
-                && Self::jsdoc_param_is_rest(jsdoc, param_name)
-            {
+            // tsc's three cases for an unmatched @param tag:
+            //   1. function uses `arguments` AND the JSDoc tag is rest (`...T`)
+            //      → no error (rest tag legitimately documents `arguments`).
+            //   2. function uses `arguments` AND the JSDoc tag is NOT rest
+            //      → TS8029 (suggest making the tag a rest type to match).
+            //   3. function does not use `arguments`
+            //      → TS8024 (truly no parameter with that name).
+            let jsdoc_tag_is_rest = Self::jsdoc_param_is_rest(jsdoc, param_name);
+            if has_implicit_arguments_candidate && jsdoc_tag_is_rest {
+                continue;
+            }
+            let (message, code) = if has_implicit_arguments_candidate {
                 (
                     format_message(
                         diagnostic_messages::JSDOC_PARAM_TAG_HAS_NAME_BUT_THERE_IS_NO_PARAMETER_WITH_THAT_NAME_IT_WOULD_MATCH,
