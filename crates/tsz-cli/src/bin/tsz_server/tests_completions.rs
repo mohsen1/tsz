@@ -1721,6 +1721,624 @@ fn test_completion_info_auto_import_includes_export_map_types_entries() {
 }
 
 #[test]
+fn test_completion_info_auto_import_discovers_dependency_files_from_disk() {
+    let mut server = make_server();
+
+    let unique = format!(
+        "tsz_completion_dep_scan_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after UNIX_EPOCH")
+            .as_nanos()
+    );
+    let root = std::env::temp_dir().join(unique);
+    let project_dir = root.join("project");
+    let src_dir = project_dir.join("src");
+    let dep_lib_dir = project_dir.join("node_modules").join("dependency").join("lib");
+    std::fs::create_dir_all(&src_dir).expect("should create src dir");
+    std::fs::create_dir_all(&dep_lib_dir).expect("should create dependency lib dir");
+
+    let tsconfig_path = project_dir.join("tsconfig.json");
+    std::fs::write(
+        &tsconfig_path,
+        r#"{
+  "compilerOptions": {
+    "lib": ["es5"],
+    "module": "nodenext"
+  }
+}"#,
+    )
+    .expect("should write tsconfig");
+
+    let package_json_path = project_dir.join("package.json");
+    std::fs::write(
+        &package_json_path,
+        r#"{
+  "dependencies": {
+    "dependency": "^1.0.0"
+  }
+}"#,
+    )
+    .expect("should write package.json");
+
+    let dep_package_json_path = project_dir.join("node_modules").join("dependency").join("package.json");
+    std::fs::write(
+        &dep_package_json_path,
+        r#"{
+  "name": "dependency",
+  "version": "1.0.0",
+  "exports": {
+    ".": { "types": "./lib/index.d.ts" },
+    "./lol": { "types": "./lib/lol.d.ts" }
+  }
+}"#,
+    )
+    .expect("should write dependency package.json");
+
+    let dep_index_path = dep_lib_dir.join("index.d.ts");
+    std::fs::write(&dep_index_path, "export declare function fooFromIndex(): void;\n")
+        .expect("should write dependency index declarations");
+
+    let dep_lol_path = dep_lib_dir.join("lol.d.ts");
+    std::fs::write(&dep_lol_path, "export declare function fooFromLol(): void;\n")
+        .expect("should write dependency lol declarations");
+
+    let source_path = src_dir.join("foo.ts");
+    let source_path_str = source_path.to_string_lossy().to_string();
+    std::fs::write(&source_path, "fooFrom").expect("should write source file");
+
+    // Intentionally keep dependency declaration files out of open_files to
+    // mirror auto-import provider scenarios where package files are discovered
+    // from disk.
+    server
+        .open_files
+        .insert(source_path_str.clone(), "fooFrom".to_string());
+    server.open_files.insert(
+        tsconfig_path.to_string_lossy().to_string(),
+        std::fs::read_to_string(&tsconfig_path).expect("should read tsconfig"),
+    );
+    server.open_files.insert(
+        package_json_path.to_string_lossy().to_string(),
+        std::fs::read_to_string(&package_json_path).expect("should read package.json"),
+    );
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": source_path_str,
+            "line": 1,
+            "offset": 8,
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "includeInsertTextCompletions": true,
+                "allowIncompleteCompletions": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+
+    let has_index = entries.iter().any(|entry| {
+        entry.get("name").and_then(serde_json::Value::as_str) == Some("fooFromIndex")
+            && entry.get("source").and_then(serde_json::Value::as_str) == Some("dependency")
+    });
+    assert!(
+        has_index,
+        "expected fooFromIndex auto-import completion discovered from on-disk dependency files"
+    );
+
+    let has_lol = entries.iter().any(|entry| {
+        entry.get("name").and_then(serde_json::Value::as_str) == Some("fooFromLol")
+            && entry.get("source").and_then(serde_json::Value::as_str) == Some("dependency/lol")
+    });
+    assert!(
+        has_lol,
+        "expected fooFromLol auto-import completion discovered from on-disk dependency files"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn test_completion_info_auto_import_with_fourslash_marker_position() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/home/src/workspaces/project/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "lib": ["es5"],
+    "module": "nodenext"
+  }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/package.json".to_string(),
+        r#"{
+  "dependencies": {
+    "dependency": "^1.0.0"
+  }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/node_modules/dependency/package.json".to_string(),
+        r#"{
+  "name": "dependency",
+  "version": "1.0.0",
+  "exports": {
+    ".": { "types": "./lib/index.d.ts" },
+    "./lol": { "types": "./lib/lol.d.ts" }
+  }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/node_modules/dependency/lib/index.d.ts".to_string(),
+        "export declare function fooFromIndex(): void;\n".to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/node_modules/dependency/lib/lol.d.ts".to_string(),
+        "export declare function fooFromLol(): void;\n".to_string(),
+    );
+
+    let source_text = "fooFrom/**/";
+    server.open_files.insert(
+        "/home/src/workspaces/project/src/foo.ts".to_string(),
+        source_text.to_string(),
+    );
+    let marker_offset = source_text.find('/').expect("marker start exists");
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/home/src/workspaces/project/src/foo.ts",
+            "line": 1,
+            "offset": marker_offset + 1,
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "includeInsertTextCompletions": true,
+                "allowIncompleteCompletions": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+
+    let has_index = entries.iter().any(|entry| {
+        entry.get("name").and_then(serde_json::Value::as_str) == Some("fooFromIndex")
+            && entry.get("source").and_then(serde_json::Value::as_str) == Some("dependency")
+    });
+    assert!(
+        has_index,
+        "expected fooFromIndex auto-import completion when cursor is at fourslash marker position"
+    );
+}
+
+#[test]
+fn test_completion_info_auto_import_allows_bare_package_without_requester_package_json_loaded() {
+    let mut server = make_server();
+
+    let source_path = "/virtual/workspace/project/src/index.ts";
+    let dep_package_path = "/virtual/workspace/project/node_modules/dep/package.json";
+    let dep_types_path = "/virtual/workspace/project/node_modules/dep/index.d.ts";
+
+    // Keep requester package.json absent to mirror adapter snapshots where only
+    // source and dependency files are tracked.
+    server
+        .open_files
+        .insert(source_path.to_string(), "DependencySymb".to_string());
+    server.open_files.insert(
+        dep_package_path.to_string(),
+        r#"{
+  "name": "dep",
+  "version": "1.0.0",
+  "types": "./index.d.ts"
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        dep_types_path.to_string(),
+        "export declare class DependencySymbol {}\n".to_string(),
+    );
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": source_path,
+            "line": 1,
+            "offset": 14,
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "includeInsertTextCompletions": true,
+                "allowIncompleteCompletions": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+
+    let has_dep_auto_import = entries.iter().any(|entry| {
+        entry.get("name").and_then(serde_json::Value::as_str) == Some("DependencySymbol")
+            && entry.get("source").and_then(serde_json::Value::as_str) == Some("dep")
+    });
+    assert!(
+        has_dep_auto_import,
+        "expected dep auto-import completion when requester package.json is not loaded"
+    );
+}
+
+#[test]
+fn test_completion_info_auto_import_includes_peer_dependency_from_workspace_package_json() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/home/src/workspaces/project/node_modules/common-dependency/package.json".to_string(),
+        r#"{ "name": "common-dependency" }"#.to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/node_modules/common-dependency/index.d.ts".to_string(),
+        "export declare class CommonDependency {}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/node_modules/package-dependency/package.json".to_string(),
+        r#"{ "name": "package-dependency" }"#.to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/node_modules/package-dependency/index.d.ts".to_string(),
+        "export declare class PackageDependency\n".to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/package.json".to_string(),
+        r#"{
+  "private": true,
+  "dependencies": {
+    "common-dependency": "*"
+  }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": { "lib": ["es5"] },
+  "files": [],
+  "references": [{ "path": "packages/a" }]
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/packages/a/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": { "lib": ["es5"], "target": "esnext", "composite": true }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/packages/a/package.json".to_string(),
+        r#"{
+  "peerDependencies": {
+    "package-dependency": "*"
+  }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/packages/a/index.ts".to_string(),
+        "".to_string(),
+    );
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/home/src/workspaces/project/packages/a/index.ts",
+            "line": 1,
+            "offset": 1,
+            "preferences": {
+                "includeCompletionsForModuleExports": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+
+    let has_common = entries.iter().any(|entry| {
+        entry.get("name").and_then(serde_json::Value::as_str) == Some("CommonDependency")
+            && entry.get("source").and_then(serde_json::Value::as_str) == Some("common-dependency")
+    });
+    assert!(
+        has_common,
+        "expected CommonDependency auto-import from root dependency package"
+    );
+
+    let has_peer = entries.iter().any(|entry| {
+        entry.get("name").and_then(serde_json::Value::as_str) == Some("PackageDependency")
+            && entry.get("source").and_then(serde_json::Value::as_str) == Some("package-dependency")
+    });
+    assert!(
+        has_peer,
+        "expected PackageDependency auto-import from peerDependencies package"
+    );
+}
+
+#[test]
+fn test_completion_info_auto_import_workspace_dependency_prefers_bare_package_source() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/home/src/workspaces/project/tsconfig.json".to_string(),
+        r#"{ "compilerOptions": { "lib": ["es5"], "module": "commonjs" } }"#.to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/package.json".to_string(),
+        r#"{ "dependencies": { "mylib": "file:packages/mylib" } }"#.to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/packages/mylib/package.json".to_string(),
+        r#"{ "name": "mylib", "version": "1.0.0", "main": "index.js", "types": "index" }"#
+            .to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/packages/mylib/index.ts".to_string(),
+        r#"export * from "./mySubDir";"#.to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/packages/mylib/mySubDir/index.ts".to_string(),
+        r#"export * from "./myClass";
+export * from "./myClass2";"#
+            .to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/packages/mylib/mySubDir/myClass.ts".to_string(),
+        "export class MyClass {}".to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/packages/mylib/mySubDir/myClass2.ts".to_string(),
+        "export class MyClass2 {}".to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/src/index.ts".to_string(),
+        "MyClass".to_string(),
+    );
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/home/src/workspaces/project/src/index.ts",
+            "line": 1,
+            "offset": 7,
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "includeInsertTextCompletions": true,
+                "allowIncompleteCompletions": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+
+    let my_class_entries: Vec<&serde_json::Value> = entries
+        .iter()
+        .filter(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some("MyClass"))
+        .collect();
+    assert!(
+        !my_class_entries.is_empty(),
+        "expected at least one MyClass auto-import entry"
+    );
+    let sources: Vec<&str> = my_class_entries
+        .iter()
+        .filter_map(|entry| entry.get("source").and_then(serde_json::Value::as_str))
+        .collect();
+    assert!(
+        sources.iter().any(|source| *source == "mylib"),
+        "expected MyClass auto-import candidates to include bare package source, got {sources:?}"
+    );
+    assert_eq!(
+        sources.first().copied(),
+        Some("mylib"),
+        "expected bare package source to be ranked first for MyClass, got {sources:?}"
+    );
+}
+
+#[test]
+fn test_completion_info_auto_import_includes_wildcard_exports_subpath_entries() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/home/src/workspaces/project/node_modules/pkg/package.json".to_string(),
+        r#"{
+  "name": "pkg",
+  "version": "1.0.0",
+  "exports": {
+    "./*": "./a/*.js",
+    "./b/*.js": "./b/*.js",
+    "./c/*": "./c/*",
+    "./d/*": { "import": "./d/*.mjs" }
+  }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/node_modules/pkg/a/a1.d.ts".to_string(),
+        "export const a1: number;".to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/node_modules/pkg/b/b1.d.ts".to_string(),
+        "export const b1: number;".to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/node_modules/pkg/c/c1.d.ts".to_string(),
+        "export const c1: number;".to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/node_modules/pkg/c/subfolder/c2.d.mts".to_string(),
+        "export const c2: number;".to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/node_modules/pkg/d/d1.d.mts".to_string(),
+        "export const d1: number;".to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/package.json".to_string(),
+        r#"{
+  "type": "module",
+  "dependencies": {
+    "pkg": "1.0.0"
+  }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "module": "nodenext",
+    "lib": ["es5"]
+  }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/main.ts".to_string(),
+        "a".to_string(),
+    );
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/home/src/workspaces/project/main.ts",
+            "line": 1,
+            "offset": 2,
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "allowIncompleteCompletions": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+
+    let has_a1 = entries.iter().any(|entry| {
+        entry.get("name").and_then(serde_json::Value::as_str) == Some("a1")
+            && entry.get("source").and_then(serde_json::Value::as_str) == Some("pkg/a1")
+    });
+    assert!(
+        has_a1,
+        "expected wildcard exports auto-import entry a1 from pkg/a1"
+    );
+}
+
+#[test]
+fn test_completion_info_auto_import_includes_string_exports_entrypoint() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/home/src/workspaces/project/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "module": "nodenext",
+    "lib": ["es5"]
+  }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/package.json".to_string(),
+        r#"{
+  "type": "module",
+  "dependencies": {
+    "dependency": "^1.0.0"
+  }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/node_modules/dependency/package.json".to_string(),
+        r#"{
+  "name": "dependency",
+  "version": "1.0.0",
+  "main": "./lib/index.js",
+  "exports": "./lib/lol.d.ts"
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/node_modules/dependency/lib/index.d.ts".to_string(),
+        "export function fooFromIndex(): void;".to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/node_modules/dependency/lib/lol.d.ts".to_string(),
+        "export function fooFromLol(): void;".to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/src/foo.ts".to_string(),
+        "fooFrom".to_string(),
+    );
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/home/src/workspaces/project/src/foo.ts",
+            "line": 1,
+            "offset": 8,
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "allowIncompleteCompletions": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+
+    let has_lol = entries.iter().any(|entry| {
+        entry.get("name").and_then(serde_json::Value::as_str) == Some("fooFromLol")
+            && entry.get("source").and_then(serde_json::Value::as_str) == Some("dependency")
+    });
+    assert!(
+        has_lol,
+        "expected fooFromLol auto-import completion from string exports package entrypoint"
+    );
+}
+
+#[test]
 fn test_open_external_project_module_none_es5_blocks_auto_import_completions() {
     let mut server = make_server();
 
