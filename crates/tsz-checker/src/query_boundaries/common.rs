@@ -643,6 +643,23 @@ pub(crate) fn enum_def_id(
     tsz_solver::type_queries::get_enum_def_id(db, type_id)
 }
 
+/// Check whether a mapped type has a `readonly` modifier applied.
+pub(crate) fn is_mapped_type_with_readonly_modifier(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::operations::property::is_mapped_type_with_readonly_modifier(db, type_id)
+}
+
+/// Check whether a tuple element at a fixed position is readonly.
+pub(crate) fn is_readonly_tuple_fixed_element(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    prop_name: &str,
+) -> bool {
+    tsz_solver::operations::property::is_readonly_tuple_fixed_element(db, type_id, prop_name)
+}
+
 /// Check if a type is a plain object type (properties only, no index signatures).
 ///
 /// Returns `true` for `TypeData::Object` but not `TypeData::ObjectWithIndex`.
