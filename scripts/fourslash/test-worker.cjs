@@ -519,26 +519,11 @@ function patchSessionClient(SessionClient, ts) {
         } catch { /* ignore */ }
 
         // Class-member snippet completions (override/implement stubs) are
-        // heavily preference-driven. Prefer tsz snippet entries when present
-        // (they carry tsz-specific insert-text/code-action wiring), otherwise
-        // fall back to native for shape parity.
+        // heavily preference-driven; merge against native LS for exact
+        // tsserver shape while preserving tsz scaffold text where needed.
         if (preferences?.includeCompletionsWithClassMemberSnippets && nativeResult) {
             if (!nativeResult.entries || nativeResult.entries.length === 0) {
                 return undefined;
-            }
-            const hasSnippetSource = (completions) =>
-                Array.isArray(completions?.entries) &&
-                completions.entries.some(entry =>
-                    entry?.source === "ClassMemberSnippet/" ||
-                    (Array.isArray(entry?.sourceDisplay) &&
-                        entry.sourceDisplay.some(part =>
-                            String(part?.text || "") === "ClassMemberSnippet/"))
-                );
-            if (hasSnippetSource(result)) {
-                if (result) {
-                    result.isNewIdentifierLocation = nativeResult.isNewIdentifierLocation;
-                }
-                return result?.entries && result.entries.length > 0 ? result : undefined;
             }
             if (result && Array.isArray(result.entries) && result.entries.length > 0) {
                 const keyOf = (entry) =>
