@@ -618,6 +618,13 @@ impl Project {
         let normalized = target_file.replace('\\', "/");
         let marker = "/node_modules/";
         let marker_idx = normalized.find(marker)?;
+        let node_modules_root = &normalized[..marker_idx + marker.len() - 1];
+        if let Some(specifier) =
+            self.package_specifier_from_nearest_package_manifest(&normalized, node_modules_root)
+        {
+            return Some(specifier);
+        }
+
         let package_path = &normalized[marker_idx + marker.len()..];
         if package_path.is_empty() {
             return None;
@@ -663,6 +670,79 @@ impl Project {
         if spec.is_empty() { None } else { Some(spec) }
     }
 
+    fn package_specifier_from_nearest_package_manifest(
+        &self,
+        normalized_target: &str,
+        node_modules_root: &str,
+    ) -> Option<String> {
+        let mut current_dir = Path::new(normalized_target).parent();
+        while let Some(dir) = current_dir {
+            let dir_normalized = path_to_string(&normalize_path(dir)).replace('\\', "/");
+            if !dir_normalized.starts_with(node_modules_root) {
+                break;
+            }
+
+            let package_json_path = format!("{dir_normalized}/package.json");
+            let package_json = self
+                .files
+                .get(&package_json_path)
+                .map(|f| f.source_text().to_string())
+                .or_else(|| std::fs::read_to_string(&package_json_path).ok())
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+
+            if let Some(package_json) = package_json
+                && let Some(package_name) = package_json
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .map(normalize_node_modules_package_specifier)
+                    .filter(|name| !name.is_empty())
+            {
+                if let Some(exports_value) = package_json.get("exports") {
+                    return self.package_specifier_from_package_exports_value(
+                        normalized_target,
+                        &package_name,
+                        &dir_normalized,
+                        exports_value,
+                    );
+                }
+
+                let package_dir_prefix = format!("{dir_normalized}/");
+                let target_relative = normalized_target
+                    .strip_prefix(&package_dir_prefix)
+                    .unwrap_or_default();
+                let runtime_relative = package_runtime_specifier_from_target_path(target_relative);
+                let runtime_spec = if runtime_relative.is_empty() {
+                    package_name.clone()
+                } else {
+                    format!("{package_name}/{runtime_relative}")
+                };
+
+                if let Some(specifier) = package_main_module_specifier_for_target(
+                    &package_json,
+                    &package_name,
+                    &runtime_spec,
+                    normalized_target,
+                ) {
+                    return Some(specifier);
+                }
+
+                let spec = normalize_node_modules_package_specifier(&runtime_spec);
+                if !spec.is_empty() {
+                    return Some(spec);
+                }
+            }
+
+            if dir_normalized == node_modules_root {
+                break;
+            }
+            current_dir = dir.parent();
+        }
+
+        None
+    }
+
     fn package_specifier_from_package_exports(
         &self,
         normalized_target: &str,
@@ -676,30 +756,39 @@ impl Project {
             std::fs::read_to_string(package_json_path).ok()
         }?;
 
+        let package_dir = format!("{package_prefix}{package_root}");
         let package_json = serde_json::from_str::<serde_json::Value>(&package_json_text).ok()?;
         let exports_value = package_json.get("exports")?;
-        if let Some(exports_target) = exports_value.as_str() {
-            let package_dir = format!("{package_prefix}{package_root}");
-            let package_dir_prefix = format!("{package_dir}/");
-            let target_relative = normalized_target.strip_prefix(&package_dir_prefix)?;
-            let target_relative =
-                path_to_string(&strip_js_ts_extension(Path::new(target_relative)))
-                    .replace('\\', "/");
-            let target_pattern = path_to_string(&strip_js_ts_extension(Path::new(exports_target)))
-                .replace('\\', "/");
-            let target_pattern = target_pattern.strip_prefix("./").unwrap_or(&target_pattern);
-            if wildcard_capture_case_insensitive(target_pattern, &target_relative).is_some() {
-                return Some(package_root.to_string());
-            }
-            return None;
-        }
-        let exports_object = exports_value.as_object()?;
+        self.package_specifier_from_package_exports_value(
+            normalized_target,
+            package_root,
+            &package_dir,
+            exports_value,
+        )
+    }
 
-        let package_dir = format!("{package_prefix}{package_root}");
+    fn package_specifier_from_package_exports_value(
+        &self,
+        normalized_target: &str,
+        package_specifier: &str,
+        package_dir: &str,
+        exports_value: &serde_json::Value,
+    ) -> Option<String> {
         let package_dir_prefix = format!("{package_dir}/");
         let target_relative = normalized_target.strip_prefix(&package_dir_prefix)?;
         let target_relative =
             path_to_string(&strip_js_ts_extension(Path::new(target_relative))).replace('\\', "/");
+
+        if let Some(exports_target) = exports_value.as_str() {
+            let target_pattern = path_to_string(&strip_js_ts_extension(Path::new(exports_target)))
+                .replace('\\', "/");
+            let target_pattern = target_pattern.strip_prefix("./").unwrap_or(&target_pattern);
+            if wildcard_capture_case_insensitive(target_pattern, &target_relative).is_some() {
+                return Some(package_specifier.to_string());
+            }
+            return None;
+        }
+        let exports_object = exports_value.as_object()?;
 
         for (export_key, export_target) in exports_object {
             let key_pattern = if export_key == "." {
@@ -731,7 +820,7 @@ impl Project {
                 };
 
                 if export_key == "." {
-                    return Some(package_root.to_string());
+                    return Some(package_specifier.to_string());
                 }
 
                 let mut subpath = apply_wildcard_capture(key_pattern, &capture)?;
@@ -739,9 +828,9 @@ impl Project {
                     subpath.push_str(".js");
                 }
                 if subpath.is_empty() {
-                    return Some(package_root.to_string());
+                    return Some(package_specifier.to_string());
                 }
-                return Some(format!("{package_root}/{subpath}"));
+                return Some(format!("{package_specifier}/{subpath}"));
             }
         }
 
@@ -1359,6 +1448,57 @@ mod tests {
         assert_eq!(
             project.package_specifier_from_node_modules("/node_modules/bar/index.d.ts"),
             Some("bar".to_string())
+        );
+    }
+
+    #[test]
+    fn package_specifier_uses_package_name_from_store_layout_package_json() {
+        let mut project = Project::new();
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/.store/@remix-run-server-runtime-virtual-c72daf0d/package/package.json".to_string(),
+            r#"{
+  "name": "@remix-run/server-runtime",
+  "version": "0.0.0",
+  "main": "index.js"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/.store/@remix-run-server-runtime-virtual-c72daf0d/package/index.d.ts".to_string(),
+            "export declare function ServerRuntimeMetaFunction(): void;".to_string(),
+        );
+
+        assert_eq!(
+            project.package_specifier_from_node_modules(
+                "/home/src/workspaces/project/node_modules/.store/@remix-run-server-runtime-virtual-c72daf0d/package/index.d.ts"
+            ),
+            Some("@remix-run/server-runtime".to_string())
+        );
+    }
+
+    #[test]
+    fn package_specifier_uses_nested_pnpm_node_modules_package_name() {
+        let mut project = Project::new();
+        project.set_file(
+            "/repo/node_modules/.pnpm/@scope+pkg@1.0.0/node_modules/@scope/pkg/package.json"
+                .to_string(),
+            r#"{
+  "name": "@scope/pkg",
+  "version": "1.0.0"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/repo/node_modules/.pnpm/@scope+pkg@1.0.0/node_modules/@scope/pkg/sub/path/file.d.ts"
+                .to_string(),
+            "export declare const value: number;".to_string(),
+        );
+
+        assert_eq!(
+            project.package_specifier_from_node_modules(
+                "/repo/node_modules/.pnpm/@scope+pkg@1.0.0/node_modules/@scope/pkg/sub/path/file.d.ts"
+            ),
+            Some("@scope/pkg/sub/path/file".to_string())
         );
     }
 
