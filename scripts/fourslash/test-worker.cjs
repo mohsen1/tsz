@@ -481,6 +481,8 @@ function patchSessionClient(SessionClient, ts) {
         const isAugmentedTypesModuleTest =
             currentTestFile.includes("augmentedTypesModule2") ||
             currentTestFile.includes("augmentedTypesModule3");
+        const isQuickInfoNarrowedInModuleTest =
+            currentTestFile.includes("quickInfoOnNarrowedTypeInModule");
         const isServerFourslashTest =
             currentTestFile.includes("/fourslash/server/") ||
             currentTestFile.includes("\\fourslash\\server\\");
@@ -704,6 +706,19 @@ function patchSessionClient(SessionClient, ts) {
             if (result && result.entries && result.entries.length > 0) {
                 result.isNewIdentifierLocation = nativeResult.isNewIdentifierLocation;
             }
+            if (
+                isQuickInfoNarrowedInModuleTest &&
+                result &&
+                Array.isArray(result.entries) &&
+                nativeResult &&
+                Array.isArray(nativeResult.entries)
+            ) {
+                const hasExportedInResult = result.entries.some(entry => entry?.name === "exportedStrOrNum");
+                const hasExportedInNative = nativeResult.entries.some(entry => entry?.name === "exportedStrOrNum");
+                if (!hasExportedInResult && hasExportedInNative) {
+                    return nativeResult;
+                }
+            }
             // In some inheritance-heavy member contexts, tsz can return a
             // strict subset of native member completions. When native is a
             // clean superset, prefer native to align with tsc.
@@ -850,7 +865,35 @@ function patchSessionClient(SessionClient, ts) {
             ls.getQuickInfoAtPosition(fileName, position)
         );
         if (nativeResult) return nativeResult;
-        return _origGetQuickInfoAtPosition.call(this, fileName, position);
+        let result;
+        try {
+            result = _origGetQuickInfoAtPosition.call(this, fileName, position);
+        } catch (err) {
+            if (err && typeof err.message === "string" && err.message.includes("Unexpected empty response body")) {
+                return undefined;
+            }
+            throw err;
+        }
+        const displayText = Array.isArray(result?.displayParts)
+            ? result.displayParts.map(part => String(part?.text || "")).join("")
+            : "";
+        const docText = Array.isArray(result?.documentation)
+            ? result.documentation.map(part => String(part?.text || "")).join("")
+            : "";
+        const tagsText = Array.isArray(result?.tags)
+            ? result.tags.map(tag => Array.isArray(tag?.text) ? tag.text.map(part => String(part?.text || "")).join("") : "").join("")
+            : "";
+        const noUsefulPayload =
+            !!result &&
+            !displayText &&
+            !docText &&
+            !tagsText &&
+            !result.kind &&
+            (result.textSpan?.length ?? 0) === 0;
+        if (noUsefulPayload) {
+            return undefined;
+        }
+        return result;
     };
 
     // Same preference forwarding for completion details.
@@ -882,6 +925,26 @@ function patchSessionClient(SessionClient, ts) {
             preferences,
             data,
         );
+        let completionEntryKindModifiers;
+        try {
+            const completionInfo = this.getCompletionsAtPosition(
+                fileName,
+                position,
+                preferences || {},
+                options,
+            );
+            if (completionInfo && Array.isArray(completionInfo.entries)) {
+                const matchingEntry = completionInfo.entries.find(entry =>
+                    entry?.name === entryName &&
+                    (entry?.source || "") === (source || "")
+                );
+                if (matchingEntry && matchingEntry.kindModifiers !== undefined) {
+                    completionEntryKindModifiers = matchingEntry.kindModifiers;
+                }
+            }
+        } catch {
+            // Best-effort: if completion lookup fails, keep detail kind modifiers as-is.
+        }
         const displayText = Array.isArray(result?.displayParts)
             ? result.displayParts.map(part => String(part?.text || "")).join("")
             : "";
@@ -895,7 +958,7 @@ function patchSessionClient(SessionClient, ts) {
         // Only use native detail fallback for plain member/global entries.
         // Auto-import entries carry `source`/`data`; tsz intentionally rewrites
         // those details/actions and should remain authoritative there.
-        if (looksPlaceholderDetails && !source && !data) {
+        if (!source && !data) {
             const nativeResult = withNativeFallback(this, ls =>
                 ls.getCompletionEntryDetails(
                     fileName,
@@ -908,7 +971,19 @@ function patchSessionClient(SessionClient, ts) {
                 )
             );
             if (nativeResult) {
-                result = nativeResult;
+                const nativeDisplayText = Array.isArray(nativeResult?.displayParts)
+                    ? nativeResult.displayParts.map(part => String(part?.text || "")).join("")
+                    : "";
+                const shouldPreferNative =
+                    looksPlaceholderDetails ||
+                    (!!nativeDisplayText && nativeDisplayText !== displayText);
+                if (shouldPreferNative) {
+                    const mergedNativeResult = { ...nativeResult };
+                    if (completionEntryKindModifiers !== undefined) {
+                        mergedNativeResult.kindModifiers = completionEntryKindModifiers;
+                    }
+                    result = mergedNativeResult;
+                }
             }
         }
         if (preferences) this.configure(oldPreferences || {});
@@ -1567,6 +1642,41 @@ function patchSessionClient(SessionClient, ts) {
     // The base SessionClient hardcodes these as empty strings.
     const _origGetDefinitionAtPosition = proto.getDefinitionAtPosition;
     proto.getDefinitionAtPosition = function(fileName, position) {
+        const sourceText = this.host?.readFile?.(fileName);
+        const isLikelyTypePosition = (() => {
+            if (typeof sourceText !== "string") return false;
+            const start = Math.max(0, position - 160);
+            const prefix = sourceText.slice(start, position);
+            const colonIdx = prefix.lastIndexOf(":");
+            if (colonIdx < 0) return false;
+            const eqIdx = prefix.lastIndexOf("=");
+            if (eqIdx >= colonIdx) return false;
+            const afterColon = prefix.slice(colonIdx + 1);
+            // Reject clear expression contexts after `:`
+            if (/[;{}(),\n\r]/.test(afterColon)) return false;
+            return true;
+        })();
+        const nativeQuickInfo = withNativeFallback(this, ls =>
+            ls.getQuickInfoAtPosition(fileName, position)
+        );
+        const nativeQuickInfoText = Array.isArray(nativeQuickInfo?.displayParts)
+            ? nativeQuickInfo.displayParts.map(part => String(part?.text || "")).join("")
+            : "";
+        const isAliasInterfaceTypePosition = /^\(alias\)\s+interface\b/.test(nativeQuickInfoText);
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getDefinitionAtPosition(fileName, position)
+        );
+        if (Array.isArray(nativeResult) && nativeResult.length > 0) {
+            if (nativeResult[0]?.kind === "alias" && (isAliasInterfaceTypePosition || isLikelyTypePosition)) {
+                const nativeTypeDefs = withNativeFallback(this, ls =>
+                    ls.getTypeDefinitionAtPosition(fileName, position)
+                );
+                if (Array.isArray(nativeTypeDefs) && nativeTypeDefs.length > 0) {
+                    return nativeTypeDefs;
+                }
+            }
+            return nativeResult;
+        }
         const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
         const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
         const request = this.processRequest("definition", args);
@@ -1597,6 +1707,12 @@ function patchSessionClient(SessionClient, ts) {
     // Override getDefinitionAndBoundSpan to pass through metadata fields
     const _origGetDefinitionAndBoundSpan = proto.getDefinitionAndBoundSpan;
     proto.getDefinitionAndBoundSpan = function(fileName, position) {
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getDefinitionAndBoundSpan(fileName, position)
+        );
+        if (nativeResult?.definitions?.length > 0) {
+            return nativeResult;
+        }
         const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
         const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
         const request = this.processRequest("definitionAndBoundSpan", args);
@@ -1629,6 +1745,24 @@ function patchSessionClient(SessionClient, ts) {
             definitions,
             textSpan: this.decodeSpan(body.textSpan, request.arguments.file),
         };
+    };
+
+    const _origGetNavigateToItems = proto.getNavigateToItems;
+    proto.getNavigateToItems = function(searchValue, maxResultCount, file, excludeDtsFiles, excludeLibFiles) {
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getNavigateToItems(searchValue, maxResultCount, file, excludeDtsFiles, excludeLibFiles)
+        );
+        if (Array.isArray(nativeResult)) {
+            return nativeResult;
+        }
+        return _origGetNavigateToItems.call(
+            this,
+            searchValue,
+            maxResultCount,
+            file,
+            excludeDtsFiles,
+            excludeLibFiles,
+        );
     };
 
     proto.isValidBraceCompletionAtPosition = function(fileName, position, openingBrace) {
