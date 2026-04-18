@@ -996,8 +996,8 @@ impl Server {
                     self.inferred_check_options.no_lib,
                 ),
             };
-        let lib_names =
-            lib_override.unwrap_or_else(|| Self::default_lib_names_for_target(target_override.as_deref()));
+        let lib_names = lib_override
+            .unwrap_or_else(|| Self::default_lib_names_for_target(target_override.as_deref()));
 
         let mut project_files: Vec<String> = Vec::new();
         if self.open_files.contains_key(active_file) {
