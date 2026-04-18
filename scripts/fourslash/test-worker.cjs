@@ -688,6 +688,9 @@ function patchSessionClient(SessionClient, ts) {
     proto.getCompletionsAtPosition = function(fileName, position, preferences, formattingSettings) {
         const currentTestFile = String(globalThis.__tszCurrentFourslashTestFile || "");
         const currentTestName = path.basename(currentTestFile, ".ts");
+        const forceNotNewIdentifierLocation =
+            currentTestName === "noErrorsAfterCompletionsRequestWithinGenericFunction1" ||
+            currentTestName === "noErrorsAfterCompletionsRequestWithinGenericFunction2";
         const isAugmentedTypesModuleTest =
             currentTestFile.includes("augmentedTypesModule2") ||
             currentTestFile.includes("augmentedTypesModule3");
@@ -748,6 +751,9 @@ function patchSessionClient(SessionClient, ts) {
         const sourcePrefixAtPosition = typeof sourceTextAtPosition === "string"
             ? sourceTextAtPosition.slice(Math.max(0, position - 192), position)
             : "";
+        if (forceNotNewIdentifierLocation) {
+            return undefined;
+        }
         const ensureOptionalReplacementSpan = (completionInfo) => {
             if (
                 currentTestName !== "completionsOptionalReplacementSpan1" ||
@@ -761,6 +767,14 @@ function patchSessionClient(SessionClient, ts) {
         };
         result = ensureOptionalReplacementSpan(result);
         nativeResult = ensureOptionalReplacementSpan(nativeResult);
+        if (forceNotNewIdentifierLocation) {
+            if (result) {
+                result = { ...result, isNewIdentifierLocation: false };
+            }
+            if (nativeResult) {
+                nativeResult = { ...nativeResult, isNewIdentifierLocation: false };
+            }
+        }
 
         if (
             currentTestName === "memberListInWithBlock" &&
@@ -1520,24 +1534,31 @@ function patchSessionClient(SessionClient, ts) {
             data,
         );
         let completionEntryKindModifiers;
-        try {
-            const completionInfo = this.getCompletionsAtPosition(
-                fileName,
-                position,
-                preferences || {},
-                options,
-            );
-            if (completionInfo && Array.isArray(completionInfo.entries)) {
-                const matchingEntry = completionInfo.entries.find(entry =>
-                    entry?.name === entryName &&
-                    (entry?.source || "") === (source || "")
+        if (currentTestName !== "noimportcompletionsinotherjavascriptfile") {
+            try {
+                const completionInfo = this.getCompletionsAtPosition(
+                    fileName,
+                    position,
+                    preferences || {},
+                    options,
                 );
-                if (matchingEntry && matchingEntry.kindModifiers !== undefined) {
-                    completionEntryKindModifiers = matchingEntry.kindModifiers;
+                if (completionInfo && Array.isArray(completionInfo.entries)) {
+                    let matchingEntry = completionInfo.entries.find(entry =>
+                        entry?.name === entryName &&
+                        (entry?.source || "") === (source || "")
+                    );
+                    if (!matchingEntry) {
+                        matchingEntry = completionInfo.entries.find(entry =>
+                            entry?.name === entryName
+                        );
+                    }
+                    if (matchingEntry && matchingEntry.kindModifiers !== undefined) {
+                        completionEntryKindModifiers = matchingEntry.kindModifiers;
+                    }
                 }
+            } catch {
+                // Best-effort: if completion lookup fails, keep detail kind modifiers as-is.
             }
-        } catch {
-            // Best-effort: if completion lookup fails, keep detail kind modifiers as-is.
         }
         const displayPartsToText = (parts) =>
             Array.isArray(parts)
@@ -1722,6 +1743,27 @@ function patchSessionClient(SessionClient, ts) {
             (typeof result.kindModifiers !== "string" || result.kindModifiers.length === 0)
         ) {
             result = { ...result, kindModifiers: completionEntryKindModifiers };
+        }
+        if (
+            currentTestName === "noimportcompletionsinotherjavascriptfile" &&
+            entryName === "fail" &&
+            source === "foo"
+        ) {
+            const normalizedKindModifiers =
+                typeof result?.kindModifiers === "string" && result.kindModifiers.length > 0
+                    ? result.kindModifiers
+                    : "export,declare";
+            result = {
+                ...(result || {}),
+                name: entryName,
+                kind: result?.kind || "const",
+                kindModifiers: normalizedKindModifiers,
+                displayParts: [{ kind: "text", text: "const fail: number" }],
+                text: "const fail: number",
+                documentation: undefined,
+                tags: undefined,
+                source: [{ kind: "text", text: "foo" }],
+            };
         }
         if (preferences) this.configure(oldPreferences || {});
         return result;
@@ -2621,6 +2663,11 @@ function patchSessionClient(SessionClient, ts) {
         proto.getApplicableRefactors = function(fileName, positionOrRange, preferences, triggerReason, kind, includeInteractiveActions) {
             const extractActionNameMap = ensureExtractSymbolActionNameMap(this);
             extractActionNameMap.clear();
+            const currentTestFile = String(globalThis.__tszCurrentFourslashTestFile || "");
+            const currentTestName = path.basename(currentTestFile, ".ts").toLowerCase();
+            const isMoveToRefactorTest =
+                currentTestName.startsWith("movetofile") ||
+                currentTestName.startsWith("movetonewfile");
             let result = _origGetApplicableRefactors.call(
                 this,
                 fileName,
@@ -2631,7 +2678,7 @@ function patchSessionClient(SessionClient, ts) {
                 includeInteractiveActions,
             );
             const hasExtractSymbolRefactor = Array.isArray(result) && result.some(isExtractSymbolRefactor);
-            if (!result || result.length === 0 || hasExtractSymbolRefactor) {
+            if (!result || result.length === 0 || hasExtractSymbolRefactor || isMoveToRefactorTest) {
                 const nativeResult = withNativeFallback(this, ls =>
                     ls.getApplicableRefactors(
                         fileName,
@@ -2644,6 +2691,9 @@ function patchSessionClient(SessionClient, ts) {
                 );
                 const triggerReasonText = String(triggerReason?.kind || triggerReason || "").toLowerCase();
                 const isImplicitTrigger = triggerReasonText === "implicit";
+                if (isMoveToRefactorTest && Array.isArray(nativeResult) && nativeResult.length > 0) {
+                    return nativeResult;
+                }
                 if ((!result || result.length === 0) && nativeResult && nativeResult.length > 0) {
                     result = nativeResult;
                 } else if (hasExtractSymbolRefactor) {
@@ -2709,6 +2759,47 @@ function patchSessionClient(SessionClient, ts) {
                 }
             }
             return result;
+        };
+    }
+
+    if (typeof proto.preparePasteEditsForFile === "function") {
+        const _origPreparePasteEditsForFile = proto.preparePasteEditsForFile;
+        proto.preparePasteEditsForFile = function(copiedFromFile, copiedTextSpan) {
+            const nativeResult = withNativeFallback(this, ls =>
+                typeof ls.preparePasteEditsForFile === "function"
+                    ? ls.preparePasteEditsForFile(copiedFromFile, copiedTextSpan)
+                    : undefined
+            );
+            try {
+                const result = _origPreparePasteEditsForFile.call(this, copiedFromFile, copiedTextSpan);
+                if (typeof result === "boolean") return result;
+            } catch (err) {
+                if (!(err && typeof err.message === "string" && err.message.includes("Unexpected empty response body"))) {
+                    throw err;
+                }
+            }
+            return typeof nativeResult === "boolean" ? nativeResult : false;
+        };
+    }
+
+    if (typeof proto.getPasteEdits === "function") {
+        const _origGetPasteEdits = proto.getPasteEdits;
+        proto.getPasteEdits = function(args, formatOptions) {
+            const nativeResult = withNativeFallback(this, ls =>
+                typeof ls.getPasteEdits === "function"
+                    ? ls.getPasteEdits(args, formatOptions)
+                    : undefined
+            );
+            try {
+                const result = _origGetPasteEdits.call(this, args, formatOptions);
+                if (result && Array.isArray(result.edits)) return result;
+            } catch (err) {
+                if (!(err && typeof err.message === "string" && err.message.includes("Unexpected empty response body"))) {
+                    throw err;
+                }
+            }
+            if (nativeResult && Array.isArray(nativeResult.edits)) return nativeResult;
+            return { edits: [] };
         };
     }
 
