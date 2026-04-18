@@ -1340,9 +1340,14 @@ impl<'a> TypeFormatter<'a> {
         } else {
             template_str.into_owned()
         };
+        let constraint_str = self.format(mapped.constraint);
+        let as_clause = if let Some(name_type) = mapped.name_type {
+            format!(" as {}", self.format(name_type))
+        } else {
+            String::new()
+        };
         format!(
-            "{{ {readonly_prefix}[{param_name} in {}]{optional_suffix}: {template_display}; }}",
-            self.format(mapped.constraint),
+            "{{ {readonly_prefix}[{param_name} in {constraint_str}{as_clause}]{optional_suffix}: {template_display}; }}"
         )
     }
 
