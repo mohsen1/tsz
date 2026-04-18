@@ -155,7 +155,7 @@ impl<'a> CheckerState<'a> {
         // Check for ThisType<T> marker in contextual type (Vue 2 / Options API pattern)
         // We need to extract this BEFORE the for loop so it's available for the pop at the end
         let marker_this_type: Option<TypeId> = if let Some(ctx_type) = contextual_type {
-            use tsz_solver::ContextualTypeContext;
+            use crate::query_boundaries::common::ContextualTypeContext;
             let ctx_helper = ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
                 ctx_type,

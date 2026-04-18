@@ -4,10 +4,11 @@
 //! see [`super::overload_compatibility`].
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{ContextualTypeContext, TypeId};
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     fn contextual_class_member_type_from_request(

@@ -11,10 +11,11 @@ use crate::query_boundaries::checkers::call::{
     array_element_type_for_type, is_type_parameter_type, resolve_call, resolve_new,
     stable_call_recovery_return_type, tuple_elements_for_type,
 };
+use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{AssignabilityChecker, CallResult, ContextualTypeContext, TupleElement, TypeId};
+use tsz_solver::{AssignabilityChecker, CallResult, TupleElement, TypeId};
 
 /// Call-local context carrying the callable type during argument collection.
 ///
@@ -1207,7 +1208,6 @@ impl<'a> CheckerState<'a> {
                 .get(self.ctx.arena.skip_parenthesized_and_assertions(arg_idx))
                 .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
             let pushed_this_type = if is_object_literal_arg && let Some(et) = expected_type {
-                use tsz_solver::ContextualTypeContext;
                 let ctx_helper = ContextualTypeContext::with_expected_and_options(
                     self.ctx.types,
                     et,
