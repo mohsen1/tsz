@@ -25,6 +25,9 @@ impl<'a> CheckerState<'a> {
         if export_name == "export=" {
             return true;
         }
+        if export_name == "_default" && exports_table.get("default").is_some() {
+            return true;
+        }
         if !export_name.starts_with('_') {
             return false;
         }
@@ -36,7 +39,10 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let lookup_symbol = |sym_id: SymbolId| self.get_cross_file_symbol(sym_id);
+        let lookup_symbol = |sym_id: SymbolId| {
+            self.get_symbol_globally(sym_id)
+                .or_else(|| self.get_cross_file_symbol(sym_id))
+        };
 
         let resolve_alias_target = |sym_id: SymbolId| {
             let mut visited = Vec::new();
