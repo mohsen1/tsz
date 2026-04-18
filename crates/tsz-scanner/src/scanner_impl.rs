@@ -55,10 +55,12 @@ pub struct ScannerDiagnostic {
     pub pos: usize,
     /// Length of the error span
     pub length: usize,
-    /// Diagnostic message
+    /// Diagnostic message template (may contain `{0}`, `{1}` placeholders)
     pub message: &'static str,
     /// Diagnostic code
     pub code: u32,
+    /// Arguments to substitute into the message template
+    pub args: Vec<String>,
 }
 
 /// A regex flag error detected during scanning.
@@ -860,6 +862,7 @@ impl ScannerState {
                                 length: 0,
                                 message: diagnostic_messages::EXPECTED_2,
                                 code: diagnostic_codes::EXPECTED_2,
+                                args: Vec::new(),
                             });
                         }
                         if self.skip_trivia {
@@ -1047,20 +1050,36 @@ impl ScannerState {
     }
 
     fn scan_string_escape(&mut self, quote: u32, result: &mut String) {
+        // pos currently points to the char after the backslash; backslash is at pos - 1.
+        let backslash_pos = self.pos - 1;
         let escaped = self.char_code_unchecked(self.pos);
         // Get byte length of the escaped character before advancing.
         let escaped_len = self.char_len_at(self.pos);
         self.pos += escaped_len;
 
         match escaped {
-            CharacterCodes::_0 => self.scan_string_escape_zero(result),
+            CharacterCodes::_0 => self.scan_string_escape_zero(backslash_pos, result),
             CharacterCodes::_1
             | CharacterCodes::_2
             | CharacterCodes::_3
             | CharacterCodes::_4
             | CharacterCodes::_5
             | CharacterCodes::_6
-            | CharacterCodes::_7 => self.scan_string_escape_octal(escaped, result),
+            | CharacterCodes::_7 => self.scan_string_escape_octal(backslash_pos, escaped, result),
+            CharacterCodes::_8 | CharacterCodes::_9 => {
+                // \8 or \9 is not a valid escape sequence — emit TS1488.
+                let digit = char::from_u32(escaped).unwrap_or('?');
+                self.scanner_diagnostics.push(ScannerDiagnostic {
+                    pos: backslash_pos,
+                    length: self.pos - backslash_pos,
+                    message: diagnostic_messages::ESCAPE_SEQUENCE_IS_NOT_ALLOWED,
+                    code: diagnostic_codes::ESCAPE_SEQUENCE_IS_NOT_ALLOWED,
+                    args: vec![format!("\\{digit}")],
+                });
+                if let Some(c) = char::from_u32(escaped) {
+                    result.push(c);
+                }
+            }
             CharacterCodes::LOWER_N => result.push('\n'),
             CharacterCodes::LOWER_R => result.push('\r'),
             CharacterCodes::LOWER_T => result.push('\t'),
@@ -1091,7 +1110,7 @@ impl ScannerState {
         }
     }
 
-    fn scan_string_escape_zero(&mut self, result: &mut String) {
+    fn scan_string_escape_zero(&mut self, backslash_pos: usize, result: &mut String) {
         if self.pos < self.end && is_digit(self.char_code_unchecked(self.pos)) {
             // Legacy octal escape: \0N - scan as octal
             let mut value = 0u32;
@@ -1104,6 +1123,7 @@ impl ScannerState {
                 value = value * 8 + (self.char_code_unchecked(self.pos) - CharacterCodes::_0);
                 self.pos += 1;
             }
+            self.emit_octal_escape_diagnostic(backslash_pos, value);
             if let Some(c) = char::from_u32(value) {
                 result.push(c);
             }
@@ -1112,19 +1132,42 @@ impl ScannerState {
         }
     }
 
-    fn scan_string_escape_octal(&mut self, escaped: u32, result: &mut String) {
-        // Legacy octal escape: \1 through \7
+    fn scan_string_escape_octal(
+        &mut self,
+        backslash_pos: usize,
+        escaped: u32,
+        result: &mut String,
+    ) {
+        // Legacy octal escape: \1 through \7.
+        // tsc reads up to 3 digits when the leading digit is 0-3, but only up to
+        // 2 digits when the leading digit is 4-7 (so `\477` parses as `\47` + '7').
         let mut value = escaped - CharacterCodes::_0;
+        let max_digits = if escaped <= CharacterCodes::_3 { 3 } else { 2 };
         let mut count = 1;
-        while count < 3 && self.pos < self.end && is_octal_digit(self.char_code_unchecked(self.pos))
+        while count < max_digits
+            && self.pos < self.end
+            && is_octal_digit(self.char_code_unchecked(self.pos))
         {
             value = value * 8 + (self.char_code_unchecked(self.pos) - CharacterCodes::_0);
             self.pos += 1;
             count += 1;
         }
+        self.emit_octal_escape_diagnostic(backslash_pos, value);
         if let Some(c) = char::from_u32(value) {
             result.push(c);
         }
+    }
+
+    fn emit_octal_escape_diagnostic(&mut self, backslash_pos: usize, value: u32) {
+        // tsc renders the suggestion as `\xNN` with lowercase 2-digit hex.
+        let suggestion = format!("\\x{value:02x}");
+        self.scanner_diagnostics.push(ScannerDiagnostic {
+            pos: backslash_pos,
+            length: self.pos - backslash_pos,
+            message: diagnostic_messages::OCTAL_ESCAPE_SEQUENCES_ARE_NOT_ALLOWED_USE_THE_SYNTAX,
+            code: diagnostic_codes::OCTAL_ESCAPE_SEQUENCES_ARE_NOT_ALLOWED_USE_THE_SYNTAX,
+            args: vec![suggestion],
+        });
     }
 
     fn scan_string_escape_hex(&mut self, result: &mut String) {
@@ -1408,6 +1451,7 @@ impl ScannerState {
             self.scanner_diagnostics.push(ScannerDiagnostic {
                 pos: numeric_start,
                 length: identifier_end - numeric_start,
+                args: Vec::new(),
                 message: if is_scientific {
                     diagnostic_messages::A_BIGINT_LITERAL_CANNOT_USE_EXPONENTIAL_NOTATION
                 } else {
@@ -1426,6 +1470,7 @@ impl ScannerState {
                 length: identifier_end - identifier_start,
                 message: diagnostic_messages::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
                 code: diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+                args: Vec::new(),
             });
             self.pos = identifier_start;
             false
@@ -2348,6 +2393,7 @@ impl ScannerState {
                     length: 1,
                     message: diagnostic_messages::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_GT,
                     code: diagnostic_codes::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_GT,
+                    args: Vec::new(),
                 });
             }
 
@@ -2358,6 +2404,7 @@ impl ScannerState {
                     length: 1,
                     message: diagnostic_messages::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_RBRACE,
                     code: diagnostic_codes::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_RBRACE,
+                    args: Vec::new(),
                 });
             }
 
@@ -2895,6 +2942,7 @@ impl ScannerState {
             length: Self::MERGE_CONFLICT_MARKER_LENGTH,
             message: diagnostic_messages::MERGE_CONFLICT_MARKER_ENCOUNTERED,
             code: diagnostic_codes::MERGE_CONFLICT_MARKER_ENCOUNTERED,
+            args: Vec::new(),
         });
 
         let ch = self.char_code_unchecked(self.pos);
