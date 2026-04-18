@@ -1180,3 +1180,28 @@ pub(crate) fn get_merged_object_shape_for_type(
 pub(crate) fn is_primitive_or_literal_compound(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_primitive_or_literal_compound(db, type_id)
 }
+
+pub(crate) fn is_only_null_or_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_only_null_or_undefined(db, type_id)
+}
+
+pub(crate) fn homomorphic_mapped_source(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::homomorphic_mapped_source(db, type_id)
+}
+
+pub(crate) fn map_compound_members_if_changed(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    f: impl FnMut(TypeId) -> TypeId,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::map_compound_members_if_changed(db, type_id, f)
+}
+
+pub(crate) use tsz_solver::type_queries::AugmentationTargetKind;
+
+pub(crate) fn classify_for_augmentation(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> AugmentationTargetKind {
+    tsz_solver::type_queries::classify_for_augmentation(db, type_id)
+}

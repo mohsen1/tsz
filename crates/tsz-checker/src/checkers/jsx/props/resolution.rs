@@ -502,7 +502,7 @@ impl<'a> CheckerState<'a> {
                         } else {
                             attr_data.initializer
                         };
-                        tsz_solver::widening::widen_type(
+                        crate::query_boundaries::common::widen_type(
                             self.ctx.types,
                             self.compute_type_of_node(value_idx),
                         )

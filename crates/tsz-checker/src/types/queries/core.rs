@@ -908,7 +908,10 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let expr_type = self.get_type_of_node(computed.expression);
-        tsz_solver::type_queries::is_string_literal(self.ctx.types, expr_type)
+        crate::query_boundaries::checkers::iterable::is_string_literal_type(
+            self.ctx.types,
+            expr_type,
+        )
     }
 
     /// Get property name as string from a property name node (identifier, string literal, etc.)

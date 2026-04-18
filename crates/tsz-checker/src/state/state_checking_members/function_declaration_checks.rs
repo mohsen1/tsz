@@ -1006,7 +1006,7 @@ impl<'a> CheckerState<'a> {
         // to `any`. A bare `yield;` produces `undefined`, which in non-strict
         // mode is widened to `any` and should trigger TS7055 (matching tsc).
         let final_yield = if !self.ctx.strict_null_checks()
-            && tsz_solver::type_queries::is_only_null_or_undefined(self.ctx.types, widened)
+            && crate::query_boundaries::common::is_only_null_or_undefined(self.ctx.types, widened)
         {
             TypeId::ANY
         } else {

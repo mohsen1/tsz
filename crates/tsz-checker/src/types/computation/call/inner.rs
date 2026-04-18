@@ -1374,7 +1374,7 @@ impl<'a> CheckerState<'a> {
                                         .find(|tp| tp.name == name)
                                         .is_some_and(|tp| !tp.is_const)
                                     {
-                                        if tsz_solver::type_queries::get_object_shape(
+                                        if crate::query_boundaries::common::object_shape_for_type(
                                             self.ctx.types,
                                             raw_ty,
                                         )

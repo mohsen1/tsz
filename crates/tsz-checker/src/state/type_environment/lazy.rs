@@ -1114,7 +1114,7 @@ impl<'a> CheckerState<'a> {
 
         // Handle unions and intersections - resolve each member
         // Only create a new union/intersection if members actually changed
-        if let Some(resolved) = tsz_solver::type_queries::map_compound_members_if_changed(
+        if let Some(resolved) = crate::query_boundaries::common::map_compound_members_if_changed(
             self.ctx.types,
             type_id,
             |member| self.resolve_lazy_type_inner(member, visited),
