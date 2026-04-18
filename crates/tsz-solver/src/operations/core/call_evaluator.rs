@@ -971,6 +971,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         struct ContextualSignatureVisitor<'a> {
             db: &'a dyn TypeDatabase,
             arg_count: Option<usize>,
+            // Cycle guard: resolving a Lazy/Ref back into an Application whose
+            // base resolves back to the same node can loop forever. Track the
+            // types currently on the visit stack and bail with None when we
+            // re-enter.
+            visiting: rustc_hash::FxHashSet<TypeId>,
+        }
+
+        impl<'a> ContextualSignatureVisitor<'a> {
+            fn visit_guarded(&mut self, type_id: TypeId) -> Option<FunctionShape> {
+                if !self.visiting.insert(type_id) {
+                    return None;
+                }
+                let result = self.visit_type(self.db, type_id);
+                self.visiting.remove(&type_id);
+                result
+            }
         }
 
         impl<'a> TypeVisitor for ContextualSignatureVisitor<'a> {
@@ -991,7 +1007,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             fn visit_ref(&mut self, ref_id: u32) -> Self::Output {
                 // Resolve the reference by converting to TypeId and recursing
                 // This handles named types like `type Handler<T> = ...`
-                self.visit_type(self.db, TypeId(ref_id))
+                self.visit_guarded(TypeId(ref_id))
             }
 
             fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
@@ -1000,7 +1016,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // contextual signature for generic inference.
                 let resolved = crate::evaluation::evaluate::evaluate_type(self.db, TypeId(def_id));
                 if resolved != TypeId(def_id) {
-                    self.visit_type(self.db, resolved)
+                    self.visit_guarded(resolved)
                 } else {
                     None
                 }
@@ -1070,7 +1086,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
                 // 2. Resolve the base type to get the generic function signature
                 // e.g., for Handler<string>, this gets the shape of Handler<T>
-                let base_shape = self.visit_type(self.db, app.base)?;
+                let base_shape = self.visit_guarded(app.base)?;
 
                 // 3. Build the substitution map
                 // Maps generic parameters (e.g., T) to arguments (e.g., string)
@@ -1131,7 +1147,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let members = self.db.type_list(TypeListId(list_id));
                 let shapes: Vec<_> = members
                     .iter()
-                    .filter_map(|&member| self.visit_type(self.db, member))
+                    .filter_map(|&member| self.visit_guarded(member))
                     .collect();
                 combine_function_shapes(self.db, shapes, self.arg_count)
             }
@@ -1145,7 +1161,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         continue;
                     }
 
-                    let shape = self.visit_type(self.db, member)?;
+                    let shape = self.visit_guarded(member)?;
 
                     if callable_member.is_some() {
                         // Optional callback unions like `Fn | undefined` should preserve
@@ -1161,8 +1177,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        let mut visitor = ContextualSignatureVisitor { db, arg_count };
-        visitor.visit_type(db, type_id)
+        let mut visitor = ContextualSignatureVisitor {
+            db,
+            arg_count,
+            visiting: rustc_hash::FxHashSet::default(),
+        };
+        visitor.visit_guarded(type_id)
     }
 
     /// Get the base constraint for an index type used in an `IndexAccess`.
