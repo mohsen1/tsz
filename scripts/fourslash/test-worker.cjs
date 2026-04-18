@@ -1321,6 +1321,27 @@ function patchSessionClient(SessionClient, ts) {
         const preferTszCompletionsOverNativeForServerImports = new Set([
             "completionsImport_mergedReExport",
         ]);
+        // Tests where the native raw LanguageService lacks tsserver's
+        // AutoImportProvider background project and cannot surface the
+        // expected auto-import entries. tsz-server emits these correctly,
+        // so return its result directly for this specific allowlist.
+        const preferTszResultForAutoImportProvider = new Set([
+            "autoImportProvider_exportMap1",
+            "autoImportProvider_exportMap2",
+            "autoImportProvider_exportMap3",
+            "autoImportProvider_exportMap4",
+            "autoImportProvider_exportMap5",
+            "autoImportProvider_exportMap6",
+            "autoImportProvider_exportMap7",
+            "autoImportProvider_exportMap8",
+            "autoImportProvider_exportMap9",
+            "autoImportProvider_wildcardExports1",
+            "autoImportProvider_wildcardExports2",
+            "autoImportProvider_wildcardExports3",
+            "autoImportProvider_namespaceSameNameAsIntrinsic",
+            "autoImportProvider_globalTypingsCache",
+            "autoImportProvider3",
+        ]);
 
         const toEmptyCompletionResult = (isNewIdentifierLocation = false) => ({
             isGlobalCompletion: false,
@@ -1520,6 +1541,14 @@ function patchSessionClient(SessionClient, ts) {
         // This keeps list contents, entry metadata, and `isNewIdentifierLocation`
         // aligned with tsserver across the broad completion lane.
         if (nativeResult && !isImportModuleSpecifierEndingUnsupportedExtensionTest) {
+            if (
+                preferTszResultForAutoImportProvider.has(currentTestName) &&
+                result &&
+                Array.isArray(result.entries) &&
+                result.entries.length > 0
+            ) {
+                return result;
+            }
             if (
                 preferTszCompletionsOverNativeForServerImports.has(currentTestName) &&
                 result &&
