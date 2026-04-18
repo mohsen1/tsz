@@ -9,6 +9,7 @@
 //! operations, providing cleaner APIs for common patterns.
 
 use crate::state::CheckerState;
+use crate::symbols_domain::name_text::entity_name_text_in_arena;
 use std::sync::Arc;
 use tracing::trace;
 use tsz_binder::{SymbolId, symbol_flags};
@@ -1178,25 +1179,7 @@ impl<'a> CheckerState<'a> {
     /// Entity names can be simple identifiers or qualified names (e.g., `A.B.C`).
     /// This function recursively builds the full text representation.
     pub(crate) fn entity_name_text(&self, idx: NodeIndex) -> Option<String> {
-        let node = self.ctx.arena.get(idx)?;
-        if node.kind == SyntaxKind::Identifier as u16 {
-            return self
-                .ctx
-                .arena
-                .get_identifier(node)
-                .map(|ident| ident.escaped_text.clone());
-        }
-        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            let qn = self.ctx.arena.get_qualified_name(node)?;
-            let left = self.entity_name_text(qn.left)?;
-            let right = self.entity_name_text(qn.right)?;
-            let mut combined = String::with_capacity(left.len() + 1 + right.len());
-            combined.push_str(&left);
-            combined.push('.');
-            combined.push_str(&right);
-            return Some(combined);
-        }
-        None
+        entity_name_text_in_arena(self.ctx.arena, idx)
     }
 
     /// Resolve a simple or qualified type name through the merged checker binder.
