@@ -549,19 +549,20 @@ fn format_object_many_properties_truncated() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);
 
-    // 10+ properties triggers truncation
-    let props: Vec<PropertyInfo> = (0..12)
+    // tsc starts truncating large object displays (roughly 22+ members),
+    // preserving a long head and the tail property.
+    let props: Vec<PropertyInfo> = (1..=24)
         .map(|i| PropertyInfo::new(db.intern_string(&format!("p{i}")), TypeId::NUMBER))
         .collect();
     let obj = db.object(props);
     let result = fmt.format(obj);
     assert!(
-        result.contains("..."),
-        "Object with >=10 properties should truncate, got: {result}"
+        result.contains("... 6 more ..."),
+        "Expected omitted-count marker for large object, got: {result}"
     );
     assert!(
-        result.contains("more"),
-        "Truncated object display should include omitted-count tail, got: {result}"
+        result.contains("p24: number"),
+        "Expected tail property preservation in truncated object display, got: {result}"
     );
 }
 
@@ -662,6 +663,48 @@ fn format_object_with_readonly_string_index_signature() {
     assert!(
         result.contains("readonly [x: string]: number"),
         "Expected readonly string index signature, got: {result}"
+    );
+}
+
+#[test]
+fn format_object_with_index_many_properties_truncated() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let mut props: Vec<PropertyInfo> = (1..=20)
+        .map(|i| PropertyInfo::new(db.intern_string(&format!("p{i}")), TypeId::NUMBER))
+        .collect();
+    let mut tail = PropertyInfo::new(
+        db.intern_string("[Symbol.unscopables]"),
+        db.object(vec![PropertyInfo::new(
+            db.intern_string("a"),
+            TypeId::NUMBER,
+        )]),
+    );
+    tail.readonly = true;
+    props.push(tail);
+
+    let shape = crate::types::ObjectShape {
+        properties: props,
+        string_index: None,
+        number_index: Some(crate::types::IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        symbol: None,
+        flags: Default::default(),
+    };
+    let obj = db.object_with_index(shape);
+    let result = fmt.format(obj);
+    assert!(
+        result.contains("... 4 more ..."),
+        "Expected omitted-count marker for indexed object truncation, got: {result}"
+    );
+    assert!(
+        result.contains("readonly [Symbol.unscopables]: { ...; }"),
+        "Expected tail symbol property preservation in indexed-object truncation, got: {result}"
     );
 }
 
@@ -1351,6 +1394,29 @@ fn format_deeply_nested_union_truncated() {
     assert!(
         result.contains("..."),
         "Deeply nested type should truncate, got: {result}"
+    );
+}
+
+#[test]
+fn format_deeply_nested_object_uses_object_elision() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let mut current = db.object(vec![PropertyInfo::new(
+        db.intern_string("leaf"),
+        TypeId::NUMBER,
+    )]);
+    for i in 0..12 {
+        current = db.object(vec![PropertyInfo::new(
+            db.intern_string(&format!("p{i}")),
+            current,
+        )]);
+    }
+
+    let result = fmt.format(current);
+    assert!(
+        result.contains("{ ...; }"),
+        "Deeply nested object branches should elide as '{{ ...; }}', got: {result}"
     );
 }
 
