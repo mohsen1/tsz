@@ -823,6 +823,7 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.report_unresolved_imports {
             let resolution_mode =
                 self.requested_resolution_mode(import.attributes, is_type_only_import);
+            self.check_js_type_only_imports_after_import_validation(import, module_name);
             let module_resolves = self
                 .ctx
                 .resolve_import_target_from_file_with_mode(
@@ -1377,8 +1378,10 @@ impl<'a> CheckerState<'a> {
                 if !skip_export_checks {
                     self.check_imported_members(import, module_name);
                 }
+                self.check_js_type_only_imports_after_import_validation(import, module_name);
             } else {
                 self.check_imported_members(import, module_name);
+                self.check_js_type_only_imports_after_import_validation(import, module_name);
             }
 
             // TS1484/TS1485: verbatimModuleSyntax import checks
@@ -1400,6 +1403,7 @@ impl<'a> CheckerState<'a> {
         {
             tracing::trace!(%module_name, "check_import_declaration: found in module_exports, checking members");
             self.check_imported_members(import, module_name);
+            self.check_js_type_only_imports_after_import_validation(import, module_name);
 
             // TS1484/TS1485: verbatimModuleSyntax import checks
             self.check_verbatim_module_syntax_imports(import, module_name);

@@ -478,22 +478,60 @@ impl Project {
             let Some(stmt_node) = arena.get(stmt_idx) else {
                 return false;
             };
+            if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
+                return arena
+                    .get_export_assignment(stmt_node)
+                    .is_some_and(|assign| !assign.is_export_equals);
+            }
             if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
                 return false;
             }
             let Some(export) = arena.get_export_decl(stmt_node) else {
                 return false;
             };
-            let is_namespace_reexport = if export.export_clause.is_none() {
-                false
-            } else if let Some(clause_node) = arena.get(export.export_clause) {
-                clause_node.kind == SyntaxKind::Identifier as u16
-                    || clause_node.kind == SyntaxKind::StringLiteral as u16
-            } else {
-                false
+            if export.is_default_export {
+                return true;
+            }
+            if export.module_specifier.is_none() {
+                return false;
+            }
+            if export.export_clause.is_none() {
+                return true;
+            }
+            if arena
+                .get_identifier_text(export.export_clause)
+                .is_some_and(|name| name == "default")
+            {
+                return true;
+            }
+
+            let Some(clause_node) = arena.get(export.export_clause) else {
+                return false;
             };
-            export.module_specifier.is_some()
-                && (export.export_clause.is_none() || is_namespace_reexport)
+            if clause_node.kind == SyntaxKind::Identifier as u16
+                || clause_node.kind == SyntaxKind::StringLiteral as u16
+            {
+                return true;
+            }
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                return false;
+            }
+            let Some(named) = arena.get_named_imports(clause_node) else {
+                return false;
+            };
+            named.elements.nodes.iter().any(|&spec_idx| {
+                let Some(spec) = arena.get_specifier_at(spec_idx) else {
+                    return false;
+                };
+                let export_ident = if spec.name.is_some() {
+                    spec.name
+                } else {
+                    spec.property_name
+                };
+                arena
+                    .get_identifier_text(export_ident)
+                    .is_some_and(|name| name == "default")
+            })
         })
     }
 
@@ -1228,14 +1266,21 @@ impl Project {
                 }
             } else if clause_node.kind == SyntaxKind::Identifier as u16
                 && let Some(export_text) = arena.get_identifier_text(export.export_clause)
-                && export_text == export_name
             {
-                matches.push(ExportMatch {
-                    kind: ImportCandidateKind::Named {
-                        export_name: export_text.to_string(),
-                    },
-                    is_type_only: export.is_type_only,
-                });
+                if export_text == "default" {
+                    matches.push(ExportMatch {
+                        kind: ImportCandidateKind::Default,
+                        is_type_only: export.is_type_only,
+                    });
+                }
+                if export_text == export_name {
+                    matches.push(ExportMatch {
+                        kind: ImportCandidateKind::Named {
+                            export_name: export_text.to_string(),
+                        },
+                        is_type_only: export.is_type_only,
+                    });
+                }
             }
         }
 
