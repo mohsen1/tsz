@@ -131,11 +131,13 @@ impl<'a> DeclarationEmitter<'a> {
                     self.emit_function_initializer_type_annotation(decl_idx, decl_name, initializer)
                 }
             {
-            } else if let Some(type_id) = self.get_node_type_or_names(&[decl_idx, decl_name]) {
-                let printed_type_text = self.print_type_id(type_id);
-                let emitted_type_text = has_initializer.then(|| {
-                    self.declaration_emittable_type_text(initializer, type_id, &printed_type_text)
-                });
+            } else if let Some(resolved_type) = self.resolve_declaration_type_text(
+                &[decl_idx, decl_name],
+                has_initializer.then_some(initializer),
+            ) {
+                let type_id = resolved_type.type_id;
+                let printed_type_text = resolved_type.canonical_type_text;
+                let emitted_type_text = has_initializer.then_some(resolved_type.emitted_type_text);
 
                 if has_initializer && printed_type_text.contains("any") {
                     self.maybe_emit_non_portable_function_return_diagnostic(decl_name, initializer);
@@ -340,7 +342,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(if self.source_is_js_file { ": " } else { " = " });
                 self.write(&lit_text);
             } else if let Some(type_text) = self
-                .infer_fallback_type_text(initializer)
+                .allowlisted_initializer_type_text(initializer)
                 .or_else(|| self.data_view_new_expression_type_text(initializer))
             {
                 self.write(": ");

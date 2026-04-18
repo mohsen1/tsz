@@ -207,11 +207,11 @@ impl<'a> DeclarationEmitter<'a> {
 
         let value_expr = value_expr?;
         let type_text = self
-            .get_node_type_or_names(&[value_expr])
-            .filter(|type_id| *type_id != tsz_solver::types::TypeId::ANY)
-            .map(|type_id| self.print_type_id(type_id))
+            .resolve_declaration_type_text(&[value_expr], Some(value_expr))
+            .filter(|resolved_type| resolved_type.type_id != tsz_solver::types::TypeId::ANY)
+            .map(|resolved_type| resolved_type.emitted_type_text)
             .or_else(|| self.js_string_concatenation_type_text(value_expr))
-            .or_else(|| self.infer_fallback_type_text(value_expr))
+            .or_else(|| self.allowlisted_initializer_type_text(value_expr))
             .unwrap_or_else(|| "any".to_string());
         Some((type_text, !writable))
     }

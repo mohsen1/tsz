@@ -1275,12 +1275,251 @@ var v = {
         "Expected unary-plus computed numeric literal to normalize to a numeric property: {output}"
     );
     assert!(
+        !output.contains("\"-2\": {};"),
+        "Did not expect canonicalized synthetic numeric names to leak into the object type: {output}"
+    );
+    assert!(
         !output.contains("[~1]: {}"),
         "Did not expect non-emittable computed names to survive fallback object typing: {output}"
     );
+}
+
+#[test]
+fn test_js_module_exports_object_literal_with_computed_names_emits_export_equals_surface() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+const TopLevelSym = Symbol();
+const InnerSym = Symbol();
+module.exports = {
+    [TopLevelSym](x = 12) {
+        return x;
+    },
+    items: {
+        [InnerSym]: (arg = { x: 12 }) => arg.x
+    }
+};
+"#,
+    );
+
     assert!(
-        !output.contains("[!1]: {}"),
-        "Did not expect non-emittable computed names to survive fallback object typing: {output}"
+        output.contains("declare const _exports: {"),
+        "Expected anonymous CommonJS object export to materialize a synthetic export root: {output}"
+    );
+    assert!(
+        output.contains("[TopLevelSym]"),
+        "Expected computed symbol member to survive on synthetic export root: {output}"
+    );
+    assert!(
+        output.contains("items: {"),
+        "Expected nested object member to survive on synthetic export root: {output}"
+    );
+    assert!(
+        output.contains("export = _exports;"),
+        "Expected synthetic CommonJS object export to end with export=: {output}"
+    );
+}
+
+#[test]
+fn test_js_module_exports_new_expression_emits_typed_export_equals_surface() {
+    let output = emit_js_dts(
+        r#"
+class Foo {}
+module.exports = new Foo();
+"#,
+    );
+
+    assert!(
+        output.contains("declare const _exports: Foo;"),
+        "Expected anonymous CommonJS value export to synthesize a typed export root: {output}"
+    );
+    assert!(
+        output.contains("export = _exports;"),
+        "Expected anonymous CommonJS value export to emit export=: {output}"
+    );
+    assert!(
+        output.contains("declare class Foo"),
+        "Expected the supporting class declaration to remain in the output: {output}"
+    );
+}
+
+#[test]
+fn test_js_module_exports_object_literal_plus_secondary_promotes_named_exports() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+const Strings = {
+    a: "A",
+    b: "B"
+};
+module.exports = {
+    thing: "ok",
+    also: "ok",
+    desc: {
+        item: "ok"
+    }
+};
+module.exports.Strings = Strings;
+"#,
+    );
+
+    assert!(
+        output.contains("export declare let thing: string;"),
+        "Expected anonymous CommonJS object members to become named exports when secondary module.exports members exist: {output}"
+    );
+    assert!(
+        output.contains("export declare let also: string;"),
+        "Expected sibling literal members to become named exports: {output}"
+    );
+    assert!(
+        output.contains("export namespace Strings {"),
+        "Expected secondary module.exports identifier exports to mark their source declaration as exported: {output}"
+    );
+    assert!(
+        output.contains("export declare namespace desc {"),
+        "Expected nested object members to become exported namespaces: {output}"
+    );
+    assert!(
+        !output.contains("export = _exports;"),
+        "Did not expect anonymous module.exports object roots with secondary members to stay on the synthetic export= path: {output}"
+    );
+}
+
+#[test]
+fn test_js_module_exports_anonymous_class_expression_uses_exports_class_surface() {
+    let output = emit_js_dts(
+        r#"
+module.exports = class {
+    /**
+     * @param {number} p
+     */
+    constructor(p) {
+        this.t = 12 + p;
+    }
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export = exports;"),
+        "Expected anonymous CommonJS class exports to target the synthetic exports class surface: {output}"
+    );
+    assert!(
+        output.contains("declare class exports {"),
+        "Expected anonymous CommonJS class exports to emit a named class surface: {output}"
+    );
+    assert!(
+        output.contains("constructor(p: number);"),
+        "Expected constructor JSDoc to flow through the synthetic exports class surface: {output}"
+    );
+    assert!(
+        output.contains("t: number;"),
+        "Expected instance properties to survive the synthetic exports class surface: {output}"
+    );
+}
+
+#[test]
+fn test_js_named_export_equals_class_expression_shadowing_preserves_root_name() {
+    let output = emit_js_dts(
+        r#"
+class A {
+    member = new Q();
+}
+class Q {
+    x = 42;
+}
+module.exports = class Q {
+    constructor() {
+        this.x = new A();
+    }
+};
+module.exports.Another = Q;
+"#,
+    );
+
+    assert!(
+        output.contains("export = Q;"),
+        "Expected named CommonJS class export-equals roots to preserve their declared class name: {output}"
+    );
+    assert!(
+        output.contains("declare namespace Q {"),
+        "Expected named CommonJS class export-equals roots to own their namespace aliases: {output}"
+    );
+    assert!(
+        output.contains("export { Q_1 as Another };"),
+        "Expected shadowed local class aliases to be redirected through a unique declaration name: {output}"
+    );
+    assert!(
+        output.contains("declare class Q_1 {"),
+        "Expected the shadowed local class declaration to be emitted under a stable unique alias: {output}"
+    );
+    assert!(
+        !output.contains("export = exports;"),
+        "Did not expect named CommonJS class export-equals roots to fall back to the anonymous exports surface: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_jsdoc_members_preserve_readonly_and_order() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @template T
+ */
+export class Box {
+    /**
+     * @type {T}
+     */
+    value;
+
+    /**
+     * @return {T}
+     */
+    get current() { return this.value; }
+
+    /**
+     * @type {string}
+     * @readonly
+     */
+    static kind;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export class Box {"),
+        "Expected the JS class declaration to be preserved: {output}"
+    );
+    assert!(
+        output.contains("static readonly kind: string;"),
+        "Expected JSDoc readonly/type tags to control JS class static property emit: {output}"
+    );
+    assert!(
+        output.contains("value: T;"),
+        "Expected JSDoc property types to drive JS class field emit: {output}"
+    );
+    assert!(
+        output.contains("get current(): T;"),
+        "Expected JSDoc getter return types to drive JS accessor emit: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_method_jsdoc_template_parameters_emit() {
+    let output = emit_js_dts(
+        r#"
+export class Factory {
+    /**
+     * @template T
+     * @param {T} value
+     * @return {T}
+     */
+    static create(value) { return value; }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("static create<T>(value: T): T;"),
+        "Expected JSDoc method templates on JS classes to surface in declaration emit: {output}"
     );
 }
 

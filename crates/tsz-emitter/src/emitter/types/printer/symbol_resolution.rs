@@ -7,10 +7,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::types::TypeId;
 use tsz_solver::visitor;
 
-use super::{
-    TypePrinter, escape_string_for_double_quote, needs_property_name_quoting,
-    needs_property_name_quoting_with_flag, quote_property_name,
-};
+use super::{TypePrinter, escape_string_for_double_quote};
 
 impl<'a> TypePrinter<'a> {
     /// Check if a symbol is visible (exported) from the current module.
@@ -761,19 +758,8 @@ impl<'a> TypePrinter<'a> {
             return "{}".to_string();
         }
 
-        // Filter out internal properties that tsc strips from .d.ts output:
-        // - `prototype`: class constructor prototype property
-        // - `__private_brand_*`: internal private member brand fields
-        // - `length`, `name`: standard Function.prototype properties
-        // - `arguments`, `caller`: legacy Function.prototype properties
         let should_skip_property = |prop: &tsz_solver::types::PropertyInfo| {
-            let name = self.resolve_atom(prop.name);
-            name == "prototype"
-                || name.starts_with("__private_brand_")
-                || name == "length"
-                || name == "name"
-                || name == "arguments"
-                || name == "caller"
+            self.property_is_hidden_in_declaration_shape(prop)
         };
 
         // When indent context is set, format as multi-line (matching tsc's .d.ts output)
@@ -871,12 +857,7 @@ impl<'a> TypePrinter<'a> {
                 }
 
                 // Property name (quote if needed)
-                let name = self.resolve_atom(property.name);
-                if needs_property_name_quoting_with_flag(&name, property.is_string_named) {
-                    line.push_str(&quote_property_name(&name));
-                } else {
-                    line.push_str(&name);
-                }
+                line.push_str(&self.declaration_property_name_text(property));
 
                 // Optional marker
                 if property.optional {
@@ -981,12 +962,7 @@ impl<'a> TypePrinter<'a> {
                 }
 
                 // Property name (quote if needed)
-                let name = self.resolve_atom(property.name);
-                if needs_property_name_quoting_with_flag(&name, property.is_string_named) {
-                    member.push_str(&quote_property_name(&name));
-                } else {
-                    member.push_str(&name);
-                }
+                member.push_str(&self.declaration_property_name_text(property));
 
                 // Optional marker
                 if property.optional {
@@ -1025,12 +1001,7 @@ impl<'a> TypePrinter<'a> {
             return None;
         }
 
-        let name = self.resolve_atom(property.name);
-        let printed_name = if needs_property_name_quoting(&name) {
-            quote_property_name(&name)
-        } else {
-            name
-        };
+        let printed_name = self.declaration_property_name_text(property);
 
         if let Some(func_id) = visitor::function_shape_id(self.interner, property.type_id) {
             let func_shape = self.interner.function_shape(func_id);
@@ -1050,16 +1021,10 @@ impl<'a> TypePrinter<'a> {
             || !callable.construct_signatures.is_empty()
             || callable.string_index.is_some()
             || callable.number_index.is_some()
-            || callable.properties.iter().any(|prop| {
-                let prop_name = self.resolve_atom(prop.name);
-                // Filter out internal properties
-                prop_name != "prototype"
-                    && !prop_name.starts_with("__private_brand_")
-                    && prop_name != "length"
-                    && prop_name != "name"
-                    && prop_name != "arguments"
-                    && prop_name != "caller"
-            })
+            || callable
+                .properties
+                .iter()
+                .any(|property| !self.property_is_hidden_in_declaration_shape(property))
         {
             return None;
         }

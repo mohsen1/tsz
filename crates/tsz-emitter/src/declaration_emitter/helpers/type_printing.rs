@@ -29,6 +29,12 @@ use tsz_scanner::SyntaxKind;
 
 use super::DtsCacheResolver;
 
+pub(crate) struct ResolvedDeclarationTypeText {
+    pub(crate) type_id: tsz_solver::types::TypeId,
+    pub(crate) canonical_type_text: String,
+    pub(crate) emitted_type_text: String,
+}
+
 impl<'a> DeclarationEmitter<'a> {
     pub(crate) fn get_node_type_or_names(
         &self,
@@ -238,6 +244,34 @@ impl<'a> DeclarationEmitter<'a> {
             // Fallback if no interner available
             "any".to_string()
         }
+    }
+
+    pub(crate) fn resolve_declaration_type_text(
+        &self,
+        related_nodes: &[NodeIndex],
+        initializer: Option<NodeIndex>,
+    ) -> Option<ResolvedDeclarationTypeText> {
+        let type_id = self.get_node_type_or_names(related_nodes)?;
+        let canonical_type_text = self.print_type_id(type_id);
+        let emitted_type_text = initializer
+            .map(|initializer| {
+                self.declaration_emittable_type_text(initializer, type_id, &canonical_type_text)
+            })
+            .unwrap_or_else(|| canonical_type_text.clone());
+        Some(ResolvedDeclarationTypeText {
+            type_id,
+            canonical_type_text,
+            emitted_type_text,
+        })
+    }
+
+    pub(crate) fn allowlisted_initializer_type_text(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<String> {
+        self.explicit_asserted_type_text(initializer)
+            .or_else(|| self.preferred_expression_type_text(initializer))
+            .or_else(|| self.infer_fallback_type_text(initializer))
     }
 
     pub(crate) fn print_type_id_with_outer_type_params(

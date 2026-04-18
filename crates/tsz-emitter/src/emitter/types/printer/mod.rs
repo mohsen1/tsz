@@ -255,12 +255,6 @@ fn quote_property_name(name: &str) -> String {
     format!("\"{}\"", escape_string_for_double_quote(name))
 }
 
-/// Check if a property name needs quoting (contains spaces, hyphens, etc.)
-/// Does NOT quote: valid identifiers, numeric literals, computed names `[...]`
-fn needs_property_name_quoting(name: &str) -> bool {
-    needs_property_name_quoting_with_flag(name, false)
-}
-
 /// Check if a property name needs quoting, with an `is_string_named` flag
 /// for properties that were declared with a string key that looks numeric.
 fn needs_property_name_quoting_with_flag(name: &str, is_string_named: bool) -> bool {

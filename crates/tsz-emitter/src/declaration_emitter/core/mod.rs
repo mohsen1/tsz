@@ -97,6 +97,7 @@ pub struct DeclarationEmitter<'a> {
     pub(super) method_names_with_overloads: FxHashSet<String>,
     pub(super) all_comments: Vec<CommentRange>,
     pub(super) comment_emit_idx: usize,
+    pub(super) current_statement_jsdoc_chain: Vec<String>,
     /// When true, strip all comments from .d.ts output (--removeComments)
     pub(super) remove_comments: bool,
     /// When true, strip declarations annotated with `@internal` (--stripInternal)
@@ -127,6 +128,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_export_equals_names: FxHashSet<String>,
     /// JS `export = name` assignments already emitted ahead of their declaration.
     pub(super) emitted_js_export_equals_names: FxHashSet<String>,
+    /// Stable aliases for local declarations that shadow a JS export-equals root name.
+    pub(super) js_shadowed_export_equals_local_aliases: FxHashMap<String, String>,
     /// JS namespace-like alias exports synthesized from expando assignments such
     /// as `foo.default = foo` and `module.exports.Bar = Bar`.
     pub(super) js_namespace_export_aliases: FxHashMap<String, Vec<(String, String)>>,

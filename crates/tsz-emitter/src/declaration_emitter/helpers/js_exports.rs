@@ -80,6 +80,290 @@ impl<'a> DeclarationEmitter<'a> {
         names
     }
 
+    pub(in crate::declaration_emitter) fn js_module_exports_assignment_initializer(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16
+            || !self.is_module_exports_reference(binary.left)
+        {
+            return None;
+        }
+
+        Some(
+            self.arena
+                .skip_parenthesized_and_assertions_and_comma(binary.right),
+        )
+    }
+
+    pub(in crate::declaration_emitter) fn js_anonymous_module_exports_assignment_initializer(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        if !self.source_is_js_file {
+            return None;
+        }
+        if self.js_commonjs_export_equals_name(stmt_idx).is_some() {
+            return None;
+        }
+        self.js_module_exports_assignment_initializer(stmt_idx)
+    }
+
+    pub(in crate::declaration_emitter) fn js_anonymous_export_equals_class_expression_initializer(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let initializer = self.js_anonymous_module_exports_assignment_initializer(stmt_idx)?;
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+            return None;
+        }
+        let class = self.arena.get_class(init_node)?;
+        if class.name.is_some() {
+            return None;
+        }
+        Some(initializer)
+    }
+
+    pub(in crate::declaration_emitter) fn js_named_export_equals_class_expression(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        let initializer = self.js_module_exports_assignment_initializer(stmt_idx)?;
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+            return None;
+        }
+        let class = self.arena.get_class(init_node)?;
+        let name_idx = class.name;
+        let name_node = self.arena.get(name_idx)?;
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        Some((name_idx, initializer))
+    }
+
+    pub(in crate::declaration_emitter) fn current_file_has_named_export_equals_class_root_name(
+        &self,
+        name: &str,
+    ) -> bool {
+        let Some(source_file_idx) = self.current_source_file_idx else {
+            return false;
+        };
+        let Some(source_file_node) = self.arena.get(source_file_idx) else {
+            return false;
+        };
+        let Some(source_file) = self.arena.get_source_file(source_file_node) else {
+            return false;
+        };
+
+        source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .filter_map(|stmt_idx| self.js_named_export_equals_class_expression(stmt_idx))
+            .any(|(name_idx, _)| self.get_identifier_text(name_idx).as_deref() == Some(name))
+    }
+
+    pub(in crate::declaration_emitter) fn js_shadowed_export_equals_local_alias(
+        &mut self,
+        name: &str,
+    ) -> Option<String> {
+        if let Some(alias) = self.js_shadowed_export_equals_local_aliases.get(name) {
+            return Some(alias.clone());
+        }
+        if !self.current_file_has_named_export_equals_class_root_name(name) {
+            return None;
+        }
+
+        let Some(source_file_idx) = self.current_source_file_idx else {
+            return None;
+        };
+        let Some(source_file_node) = self.arena.get(source_file_idx) else {
+            return None;
+        };
+        let Some(source_file) = self.arena.get_source_file(source_file_node) else {
+            return None;
+        };
+
+        let has_shadowed_local_class =
+            source_file
+                .statements
+                .nodes
+                .iter()
+                .copied()
+                .any(|stmt_idx| {
+                    self.arena
+                        .get(stmt_idx)
+                        .and_then(|stmt_node| self.arena.get_class(stmt_node))
+                        .and_then(|class| self.get_identifier_text(class.name))
+                        .as_deref()
+                        == Some(name)
+                });
+        if !has_shadowed_local_class {
+            return None;
+        }
+
+        let alias = self.generate_unique_name(name);
+        self.reserved_names.insert(alias.clone());
+        self.js_shadowed_export_equals_local_aliases
+            .insert(name.to_string(), alias.clone());
+        Some(alias)
+    }
+
+    pub(in crate::declaration_emitter) fn js_commonjs_named_export_for_statement_with_options(
+        &self,
+        stmt_idx: NodeIndex,
+        allow_module_exports_receiver: bool,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+
+        let lhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
+        let lhs_node = self.arena.get(lhs)?;
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let lhs_access = self.arena.get_access_expr(lhs_node)?;
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(lhs_access.expression);
+        let receiver_is_supported = self.is_exports_identifier_reference(receiver)
+            || (allow_module_exports_receiver && self.is_module_exports_reference(receiver));
+        if !receiver_is_supported {
+            return None;
+        }
+        if self
+            .arena
+            .get(lhs_access.name_or_argument)
+            .is_none_or(|name| name.kind != SyntaxKind::Identifier as u16)
+        {
+            return None;
+        }
+
+        let rhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+        Some((lhs_access.name_or_argument, rhs))
+    }
+
+    pub(in crate::declaration_emitter) fn current_file_has_anonymous_module_exports_named_members_root(
+        &self,
+    ) -> bool {
+        let Some(source_file_idx) = self.current_source_file_idx else {
+            return false;
+        };
+        let Some(source_file_node) = self.arena.get(source_file_idx) else {
+            return false;
+        };
+        let Some(source_file) = self.arena.get_source_file(source_file_node) else {
+            return false;
+        };
+
+        source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .any(|stmt_idx| {
+                self.js_anonymous_module_exports_named_members_initializer(stmt_idx)
+                    .is_some()
+            })
+    }
+
+    pub(in crate::declaration_emitter) fn js_anonymous_module_exports_named_members_initializer(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let initializer = self.js_anonymous_module_exports_assignment_initializer(stmt_idx)?;
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind == syntax_kind_ext::CLASS_EXPRESSION {
+            return None;
+        }
+
+        let Some(source_file_idx) = self.current_source_file_idx else {
+            return None;
+        };
+        let Some(source_file_node) = self.arena.get(source_file_idx) else {
+            return None;
+        };
+        let Some(source_file) = self.arena.get_source_file(source_file_node) else {
+            return None;
+        };
+
+        let has_secondary_exports = source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .filter(|other_stmt_idx| *other_stmt_idx != stmt_idx)
+            .any(|other_stmt_idx| {
+                self.js_commonjs_named_export_for_statement_with_options(other_stmt_idx, true)
+                    .is_some()
+            });
+        if !has_secondary_exports {
+            return None;
+        }
+
+        if init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return Some(initializer);
+        }
+        if self
+            .js_new_expression_class_declaration(initializer)
+            .is_some()
+        {
+            return Some(initializer);
+        }
+
+        let type_id = self.get_node_type_or_names(&[initializer])?;
+        if matches!(
+            type_id,
+            tsz_solver::types::TypeId::ANY
+                | tsz_solver::types::TypeId::UNKNOWN
+                | tsz_solver::types::TypeId::ERROR
+                | tsz_solver::types::TypeId::NEVER
+        ) {
+            return None;
+        }
+        let interner = self.type_interner?;
+        let properties = interner.get_display_properties(type_id)?;
+        if properties.is_empty() {
+            return None;
+        }
+
+        Some(initializer)
+    }
+
     pub(crate) fn source_file_export_equals_names(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
@@ -1038,6 +1322,43 @@ impl<'a> DeclarationEmitter<'a> {
         deferred
     }
 
+    pub(in crate::declaration_emitter) fn js_namespace_object_stmt_emits_in_source_order(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return false;
+        }
+        let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+            return false;
+        };
+
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                if self.is_js_named_exported_name(decl.name) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     pub(crate) fn js_namespace_object_member_initializer_supported(
         &self,
         initializer: NodeIndex,
@@ -1156,6 +1477,11 @@ impl<'a> DeclarationEmitter<'a> {
         let mut plain_exports = Vec::new();
         let mut renamed_exports = Vec::new();
         for (export_name, local_name) in aliases {
+            let local_name = self
+                .js_shadowed_export_equals_local_aliases
+                .get(&local_name)
+                .cloned()
+                .unwrap_or(local_name);
             if export_name == local_name {
                 plain_exports.push(local_name);
             } else {
@@ -1245,10 +1571,20 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        self.get_identifier_text(
-            self.arena
-                .skip_parenthesized_and_assertions_and_comma(binary.right),
-        )
+        let rhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+        if let Some(name) = self.get_identifier_text(rhs) {
+            return Some(name);
+        }
+
+        let rhs_node = self.arena.get(rhs)?;
+        if rhs_node.kind == syntax_kind_ext::CLASS_EXPRESSION {
+            let class = self.arena.get_class(rhs_node)?;
+            return self.get_identifier_text(class.name);
+        }
+
+        None
     }
 
     pub(in crate::declaration_emitter) fn js_commonjs_expando_decl_for_statement(
@@ -1334,49 +1670,10 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         stmt_idx: NodeIndex,
     ) -> Option<(NodeIndex, NodeIndex)> {
-        let stmt_node = self.arena.get(stmt_idx)?;
-        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-            return None;
-        }
-        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
-        let expr_idx = self
-            .arena
-            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
-        let expr_node = self.arena.get(expr_idx)?;
-        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
-            return None;
-        }
-        let binary = self.arena.get_binary_expr(expr_node)?;
-        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
-            return None;
-        }
-
-        let lhs = self
-            .arena
-            .skip_parenthesized_and_assertions_and_comma(binary.left);
-        let lhs_node = self.arena.get(lhs)?;
-        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            return None;
-        }
-        let lhs_access = self.arena.get_access_expr(lhs_node)?;
-        let receiver = self
-            .arena
-            .skip_parenthesized_and_assertions_and_comma(lhs_access.expression);
-        if !self.is_exports_identifier_reference(receiver) {
-            return None;
-        }
-        if self
-            .arena
-            .get(lhs_access.name_or_argument)
-            .is_none_or(|name| name.kind != SyntaxKind::Identifier as u16)
-        {
-            return None;
-        }
-
-        let rhs = self
-            .arena
-            .skip_parenthesized_and_assertions_and_comma(binary.right);
-        Some((lhs_access.name_or_argument, rhs))
+        self.js_commonjs_named_export_for_statement_with_options(
+            stmt_idx,
+            self.current_file_has_anonymous_module_exports_named_members_root(),
+        )
     }
 
     pub(in crate::declaration_emitter) fn js_namespace_export_alias_for_statement(

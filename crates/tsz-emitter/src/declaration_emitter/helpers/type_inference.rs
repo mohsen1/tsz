@@ -1000,6 +1000,23 @@ impl<'a> DeclarationEmitter<'a> {
         expr_idx: NodeIndex,
     ) -> Option<String> {
         let expr_idx = self.skip_parenthesized_expression(expr_idx)?;
+        if self.is_module_exports_reference(expr_idx) {
+            let source_file_idx = self.current_source_file_idx?;
+            let source_file_node = self.arena.get(source_file_idx)?;
+            let source_file = self.arena.get_source_file(source_file_node)?;
+            if source_file
+                .statements
+                .nodes
+                .iter()
+                .copied()
+                .any(|stmt_idx| {
+                    self.js_anonymous_export_equals_class_expression_initializer(stmt_idx)
+                        .is_some()
+                })
+            {
+                return Some(r#"import(".")"#.to_string());
+            }
+        }
         let expr_node = self.arena.get(expr_idx)?;
 
         match expr_node.kind {
@@ -1899,7 +1916,10 @@ impl<'a> DeclarationEmitter<'a> {
 
         let mut computed_members = Vec::new();
         let mut overridden_members = Vec::new();
+        let mut concrete_member_names = Vec::new();
         let mut only_numeric_like = true;
+        let mut has_non_emittable_computed_members = false;
+        let mut synthetic_number_index_member = None;
 
         for &member_idx in &object.elements.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
@@ -1927,8 +1947,22 @@ impl<'a> DeclarationEmitter<'a> {
             }
 
             let Some(name_text) = self.object_literal_member_name_text(name_idx) else {
+                if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    has_non_emittable_computed_members = true;
+                    if synthetic_number_index_member.is_none() {
+                        synthetic_number_index_member = self
+                            .infer_object_member_type_text_named_at(
+                                member_idx,
+                                "[x: number]",
+                                self.indent_level + 1,
+                                false,
+                                false,
+                            );
+                    }
+                }
                 continue;
             };
+            concrete_member_names.push(name_text.clone());
             let preserve_computed_syntax = name_node.kind
                 == syntax_kind_ext::COMPUTED_PROPERTY_NAME
                 && self
@@ -1975,7 +2009,39 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         if only_numeric_like {
-            lines.retain(|line| !line.trim_start().starts_with("[x: string]:"));
+            if has_non_emittable_computed_members {
+                for line in &mut lines {
+                    let trimmed = line.trim_start();
+                    if trimmed.starts_with("[x: string]:") {
+                        *line = line.replacen("[x: string]:", "[x: number]:", 1);
+                    } else if trimmed.starts_with("readonly [x: string]:") {
+                        *line = line.replacen("readonly [x: string]:", "readonly [x: number]:", 1);
+                    }
+                }
+                lines.retain(|line| {
+                    let trimmed = line.trim_start();
+                    if Self::is_numeric_like_object_property_line(trimmed)
+                        && !Self::object_literal_line_matches_any_name(
+                            trimmed,
+                            &concrete_member_names,
+                        )
+                    {
+                        return false;
+                    }
+                    true
+                });
+                let has_number_index = lines
+                    .iter()
+                    .any(|line| line.trim_start().starts_with("[x: number]:"));
+                if !has_number_index
+                    && let Some(member_text) = synthetic_number_index_member.as_deref()
+                {
+                    let member_indent = "    ".repeat((self.indent_level + 1) as usize);
+                    lines.insert(1, format!("{member_indent}{member_text};"));
+                }
+            } else {
+                lines.retain(|line| !line.trim_start().starts_with("[x: string]:"));
+            }
         }
 
         let indent = "    ".repeat((self.indent_level + 1) as usize);
@@ -2028,6 +2094,20 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         false
+    }
+
+    pub(in crate::declaration_emitter) fn object_literal_line_matches_any_name(
+        existing: &str,
+        names: &[String],
+    ) -> bool {
+        names.iter().any(|name| {
+            Self::object_literal_property_name_prefixes(name)
+                .into_iter()
+                .any(|prefix| {
+                    existing.starts_with(&prefix)
+                        || existing.starts_with(&format!("readonly {prefix}"))
+                })
+        })
     }
 
     pub(in crate::declaration_emitter) fn object_literal_property_name_prefixes(
@@ -2130,5 +2210,22 @@ impl<'a> DeclarationEmitter<'a> {
             || (name.starts_with("[-")
                 && name.ends_with(']')
                 && name[2..name.len().saturating_sub(1)].parse::<f64>().is_ok())
+    }
+
+    pub(in crate::declaration_emitter) fn is_numeric_like_object_property_line(line: &str) -> bool {
+        let Some((name, _)) = line.split_once(':') else {
+            return false;
+        };
+        let trimmed = name.trim().trim_start_matches("readonly ").trim();
+        let normalized = trimmed
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .or_else(|| {
+                trimmed
+                    .strip_prefix('\'')
+                    .and_then(|s| s.strip_suffix('\''))
+            })
+            .unwrap_or(trimmed);
+        normalized.parse::<f64>().is_ok()
     }
 }
