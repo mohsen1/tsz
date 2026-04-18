@@ -13,6 +13,21 @@ pub(crate) fn union_types(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId
     tsz_solver::utils::union_or_single(db, members)
 }
 
+pub(crate) fn intersection_types(db: &dyn QueryDatabase, members: Vec<TypeId>) -> TypeId {
+    tsz_solver::utils::intersection_or_single(db, members)
+}
+
+pub(crate) fn array_type(db: &dyn QueryDatabase, element: TypeId) -> TypeId {
+    db.array(element)
+}
+
+pub(crate) fn tuple_type(
+    db: &dyn QueryDatabase,
+    elements: Vec<tsz_solver::TupleElement>,
+) -> TypeId {
+    db.tuple(elements)
+}
+
 pub(crate) fn enum_member_domain(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::visitor::enum_components(db, type_id)
         .map(|(_def_id, members)| members)

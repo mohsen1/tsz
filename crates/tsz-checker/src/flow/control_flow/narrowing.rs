@@ -786,7 +786,7 @@ impl<'a> FlowAnalyzer<'a> {
                 return Some(if unwrapped.len() == 1 {
                     unwrapped[0]
                 } else {
-                    self.interner.union(unwrapped)
+                    crate::query_boundaries::flow_analysis::union_types(self.interner, unwrapped)
                 });
             }
         }
@@ -795,7 +795,7 @@ impl<'a> FlowAnalyzer<'a> {
         let inferred = if remaining.len() == 1 {
             remaining[0]
         } else {
-            self.interner.union(remaining)
+            crate::query_boundaries::flow_analysis::union_types(self.interner, remaining)
         };
         Some(inferred)
     }
