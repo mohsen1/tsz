@@ -821,9 +821,19 @@ impl<'a> CheckerState<'a> {
         // unresolved-import reporting is disabled (the lightweight multi-file harness
         // uses this mode). Only skip entirely when the module also can't be resolved.
         if !self.ctx.report_unresolved_imports {
+            let resolution_mode =
+                self.requested_resolution_mode(import.attributes, is_type_only_import);
             let module_resolves = self
                 .ctx
-                .resolve_import_target_from_file(self.ctx.current_file_idx, module_name)
+                .resolve_import_target_from_file_with_mode(
+                    self.ctx.current_file_idx,
+                    module_name,
+                    resolution_mode,
+                )
+                .or_else(|| {
+                    self.ctx
+                        .resolve_import_target_from_file(self.ctx.current_file_idx, module_name)
+                })
                 .or_else(|| self.ctx.resolve_import_target(module_name))
                 .is_some()
                 || self.ctx.binder.module_exports.contains_key(module_name);

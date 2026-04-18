@@ -944,6 +944,16 @@ impl<'a> CheckerState<'a> {
                     ..
                 }
                 | crate::query_boundaries::common::PropertyAccessResult::IsUnknown => {
+                    if let Some(type_id) = self.try_resolve_typeof_import_segment_via_export_equals(
+                        &module_name,
+                        &resolved_segments,
+                        &segment,
+                        resolution_mode_override,
+                    ) {
+                        resolved_segments.push(segment.clone());
+                        current = self.resolve_type_query_type(type_id);
+                        continue;
+                    }
                     let namespace_name = self
                         .ctx
                         .namespace_module_names
@@ -991,5 +1001,20 @@ impl<'a> CheckerState<'a> {
             };
         }
         Some(current)
+    }
+
+    fn try_resolve_typeof_import_segment_via_export_equals(
+        &mut self,
+        module_name: &str,
+        resolved_segments: &[String],
+        next_segment: &str,
+        _resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
+    ) -> Option<TypeId> {
+        if !resolved_segments.is_empty() {
+            return None;
+        }
+
+        let sym_id = self.resolve_named_export_via_export_equals(module_name, next_segment)?;
+        Some(self.get_type_of_symbol(sym_id))
     }
 }

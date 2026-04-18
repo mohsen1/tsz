@@ -910,7 +910,7 @@ impl<'a> CheckerState<'a> {
                 && self.is_js_file()
                 && self.ctx.should_resolve_jsdoc()
                 && !enclosing_export_is_type_only
-                && self.is_local_symbol_type_only(&name_str)
+                && (self.is_local_symbol_type_only(&name_str) || has_local_jsdoc_typedef)
             {
                 self.error_at_node(
                     name_idx,

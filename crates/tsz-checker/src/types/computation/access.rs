@@ -1510,7 +1510,17 @@ impl<'a> CheckerState<'a> {
                 && tsz_solver::visitor::is_function_type(self.ctx.types, object_type_for_access)
                 && tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type).is_some()
                 && self.object_has_unique_symbol_expandos(access.expression);
-            if !is_expando_write && !is_expando_symbol_read {
+            let is_js_constructor_instance_symbol_read = !skip_flow_narrowing
+                && !is_namespace_object
+                && self.is_js_file()
+                && self.ctx.compiler_options.check_js
+                && tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type).is_some()
+                && self.object_expr_is_new_constructor_instance(access.expression)
+                && self.object_has_unique_symbol_expandos(access.expression);
+            if !is_expando_write
+                && !is_expando_symbol_read
+                && !is_js_constructor_instance_symbol_read
+            {
                 self.error_no_index_signature_at(
                     index_type,
                     object_type_for_access,

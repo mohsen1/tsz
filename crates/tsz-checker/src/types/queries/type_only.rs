@@ -1362,6 +1362,15 @@ impl<'a> CheckerState<'a> {
                 .get_symbol(sym_id)
                 .or_else(|| self.ctx.binder.get_symbol(sym_id));
             if let Some(sym) = sym_opt {
+                const PURE_TYPE: u32 = symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS;
+                const VALUE: u32 = symbol_flags::VARIABLE
+                    | symbol_flags::FUNCTION
+                    | symbol_flags::CLASS
+                    | symbol_flags::ENUM
+                    | symbol_flags::ENUM_MEMBER
+                    | symbol_flags::VALUE_MODULE
+                    | symbol_flags::NAMESPACE_MODULE;
+
                 if sym.is_type_only {
                     // A merged symbol like `import type { A }` + `const A = 0`
                     // has both ALIAS and VALUE flags. The value binding overrides
@@ -1372,6 +1381,14 @@ impl<'a> CheckerState<'a> {
                     {
                         return true;
                     }
+                }
+                if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
+                    return true;
+                }
+                if (sym.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
+                    && !self.symbol_has_runtime_value_in_binder(target_binder, sym_id)
+                {
+                    return true;
                 }
                 let concrete_value = symbol_flags::VARIABLE
                     | symbol_flags::FUNCTION
