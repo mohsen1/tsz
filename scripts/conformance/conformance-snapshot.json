@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-04-18T03:05:58Z",
-  "git_sha": "bde90909b0f23ba68284c88ddca88201af3227b0",
+  "timestamp": "2026-04-18T05:39:45Z",
+  "git_sha": "20100df2a6dd6c5648ac247b8c101a12b8a4e08b",
   "summary": {
     "total_tests": 12581,
-    "passed": 11929,
-    "failed": 652,
+    "passed": 11932,
+    "failed": 649,
     "pass_rate": 94.8
   },
   "areas_by_pass_rate": [
@@ -186,9 +186,9 @@
     {
       "area": "es6/destructuring",
       "total": 147,
-      "passed": 131,
-      "failed": 16,
-      "pass_rate": 89.12
+      "passed": 132,
+      "failed": 15,
+      "pass_rate": 89.8
     },
     {
       "area": "salsa",
@@ -305,9 +305,9 @@
     {
       "area": "compiler",
       "total": 6519,
-      "passed": 6233,
-      "failed": 286,
-      "pass_rate": 95.61
+      "passed": 6235,
+      "failed": 284,
+      "pass_rate": 95.64
     },
     {
       "area": "es6/arrowFunction",
@@ -1136,11 +1136,11 @@
       "count": 1
     },
     {
-      "code": "TS2507",
+      "code": "TS2708",
       "count": 1
     },
     {
-      "code": "TS2708",
+      "code": "TS2507",
       "count": 1
     }
   ],
@@ -1472,7 +1472,7 @@
     "false_positive": 5,
     "all_missing": 31,
     "wrong_code": 108,
-    "fingerprint_only": 486,
+    "fingerprint_only": 483,
     "close_to_passing": 53
   }
 }

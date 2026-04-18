@@ -164,8 +164,6 @@ FAIL TypeScript/tests/cases/compiler/nestedExcessPropertyChecking.ts | expected:
 FAIL TypeScript/tests/cases/compiler/noCrashOnNoLib.ts
 FAIL TypeScript/tests/cases/compiler/noInferCommonPropertyCheck1.ts | expected:[TS2559] actual:[TS2559]
 FAIL TypeScript/tests/cases/compiler/noInferUnionExcessPropertyCheck1.ts | expected:[TS2353] actual:[TS2353]
-FAIL TypeScript/tests/cases/compiler/noParameterReassignmentIIFEAnnotated.ts | expected:[TS2345,TS2683,TS8029] actual:[TS2345,TS2683,TS8029]
-FAIL TypeScript/tests/cases/compiler/noParameterReassignmentJSIIFE.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/normalizedIntersectionTooComplex.ts | expected:[TS2590,TS7006] actual:[TS2590,TS7006]
 FAIL TypeScript/tests/cases/compiler/numberLiteralsWithLeadingZeros.ts | expected:[TS1005,TS1121,TS1489,TS6188] actual:[TS1121,TS1489]
 FAIL TypeScript/tests/cases/compiler/numberVsBigIntOperations.ts | expected:[TS2322,TS2362,TS2363,TS2365,TS2367,TS2736] actual:[TS2322,TS2362,TS2363,TS2365,TS2367,TS2736]
@@ -321,7 +319,6 @@ FAIL TypeScript/tests/cases/conformance/es6/binaryAndOctalIntegerLiteral/octalIn
 FAIL TypeScript/tests/cases/conformance/es6/classDeclaration/parseClassDeclarationInStrictModeByDefaultInES6.ts | expected:[TS1210,TS2322] actual:[TS1210,TS2322]
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringArrayBindingPatternAndAssignment2.ts | expected:[TS2322,TS2488,TS2493] actual:[TS2322,TS2488,TS2493]
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringAssignabilityCheck.ts | expected:[TS2488,TS2532] actual:[TS2488,TS2532]
-FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringObjectBindingPatternAndAssignment4.ts | expected:[TS2448] actual:[TS2448]
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration1ES5.ts | expected:[TS2322,TS2345,TS2393,TS7006,TS7010,TS7031] actual:[TS2322,TS2345,TS2393,TS7006,TS7010,TS7031]
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration1ES6.ts | expected:[TS2300,TS2322,TS2345,TS7006,TS7010,TS7031] actual:[TS2300,TS2322,TS2345,TS7006,TS7010,TS7031]
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringParameterDeclaration2.ts | expected:[TS1005] actual:[TS1005]
@@ -5068,6 +5065,8 @@ PASS TypeScript/tests/cases/compiler/noImplicitUseStrict_umd.ts
 PASS TypeScript/tests/cases/compiler/noIterationTypeErrorsInCFA.ts
 PASS TypeScript/tests/cases/compiler/noMappedGetSet.ts
 PASS TypeScript/tests/cases/compiler/noObjectKeysToKeyofT.ts
+PASS TypeScript/tests/cases/compiler/noParameterReassignmentIIFEAnnotated.ts
+PASS TypeScript/tests/cases/compiler/noParameterReassignmentJSIIFE.ts
 PASS TypeScript/tests/cases/compiler/noReachabilityErrorsOnEmptyStatement.ts
 PASS TypeScript/tests/cases/compiler/noRepeatedPropertyNames.ts
 PASS TypeScript/tests/cases/compiler/noSelfOnVars.ts
@@ -8247,6 +8246,7 @@ PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringObjectAss
 PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringObjectBindingPatternAndAssignment1ES5.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringObjectBindingPatternAndAssignment1ES6.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringObjectBindingPatternAndAssignment3.ts
+PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringObjectBindingPatternAndAssignment4.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringObjectBindingPatternAndAssignment5.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringObjectBindingPatternAndAssignment6.ts
 PASS TypeScript/tests/cases/conformance/es6/destructuring/destructuringObjectBindingPatternAndAssignment7.ts
