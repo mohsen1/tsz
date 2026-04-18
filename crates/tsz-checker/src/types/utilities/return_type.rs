@@ -596,9 +596,9 @@ impl<'a> CheckerState<'a> {
     /// as the instance type, not be converted to the constructor type.
     pub(crate) fn resolve_lazy_class_to_constructor(&self, type_id: TypeId) -> TypeId {
         use tsz_solver::SymbolRef;
-        use tsz_solver::lazy_def_id;
 
-        let Some(def_id) = lazy_def_id(self.ctx.types, type_id) else {
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
+        else {
             return type_id;
         };
 
