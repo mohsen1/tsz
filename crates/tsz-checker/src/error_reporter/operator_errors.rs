@@ -388,47 +388,35 @@ impl<'a> CheckerState<'a> {
 
         // tsc uses getTypeOfNode (which widens literals) for TS2365 messages,
         // so literal types are widened to base types (e.g., `1` → `number`).
-        // Exception: for `+` operator with number↔bigint mismatch, tsc preserves
-        // the literal types (e.g., `1 + 2n` shows `'1' and '2n'`).
+        // Exception: when an arithmetic/bitwise/shift operator mixes bigint with
+        // number-family operands, tsc preserves literal types so the user can see
+        // the offending numeric (e.g., `bigInt << 2` shows `'bigint' and '2'`,
+        // `1 + 2n` shows `'1' and '2n'`).
         // Enum member types (E.a) should widen to the parent enum (E).
-        let is_number_bigint_mix = op == "+"
-            && self.literal_type_from_initializer(left_idx).is_some()
-            && self.literal_type_from_initializer(right_idx).is_some()
-            && {
-                let l = self
-                    .literal_type_from_initializer(left_idx)
-                    .expect("checked is_some above");
-                let r = self
-                    .literal_type_from_initializer(right_idx)
-                    .expect("checked is_some above");
-                let l_num = crate::query_boundaries::common::widen_literal_type(self.ctx.types, l)
-                    == TypeId::NUMBER
-                    || crate::query_boundaries::common::widen_literal_type(self.ctx.types, l)
-                        == TypeId::BIGINT;
-                let r_num = crate::query_boundaries::common::widen_literal_type(self.ctx.types, r)
-                    == TypeId::NUMBER
-                    || crate::query_boundaries::common::widen_literal_type(self.ctx.types, r)
-                        == TypeId::BIGINT;
-                let l_is_bigint =
-                    crate::query_boundaries::common::widen_literal_type(self.ctx.types, l)
-                        == TypeId::BIGINT;
-                let r_is_bigint =
-                    crate::query_boundaries::common::widen_literal_type(self.ctx.types, r)
-                        == TypeId::BIGINT;
-                l_num && r_num && (l_is_bigint != r_is_bigint)
-            };
+        let widen_lit = |t: TypeId, db: &dyn tsz_solver::TypeDatabase| -> TypeId {
+            crate::query_boundaries::common::widen_literal_type(db, t)
+        };
+        let left_narrow = self
+            .literal_type_from_initializer(left_idx)
+            .unwrap_or(left_type);
+        let right_narrow = self
+            .literal_type_from_initializer(right_idx)
+            .unwrap_or(right_type);
+        let is_number_bigint_mix = matches!(
+            op,
+            "+" | "-" | "*" | "/" | "%" | "**" | "&" | "|" | "^" | "<<" | ">>" | ">>>"
+        ) && {
+            let lw = widen_lit(left_narrow, self.ctx.types);
+            let rw = widen_lit(right_narrow, self.ctx.types);
+            let is_num_fam = |t: TypeId| t == TypeId::NUMBER || t == TypeId::BIGINT;
+            is_num_fam(lw) && is_num_fam(rw) && lw != rw
+        };
 
         let (left_diag, right_diag) = if is_number_bigint_mix {
-            // Preserve literal types for number+bigint mix (e.g., '1' and '2n')
-            let l = self
-                .literal_type_from_initializer(left_idx)
-                .expect("checked is_some above");
-            let r = self
-                .literal_type_from_initializer(right_idx)
-                .expect("checked is_some above");
+            // Preserve literal types for number/bigint mix.
             (
-                self.widen_enum_member_type(l),
-                self.widen_enum_member_type(r),
+                self.widen_enum_member_type(left_narrow),
+                self.widen_enum_member_type(right_narrow),
             )
         } else {
             // Widen literal types to base types for all other operator errors.
