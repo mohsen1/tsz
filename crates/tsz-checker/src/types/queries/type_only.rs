@@ -1377,18 +1377,47 @@ impl<'a> CheckerState<'a> {
                     // type-only status. But cloned `export type { A as default }`
                     // symbols copy the source's value flags (e.g., CLASS) without
                     // ALIAS, so we only skip when ALIAS+VALUE are both present.
-                    if sym.flags & symbol_flags::ALIAS == 0 || sym.flags & symbol_flags::VALUE == 0
-                    {
+                    let has_value_flags = sym.flags & symbol_flags::ALIAS != 0
+                        && sym.flags & symbol_flags::VALUE != 0;
+                    let has_value_partner = target_binder
+                        .alias_partners
+                        .get(&sym_id)
+                        .or_else(|| self.ctx.binder.alias_partners.get(&sym_id))
+                        .is_some();
+                    if !has_value_flags && !has_value_partner {
                         return true;
                     }
                 }
                 if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
-                    return true;
+                    // When `export type X = ...` merges with `export * as X from "..."`,
+                    // the module_exports entry holds the TYPE_ALIAS but the binder records
+                    // the value-providing ALIAS as an alias_partner. If such a partner
+                    // exists, the merged name provides runtime value and is NOT type-only.
+                    let has_value_partner = target_binder
+                        .alias_partners
+                        .get(&sym_id)
+                        .or_else(|| self.ctx.binder.alias_partners.get(&sym_id))
+                        .is_some();
+                    // When the symbol also has ALIAS flag (e.g., `import * as B` merged
+                    // with `interface B`), the alias part may provide runtime value. Don't
+                    // declare type-only here — let the alias-chain-following logic below
+                    // determine whether the alias target is actually type-only.
+                    let alias_may_provide_value =
+                        sym.flags & symbol_flags::ALIAS != 0 && !sym.is_type_only;
+                    if !has_value_partner && !alias_may_provide_value {
+                        return true;
+                    }
                 }
                 if (sym.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
                     && !self.symbol_has_runtime_value_in_binder(target_binder, sym_id)
                 {
-                    return true;
+                    // When the symbol also has ALIAS flag (e.g., `import { Enum }` merged
+                    // with `namespace Enum { type Foo = ... }`), the alias may resolve to
+                    // a value-providing target even though the namespace itself has no
+                    // runtime value exports. Don't return type-only here.
+                    if sym.flags & symbol_flags::ALIAS == 0 || sym.is_type_only {
+                        return true;
+                    }
                 }
                 let concrete_value = symbol_flags::VARIABLE
                     | symbol_flags::FUNCTION
