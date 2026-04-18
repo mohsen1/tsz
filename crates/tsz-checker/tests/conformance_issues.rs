@@ -26060,3 +26060,54 @@ create({
          Record<string, unknown> constraint. Got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_module_augmentation_class_prototype_assignable_to_augmented_interface() {
+    let files = [
+        (
+            "/child1.ts",
+            r#"
+import { ParentThing } from './parent';
+
+declare module './parent' {
+    interface ParentThing {
+        add: (a: number, b: number) => number;
+    }
+}
+
+export function child1(prototype: ParentThing) {
+    prototype.add = (a: number, b: number) => a + b;
+}
+"#,
+        ),
+        (
+            "/parent.ts",
+            r#"
+import { child1 } from './child1';
+
+export class ParentThing implements ParentThing {}
+
+child1(ParentThing.prototype);
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &files,
+        "/parent.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            emit_declarations: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2345),
+        "Module augmentation should merge interface members into class instance type. \
+         ParentThing.prototype should include the augmented 'add' member and be \
+         assignable to the augmented ParentThing parameter type. Got: {diagnostics:?}"
+    );
+}

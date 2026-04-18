@@ -1497,6 +1497,97 @@ mod tests {
     }
 
     #[test]
+    fn auto_import_candidates_use_type_module_main_subpath_without_index() {
+        let mut project = Project::new();
+        project.set_file(
+            "/node_modules/pkg/package.json".to_string(),
+            r#"{
+  "name": "pkg",
+  "version": "1.0.0",
+  "main": "lib",
+  "type": "module"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/node_modules/pkg/lib/index.js".to_string(),
+            "export function foo() {}".to_string(),
+        );
+        project.set_file(
+            "/package.json".to_string(),
+            r#"{
+  "dependencies": {
+    "pkg": "*"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file("/index.ts".to_string(), "foo".to_string());
+
+        let mut specs: Vec<String> = project
+            .get_import_candidates_for_prefix("/index.ts", "foo")
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "foo")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+        specs.sort();
+        specs.dedup();
+
+        assert_eq!(specs, vec!["pkg/lib".to_string()]);
+    }
+
+    #[test]
+    fn diagnostics_import_candidates_use_type_module_main_subpath_without_index() {
+        let mut project = Project::new();
+        project.set_file(
+            "/node_modules/pkg/package.json".to_string(),
+            r#"{
+  "name": "pkg",
+  "version": "1.0.0",
+  "main": "lib",
+  "type": "module"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/node_modules/pkg/lib/index.js".to_string(),
+            "export function foo() {}".to_string(),
+        );
+        project.set_file(
+            "/package.json".to_string(),
+            r#"{
+  "dependencies": {
+    "pkg": "*"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file("/index.ts".to_string(), "foo".to_string());
+
+        let diagnostics = vec![LspDiagnostic {
+            range: Range::new(Position::new(0, 0), Position::new(0, 3)),
+            message: "Cannot find name 'foo'.".to_string(),
+            code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+            severity: None,
+            source: None,
+            related_information: None,
+            reports_unnecessary: None,
+            reports_deprecated: None,
+        }];
+
+        let mut specs: Vec<String> = project
+            .get_import_candidates_for_diagnostics("/index.ts", &diagnostics)
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "foo")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+        specs.sort();
+        specs.dedup();
+
+        assert_eq!(specs, vec!["pkg/lib".to_string()]);
+    }
+
+    #[test]
     fn ambient_module_auto_import_candidates_respect_specifier_exclude_regexes() {
         let mut project = Project::new();
         project.set_auto_import_specifier_exclude_regexes(vec!["utils".to_string()]);
