@@ -637,6 +637,15 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Suppress TS2304 for the `intrinsic` identifier when it appears as the
+        // bare body of a type alias declaration. tsc parses it as a keyword in
+        // that position and reports TS2795 separately (handled in the type
+        // alias check). Without this we double-report TS2304 alongside TS2795.
+        if request.name == "intrinsic" && self.is_intrinsic_keyword_in_type_alias_body(request.idx)
+        {
+            return;
+        }
+
         // TS1212: When `yield` is used as a type reference name inside a generator
         // function, emit TS1212 in addition to the normal TS2304. tsc emits both
         // diagnostics: TS1212 (reserved word) and TS2304 (cannot find name).
