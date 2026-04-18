@@ -237,6 +237,27 @@ impl<'a> FlowAnalyzer<'a> {
         simplified
     }
 
+    /// Returns true when two types represent the same union member set.
+    ///
+    /// Used by switch-clause fallthrough merging to preserve the original
+    /// pre-switch type identity (including alias/display metadata) when the
+    /// merged type expands back to that same semantic union.
+    fn same_union_member_set(&self, left: TypeId, right: TypeId) -> bool {
+        fn normalized_union_members(db: &dyn QueryDatabase, ty: TypeId) -> Vec<TypeId> {
+            if let Some(members) = query::union_members(db, ty) {
+                let mut normalized = members.to_vec();
+                normalized.sort_unstable_by_key(|member| member.0);
+                normalized.dedup();
+                normalized
+            } else {
+                vec![ty]
+            }
+        }
+
+        normalized_union_members(self.interner, left)
+            == normalized_union_members(self.interner, right)
+    }
+
     /// Create a new `FlowAnalyzer`.
     pub fn new(
         arena: &'a NodeArena,
@@ -1700,10 +1721,23 @@ impl<'a> FlowAnalyzer<'a> {
                     }
                 }
                 let types = self.simplify_flow_merge_types(types);
-                if types.len() == 1 {
+                let merged_type = if types.len() == 1 {
                     types[0]
                 } else {
                     query::union_types(self.interner, types)
+                };
+
+                // Preserve pre-switch identity (e.g. named alias display like `MyType`)
+                // when the merged type semantically equals that original union.
+                if let Some(&pre_switch_ant) = flow.antecedent.first() {
+                    let pre_switch_type = *results.get(&pre_switch_ant).unwrap_or(&current_type);
+                    if self.same_union_member_set(merged_type, pre_switch_type) {
+                        pre_switch_type
+                    } else {
+                        merged_type
+                    }
+                } else {
+                    merged_type
                 }
             } else if flow.has_any_flags(flow_flags::LOOP_LABEL) {
                 // LOOP_LABEL: use result_type directly from analyze_loop_fixed_point.
