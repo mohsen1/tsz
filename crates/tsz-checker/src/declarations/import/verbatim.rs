@@ -232,6 +232,8 @@ impl<'a> CheckerState<'a> {
         module_name: &str,
         import_name: &str,
     ) -> bool {
+        use tsz_binder::symbol_flags;
+
         let normalized = module_name.trim_matches('"').trim_matches('\'');
 
         let import_names = if import_name == "default" {
@@ -243,6 +245,7 @@ impl<'a> CheckerState<'a> {
         if let Some(target_idx) = self.ctx.resolve_import_target(normalized)
             && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
         {
+            let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
             if self.file_has_jsdoc_typedef_namespace_root(target_idx as usize, import_name) {
                 return true;
             }
@@ -271,6 +274,36 @@ impl<'a> CheckerState<'a> {
                             && self.binder_symbol_is_type_only(target_binder, sym_id)
                         {
                             return true;
+                        }
+
+                        // For ambient `export default X` surfaces, the `default` symbol is a
+                        // synthetic alias-like export. If it is not directly marked type-only,
+                        // follow `X` inside the same export table and classify based on that
+                        // referenced symbol's runtime-ness.
+                        if candidate_name == "default"
+                            && let Some(default_sym_id) = exports.get(candidate_name)
+                            && let Some(default_sym) = target_binder.get_symbol(default_sym_id)
+                            && (default_sym.flags & symbol_flags::ALIAS) != 0
+                            && default_sym.import_module.is_none()
+                            && let Some(target_decl_idx) = if default_sym.value_declaration.is_some()
+                            {
+                                Some(default_sym.value_declaration)
+                            } else {
+                                default_sym.declarations.first().copied()
+                            }
+                            && let Some(target_decl_node) = target_arena.get(target_decl_idx)
+                            && let Some(target_ident) = target_arena.get_identifier(target_decl_node)
+                        {
+                            let target_name = target_ident.escaped_text.as_str();
+                            let target_sym_id = exports
+                                .get(target_name)
+                                .or_else(|| target_binder.file_locals.get(target_name));
+                            if let Some(target_sym_id) = target_sym_id
+                                && target_sym_id != default_sym_id
+                                && self.binder_symbol_is_type_only(target_binder, target_sym_id)
+                            {
+                                return true;
+                            }
                         }
                     }
                 }
