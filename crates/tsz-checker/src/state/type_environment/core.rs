@@ -1,6 +1,7 @@
 //! Core type environment building, application type evaluation, and
 //! property access type resolution.
 
+use crate::query_boundaries::common::SourceLocation;
 use crate::query_boundaries::state::type_environment as query;
 use crate::state::{CheckerState, EnumKind, MAX_INSTANTIATION_DEPTH};
 use rustc_hash::FxHashSet;
@@ -9,7 +10,6 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::MappedTypeId;
-use tsz_solver::SourceLocation;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 use tsz_solver::{CallSignature, CallableShape, ParamInfo};
