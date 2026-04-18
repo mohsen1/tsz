@@ -302,6 +302,13 @@ impl<'a> TypeFormatter<'a> {
     /// and `Cow::Owned` for dynamically formatted types.
     pub fn format(&mut self, type_id: TypeId) -> Cow<'static, str> {
         if self.current_depth >= self.max_depth {
+            // tsc elides deep object branches as `{ ...; }` rather than raw `...`.
+            if matches!(
+                self.interner.lookup(type_id),
+                Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+            ) {
+                return Cow::Borrowed("{ ...; }");
+            }
             return Cow::Borrowed("...");
         }
 
