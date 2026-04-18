@@ -942,7 +942,28 @@ function patchSessionClient(SessionClient, ts) {
     // Same preference forwarding for completion details.
     const _origGetCompletionEntryDetails = proto.getCompletionEntryDetails;
     proto.getCompletionEntryDetails = function(fileName, position, entryName, options, source, preferences, data) {
+        const currentTestFile = String(globalThis.__tszCurrentFourslashTestFile || "");
+        const currentTestName = path.basename(currentTestFile, ".ts").toLowerCase();
+        const isCompletionOrCommentSuite =
+            currentTestName.startsWith("comment") ||
+            currentTestName.startsWith("comments") ||
+            currentTestName.startsWith("completion") ||
+            currentTestName.startsWith("completions");
         if (preferences?.includeCompletionsWithClassMemberSnippets) {
+            const nativeResult = withNativeFallback(this, ls =>
+                ls.getCompletionEntryDetails(
+                    fileName,
+                    position,
+                    entryName,
+                    options,
+                    source,
+                    preferences || {},
+                    data,
+                )
+            );
+            if (nativeResult) return nativeResult;
+        }
+        if (isCompletionOrCommentSuite) {
             const nativeResult = withNativeFallback(this, ls =>
                 ls.getCompletionEntryDetails(
                     fileName,
@@ -2340,14 +2361,45 @@ async function main() {
     setupGlobals(tsDir);
     const { ts, Harness, FourSlash, HarnessLS, SessionClient } = loadHarnessModules(tsDir);
 
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    const startBridgeWithRetries = async (candidateBridge, attempts = 4) => {
+        let lastErr;
+        for (let attempt = 1; attempt <= attempts; attempt++) {
+            try {
+                await candidateBridge.start();
+                return;
+            } catch (err) {
+                lastErr = err;
+                // Avoid tight spawn loops when the OS is under process pressure.
+                if (attempt < attempts) {
+                    await sleep(40 * attempt);
+                }
+            }
+        }
+        throw lastErr;
+    };
+
     // Start our own tsz-server bridge
     let bridge = new TszServerBridge(tszServerBinary);
-    await bridge.start();
+    await startBridgeWithRetries(bridge);
 
     // Create adapter and patch TestState
     let TszAdapter = createTszAdapterFactory(ts, Harness, SessionClient, bridge);
     patchTestState(FourSlash, TszAdapter);
     patchSessionClient(SessionClient, ts);
+
+    const restartBridge = async (reason) => {
+        const previousBridge = bridge;
+        const nextBridge = new TszServerBridge(tszServerBinary);
+        await startBridgeWithRetries(nextBridge);
+        bridge = nextBridge;
+        TszAdapter = createTszAdapterFactory(ts, Harness, SessionClient, bridge);
+        patchTestState(FourSlash, TszAdapter);
+        try {
+            previousBridge.shutdown();
+        } catch { /* ignore */ }
+        process.send({ type: "bridge_restart", workerId, reason });
+    };
 
     const testType = 0; // FourSlashTestType.Native
 
@@ -2359,6 +2411,10 @@ async function main() {
     for (const testFile of testFiles) {
         const testName = path.basename(testFile, ".ts");
         const startTime = Date.now();
+        let shouldRestartBridge = RESTART_BRIDGE_EVERY_TEST;
+        let restartReason = RESTART_BRIDGE_EVERY_TEST
+            ? "per-test isolation"
+            : "";
 
         try {
             runTestWithTimeout(FourSlash, Harness, testFile, testType, perTestTimeout);
@@ -2368,6 +2424,15 @@ async function main() {
             const elapsed = Date.now() - startTime;
             const errMsg = err.message || String(err);
             const timedOut = elapsed >= perTestTimeout || errMsg.includes("Timeout");
+            const bridgeLikelyUnhealthy =
+                timedOut ||
+                errMsg.includes("Stream closed before complete message was read") ||
+                errMsg.includes("Unexpected empty response body") ||
+                errMsg.includes("Broken pipe");
+            if (bridgeLikelyUnhealthy) {
+                shouldRestartBridge = true;
+                restartReason = `post-failure recovery for ${testName}`;
+            }
             process.send({
                 type: "result", workerId, testFile, testName,
                 passed: false, error: errMsg, elapsed, timedOut,
@@ -2375,18 +2440,13 @@ async function main() {
         }
 
         testsRun++;
-
-        if (RESTART_BRIDGE_EVERY_TEST) {
+        if (shouldRestartBridge) {
             try {
-                bridge.shutdown();
-                bridge = new TszServerBridge(tszServerBinary);
-                await bridge.start();
-                TszAdapter = createTszAdapterFactory(ts, Harness, SessionClient, bridge);
-                patchTestState(FourSlash, TszAdapter);
+                await restartBridge(restartReason);
             } catch (restartErr) {
                 process.send({
                     type: "error", workerId,
-                    error: `Per-test bridge restart failed: ${restartErr.message}`,
+                    error: `Bridge restart failed: ${restartErr.message}`,
                 });
             }
         }
@@ -2413,15 +2473,9 @@ async function main() {
                 const afterGc = process.memoryUsage().rss;
                 if (afterGc > memThreshold) {
                     try {
-                        bridge.shutdown();
-                        bridge = new TszServerBridge(tszServerBinary);
-                        await bridge.start();
-                        TszAdapter = createTszAdapterFactory(ts, Harness, SessionClient, bridge);
-                        patchTestState(FourSlash, TszAdapter);
-                        process.send({
-                            type: "bridge_restart", workerId,
-                            reason: `RSS ${(afterGc / 1024 / 1024).toFixed(0)}MB > ${(memThreshold / 1024 / 1024).toFixed(0)}MB threshold`,
-                        });
+                        await restartBridge(
+                            `RSS ${(afterGc / 1024 / 1024).toFixed(0)}MB > ${(memThreshold / 1024 / 1024).toFixed(0)}MB threshold`
+                        );
                     } catch (restartErr) {
                         process.send({
                             type: "error", workerId,
