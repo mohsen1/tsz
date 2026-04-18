@@ -1567,13 +1567,10 @@ impl<'a> CheckerState<'a> {
                     (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
                 }
             });
-            let has_remote_block_scoped_alias_conflict = declarations
-                .iter()
-                .any(|(_, flags, is_local, _, _origin)| {
-                    // Synthetic default-import aliases from remote declaration files can
-                    // collide with value declarations across files and should prefer
-                    // TS2300 classification (e.g. impliedNodeFormatInterop1.ts).
+            let has_remote_block_scoped_alias_conflict =
+                declarations.iter().any(|(_, flags, is_local, _, origin)| {
                     !*is_local
+                        && *origin == DuplicateDeclarationOrigin::GlobalScopeConflict
                         && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
                         && (flags & symbol_flags::ALIAS) != 0
                 });
