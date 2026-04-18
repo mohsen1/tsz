@@ -532,14 +532,10 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
         constructor(cancellationToken, options) {
             this._host = new TszClientHost(cancellationToken, options);
             this._client = new SessionClient(this._host);
-            this._fallbackLanguageService = ts.createLanguageService(
-                this._host,
-                ts.createDocumentRegistry()
-            );
-            const fallbackLanguageService = this._fallbackLanguageService;
-            this._client._tszNativeLs = fallbackLanguageService;
-            this._client.updateIsDefinitionOfReferencedSymbols = (referencedSymbols, knownSymbolSpans) =>
-                fallbackLanguageService.updateIsDefinitionOfReferencedSymbols?.(referencedSymbols, knownSymbolSpans) ?? false;
+            // Fallback TypeScript language service removed: fourslash tests must
+            // exercise tsz-server itself. Callers that expect these helpers get
+            // defaults (false / empty).
+            this._client.updateIsDefinitionOfReferencedSymbols = () => false;
             for (const prop of ["getCombinedCodeFix", "applyCodeActionCommand", "mapCode"]) {
                 if (Object.prototype.hasOwnProperty.call(this._client, prop)) {
                     delete this._client[prop];
@@ -670,7 +666,6 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
             const originalGetCodeFixesAtPosition = this._client.getCodeFixesAtPosition?.bind(this._client);
             if (originalGetCodeFixesAtPosition) {
                 this._client.getCodeFixesAtPosition = (file, start, end, errorCodes, formatOptions, preferences) => {
-                    const currentTestFile = String(globalThis.__tszCurrentFourslashTestFile || "");
                     if (preferences && this._client.configure) {
                         this._client.configure(preferences);
                     }
@@ -682,14 +677,11 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
                         formatOptions,
                         preferences,
                     ) || [];
+                    // Deduplicate only; test-file-specific filtering and canned
+                    // canonical-action substitutions removed so the harness
+                    // reflects what tsz-server actually returns.
                     const seenForCall = new Set();
-                    let deduped = [];
-                    const isAnnotateJsdocTestFile =
-                        file.includes("annotateWithTypeFromJSDoc") ||
-                        currentTestFile.includes("annotateWithTypeFromJSDoc");
-                    const isAddMemberDeclTestFile =
-                        file.includes("addMemberInDeclarationFile") ||
-                        currentTestFile.includes("addMemberInDeclarationFile");
+                    const deduped = [];
                     for (const action of actions) {
                         const key = JSON.stringify({
                             fixName: action.fixName || "",
@@ -700,76 +692,6 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
                         if (seenForCall.has(key)) continue;
                         seenForCall.add(key);
                         deduped.push(action);
-                    }
-
-                    const hasCode = (code) => Array.isArray(errorCodes) && errorCodes.some((value) => Number(value) === code);
-                    if (file.endsWith("annotateWithTypeFromJSDoc16.ts") && Array.isArray(errorCodes)) {
-                        if (hasCode(2322)) {
-                            return [];
-                        }
-                        if (hasCode(7043)) {
-                            return [];
-                        }
-                    }
-                    if (isAnnotateJsdocTestFile && !file.endsWith("annotateWithTypeFromJSDoc16.ts")) {
-                        deduped = deduped.filter(action => action.fixName !== "import");
-                        const annotateLike = deduped.filter(action => {
-                            const fixName = action.fixName || "";
-                            const description = action.description || "";
-                            return fixName === "annotateWithTypeFromJSDoc" ||
-                                String(description).includes("Annotate with type from JSDoc") ||
-                                String(description).startsWith("Infer type from usage");
-                        });
-                        if (annotateLike.length > 0) {
-                            const chosen = annotateLike.find(action => (action.fixName || "") === "annotateWithTypeFromJSDoc") || annotateLike[0];
-                            deduped = [{
-                                ...chosen,
-                                description: "Annotate with type from JSDoc",
-                            }];
-                        } else {
-                            const retry80004 = originalGetCodeFixesAtPosition(
-                                file,
-                                start,
-                                end,
-                                [80004],
-                                formatOptions,
-                                preferences,
-                            ) || [];
-                            const retryAnnotate = retry80004.filter(action => {
-                                const fixName = action.fixName || "";
-                                const description = action.description || "";
-                                return fixName === "annotateWithTypeFromJSDoc" ||
-                                    String(description).includes("Annotate with type from JSDoc") ||
-                                    String(description).startsWith("Infer type from usage");
-                            });
-                            if (retryAnnotate.length > 0) {
-                                const chosen = retryAnnotate.find(action => (action.fixName || "") === "annotateWithTypeFromJSDoc") || retryAnnotate[0];
-                                deduped = [{
-                                    ...chosen,
-                                    description: "Annotate with type from JSDoc",
-                                }];
-                            }
-                        }
-                    }
-                    if (isAddMemberDeclTestFile) {
-                        const canonical = [
-                            { fixName: "addMissingMember", description: "Declare method 'test'", changes: [] },
-                            { fixName: "addMissingMember", description: "Declare property 'test'", changes: [] },
-                            { fixName: "addMissingMember", description: "Add index signature for property 'test'", changes: [] },
-                        ];
-                        const canonicalKey = (action) => JSON.stringify({
-                            fixName: action.fixName || "",
-                            fixId: action.fixId || "",
-                            description: action.description || "",
-                            changes: action.changes || [],
-                        });
-                        const canonicalKeys = new Set(canonical.map(canonicalKey));
-                        const hasOnlyCanonical =
-                            deduped.length === canonical.length &&
-                            deduped.every(action => canonicalKeys.has(canonicalKey(action)));
-                        if (!hasOnlyCanonical) {
-                            deduped = canonical;
-                        }
                     }
                     return deduped;
                 };

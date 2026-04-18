@@ -394,35 +394,14 @@ function patchSessionClient(SessionClient, ts) {
         return wrapper;
     };
 
-    const getNativeLanguageService = (client) => {
-        // Always create our own native LS with a properly configured host.
-        // The adapter may have set _tszNativeLs but with a host that has
-        // broken getDefaultLibFileName (returns undefined).
-        if (client._tszNativeLsFixed !== undefined) return client._tszNativeLsFixed;
-        try {
-            const wrappedHost = createNativeHost(client.host);
-            client._tszNativeLsFixed = ts.createLanguageService(wrappedHost, ts.createDocumentRegistry());
-        } catch {
-            client._tszNativeLsFixed = null;
-        }
-        return client._tszNativeLsFixed;
-    };
+    // Native LS fallback disabled: tsz-server must answer LSP requests on its own.
+    // Historical runner.cjs code called withNativeFallback to substitute results from
+    // a real TypeScript language service when tsz's output was empty or less focused,
+    // which made fourslash pass-rate overstate parity. Keep the signatures so call
+    // sites compile, but always return undefined so no substitution happens.
+    const getNativeLanguageService = (_client) => null;
 
-    const withNativeFallback = (client, op) => {
-        const nativeLs = getNativeLanguageService(client);
-        if (!nativeLs) return undefined;
-        try {
-            return op(nativeLs);
-        } catch (err) {
-            if (
-                (ts.OperationCanceledException && err instanceof ts.OperationCanceledException) ||
-                err?.name === "OperationCanceledException"
-            ) {
-                throw err;
-            }
-            return undefined;
-        }
-    };
+    const withNativeFallback = (_client, _op) => undefined;
 
     const processOptionalResponse = (client, request) => {
         try {
