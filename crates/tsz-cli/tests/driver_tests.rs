@@ -11387,6 +11387,38 @@ fn ts2552_emitted_for_type_only_export_typo() {
     );
 }
 
+#[test]
+fn js_export_type_skips_follow_on_local_named_export_diagnostics() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{ "compilerOptions": { "allowJs": true, "checkJs": true, "target": "es2015", "module": "commonjs" }, "files": ["index.js", "a.d.ts"] }"#,
+    );
+    write_file(&base.join("a.d.ts"), "export default interface A {}\n");
+    write_file(
+        &base.join("index.js"),
+        "import type A from \"./a\";\nexport type { A };\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        !result.diagnostics.iter().any(|d| {
+            matches!(
+                d.code,
+                diagnostic_codes::TYPES_CANNOT_APPEAR_IN_EXPORT_DECLARATIONS_IN_JAVASCRIPT_FILES
+                    | diagnostic_codes::CANNOT_EXPORT_ONLY_LOCAL_DECLARATIONS_CAN_BE_EXPORTED_FROM_A_MODULE
+                    | diagnostic_codes::CANNOT_FIND_NAME
+            )
+        }),
+        "Did not expect TS18043/TS2661/TS2304 follow-on diagnostics for `export type` in JS, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
 /// TS8002: `export import x = require(...)` in a JS file should report at the
 /// `export` keyword (position 0), not the inner `import` keyword.
 #[test]
