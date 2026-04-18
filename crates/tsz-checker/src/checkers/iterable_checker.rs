@@ -8,6 +8,7 @@ use crate::query_boundaries::checkers::iterable::{
     is_tuple_type, union_members_for_type,
 };
 use crate::state::CheckerState;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
@@ -892,9 +893,104 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // Generic mapped tuple/object forms (`{ [K in keyof T]: ... }`) are used
+        // as spread sources in variadic generic flows. tsc does not report TS2488
+        // for these unresolved generic mapped types at this point.
+        if crate::query_boundaries::common::is_generic_mapped_type(self.ctx.types, spread_type) {
+            let anchor = self.spread_iterability_error_anchor(expr_idx);
+            if anchor != expr_idx {
+                self.emit_ts2589_spread_instantiation_depth(anchor);
+                return false;
+            }
+            return true;
+        }
+
+        // Some recursive generic mapped/tuple spreads overflow type instantiation
+        // depth during assignability-style evaluation (tsc reports TS2589 in these
+        // cases instead of a follow-on TS2488 at the spread operand).
+        let prev_depth_exceeded = self.ctx.depth_exceeded.get();
+        self.ctx.depth_exceeded.set(false);
+        let evaluated_for_assignability = self.evaluate_type_for_assignability(spread_type);
+        let depth_exceeded = self.ctx.depth_exceeded.get();
+        self.ctx
+            .depth_exceeded
+            .set(prev_depth_exceeded || depth_exceeded);
+        if depth_exceeded {
+            self.emit_ts2589_spread_instantiation_depth(self.spread_iterability_error_anchor(expr_idx));
+            return false;
+        }
+
+        let _ = evaluated_for_assignability;
+
         // Not iterable - emit TS2488
         self.emit_ts2488_not_iterable(spread_type, expr_idx, false);
         false
+    }
+
+    fn spread_iterability_error_anchor(&self, expr_idx: NodeIndex) -> NodeIndex {
+        let mut current = self.ctx.arena.get_extended(expr_idx).map(|ext| ext.parent);
+        while let Some(parent_idx) = current {
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+            if parent_node.kind == tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION
+                || parent_node.kind == tsz_parser::parser::syntax_kind_ext::NEW_EXPRESSION
+            {
+                return parent_idx;
+            }
+            current = self.ctx.arena.get_extended(parent_idx).map(|ext| ext.parent);
+        }
+        expr_idx
+    }
+
+    fn spread_iterability_variadic_call_new_anchor(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = self.ctx.arena.get_extended(expr_idx).map(|ext| ext.parent);
+        while let Some(parent_idx) = current {
+            let parent_node = self.ctx.arena.get(parent_idx)?;
+            let is_call_or_new =
+                parent_node.kind == tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION
+                    || parent_node.kind == tsz_parser::parser::syntax_kind_ext::NEW_EXPRESSION;
+            if is_call_or_new {
+                let has_variadic_type_arg = self
+                    .ctx
+                    .arena
+                    .get_expr_type_args(parent_node)
+                    .and_then(|expr_type_args| expr_type_args.type_arguments.as_ref())
+                    .is_some_and(|type_args| {
+                        type_args
+                            .nodes
+                            .iter()
+                            .any(|&arg_idx| self.type_node_contains_rest_type(arg_idx))
+                    });
+                if has_variadic_type_arg {
+                    return Some(parent_idx);
+                }
+            }
+            current = self.ctx.arena.get_extended(parent_idx).map(|ext| ext.parent);
+        }
+        None
+    }
+
+    fn type_node_contains_rest_type(&self, node_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind == tsz_parser::parser::syntax_kind_ext::REST_TYPE {
+            return true;
+        }
+        self.ctx
+            .arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child_idx| self.type_node_contains_rest_type(child_idx))
+    }
+
+    fn emit_ts2589_spread_instantiation_depth(&mut self, error_node: NodeIndex) {
+        self.error_at_node(
+            error_node,
+            diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+            diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+        );
     }
 
     /// Check iterability for array destructuring patterns and emit TS2488 if not iterable.

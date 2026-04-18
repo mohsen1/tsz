@@ -134,7 +134,6 @@ impl<'a> CheckerContext<'a> {
             return false;
         }
 
-        // JS files get noImplicitAny errors only when checkJs is enabled
         if self.is_js_file() {
             self.compiler_options.check_js
         } else {

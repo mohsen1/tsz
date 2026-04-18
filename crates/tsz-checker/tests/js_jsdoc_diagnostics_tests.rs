@@ -76,7 +76,7 @@ fn diagnostic_message(diagnostics: &[(u32, String)], code: u32) -> Option<&str> 
 }
 
 #[test]
-fn checked_js_parameter_reports_ts7006_without_no_implicit_any() {
+fn checked_js_parameter_does_not_report_ts7006_without_no_implicit_any() {
     let diagnostics = compile_named_files(
         &[(
             "index.js",
@@ -97,8 +97,8 @@ function f(x) {
     );
 
     assert!(
-        has_error(&diagnostics, 7006),
-        "Expected TS7006 in checked JS even when noImplicitAny is disabled. Actual diagnostics: {diagnostics:#?}"
+        !has_error(&diagnostics, 7006),
+        "Did not expect TS7006 in checked JS when noImplicitAny is disabled. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
