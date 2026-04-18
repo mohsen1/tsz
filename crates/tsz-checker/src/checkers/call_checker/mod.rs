@@ -11,11 +11,12 @@ use crate::query_boundaries::checkers::call::{
     array_element_type_for_type, is_type_parameter_type, resolve_call, resolve_new,
     stable_call_recovery_return_type, tuple_elements_for_type,
 };
+use crate::query_boundaries::common::CallResult;
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{AssignabilityChecker, CallResult, TupleElement, TypeId};
+use tsz_solver::{AssignabilityChecker, TupleElement, TypeId};
 
 /// Call-local context carrying the callable type during argument collection.
 ///
