@@ -342,6 +342,39 @@ impl Server {
             .any(|part| part == "class")
     }
 
+    fn is_type_annotation_identifier_prefix_context(
+        source_text: &str,
+        line_map: &LineMap,
+        position: Position,
+    ) -> bool {
+        let Some(offset) = line_map.position_to_offset(position, source_text) else {
+            return false;
+        };
+        let end = (offset as usize).min(source_text.len());
+        let prefix = Self::strip_trailing_fourslash_marker_text(&source_text[..end]).trim_end();
+        let line_start = prefix.rfind('\n').map_or(0, |idx| idx + 1);
+        let line = &prefix[line_start..];
+        if line.is_empty() {
+            return false;
+        }
+
+        let bytes = line.as_bytes();
+        let mut idx = bytes.len();
+        while idx > 0 {
+            let ch = bytes[idx - 1] as char;
+            if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+                idx -= 1;
+            } else {
+                break;
+            }
+        }
+        if idx == bytes.len() {
+            return false;
+        }
+
+        line[..idx].trim_end().ends_with(':')
+    }
+
     fn prune_deeper_auto_import_duplicates(items: Vec<CompletionItem>) -> Vec<CompletionItem> {
         let mut best_rank_by_label: std::collections::HashMap<String, (usize, usize)> =
             std::collections::HashMap::new();
@@ -2126,11 +2159,23 @@ impl Server {
 
     fn path_workspace_prefix(file_name: &str) -> Option<String> {
         let normalized = file_name.replace('\\', "/");
-        let mut segments = normalized.split('/').filter(|segment| !segment.is_empty());
-        let first = segments.next()?;
-        let second = segments.next()?;
-        let third = segments.next()?;
-        Some(format!("/{first}/{second}/{third}"))
+        let segments: Vec<&str> = normalized
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .collect();
+        if segments.is_empty() {
+            return None;
+        }
+        if segments.len() == 1 {
+            return Some("/".to_string());
+        }
+        if segments.len() <= 3 {
+            return Some(format!("/{}", segments[0]));
+        }
+        Some(format!(
+            "/{}/{}/{}",
+            segments[0], segments[1], segments[2]
+        ))
     }
 
     fn node_modules_path_matches_allowed_packages(
@@ -3031,7 +3076,13 @@ impl Server {
             let has_class_member_snippet = items
                 .iter()
                 .any(|item| item.source.as_deref() == Some("ClassMemberSnippet/"));
-            let is_new_identifier_location = if (include_class_member_snippets
+            let is_new_identifier_location = if Self::is_type_annotation_identifier_prefix_context(
+                &source_text,
+                &line_map,
+                completion_position,
+            ) {
+                false
+            } else if (include_class_member_snippets
                 && has_class_member_snippet)
                 || Self::is_class_member_declaration_prefix_context(
                     &source_text,
