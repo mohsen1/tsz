@@ -461,6 +461,7 @@ impl<'a> CheckerState<'a> {
             return member_sym_id;
         }
 
+        let lib_binders = self.get_lib_binders();
         let parent_file_idx = self
             .ctx
             .resolve_symbol_file_index(parent_sym_id)
@@ -473,15 +474,34 @@ impl<'a> CheckerState<'a> {
                             None
                         }
                     })
+            })
+            // For namespace imports (import * as ns), the parent symbol doesn't have
+            // a file index (it's a local alias). Resolve from its import_module.
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .get_symbol_with_libs(parent_sym_id, &lib_binders)
+                    .and_then(|symbol| symbol.import_module.as_deref())
+                    .and_then(|module_specifier| self.ctx.resolve_import_target(module_specifier))
             });
 
         if let Some(file_idx) = parent_file_idx {
-            if let Some(local_sym) = self.ctx.binder.get_symbol(member_sym_id) {
-                if local_sym.escaped_name.as_str() != member_name {
-                    self.ctx
-                        .register_symbol_file_target(member_sym_id, file_idx);
-                }
-            } else {
+            // Always register for cross-file symbols. The check for name mismatch was
+            // intended to skip local symbols, but with shared symbol arenas (CLI mode),
+            // the binder may return the cross-file symbol. We register if:
+            // - The binder doesn't have the symbol (clearly cross-file)
+            // - OR the target file differs from current file (cross-file access)
+            // - OR the names differ (aliased import)
+            let should_register = self
+                .ctx
+                .binder
+                .get_symbol(member_sym_id)
+                .map(|local_sym| {
+                    local_sym.escaped_name.as_str() != member_name
+                        || file_idx != self.ctx.current_file_idx
+                })
+                .unwrap_or(true);
+            if should_register {
                 self.ctx
                     .register_symbol_file_target(member_sym_id, file_idx);
             }
