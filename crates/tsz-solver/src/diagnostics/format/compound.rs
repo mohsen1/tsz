@@ -85,6 +85,33 @@ impl<'a> TypeFormatter<'a> {
         format!("{{ {}; }}", display_parts.join("; "))
     }
 
+    fn visible_object_properties<'b>(&self, props: &'b [PropertyInfo]) -> Vec<&'b PropertyInfo> {
+        let default_name = self.interner.intern_string("default");
+        let internal_default_name = self.interner.intern_string("_default");
+        let default_prop = props.iter().find(|prop| prop.name == default_name);
+
+        props
+            .iter()
+            .filter(|prop| {
+                if prop.name != internal_default_name {
+                    return true;
+                }
+                let Some(default_prop) = default_prop else {
+                    return true;
+                };
+
+                // Some module export surfaces retain the local `_default` binding
+                // alongside the real `default` export. tsc hides that duplicate
+                // implementation detail in object displays.
+                prop.type_id != default_prop.type_id
+                    || prop.write_type != default_prop.write_type
+                    || prop.optional != default_prop.optional
+                    || prop.readonly != default_prop.readonly
+                    || prop.is_method != default_prop.is_method
+            })
+            .collect()
+    }
+
     pub(super) fn format_literal(&mut self, lit: &LiteralValue) -> String {
         match lit {
             LiteralValue::String(s) => {
@@ -119,7 +146,7 @@ impl<'a> TypeFormatter<'a> {
         if props.is_empty() {
             return "{}".to_string();
         }
-        let mut display_props: Vec<&PropertyInfo> = props.iter().collect();
+        let mut display_props = self.visible_object_properties(props);
         // Sort properties for display. Use declaration_order as primary key when
         // available, with tsc-compatible tiebreaking: numeric keys in numeric order,
         // then string keys in existing order (stable sort preserves Atom ID order).
@@ -431,7 +458,7 @@ impl<'a> TypeFormatter<'a> {
             ));
         }
         // Sort properties by declaration_order for display (preserves source order)
-        let mut display_props: Vec<&PropertyInfo> = shape.properties.iter().collect();
+        let mut display_props = self.visible_object_properties(shape.properties.as_slice());
         let has_decl_order = display_props.iter().any(|p| p.declaration_order > 0);
         if has_decl_order {
             display_props.sort_by_key(|p| p.declaration_order);

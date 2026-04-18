@@ -567,6 +567,50 @@ fn format_object_many_properties_truncated() {
 }
 
 #[test]
+fn format_object_hides_duplicate_internal_default_alias() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let shared = TypeId::NUMBER;
+    let obj = db.object(vec![
+        PropertyInfo::new(db.intern_string("default"), shared),
+        PropertyInfo::new(db.intern_string("_default"), shared),
+        PropertyInfo::new(db.intern_string("value"), TypeId::STRING),
+    ]);
+    let result = fmt.format(obj);
+
+    assert!(
+        result.contains("default: number"),
+        "Expected real default export to remain visible, got: {result}"
+    );
+    assert!(
+        !result.contains("_default"),
+        "Expected duplicate internal `_default` alias to be hidden, got: {result}"
+    );
+    assert!(
+        result.contains("value: string"),
+        "Expected unrelated properties to remain visible, got: {result}"
+    );
+}
+
+#[test]
+fn format_object_keeps_distinct_internal_default_alias() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let obj = db.object(vec![
+        PropertyInfo::new(db.intern_string("default"), TypeId::NUMBER),
+        PropertyInfo::new(db.intern_string("_default"), TypeId::STRING),
+    ]);
+    let result = fmt.format(obj);
+
+    assert!(
+        result.contains("_default: string"),
+        "Expected `_default` to remain when it is not a duplicate of `default`, got: {result}"
+    );
+}
+
+#[test]
 fn format_object_with_string_index_signature() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);
@@ -588,6 +632,43 @@ fn format_object_with_string_index_signature() {
     assert!(
         result.contains("[x: string]: number"),
         "Expected string index signature with default param name 'x', got: {result}"
+    );
+}
+
+#[test]
+fn format_object_with_index_hides_duplicate_internal_default_alias() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let shape = crate::types::ObjectShape {
+        properties: vec![
+            PropertyInfo::new(db.intern_string("default"), TypeId::NUMBER),
+            PropertyInfo::new(db.intern_string("_default"), TypeId::NUMBER),
+        ],
+        string_index: Some(crate::types::IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+        symbol: None,
+        flags: Default::default(),
+    };
+    let obj = db.object_with_index(shape);
+    let result = fmt.format(obj);
+
+    assert!(
+        result.contains("[x: string]: number"),
+        "Expected index signature to remain visible, got: {result}"
+    );
+    assert!(
+        result.contains("default: number"),
+        "Expected real default export to remain visible, got: {result}"
+    );
+    assert!(
+        !result.contains("_default"),
+        "Expected duplicate internal `_default` alias to be hidden in object-with-index display, got: {result}"
     );
 }
 
