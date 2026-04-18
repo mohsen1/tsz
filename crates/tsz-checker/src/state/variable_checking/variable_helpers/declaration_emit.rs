@@ -290,7 +290,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn first_private_name_from_external_module_reference(
-        &self,
+        &mut self,
         inferred_type: TypeId,
     ) -> Option<(String, String)> {
         let referenced_types = collect_referenced_types(self.ctx.types, inferred_type);
@@ -322,7 +322,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn private_external_module_nameability_info(
-        &self,
+        &mut self,
         sym_id: SymbolId,
     ) -> Option<(String, String)> {
         use tsz_binder::symbol_flags;
@@ -355,15 +355,62 @@ impl<'a> CheckerState<'a> {
             .source_files
             .first()
             .map(|sf| sf.file_name.clone())?;
-        let is_exported_from_target = target_binder
-            .module_exports
-            .get(&target_file_name)
-            .is_some_and(|exports| {
-                exports
-                    .iter()
-                    .any(|(_, &export_sym_id)| export_sym_id == resolved_sym_id)
-            });
+        let target_file_stem = target_file_name
+            .rsplit_once('.')
+            .map(|(base, _)| base)
+            .unwrap_or(target_file_name.as_str())
+            .to_string();
+        let target_basename = target_file_stem
+            .rsplit_once('/')
+            .map(|(_, name)| name)
+            .unwrap_or(target_file_stem.as_str())
+            .to_string();
+        let normalized_file_name = target_file_name.replace('\\', "/");
+        let normalized_stem = target_file_stem.replace('\\', "/");
+        let normalized_without_dot = normalized_file_name
+            .strip_prefix("./")
+            .unwrap_or(normalized_file_name.as_str())
+            .to_string();
+        let stem_without_dot = normalized_stem
+            .strip_prefix("./")
+            .unwrap_or(normalized_stem.as_str())
+            .to_string();
+
+        let mut export_keys = vec![
+            target_file_name.clone(),
+            normalized_file_name,
+            normalized_without_dot,
+            target_file_stem,
+            normalized_stem,
+            stem_without_dot,
+            target_basename,
+        ];
+        export_keys.sort();
+        export_keys.dedup();
+
+        let is_exported_from_target = export_keys.iter().any(|key| {
+            target_binder.module_exports.get(key).is_some_and(|exports| {
+                exports.iter().any(|(_, &export_sym_id)| {
+                    export_sym_id == resolved_sym_id
+                        || target_binder.resolve_import_symbol(export_sym_id)
+                            == Some(resolved_sym_id)
+                        || self.ctx.binder.resolve_import_symbol(export_sym_id)
+                            == Some(resolved_sym_id)
+                        || self.resolve_alias_symbol(export_sym_id, &mut Vec::new())
+                            == Some(resolved_sym_id)
+                })
+            })
+        });
         if is_exported_from_target {
+            return None;
+        }
+
+        let is_named_commonjs_export = self
+            .resolve_js_export_surface(file_idx as usize)
+            .named_exports
+            .iter()
+            .any(|prop| self.ctx.types.resolve_atom(prop.name) == referenced_name);
+        if is_named_commonjs_export {
             return None;
         }
 
