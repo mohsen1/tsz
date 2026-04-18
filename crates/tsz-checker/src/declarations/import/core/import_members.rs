@@ -374,8 +374,34 @@ impl<'a> CheckerState<'a> {
                     };
 
                     let import_name = &identifier.escaped_text;
+                    let local_name = self.get_identifier_text_from_idx(specifier.name);
 
                     if import_name == "default" {
+                        continue;
+                    }
+
+                    if self.import_binding_is_type_only(module_name, import_name)
+                        || local_name
+                            .as_deref()
+                            .is_some_and(|name| self.local_import_binding_is_type_only(name))
+                    {
+                        self.ctx.type_only_nodes.insert(*element_idx);
+                        let specifier_is_type_only = self
+                            .ctx
+                            .arena
+                            .get(*element_idx)
+                            .and_then(|n| self.ctx.arena.get_specifier(n))
+                            .is_some_and(|s| s.is_type_only);
+                        if self.should_report_js_type_only_import_diagnostic(
+                            clause.is_type_only,
+                            specifier_is_type_only,
+                        ) {
+                            self.emit_js_type_only_import_diagnostic(
+                                *element_idx,
+                                import_name,
+                                module_name,
+                            );
+                        }
                         continue;
                     }
 
@@ -761,6 +787,38 @@ impl<'a> CheckerState<'a> {
             || self.is_export_type_only_across_binders(module_name, import_name)
             || (import_name == "default" && self.module_default_export_is_type_only(module_name))
             || (import_name == "default" && self.is_module_export_equals_type_only(module_name))
+            || self.module_has_jsdoc_namespace_named(module_name, import_name)
+    }
+
+    fn module_has_jsdoc_namespace_named(&self, module_name: &str, export_name: &str) -> bool {
+        let Some(target_idx) = self
+            .ctx
+            .resolve_import_target_from_file(self.ctx.current_file_idx, module_name)
+            .or_else(|| self.ctx.resolve_import_target(module_name))
+        else {
+            return false;
+        };
+        let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+        target_arena.source_files.iter().any(|source_file| {
+            source_file.comments.iter().any(|comment| {
+                let content = source_file
+                    .text
+                    .get(comment.pos as usize..comment.end as usize)
+                    .unwrap_or("");
+                content.lines().any(|line| {
+                    let line = line.trim();
+                    let line = line.trim_start_matches('*').trim();
+                    if let Some(rest) = line.strip_prefix("@namespace") {
+                        rest.trim()
+                            .split(|c: char| c.is_whitespace() || c == '{' || c == '}')
+                            .find(|segment| !segment.is_empty())
+                            .is_some_and(|name| name == export_name)
+                    } else {
+                        false
+                    }
+                })
+            })
+        })
     }
 
     fn module_default_export_is_type_only(&self, module_name: &str) -> bool {

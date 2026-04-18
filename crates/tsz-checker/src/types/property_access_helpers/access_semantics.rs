@@ -1137,29 +1137,86 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
+        let mut candidate_keys = vec![obj_key];
+        if let Some(node) = self.ctx.arena.get(object_expr_idx)
+            && node.kind == SyntaxKind::Identifier as u16
+            && let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(object_expr_idx)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && let Some(decl_node) = self.ctx.arena.get(symbol.value_declaration)
+            && decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+            && let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+            && let Some(init_node) = self.ctx.arena.get(var_decl.initializer)
+            && init_node.kind == syntax_kind_ext::NEW_EXPRESSION
+            && let Some(new_expr) = self.ctx.arena.get_call_expr(init_node)
+            && let Some(ctor_key) = property_access_chain(self.ctx.arena, new_expr.expression)
+        {
+            candidate_keys.push(format!("{ctor_key}.prototype"));
+            if let Some(ctor_node) = self.ctx.arena.get(new_expr.expression)
+                && ctor_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(ctor_access) = self.ctx.arena.get_access_expr(ctor_node)
+                && let Some(name_node) = self.ctx.arena.get(ctor_access.name_or_argument)
+                && let Some(name_ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                candidate_keys.push(format!("{}.prototype", name_ident.escaped_text));
+            }
+        }
 
         let has_unique =
-            |expandos: &rustc_hash::FxHashMap<String, rustc_hash::FxHashSet<String>>| {
+            |expandos: &rustc_hash::FxHashMap<String, rustc_hash::FxHashSet<String>>, key: &str| {
                 expandos
-                    .get(&obj_key)
+                    .get(key)
                     .is_some_and(|props| props.iter().any(|p| p.starts_with("__unique_")))
             };
 
-        if has_unique(&self.ctx.binder.expando_properties) {
-            return true;
+        for key in &candidate_keys {
+            if has_unique(&self.ctx.binder.expando_properties, key) {
+                return true;
+            }
         }
         // Use global expando index for O(1) lookup instead of O(N) binder scan
         if let Some(expando_idx) = &self.ctx.global_expando_index {
-            if has_unique(expando_idx) {
-                return true;
+            for key in &candidate_keys {
+                if has_unique(expando_idx, key) {
+                    return true;
+                }
             }
         } else if let Some(all_binders) = &self.ctx.all_binders {
             for binder in all_binders.iter() {
-                if has_unique(&binder.expando_properties) {
-                    return true;
+                for key in &candidate_keys {
+                    if has_unique(&binder.expando_properties, key) {
+                        return true;
+                    }
                 }
             }
         }
         false
+    }
+
+    pub(crate) fn object_expr_is_new_constructor_instance(&self, object_expr_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(object_expr_idx) else {
+            return false;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(object_expr_idx) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let Some(decl_node) = self.ctx.arena.get(symbol.value_declaration) else {
+            return false;
+        };
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return false;
+        }
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        let Some(init_node) = self.ctx.arena.get(var_decl.initializer) else {
+            return false;
+        };
+        init_node.kind == syntax_kind_ext::NEW_EXPRESSION
     }
 }
