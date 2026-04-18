@@ -723,8 +723,7 @@ impl ParserState {
                         if self.is_identifier_or_keyword() {
                             self.next_token();
                         }
-                        let fragment_unclosed_pos = if self.is_token(SyntaxKind::GreaterThanToken)
-                        {
+                        let fragment_unclosed_pos = if self.is_token(SyntaxKind::GreaterThanToken) {
                             let end = self.token_end();
                             self.next_token();
                             end

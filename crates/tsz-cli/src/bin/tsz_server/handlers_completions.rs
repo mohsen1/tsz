@@ -2172,10 +2172,7 @@ impl Server {
         if segments.len() <= 3 {
             return Some(format!("/{}", segments[0]));
         }
-        Some(format!(
-            "/{}/{}/{}",
-            segments[0], segments[1], segments[2]
-        ))
+        Some(format!("/{}/{}/{}", segments[0], segments[1], segments[2]))
     }
 
     fn node_modules_path_matches_allowed_packages(
@@ -3082,13 +3079,13 @@ impl Server {
                 completion_position,
             ) {
                 false
-            } else if (include_class_member_snippets
-                && has_class_member_snippet)
+            } else if (include_class_member_snippets && has_class_member_snippet)
                 || Self::is_class_member_declaration_prefix_context(
                     &source_text,
                     &line_map,
                     completion_position,
-                ) {
+                )
+            {
                 true
             } else if Self::is_bare_identifier_expression_prefix(
                 &source_text,

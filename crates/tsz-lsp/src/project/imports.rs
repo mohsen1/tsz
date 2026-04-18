@@ -1026,7 +1026,9 @@ impl Project {
                 if !Self::statement_text_contains_name(file.source_text(), stmt_node, export_name) {
                     continue;
                 }
-                if export_name == "default" && Self::statement_has_default_modifier(arena, stmt_node) {
+                if export_name == "default"
+                    && Self::statement_has_default_modifier(arena, stmt_node)
+                {
                     matches.push(ExportMatch {
                         kind: ImportCandidateKind::Default,
                         is_type_only: Self::statement_is_type_only(stmt_node.kind),
@@ -1249,27 +1251,27 @@ impl Project {
         stmt_node: &'a tsz_parser::parser::node::Node,
     ) -> Option<&'a tsz_parser::parser::base::NodeList> {
         match stmt_node.kind {
-            syntax_kind_ext::FUNCTION_DECLARATION => {
-                arena.get_function(stmt_node).and_then(|data| data.modifiers.as_ref())
-            }
-            syntax_kind_ext::CLASS_DECLARATION => {
-                arena.get_class(stmt_node).and_then(|data| data.modifiers.as_ref())
-            }
+            syntax_kind_ext::FUNCTION_DECLARATION => arena
+                .get_function(stmt_node)
+                .and_then(|data| data.modifiers.as_ref()),
+            syntax_kind_ext::CLASS_DECLARATION => arena
+                .get_class(stmt_node)
+                .and_then(|data| data.modifiers.as_ref()),
             syntax_kind_ext::INTERFACE_DECLARATION => arena
                 .get_interface(stmt_node)
                 .and_then(|data| data.modifiers.as_ref()),
             syntax_kind_ext::TYPE_ALIAS_DECLARATION => arena
                 .get_type_alias(stmt_node)
                 .and_then(|data| data.modifiers.as_ref()),
-            syntax_kind_ext::ENUM_DECLARATION => {
-                arena.get_enum(stmt_node).and_then(|data| data.modifiers.as_ref())
-            }
+            syntax_kind_ext::ENUM_DECLARATION => arena
+                .get_enum(stmt_node)
+                .and_then(|data| data.modifiers.as_ref()),
             syntax_kind_ext::VARIABLE_STATEMENT => arena
                 .get_variable(stmt_node)
                 .and_then(|data| data.modifiers.as_ref()),
-            syntax_kind_ext::MODULE_DECLARATION => {
-                arena.get_module(stmt_node).and_then(|data| data.modifiers.as_ref())
-            }
+            syntax_kind_ext::MODULE_DECLARATION => arena
+                .get_module(stmt_node)
+                .and_then(|data| data.modifiers.as_ref()),
             _ => None,
         }
     }
@@ -1318,7 +1320,8 @@ impl Project {
     }
 
     fn statement_is_type_only(kind: u16) -> bool {
-        kind == syntax_kind_ext::INTERFACE_DECLARATION || kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+        kind == syntax_kind_ext::INTERFACE_DECLARATION
+            || kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
     }
 
     fn file_has_type_namespace_import(file: &ProjectFile, namespace_name: &str) -> bool {
@@ -3021,7 +3024,8 @@ export = ts;
             "did not expect inferred workspace package specifier utils/dist without requesting package metadata, got {specs:?}"
         );
         assert!(
-            specs.iter()
+            specs
+                .iter()
                 .any(|specifier| specifier == "./packages/utils/dist/index.js"),
             "expected relative candidate ./packages/utils/dist/index.js, got {specs:?}"
         );
