@@ -2600,6 +2600,9 @@ impl Server {
                 }
             }
         }
+        if item.is_package_json_import == Some(true) {
+            entry["isPackageJsonImport"] = serde_json::json!(true);
+        }
         if let Some(source) = item.source.as_ref() {
             entry["source"] = serde_json::json!(source);
             entry["sourceDisplay"] = serde_json::json!([{ "text": source, "kind": "text" }]);

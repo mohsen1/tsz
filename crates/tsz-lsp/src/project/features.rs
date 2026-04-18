@@ -247,7 +247,8 @@ impl Project {
                     &candidate,
                     position,
                 ) {
-                    let mut item = self.completion_from_import_candidate(&candidate);
+                    let mut item =
+                        self.completion_from_import_candidate(&candidate, file.file_name());
                     item = item.with_additional_edits(edits);
                     completions.push(item);
                 }
