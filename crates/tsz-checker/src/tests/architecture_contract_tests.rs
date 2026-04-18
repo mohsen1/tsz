@@ -1777,20 +1777,11 @@ fn test_solver_imports_go_through_query_boundaries() {
     // remove the entry and let the test enforce the boundary.
     const TEMPORARILY_ALLOWED: &[&str] = &[
         // TODO: Computation APIs — need query_boundaries wrappers
-        "AssignabilityChecker",
         "BinaryOpEvaluator",
-        "IndexSignatureResolver",
         "QueryDatabase",
-        "SubtypeFailureReason",
         "TypeEnvironment",
         "TypeResolver",
         "def::resolver::TypeResolver",
-        "instantiate_generic",
-        "judge::DefaultJudge",
-        "judge::Judge",
-        "judge::JudgeConfig",
-        "objects::index_signatures::IndexKind",
-        "objects::index_signatures::IndexSignatureResolver",
     ];
 
     fn walk_rs(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
@@ -3790,7 +3781,7 @@ fn test_shared_def_store_propagated_through_cache_constructor() {
 /// they should remove it from `TEMPORARILY_ALLOWED`, shrinking the count.
 /// Adding new bypasses requires updating this ceiling (which reviewers will see).
 ///
-/// Current ceiling: 14 items. This number must only decrease over time.
+/// Current ceiling: 5 items. This number must only decrease over time.
 #[test]
 fn test_temporarily_allowed_bypass_list_does_not_grow() {
     // The authoritative list lives in test_solver_imports_go_through_query_boundaries.
@@ -3820,7 +3811,7 @@ fn test_temporarily_allowed_bypass_list_does_not_grow() {
         }
     }
 
-    const CEILING: usize = 14;
+    const CEILING: usize = 5;
     assert!(
         count <= CEILING,
         "TEMPORARILY_ALLOWED bypass list has grown to {count} items (ceiling: {CEILING}). \

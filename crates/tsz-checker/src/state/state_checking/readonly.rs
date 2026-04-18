@@ -592,7 +592,7 @@ impl<'a> CheckerState<'a> {
     /// - The constraint has no index signature (e.g., `{ a: string, b: number }`)
     fn is_generic_indexed_write(&mut self, object_type: TypeId, index_type: TypeId) -> bool {
         use crate::query_boundaries::common as common_query;
-        use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
+        use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
 
         // Broad primitive keys definitely go through an index-signature-like path.
         if !self.is_broad_index_type(index_type) {
@@ -632,7 +632,7 @@ impl<'a> CheckerState<'a> {
     /// Evaluates the constraint through `TypeEnvironment` first to resolve
     /// Application/Lazy wrappers (e.g., `Record<string, any>` → `{ [key: string]: any }`).
     fn constraint_has_index_signature(&mut self, type_param: TypeId, index_type: TypeId) -> bool {
-        use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
+        use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
 
         let Some(info) =
             crate::query_boundaries::common::type_param_info(self.ctx.types, type_param)
