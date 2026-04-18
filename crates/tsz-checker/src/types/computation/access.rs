@@ -6,6 +6,7 @@
 
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
+use crate::symbols_domain::name_text::property_access_chain_text_in_arena;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
@@ -148,22 +149,8 @@ impl<'a> CheckerState<'a> {
         object_expr_idx: NodeIndex,
         key_expr_idx: NodeIndex,
     ) -> bool {
-        fn property_access_chain(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
-            let node = arena.get(idx)?;
-            if node.kind == SyntaxKind::Identifier as u16 {
-                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
-            }
-            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                let access = arena.get_access_expr(node)?;
-                let left = property_access_chain(arena, access.expression)?;
-                let right_node = arena.get(access.name_or_argument)?;
-                let right = arena.get_identifier(right_node)?.escaped_text.clone();
-                return Some(format!("{left}.{right}"));
-            }
-            None
-        }
-
-        let Some(obj_key) = property_access_chain(self.ctx.arena, object_expr_idx) else {
+        let Some(obj_key) = property_access_chain_text_in_arena(self.ctx.arena, object_expr_idx)
+        else {
             return false;
         };
         let Some(prop_key) = self.expando_element_key_name(key_expr_idx) else {
@@ -260,30 +247,8 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get_identifier_at(access.name_or_argument)
                     .is_some_and(|member_ident| {
-                        fn property_access_chain(
-                            arena: &tsz_parser::parser::node::NodeArena,
-                            idx: NodeIndex,
-                        ) -> Option<String> {
-                            let node = arena.get(idx)?;
-                            if node.kind == SyntaxKind::Identifier as u16 {
-                                return arena
-                                    .get_identifier(node)
-                                    .map(|id| id.escaped_text.clone());
-                            }
-                            if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                                return None;
-                            }
-                            let access = arena.get_access_expr(node)?;
-                            let left = property_access_chain(arena, access.expression)?;
-                            let right = arena
-                                .get_identifier_at(access.name_or_argument)?
-                                .escaped_text
-                                .clone();
-                            Some(format!("{left}.{right}"))
-                        }
-
-                        property_access_chain(self.ctx.arena, access.expression).is_some_and(
-                            |object_key| {
+                        property_access_chain_text_in_arena(self.ctx.arena, access.expression)
+                            .is_some_and(|object_key| {
                                 self.collect_expando_properties_for_root(&object_key)
                                     .contains(&member_ident.escaped_text)
                                     || object_key.rsplit_once('.').is_some_and(
@@ -292,8 +257,7 @@ impl<'a> CheckerState<'a> {
                                                 .contains(&member_ident.escaped_text)
                                         },
                                     )
-                            },
-                        )
+                            })
                     });
             let can_use_no_flow = if let Some(name) = literal_string.as_deref() {
                 !matches!(

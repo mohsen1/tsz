@@ -3,6 +3,7 @@
 
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
+use crate::symbols_domain::name_text::entity_name_text_in_arena;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
@@ -1150,23 +1151,7 @@ impl<'a> CheckerState<'a> {
         arena: &NodeArena,
         idx: NodeIndex,
     ) -> Option<String> {
-        let node = arena.get(idx)?;
-        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
-            return arena
-                .get_identifier(node)
-                .map(|ident| ident.escaped_text.clone());
-        }
-        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            let qn = arena.get_qualified_name(node)?;
-            let left = Self::entity_name_text_in_arena(arena, qn.left)?;
-            let right = Self::entity_name_text_in_arena(arena, qn.right)?;
-            let mut combined = String::with_capacity(left.len() + 1 + right.len());
-            combined.push_str(&left);
-            combined.push('.');
-            combined.push_str(&right);
-            return Some(combined);
-        }
-        None
+        entity_name_text_in_arena(arena, idx)
     }
 
     // JSX Intrinsic Elements Type

@@ -1,3 +1,4 @@
+pub(crate) mod name_text;
 pub mod scope_finder;
 pub(crate) mod scope_finder_contexts;
 pub mod symbol_resolver;
