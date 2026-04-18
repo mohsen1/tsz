@@ -120,122 +120,143 @@ impl Project {
             &wildcard_reexport_files,
         );
 
-        for file_name in files_to_check {
-            if file_name == from_file.file_name() {
-                continue;
-            }
+        let mut collect_from_files = |files_to_check: Vec<String>| {
+            let before_len = output.len();
 
-            for (module_specifier, export_match) in
-                self.matching_exports_in_ambient_modules(&file_name, missing_name)
-            {
-                if self.is_ambient_module_candidate_excluded(
-                    &module_specifier,
-                    from_file.source_text(),
-                    allowed_packages.as_ref(),
-                    &existing_imported_packages,
-                    &mut source_cache,
-                ) {
+            for file_name in files_to_check {
+                if file_name == from_file.file_name() {
                     continue;
                 }
 
-                let candidate = ImportCandidate {
-                    module_specifier,
-                    local_name: missing_name.to_string(),
-                    kind: export_match.kind.clone(),
-                    is_type_only: export_match.is_type_only,
-                };
-
-                let kind_key = match &candidate.kind {
-                    ImportCandidateKind::Named { export_name } => format!("named:{export_name}"),
-                    ImportCandidateKind::Default => "default".to_string(),
-                    ImportCandidateKind::Namespace => "namespace".to_string(),
-                };
-
-                if seen.insert((
-                    candidate.module_specifier.clone(),
-                    candidate.local_name.clone(),
-                    kind_key,
-                    candidate.is_type_only,
-                )) {
-                    output.push(candidate);
-                }
-            }
-
-            let module_specifiers = module_specifiers_cache
-                .entry(file_name.clone())
-                .or_insert_with(|| {
-                    self.auto_import_module_specifiers_from_files(from_file.file_name(), &file_name)
-                });
-            if module_specifiers.is_empty() {
-                continue;
-            }
-
-            let mut visited = FxHashSet::default();
-            let matches = self.matching_exports_in_file(&file_name, missing_name, &mut visited);
-            if matches.is_empty() && !is_namespace_missing {
-                continue;
-            }
-
-            let Some(module_specifier) = module_specifiers
-                .iter()
-                .find(|module_specifier| {
-                    !self.is_auto_import_candidate_excluded(
-                        &file_name,
-                        module_specifier,
+                for (module_specifier, export_match) in
+                    self.matching_exports_in_ambient_modules(&file_name, missing_name)
+                {
+                    if self.is_ambient_module_candidate_excluded(
+                        &module_specifier,
                         from_file.source_text(),
                         allowed_packages.as_ref(),
                         &existing_imported_packages,
                         &mut source_cache,
-                    )
-                })
-                .cloned()
-            else {
-                continue;
-            };
+                    ) {
+                        continue;
+                    }
 
-            for export_match in &matches {
-                let candidate = ImportCandidate {
-                    module_specifier: module_specifier.clone(),
-                    local_name: missing_name.to_string(),
-                    kind: export_match.kind.clone(),
-                    is_type_only: export_match.is_type_only,
+                    let candidate = ImportCandidate {
+                        module_specifier,
+                        local_name: missing_name.to_string(),
+                        kind: export_match.kind.clone(),
+                        is_type_only: export_match.is_type_only,
+                    };
+
+                    let kind_key = match &candidate.kind {
+                        ImportCandidateKind::Named { export_name } => {
+                            format!("named:{export_name}")
+                        }
+                        ImportCandidateKind::Default => "default".to_string(),
+                        ImportCandidateKind::Namespace => "namespace".to_string(),
+                    };
+
+                    if seen.insert((
+                        candidate.module_specifier.clone(),
+                        candidate.local_name.clone(),
+                        kind_key,
+                        candidate.is_type_only,
+                    )) {
+                        output.push(candidate);
+                    }
+                }
+
+                let module_specifiers = module_specifiers_cache
+                    .entry(file_name.clone())
+                    .or_insert_with(|| {
+                        self.auto_import_module_specifiers_from_files(
+                            from_file.file_name(),
+                            &file_name,
+                        )
+                    });
+                if module_specifiers.is_empty() {
+                    continue;
+                }
+
+                let mut visited = FxHashSet::default();
+                let matches = self.matching_exports_in_file(&file_name, missing_name, &mut visited);
+                if matches.is_empty() && !is_namespace_missing {
+                    continue;
+                }
+
+                let Some(module_specifier) = module_specifiers
+                    .iter()
+                    .find(|module_specifier| {
+                        !self.is_auto_import_candidate_excluded(
+                            &file_name,
+                            module_specifier,
+                            from_file.source_text(),
+                            allowed_packages.as_ref(),
+                            &existing_imported_packages,
+                            &mut source_cache,
+                        )
+                    })
+                    .cloned()
+                else {
+                    continue;
                 };
 
-                let kind_key = match &candidate.kind {
-                    ImportCandidateKind::Named { export_name } => format!("named:{export_name}"),
-                    ImportCandidateKind::Default => "default".to_string(),
-                    ImportCandidateKind::Namespace => "namespace".to_string(),
-                };
+                for export_match in &matches {
+                    let candidate = ImportCandidate {
+                        module_specifier: module_specifier.clone(),
+                        local_name: missing_name.to_string(),
+                        kind: export_match.kind.clone(),
+                        is_type_only: export_match.is_type_only,
+                    };
 
-                if seen.insert((
-                    candidate.module_specifier.clone(),
-                    candidate.local_name.clone(),
-                    kind_key,
-                    candidate.is_type_only,
-                )) {
-                    output.push(candidate);
+                    let kind_key = match &candidate.kind {
+                        ImportCandidateKind::Named { export_name } => {
+                            format!("named:{export_name}")
+                        }
+                        ImportCandidateKind::Default => "default".to_string(),
+                        ImportCandidateKind::Namespace => "namespace".to_string(),
+                    };
+
+                    if seen.insert((
+                        candidate.module_specifier.clone(),
+                        candidate.local_name.clone(),
+                        kind_key,
+                        candidate.is_type_only,
+                    )) {
+                        output.push(candidate);
+                    }
+                }
+
+                if is_namespace_missing
+                    && let Some(is_type_only) = self.export_star_as_default_is_type_only(&file_name)
+                {
+                    let candidate = ImportCandidate {
+                        module_specifier: module_specifier.clone(),
+                        local_name: missing_name.to_string(),
+                        kind: ImportCandidateKind::Default,
+                        is_type_only,
+                    };
+                    let kind_key = "default".to_string();
+                    if seen.insert((
+                        candidate.module_specifier.clone(),
+                        candidate.local_name.clone(),
+                        kind_key,
+                        candidate.is_type_only,
+                    )) {
+                        output.push(candidate);
+                    }
                 }
             }
 
-            if is_namespace_missing
-                && let Some(is_type_only) = self.export_star_as_default_is_type_only(&file_name)
-            {
-                let candidate = ImportCandidate {
-                    module_specifier: module_specifier.clone(),
-                    local_name: missing_name.to_string(),
-                    kind: ImportCandidateKind::Default,
-                    is_type_only,
-                };
-                let kind_key = "default".to_string();
-                if seen.insert((
-                    candidate.module_specifier.clone(),
-                    candidate.local_name.clone(),
-                    kind_key,
-                    candidate.is_type_only,
-                )) {
-                    output.push(candidate);
-                }
-            }
+            output.len() > before_len
+        };
+
+        if !collect_from_files(files_to_check) {
+            let fallback_files = all_files
+                .into_iter()
+                .filter(|file_name| file_name != from_file.file_name())
+                .collect();
+            let _ = collect_from_files(fallback_files);
         }
     }
 
@@ -1118,8 +1139,7 @@ impl Project {
                             },
                             is_type_only,
                         });
-                        if is_type_only && Self::file_has_type_namespace_import(file, &export_text)
-                        {
+                        if is_type_only && Self::file_has_type_namespace_import(file, export_text) {
                             matches.push(ExportMatch {
                                 kind: ImportCandidateKind::Named {
                                     export_name: export_text.to_string(),
@@ -1276,7 +1296,7 @@ impl Project {
         }
     }
 
-    fn is_supported_direct_export_declaration_kind(kind: u16) -> bool {
+    const fn is_supported_direct_export_declaration_kind(kind: u16) -> bool {
         kind == syntax_kind_ext::FUNCTION_DECLARATION
             || kind == syntax_kind_ext::CLASS_DECLARATION
             || kind == syntax_kind_ext::INTERFACE_DECLARATION
@@ -1319,7 +1339,7 @@ impl Project {
         arena.has_modifier_ref(modifiers, SyntaxKind::DefaultKeyword)
     }
 
-    fn statement_is_type_only(kind: u16) -> bool {
+    const fn statement_is_type_only(kind: u16) -> bool {
         kind == syntax_kind_ext::INTERFACE_DECLARATION
             || kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
     }
@@ -1708,11 +1728,11 @@ impl Project {
             .map(std::string::ToString::to_string)
     }
 
-    fn is_ascii_identifier_start(byte: u8) -> bool {
+    const fn is_ascii_identifier_start(byte: u8) -> bool {
         byte.is_ascii_alphabetic() || byte == b'_' || byte == b'$'
     }
 
-    fn is_ascii_identifier_continue(byte: u8) -> bool {
+    const fn is_ascii_identifier_continue(byte: u8) -> bool {
         byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
     }
 

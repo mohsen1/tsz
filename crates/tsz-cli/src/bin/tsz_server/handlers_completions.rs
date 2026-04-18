@@ -1585,7 +1585,7 @@ impl Server {
             if parsed
                 .summary
                 .as_deref()
-                .map_or(true, |text| text.trim().is_empty())
+                .is_none_or(|text| text.trim().is_empty())
             {
                 parsed.summary = supplemental_parsed.summary;
             }
@@ -2187,7 +2187,10 @@ impl Server {
             return None;
         }
         if segments.len() == 1 {
-            return Some("/".to_string());
+            if normalized.starts_with('/') {
+                return Some("/".to_string());
+            }
+            return None;
         }
         if segments.len() <= 3 {
             return Some(format!("/{}", segments[0]));
@@ -2606,10 +2609,7 @@ impl Server {
             if item.has_action {
                 data.insert("moduleSpecifier".to_string(), serde_json::json!(source));
                 if let Some(export_name) = Self::auto_import_export_name(item) {
-                    data.insert(
-                        "exportName".to_string(),
-                        serde_json::json!(export_name.clone()),
-                    );
+                    data.insert("exportName".to_string(), serde_json::json!(export_name));
                     // Force worker-mode completion detail requests to stay on tsz for
                     // auto-import entries. Native fallback details can drop/reshape
                     // tags and action metadata for these entries.
@@ -3362,14 +3362,14 @@ impl Server {
                                 && Self::completion_sources_match(i.source.as_deref(), source)
                                 && requested_export_name
                                     .as_deref()
-                                    .map_or(true, |requested| export_name_matches(i, requested))
+                                    .is_none_or(|requested| export_name_matches(i, requested))
                         })
                         .or_else(|| {
                             find(&|i| {
                                 Self::completion_sources_match(i.source.as_deref(), source)
                                     && requested_export_name
                                         .as_deref()
-                                        .map_or(true, |requested| export_name_matches(i, requested))
+                                        .is_none_or(|requested| export_name_matches(i, requested))
                             })
                         })
                         .or_else(|| {
@@ -3386,7 +3386,7 @@ impl Server {
                                 find(&|i| {
                                     requested_export_name
                                         .as_deref()
-                                        .map_or(true, |requested| export_name_matches(i, requested))
+                                        .is_none_or(|requested| export_name_matches(i, requested))
                                 })
                             },
                         )

@@ -855,6 +855,15 @@ impl<'a> CheckerState<'a> {
         if let Some(exports) = direct_exports {
             let mut combined = exports.clone();
             self.merge_export_equals_members(target_binder, exports, &mut combined);
+            if let Some(export_equals_sym_id) = exports.get("export=")
+                && let Some(export_equals_symbol) = target_binder.get_symbol(export_equals_sym_id)
+            {
+                self.merge_export_equals_import_type_members(
+                    export_equals_symbol,
+                    Some(target_file_idx),
+                    &mut combined,
+                );
+            }
             let mut visited = rustc_hash::FxHashSet::default();
             self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
             self.merge_module_augmentation_namespace_exports(
@@ -1035,7 +1044,11 @@ impl<'a> CheckerState<'a> {
             }
             return Some(tsz_binder::SymbolTable::new());
         }
-        self.resolve_effective_module_exports(module_specifier)
+        self.resolve_effective_module_exports_from_file(
+            module_specifier,
+            Some(self.ctx.current_file_idx),
+        )
+        .or_else(|| self.resolve_effective_module_exports(module_specifier))
     }
 
     /// Like `resolve_effective_module_exports` but optionally resolves relative paths
@@ -1084,6 +1097,16 @@ impl<'a> CheckerState<'a> {
             if let Some(exports) = self.ctx.binder.module_exports.get(&candidate) {
                 let mut combined = exports.clone();
                 self.merge_export_equals_members(self.ctx.binder, exports, &mut combined);
+                if let Some(export_equals_sym_id) = exports.get("export=")
+                    && let Some(export_equals_symbol) =
+                        self.ctx.binder.get_symbol(export_equals_sym_id)
+                {
+                    self.merge_export_equals_import_type_members(
+                        export_equals_symbol,
+                        source_file_idx.or_else(|| self.ctx.resolve_import_target(&candidate)),
+                        &mut combined,
+                    );
+                }
                 return Some(combined);
             }
         }
@@ -1104,14 +1127,32 @@ impl<'a> CheckerState<'a> {
                 {
                     let mut combined = exports.clone();
                     self.merge_export_equals_members(binder, exports, &mut combined);
+                    if let Some(export_equals_sym_id) = exports.get("export=")
+                        && let Some(export_equals_symbol) = binder.get_symbol(export_equals_sym_id)
+                    {
+                        self.merge_export_equals_import_type_members(
+                            export_equals_symbol,
+                            Some(file_idx),
+                            &mut combined,
+                        );
+                    }
                     return Some(combined);
                 }
             }
         } else {
-            for binder in binders.iter() {
+            for (file_idx, binder) in binders.iter().enumerate() {
                 if let Some(exports) = binder.module_exports.get(module_specifier) {
                     let mut combined = exports.clone();
                     self.merge_export_equals_members(binder, exports, &mut combined);
+                    if let Some(export_equals_sym_id) = exports.get("export=")
+                        && let Some(export_equals_symbol) = binder.get_symbol(export_equals_sym_id)
+                    {
+                        self.merge_export_equals_import_type_members(
+                            export_equals_symbol,
+                            Some(file_idx),
+                            &mut combined,
+                        );
+                    }
                     return Some(combined);
                 }
             }
@@ -1155,12 +1196,17 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn merge_export_equals_import_type_members(
         &self,
         export_equals_symbol: &tsz_binder::Symbol,
+        fallback_decl_file_idx: Option<usize>,
         combined: &mut tsz_binder::SymbolTable,
     ) {
-        if export_equals_symbol.decl_file_idx == u32::MAX {
-            return;
-        }
-        let decl_file_idx = export_equals_symbol.decl_file_idx as usize;
+        let decl_file_idx = if export_equals_symbol.decl_file_idx == u32::MAX {
+            let Some(fallback_idx) = fallback_decl_file_idx else {
+                return;
+            };
+            fallback_idx
+        } else {
+            export_equals_symbol.decl_file_idx as usize
+        };
         let Some(binder) = self.ctx.get_binder_for_file(decl_file_idx) else {
             return;
         };
@@ -1252,8 +1298,19 @@ impl<'a> CheckerState<'a> {
         else {
             return;
         };
+        let nested_target_idx = nested_exports
+            .iter()
+            .find_map(|(_, &sym_id)| self.ctx.resolve_symbol_file_index(sym_id))
+            .or_else(|| {
+                self.ctx
+                    .resolve_import_target_from_file(decl_file_idx, &module_specifier)
+            })
+            .or_else(|| self.ctx.resolve_import_target(&module_specifier));
 
         for (name, sym_id) in nested_exports.iter() {
+            if let Some(target_idx) = nested_target_idx {
+                self.ctx.register_symbol_file_target(*sym_id, target_idx);
+            }
             if name != "export=" && !combined.has(name) {
                 combined.set(name.to_string(), *sym_id);
             }

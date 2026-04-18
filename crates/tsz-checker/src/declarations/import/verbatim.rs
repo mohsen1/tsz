@@ -235,18 +235,22 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::symbol_flags;
 
         let normalized = module_name.trim_matches('"').trim_matches('\'');
-
         let import_names = if import_name == "default" {
             ["default", "export="]
         } else {
             [import_name, import_name]
         };
 
-        if let Some(target_idx) = self.ctx.resolve_import_target(normalized)
+        let target_idx = self
+            .ctx
+            .resolve_import_target_from_file(self.ctx.current_file_idx, normalized)
+            .or_else(|| self.ctx.resolve_import_target(normalized));
+
+        if let Some(target_idx) = target_idx
             && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
         {
             let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
-            if self.file_has_jsdoc_typedef_namespace_root(target_idx as usize, import_name) {
+            if self.file_has_jsdoc_typedef_namespace_root(target_idx, import_name) {
                 return true;
             }
 

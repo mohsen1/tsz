@@ -628,6 +628,9 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn format_property_receiver_type_for_diagnostic(&mut self, ty: TypeId) -> String {
+        if let Some(module_name) = self.ctx.namespace_module_names.get(&ty) {
+            return format!("typeof import(\"{module_name}\")");
+        }
         let has_object_shape =
             tsz_solver::type_queries::get_object_shape(self.ctx.types, ty).is_some();
         let has_def = self.ctx.definition_store.find_def_for_type(ty).is_some();

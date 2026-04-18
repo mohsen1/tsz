@@ -224,7 +224,7 @@ impl<'a> CheckerState<'a> {
         // declarations, not module augmentations. The top-level conflict pass
         // only applies when the current file is itself an external module host
         // for augmentations.
-        if !self.ctx.binder.is_external_module() {
+        if !self.current_file_is_external_module_host() {
             self.check_target_file_exports_conflicting_with_module_augmentations();
             return;
         }
@@ -287,10 +287,9 @@ impl<'a> CheckerState<'a> {
                 } else {
                     inner_idx
                 };
-                let Some(sym_id) = self.ctx.binder.get_node_symbol(decl_idx) else {
-                    continue;
-                };
-                let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                let Some(export_name) =
+                    self.module_augmentation_top_level_export_name(stmt_idx, decl_idx)
+                else {
                     continue;
                 };
 
@@ -320,7 +319,7 @@ impl<'a> CheckerState<'a> {
                     .module_augmentation_top_level_name_conflicts_with_target_export_surface(
                         decl_idx,
                         target_idx,
-                        &symbol.escaped_name,
+                        &export_name,
                     );
                 if !has_conflict {
                     continue;
@@ -330,7 +329,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node_msg(
                     error_node,
                     diagnostic_codes::DUPLICATE_IDENTIFIER,
-                    &[&symbol.escaped_name],
+                    &[&export_name],
                 );
             }
         }
@@ -446,9 +445,147 @@ impl<'a> CheckerState<'a> {
             return self.target_file_has_direct_export_named(target_idx, export_name);
         }
 
-        target_decls.into_iter().all(|(_, target_flags, _)| {
-            !tsz_binder::BinderState::can_merge_flags(target_flags, local_flags)
-        })
+        target_decls
+            .into_iter()
+            .all(|(target_decl_idx, target_flags, _)| {
+                !self.module_augmentation_target_decl_can_merge(
+                    target_idx,
+                    target_decl_idx,
+                    target_flags,
+                    local_flags,
+                )
+            })
+    }
+
+    fn current_file_is_external_module_host(&self) -> bool {
+        if self.ctx.binder.is_external_module() {
+            return true;
+        }
+
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
+            return false;
+        };
+
+        source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .any(|stmt_idx| {
+                let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                    return false;
+                };
+
+                matches!(
+                    stmt_node.kind,
+                    syntax_kind_ext::IMPORT_DECLARATION
+                        | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                        | syntax_kind_ext::EXPORT_DECLARATION
+                        | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                        | syntax_kind_ext::EXPORT_ASSIGNMENT
+                ) || self.is_declaration_exported(self.ctx.arena, stmt_idx)
+            })
+    }
+
+    fn module_augmentation_top_level_export_name(
+        &self,
+        stmt_idx: NodeIndex,
+        decl_idx: NodeIndex,
+    ) -> Option<String> {
+        let stmt_node = self.ctx.arena.get(stmt_idx)?;
+        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            let export_decl = self.ctx.arena.get_export_decl(stmt_node)?;
+            let clause_node = self.ctx.arena.get(export_decl.export_clause)?;
+            if clause_node.kind == SyntaxKind::Identifier as u16 {
+                return self
+                    .ctx
+                    .arena
+                    .get_identifier(clause_node)
+                    .map(|ident| ident.escaped_text.clone());
+            }
+        }
+
+        self.get_declaration_name_node_in_arena(self.ctx.arena, decl_idx)
+            .and_then(|name_idx| self.ctx.arena.get_identifier_at(name_idx))
+            .map(|ident| ident.escaped_text.clone())
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .get_node_symbol(decl_idx)
+                    .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                    .map(|symbol| symbol.escaped_name.clone())
+            })
+    }
+
+    fn module_augmentation_target_decl_can_merge(
+        &self,
+        target_file_idx: usize,
+        target_decl_idx: NodeIndex,
+        target_flags: u32,
+        local_flags: u32,
+    ) -> bool {
+        if let Some(flags) =
+            self.resolve_module_augmentation_reexport_target_flags(target_file_idx, target_decl_idx)
+        {
+            return flags.into_iter().any(|target_flag| {
+                tsz_binder::BinderState::can_merge_flags(target_flag, local_flags)
+            });
+        }
+
+        tsz_binder::BinderState::can_merge_flags(target_flags, local_flags)
+    }
+
+    fn resolve_module_augmentation_reexport_target_flags(
+        &self,
+        target_file_idx: usize,
+        target_decl_idx: NodeIndex,
+    ) -> Option<Vec<u32>> {
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_node = target_arena.get(target_decl_idx)?;
+        if target_node.kind != syntax_kind_ext::EXPORT_SPECIFIER {
+            return None;
+        }
+
+        let spec = target_arena.get_specifier(target_node)?;
+        let reexported_name = target_arena
+            .get(spec.property_name)
+            .and_then(|node| target_arena.get_identifier(node))
+            .or_else(|| {
+                target_arena
+                    .get(spec.name)
+                    .and_then(|node| target_arena.get_identifier(node))
+            })?
+            .escaped_text
+            .clone();
+
+        let named_exports_idx = target_arena.get_extended(target_decl_idx)?.parent;
+        let export_decl_idx = target_arena.get_extended(named_exports_idx)?.parent;
+        let export_decl = target_arena.get_export_decl_at(export_decl_idx)?;
+        let module_spec_idx = export_decl.module_specifier;
+        if module_spec_idx.is_none() {
+            return None;
+        }
+        let module_spec = target_arena
+            .get(module_spec_idx)
+            .and_then(|node| target_arena.get_literal(node))?
+            .text
+            .clone();
+
+        let reexport_target_idx = self
+            .ctx
+            .resolve_import_target_from_file(target_file_idx, &module_spec)?;
+        let target_decls =
+            self.export_surface_declarations_in_file(reexport_target_idx, &reexported_name);
+        if target_decls.is_empty() {
+            return None;
+        }
+
+        Some(
+            target_decls
+                .into_iter()
+                .map(|(_, flags, _)| flags)
+                .collect(),
+        )
     }
 
     fn collect_interface_member_kinds(

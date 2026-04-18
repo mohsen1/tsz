@@ -409,7 +409,8 @@ impl<'a> CheckerState<'a> {
                     .find_def_for_type(type_id)
                     .is_some()
                 || tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, type_id).is_some()
-                || self.ctx.types.get_display_alias(type_id).is_some();
+                || self.ctx.types.get_display_alias(type_id).is_some()
+                || self.ctx.namespace_module_names.contains_key(&type_id);
             if has_named_receiver_identity {
                 return self.format_property_receiver_type_for_diagnostic(type_id);
             }

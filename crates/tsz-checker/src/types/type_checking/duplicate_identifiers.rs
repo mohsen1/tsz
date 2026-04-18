@@ -47,7 +47,7 @@ impl<'a> CheckerState<'a> {
         // per file due to HashMap lookups for each symbol's declarations.
         // Optimization: pre-build a set of user-code symbols from node_symbols, then
         // intersect with non-class scope symbols to preserve the Class-scope exclusion.
-        let symbol_ids: FxHashSet<tsz_binder::SymbolId> = if has_libs {
+        let mut symbol_ids: FxHashSet<tsz_binder::SymbolId> = if has_libs {
             let user_syms: FxHashSet<tsz_binder::SymbolId> =
                 self.ctx.binder.node_symbols.values().copied().collect();
             let mut result = FxHashSet::default();
@@ -89,6 +89,11 @@ impl<'a> CheckerState<'a> {
             }
             result
         };
+
+        // Declarations inside `declare module {}` / `declare global {}` blocks are not
+        // guaranteed to appear in top-level scope tables, but they still participate in
+        // duplicate-name checks for the current file.
+        self.extend_duplicate_symbol_ids_with_local_augmentation_decls(&mut symbol_ids);
 
         let mut cross_file_conflicts = Vec::new();
         for &sym_id in &symbol_ids {
@@ -1812,8 +1817,16 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // The remote-block-scoped-alias ⇄ default-export TS2300 redirect
+            // is a JS parity quirk (paired with the block at ~L1342). Gate it
+            // on JS-file context so TS files that legitimately export an
+            // interface or namespace as default, then also import a value of
+            // the same name (e.g. allowImportClausesToMergeWithTypes.ts),
+            // don't produce a false TS2300 at the `default` export site.
             if code == diagnostic_codes::DUPLICATE_IDENTIFIER
                 && has_remote_block_scoped_alias_conflict
+                && self.is_js_file()
+                && self.ctx.should_resolve_jsdoc()
                 && let Some(default_export_ident) =
                     self.current_file_default_export_identifier_named(&name)
             {
