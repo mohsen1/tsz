@@ -1,6 +1,7 @@
 //! Core type environment building, application type evaluation, and
 //! property access type resolution.
 
+use crate::query_boundaries::common::SourceLocation;
 use crate::query_boundaries::state::type_environment as query;
 use crate::state::{CheckerState, EnumKind, MAX_INSTANTIATION_DEPTH};
 use rustc_hash::FxHashSet;
@@ -9,7 +10,6 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::MappedTypeId;
-use tsz_solver::SourceLocation;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 use tsz_solver::{CallSignature, CallableShape, ParamInfo};
@@ -355,8 +355,9 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn evaluate_application_type_inner(&mut self, type_id: TypeId) -> TypeId {
-        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
-        use tsz_solver::instantiate_type_with_depth_status;
+        use crate::query_boundaries::common::{
+            TypeSubstitution, instantiate_type, instantiate_type_with_depth_status,
+        };
 
         let Some((base, args)) = query::application_info(self.ctx.types, type_id) else {
             return type_id;
