@@ -17,6 +17,7 @@ pub(crate) use tsz_solver::IntrinsicKind;
 pub(crate) use tsz_solver::MappedType;
 pub(crate) use tsz_solver::ObjectFlags;
 pub(crate) use tsz_solver::ParamInfo;
+pub(crate) use tsz_solver::PendingDiagnostic;
 pub(crate) use tsz_solver::PendingDiagnosticBuilder;
 pub(crate) use tsz_solver::SourceLocation;
 pub(crate) use tsz_solver::TypeFormatter;

@@ -1,6 +1,7 @@
 //! Type assignability and excess property checking.
 //! Subtype, identity, and redeclaration compatibility live in `subtype_identity_checker`.
 
+use crate::query_boundaries::assignability::RelationCacheKey;
 use crate::query_boundaries::assignability::{
     AssignabilityEvalKind, AssignabilityQueryInputs, are_types_overlapping_with_env,
     check_application_variance_assignability, classify_for_assignability_eval,
@@ -18,7 +19,6 @@ use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::NarrowingContext;
-use tsz_solver::RelationCacheKey;
 use tsz_solver::TypeId;
 use tsz_solver::visitor::{collect_lazy_def_ids, collect_type_queries};
 

@@ -140,6 +140,12 @@ impl RelationFlags {
     pub const DISABLE_METHOD_BIVARIANCE: u16 =
         tsz_solver::RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE;
 }
+
+/// Re-export of the solver's relation cache key type.
+///
+/// Used by the assignability checker to construct cache keys for memoizing
+/// subtype and assignability relation results.
+pub(crate) use tsz_solver::RelationCacheKey;
 pub(crate) use tsz_solver::type_queries::{
     AssignabilityEvalKind, ExcessPropertiesKind, get_allowed_keys, get_keyof_type,
     get_string_literal_value, get_union_members, is_keyof_type, is_type_parameter_like,
