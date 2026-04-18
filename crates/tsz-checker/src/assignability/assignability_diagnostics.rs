@@ -616,7 +616,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         source_idx: NodeIndex,
     ) -> Option<bool> {
-        use tsz_solver::TypeResolver;
+        use crate::query_boundaries::common::TypeResolver;
         let target = self.evaluate_type_for_assignability(target);
         let target_def_id = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, target)?;
         if !self.ctx.is_numeric_enum(target_def_id) {
