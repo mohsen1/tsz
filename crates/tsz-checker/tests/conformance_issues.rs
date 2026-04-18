@@ -22530,17 +22530,13 @@ function toString() {
         },
     );
 
+    // In tsc, file-scope function declarations shadow identically-named globals.
+    // `function toString()` shadows `lib.dom.d.ts`'s `declare function toString(): string;`
+    // rather than merging as overloads, so TS2394 should NOT be emitted.
     assert!(
-        diagnostics
-            .iter()
-            .any(|d| d.code == 2394 && d.file.contains("dom")),
-        "Expected TS2394 because global `toString` overload from lib.dom.d.ts is incompatible with this implementation. Actual diagnostics: {diagnostics:#?}"
-    );
-    assert!(
-        !diagnostics
-            .iter()
-            .any(|d| d.code == 2394 && d.file == "index.js"),
-        "TS2394 should be anchored to lib.dom.d.ts, not index.js. Actual diagnostics: {diagnostics:#?}"
+        !diagnostics.iter().any(|d| d.code == 2394),
+        "function toString() in a script file should shadow the lib global, \
+         not produce TS2394. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -26336,5 +26332,27 @@ if (x.constructor !== A) {
         !has_error(&diagnostics, 2339),
         "Constructor narrowing false branch: x.constructor !== A should \
          exclude A from the union, leaving B. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_user_declare_function_shadows_lib_function_no_false_ts2554() {
+    // lib.dom.d.ts declares `function print(): void` (0 args).
+    // A user `declare function print(s: string): void;` in a script file
+    // should shadow the lib declaration, not merge as overloads.
+    let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
+        r#"
+declare function print(s: string): void;
+print('1');
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 2554),
+        "User declare function should shadow lib function; print('1') must not \
+         produce TS2554 ('Expected 0 arguments'). Got: {diagnostics:?}"
     );
 }
