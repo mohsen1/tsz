@@ -1497,6 +1497,68 @@ mod tests {
     }
 
     #[test]
+    fn auto_import_candidates_include_workspace_file_dependency_alias_specifier() {
+        let mut project = Project::new();
+        project.set_file(
+            "/home/src/workspaces/solution/packages/utils/package.json".to_string(),
+            r#"{
+  "name": "utils",
+  "version": "1.0.0",
+  "exports": "./dist/index.js"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/solution/packages/utils/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "lib": ["es5"],
+    "composite": true,
+    "module": "nodenext",
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src"]
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/solution/packages/utils/src/index.ts".to_string(),
+            "export function gainUtility() { return 0; }".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/solution/packages/web/package.json".to_string(),
+            r#"{
+  "name": "web",
+  "version": "1.0.0",
+  "dependencies": {
+    "@monorepo/utils": "file:../utils"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/solution/packages/web/src/index.ts".to_string(),
+            "gainUtility".to_string(),
+        );
+
+        let specs: Vec<String> = project
+            .get_import_candidates_for_prefix(
+                "/home/src/workspaces/solution/packages/web/src/index.ts",
+                "gainUtility",
+            )
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "gainUtility")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+
+        assert!(
+            specs.iter().any(|spec| spec == "@monorepo/utils"),
+            "expected @monorepo/utils candidate from file-linked workspace dependency, got {specs:?}"
+        );
+    }
+
+    #[test]
     fn auto_import_candidates_use_type_module_main_subpath_without_index() {
         let mut project = Project::new();
         project.set_file(

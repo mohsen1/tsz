@@ -44,10 +44,19 @@ impl Project {
     ) -> Vec<String> {
         let target_in_node_modules = target_file.replace('\\', "/").contains("/node_modules/");
         let package_specifier = self.package_specifier_from_node_modules(target_file);
+        let workspace_package_specifier = self.workspace_package_dependency_specifier(
+            from_file,
+            target_file,
+            target_in_node_modules,
+        );
 
         let Some(relative) = self.relative_module_specifier_from_files(from_file, target_file)
         else {
-            return package_specifier.into_iter().collect();
+            let mut only_packages: Vec<String> = workspace_package_specifier.into_iter().collect();
+            only_packages.extend(package_specifier);
+            let mut seen = FxHashSet::default();
+            only_packages.retain(|spec| seen.insert(spec.clone()));
+            return only_packages;
         };
 
         let root_dirs_relative =
@@ -60,6 +69,9 @@ impl Project {
         if pref == Some("non-relative") {
             candidates.extend(path_mappings);
             candidates.extend(package_imports);
+            if let Some(workspace_package_specifier) = workspace_package_specifier.as_ref() {
+                candidates.push(workspace_package_specifier.clone());
+            }
             if let Some(package_specifier) = package_specifier.as_ref() {
                 candidates.push(package_specifier.clone());
             }
@@ -74,6 +86,9 @@ impl Project {
             }
             candidates.extend(path_mappings);
             candidates.extend(package_imports);
+            if let Some(workspace_package_specifier) = workspace_package_specifier.as_ref() {
+                candidates.push(workspace_package_specifier.clone());
+            }
             if let Some(package_specifier) = package_specifier.as_ref() {
                 candidates.push(package_specifier.clone());
             }
@@ -98,6 +113,178 @@ impl Project {
         }
 
         candidates
+    }
+
+    fn workspace_package_dependency_specifier(
+        &self,
+        from_file: &str,
+        target_file: &str,
+        target_in_node_modules: bool,
+    ) -> Option<String> {
+        if target_in_node_modules {
+            return None;
+        }
+
+        let (from_package_dir, from_package_json) = self.nearest_package_json(from_file)?;
+        let (target_package_dir, target_package_json) = self.nearest_package_json(target_file)?;
+        let target_package_name = target_package_json
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())?;
+        let dependency_specifier = Self::dependency_specifier_for_target_package(
+            &from_package_dir,
+            &from_package_json,
+            &target_package_dir,
+            target_package_name,
+        )?;
+
+        let mut target_candidates = vec![
+            normalize_path(Path::new(target_file))
+                .to_string_lossy()
+                .replace('\\', "/"),
+        ];
+        target_candidates.extend(self.project_output_target_alternatives(target_file));
+        let mut seen_targets = FxHashSet::default();
+        target_candidates.retain(|candidate| seen_targets.insert(candidate.clone()));
+
+        if let Some(exports_value) = target_package_json.get("exports") {
+            for candidate in &target_candidates {
+                if let Some(specifier) = self.package_specifier_from_package_exports_value(
+                    candidate,
+                    &dependency_specifier,
+                    &target_package_dir,
+                    exports_value,
+                ) {
+                    return Some(specifier);
+                }
+            }
+            return None;
+        }
+
+        for candidate in &target_candidates {
+            let package_dir_prefix = format!("{target_package_dir}/");
+            let target_relative = candidate
+                .strip_prefix(&package_dir_prefix)
+                .unwrap_or_default();
+            let runtime_relative = package_runtime_specifier_from_target_path(target_relative);
+            let runtime_spec = if runtime_relative.is_empty() {
+                dependency_specifier.clone()
+            } else {
+                format!("{dependency_specifier}/{runtime_relative}")
+            };
+
+            if let Some(specifier) = package_main_module_specifier_for_target(
+                &target_package_json,
+                &dependency_specifier,
+                &runtime_spec,
+                candidate,
+            ) {
+                return Some(specifier);
+            }
+
+            let specifier = normalize_node_modules_package_specifier(&runtime_spec);
+            if !specifier.is_empty() {
+                return Some(specifier);
+            }
+        }
+
+        None
+    }
+
+    fn nearest_package_json(&self, file: &str) -> Option<(String, serde_json::Value)> {
+        let mut current = Path::new(file).parent();
+        while let Some(dir) = current {
+            let package_json_path = normalize_path(&dir.join("package.json"));
+            let package_json_key = path_to_string(&package_json_path).replace('\\', "/");
+            let package_json_text = self
+                .files
+                .get(&package_json_key)
+                .map(|f| f.source_text().to_string())
+                .or_else(|| std::fs::read_to_string(&package_json_key).ok());
+            if let Some(package_json_text) = package_json_text
+                && let Ok(package_json) =
+                    serde_json::from_str::<serde_json::Value>(&package_json_text)
+            {
+                return Some((
+                    path_to_string(&normalize_path(dir)).replace('\\', "/"),
+                    package_json,
+                ));
+            }
+            current = dir.parent();
+        }
+        None
+    }
+
+    fn dependency_specifier_for_target_package(
+        from_package_dir: &str,
+        from_package_json: &serde_json::Value,
+        target_package_dir: &str,
+        target_package_name: &str,
+    ) -> Option<String> {
+        const DEP_FIELDS: [&str; 4] = [
+            "dependencies",
+            "devDependencies",
+            "peerDependencies",
+            "optionalDependencies",
+        ];
+
+        for field in DEP_FIELDS {
+            let Some(deps) = from_package_json
+                .get(field)
+                .and_then(serde_json::Value::as_object)
+            else {
+                continue;
+            };
+
+            if deps.contains_key(target_package_name) {
+                return Some(target_package_name.to_string());
+            }
+
+            for (dep_name, dep_version) in deps {
+                let Some(dep_version) = dep_version.as_str() else {
+                    continue;
+                };
+                let Some(resolved_path) =
+                    Self::resolve_dependency_path(from_package_dir, dep_version)
+                else {
+                    continue;
+                };
+                if resolved_path == target_package_dir {
+                    return Some(dep_name.clone());
+                }
+            }
+        }
+
+        None
+    }
+
+    fn resolve_dependency_path(from_package_dir: &str, specifier: &str) -> Option<String> {
+        let path = if let Some(rest) = specifier.strip_prefix("file:") {
+            rest
+        } else if let Some(rest) = specifier.strip_prefix("link:") {
+            rest
+        } else if let Some(rest) = specifier.strip_prefix("workspace:") {
+            if rest.starts_with('.') || rest.starts_with('/') {
+                rest
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        };
+
+        let path = path.trim();
+        if path.is_empty() {
+            return None;
+        }
+
+        let resolved = if Path::new(path).is_absolute() {
+            normalize_path(Path::new(path))
+        } else {
+            normalize_path(&Path::new(from_package_dir).join(path))
+        };
+        Some(path_to_string(&resolved).replace('\\', "/"))
     }
 
     fn path_mapping_specifiers_from_files(
@@ -1448,6 +1635,165 @@ mod tests {
         assert_eq!(
             project.package_specifier_from_node_modules("/node_modules/bar/index.d.ts"),
             Some("bar".to_string())
+        );
+    }
+
+    #[test]
+    fn workspace_dependency_uses_declared_package_name_specifier() {
+        let mut project = Project::new();
+        project.set_file(
+            "/home/src/workspaces/project/packages/common/package.json".to_string(),
+            r#"{
+  "name": "@company/common",
+  "version": "1.0.0",
+  "main": "./lib/index.tsx"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/common/lib/index.tsx".to_string(),
+            "export function Tooltip() {}".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/app/package.json".to_string(),
+            r#"{
+  "name": "@company/app",
+  "version": "1.0.0",
+  "dependencies": {
+    "@company/common": "1.0.0"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/app/lib/index.ts".to_string(),
+            "Tooltip".to_string(),
+        );
+
+        let specifiers = project.auto_import_module_specifiers_from_files(
+            "/home/src/workspaces/project/packages/app/lib/index.ts",
+            "/home/src/workspaces/project/packages/common/lib/index.tsx",
+        );
+        assert!(
+            specifiers
+                .iter()
+                .any(|specifier| specifier == "@company/common"),
+            "expected @company/common specifier from workspace dependency, got {specifiers:?}"
+        );
+    }
+
+    #[test]
+    fn workspace_file_dependency_alias_uses_dependency_name_specifier() {
+        let mut project = Project::new();
+        project.set_file(
+            "/home/src/workspaces/solution/packages/utils/package.json".to_string(),
+            r#"{
+  "name": "utils",
+  "version": "1.0.0",
+  "exports": "./dist/index.js"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/solution/packages/utils/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "lib": ["es5"],
+    "composite": true,
+    "module": "nodenext",
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src"]
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/solution/packages/utils/src/index.ts".to_string(),
+            "export function gainUtility() { return 0; }".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/solution/packages/web/package.json".to_string(),
+            r#"{
+  "name": "web",
+  "version": "1.0.0",
+  "dependencies": {
+    "@monorepo/utils": "file:../utils"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/solution/packages/web/src/index.ts".to_string(),
+            "gainUtility".to_string(),
+        );
+
+        let specifiers = project.auto_import_module_specifiers_from_files(
+            "/home/src/workspaces/solution/packages/web/src/index.ts",
+            "/home/src/workspaces/solution/packages/utils/src/index.ts",
+        );
+        assert!(
+            specifiers
+                .iter()
+                .any(|specifier| specifier == "@monorepo/utils"),
+            "expected @monorepo/utils specifier from file-linked dependency alias, got {specifiers:?}"
+        );
+    }
+
+    #[test]
+    fn workspace_dependency_respects_package_exports_visibility() {
+        let mut project = Project::new();
+        project.set_file(
+            "/repo/packages/pack/package.json".to_string(),
+            r#"{
+  "name": "pack",
+  "version": "1.0.0",
+  "exports": {
+    ".": "./dist/main.mjs"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/repo/packages/pack/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "lib": ["es5"],
+    "composite": true,
+    "module": "nodenext",
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src"]
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/repo/packages/pack/src/unreachable.ts".to_string(),
+            "export const fromUnreachable = 0;".to_string(),
+        );
+        project.set_file(
+            "/repo/packages/app/package.json".to_string(),
+            r#"{
+  "name": "app",
+  "dependencies": {
+    "pack": "file:../pack"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/repo/packages/app/src/index.ts".to_string(),
+            "x".to_string(),
+        );
+
+        let specifiers = project.auto_import_module_specifiers_from_files(
+            "/repo/packages/app/src/index.ts",
+            "/repo/packages/pack/src/unreachable.ts",
+        );
+        assert!(
+            !specifiers.iter().any(|specifier| specifier == "pack"),
+            "expected hidden exports target to avoid pack bare specifier, got {specifiers:?}"
         );
     }
 
