@@ -403,6 +403,10 @@ struct CompilerOptions {
         deserialize_with = "deserialize_bool_option"
     )]
     no_unchecked_indexed_access: Option<bool>,
+
+    /// Enable Sound Mode for stricter type checking beyond TypeScript's defaults.
+    #[serde(default, deserialize_with = "deserialize_bool_option")]
+    sound_mode: Option<bool>,
 }
 
 /// Deserialize a boolean option that can be a boolean, string, or comma-separated string.
@@ -649,7 +653,7 @@ impl CompilerOptions {
             allow_unreachable_code: None,
             allow_unused_labels: None,
             no_property_access_from_index_signature: false,
-            sound_mode: false,
+            sound_mode: self.sound_mode.unwrap_or(false),
             experimental_decorators: false,
             no_unused_locals: false,
             no_unused_parameters: false,
@@ -1576,14 +1580,17 @@ impl Parser {
             .ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let source_text = self.parser.get_source_text();
         let file_name = self.parser.get_file_name().to_string();
+        let checker_options = self.compiler_options.to_checker_options();
 
-        let provider = Completions::new_with_types(
+        let provider = Completions::with_options(
             self.parser.get_arena(),
             binder,
             line_map,
             &self.type_interner,
             source_text,
             file_name,
+            checker_options.strict,
+            checker_options.sound_mode,
         );
         let pos = Position::new(line, character);
 
@@ -1616,14 +1623,17 @@ impl Parser {
             .ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let source_text = self.parser.get_source_text();
         let file_name = self.parser.get_file_name().to_string();
+        let checker_options = self.compiler_options.to_checker_options();
 
-        let provider = HoverProvider::new(
+        let provider = HoverProvider::with_options(
             self.parser.get_arena(),
             binder,
             line_map,
             &self.type_interner,
             source_text,
             file_name,
+            checker_options.strict,
+            checker_options.sound_mode,
         );
         let pos = Position::new(line, character);
 
@@ -1660,14 +1670,17 @@ impl Parser {
             .ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let source_text = self.parser.get_source_text();
         let file_name = self.parser.get_file_name().to_string();
+        let checker_options = self.compiler_options.to_checker_options();
 
-        let provider = SignatureHelpProvider::new(
+        let provider = SignatureHelpProvider::with_options(
             self.parser.get_arena(),
             binder,
             line_map,
             &self.type_interner,
             source_text,
             file_name,
+            checker_options.strict,
+            checker_options.sound_mode,
         );
         let pos = Position::new(line, character);
 
@@ -2732,6 +2745,23 @@ pub fn is_word_character(ch: u32) -> bool {
 // =============================================================================
 // Unit Tests
 // =============================================================================
+
+#[cfg(test)]
+mod playground_bridge_option_tests {
+    use super::CompilerOptions;
+
+    #[test]
+    fn test_compiler_options_parse_sound_mode_from_playground_json() {
+        let options: CompilerOptions =
+            serde_json::from_str(r#"{"strict":true,"soundMode":true,"module":99}"#)
+                .expect("compiler options JSON should parse");
+        let checker_options = options.to_checker_options();
+
+        assert!(checker_options.strict);
+        assert!(checker_options.sound_mode);
+        assert_eq!(checker_options.module, crate::common::ModuleKind::ESNext);
+    }
+}
 
 // ASI Conformance tests for verifying TS1005/TS1109 patterns
 #[cfg(test)]

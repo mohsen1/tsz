@@ -350,6 +350,7 @@ pub struct Completions<'a> {
     pub(super) interner: Option<&'a TypeInterner>,
     pub(super) file_name: Option<String>,
     pub(super) strict: bool,
+    pub(super) sound_mode: bool,
 }
 
 mod context;

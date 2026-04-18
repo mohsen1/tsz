@@ -58,6 +58,7 @@ impl<'a> HoverProvider<'a> {
             strict_function_types: self.strict,
             strict_property_initialization: self.strict,
             use_unknown_in_catch_variables: self.strict,
+            sound_mode: self.sound_mode,
             isolated_modules: false,
             ..Default::default()
         };
@@ -917,6 +918,7 @@ impl<'a> HoverProvider<'a> {
             strict_function_types: self.strict,
             strict_property_initialization: self.strict,
             use_unknown_in_catch_variables: self.strict,
+            sound_mode: self.sound_mode,
             isolated_modules: false,
             ..Default::default()
         };
@@ -993,6 +995,7 @@ impl<'a> HoverProvider<'a> {
                 strict_function_types: self.strict,
                 strict_property_initialization: self.strict,
                 use_unknown_in_catch_variables: self.strict,
+                sound_mode: self.sound_mode,
                 isolated_modules: false,
                 ..Default::default()
             };

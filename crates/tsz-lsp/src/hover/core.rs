@@ -146,6 +146,7 @@ impl<'a> HoverProvider<'a> {
             strict_function_types: self.strict,
             strict_property_initialization: self.strict,
             use_unknown_in_catch_variables: self.strict,
+            sound_mode: self.sound_mode,
             isolated_modules: false,
             ..Default::default()
         };
@@ -289,6 +290,7 @@ impl<'a> HoverProvider<'a> {
             strict_function_types: self.strict,
             strict_property_initialization: self.strict,
             use_unknown_in_catch_variables: self.strict,
+            sound_mode: self.sound_mode,
             isolated_modules: false,
             ..Default::default()
         };
@@ -951,12 +953,18 @@ impl<'a> HoverProvider<'a> {
             let mut type_string = self
                 .merged_function_initializer_display_type(decl_node_idx)
                 .unwrap_or_else(|| type_string.to_string());
-            if (type_string == "any" || type_string == "unknown" || type_string == "error")
-                && self.is_parameter_declaration(decl_node_idx)
-                && let Some(contextual_type) =
-                    self.contextual_parameter_annotation_text(decl_node_idx)
-            {
-                type_string = contextual_type;
+            if self.is_parameter_declaration(decl_node_idx) {
+                if let Some(annotation) = self.parameter_declaration_annotation_text(decl_node_idx)
+                {
+                    type_string = annotation;
+                } else if (type_string == "any"
+                    || type_string == "unknown"
+                    || type_string == "error")
+                    && let Some(contextual_type) =
+                        self.contextual_parameter_annotation_text(decl_node_idx)
+                {
+                    type_string = contextual_type;
+                }
             }
             if type_string == "error"
                 && let Some(array_type) =
@@ -1147,6 +1155,23 @@ impl<'a> HoverProvider<'a> {
                 .trim_end_matches([',', ';', '='])
                 .trim_end()
                 .to_string()
+        })
+    }
+
+    fn parameter_declaration_annotation_text(&self, decl_node_idx: NodeIndex) -> Option<String> {
+        if !decl_node_idx.is_some() {
+            return None;
+        }
+        let decl_node = self.arena.get(decl_node_idx)?;
+        let parameter = self.arena.get_parameter(decl_node)?;
+        if !parameter.type_annotation.is_some() {
+            return None;
+        }
+        let type_node = self.arena.get(parameter.type_annotation)?;
+        let start = type_node.pos as usize;
+        let end = type_node.end.min(self.source_text.len() as u32) as usize;
+        (start < end).then(|| {
+            Self::normalize_annotation_text(self.source_text[start..end].trim().to_string())
         })
     }
 
