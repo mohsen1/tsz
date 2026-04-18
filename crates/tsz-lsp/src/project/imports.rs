@@ -1659,6 +1659,60 @@ mod tests {
     }
 
     #[test]
+    fn auto_import_file_exclude_patterns_hide_store_layout_package_candidates() {
+        let mut project = Project::new();
+        project.set_auto_import_file_exclude_patterns(vec![
+            "/**/@remix-run/server-runtime".to_string()
+        ]);
+        project.set_file(
+            "/home/src/workspaces/project/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "module": "commonjs"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/package.json".to_string(),
+            r#"{
+  "dependencies": {
+    "@remix-run/server-runtime": "*"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/.store/@remix-run-server-runtime-virtual-c72daf0d/package/package.json".to_string(),
+            r#"{
+  "name": "@remix-run/server-runtime",
+  "version": "0.0.0",
+  "main": "index.js"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/.store/@remix-run-server-runtime-virtual-c72daf0d/package/index.d.ts".to_string(),
+            "export declare function ServerRuntimeMetaFunction(): void;".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/index.ts".to_string(),
+            "ServerRuntimeMetaFunction".to_string(),
+        );
+
+        let candidates = project.get_import_candidates_for_prefix(
+            "/home/src/workspaces/project/index.ts",
+            "ServerRuntimeMetaFunction",
+        );
+        assert!(
+            !candidates
+                .iter()
+                .any(|candidate| candidate.local_name == "ServerRuntimeMetaFunction"),
+            "expected store-layout package candidate to be excluded, got {candidates:?}"
+        );
+    }
+
+    #[test]
     fn ambient_module_auto_import_candidates_respect_specifier_exclude_regexes() {
         let mut project = Project::new();
         project.set_auto_import_specifier_exclude_regexes(vec!["utils".to_string()]);
