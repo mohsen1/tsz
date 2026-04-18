@@ -4515,7 +4515,7 @@ fn test_direct_binary_op_evaluator_construction_ceiling() {
         }
     }
 
-    const CEILING: usize = 26;
+    const CEILING: usize = 24;
     assert!(
         count <= CEILING,
         "BinaryOpEvaluator::new() usage ceiling exceeded: found {count} (ceiling: {CEILING}). \
@@ -4620,7 +4620,7 @@ fn test_direct_type_instantiator_construction_ceiling() {
         }
     }
 
-    const CEILING: usize = 1;
+    const CEILING: usize = 0;
     assert!(
         count <= CEILING,
         "TypeInstantiator::new() usage ceiling exceeded: found {count} (ceiling: {CEILING}). \
