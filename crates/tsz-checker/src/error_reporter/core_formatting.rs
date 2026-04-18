@@ -980,7 +980,6 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> Option<String> {
-        use tsz_solver::type_queries;
         // Source must be a string literal
         let source_str = match tsz_solver::literal_value(self.ctx.types, source) {
             Some(tsz_solver::LiteralValue::String(atom)) => self.ctx.types.resolve_atom(atom),
@@ -988,24 +987,25 @@ impl<'a> CheckerState<'a> {
         };
 
         // Collect target string literal members
-        let target_literals: Vec<String> =
-            if let Some(members) = type_queries::get_union_members(self.ctx.types, target) {
-                members
-                    .iter()
-                    .filter_map(|&m| match tsz_solver::literal_value(self.ctx.types, m) {
-                        Some(tsz_solver::LiteralValue::String(atom)) => {
-                            Some(self.ctx.types.resolve_atom(atom))
-                        }
-                        _ => None,
-                    })
-                    .collect()
-            } else if let Some(tsz_solver::LiteralValue::String(atom)) =
-                tsz_solver::literal_value(self.ctx.types, target)
-            {
-                vec![self.ctx.types.resolve_atom(atom)]
-            } else {
-                vec![]
-            };
+        let target_literals: Vec<String> = if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, target)
+        {
+            members
+                .iter()
+                .filter_map(|&m| match tsz_solver::literal_value(self.ctx.types, m) {
+                    Some(tsz_solver::LiteralValue::String(atom)) => {
+                        Some(self.ctx.types.resolve_atom(atom))
+                    }
+                    _ => None,
+                })
+                .collect()
+        } else if let Some(tsz_solver::LiteralValue::String(atom)) =
+            tsz_solver::literal_value(self.ctx.types, target)
+        {
+            vec![self.ctx.types.resolve_atom(atom)]
+        } else {
+            vec![]
+        };
 
         // Use tsc's getSpellingSuggestion algorithm with weighted Levenshtein.
         // tsc uses substitution cost 2.0 (0.1 for case-only diffs), which means

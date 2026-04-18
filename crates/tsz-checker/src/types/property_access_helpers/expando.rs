@@ -506,7 +506,7 @@ impl<'a> CheckerState<'a> {
         object_expr_idx: NodeIndex,
         object_type: TypeId,
     ) -> bool {
-        use tsz_solver::visitor::is_function_type;
+        use crate::query_boundaries::property_access::is_function_type;
 
         let prototype_root_expr = self.ctx.arena.get(object_expr_idx).and_then(|node| {
             if node.kind != tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {

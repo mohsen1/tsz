@@ -1502,6 +1502,45 @@ pub(crate) fn get_conditional_type_id(
     tsz_solver::type_queries::get_conditional_type_id(db, type_id)
 }
 
+pub(crate) fn collect_lazy_def_ids(
+    db: &dyn TypeDatabase,
+    root: TypeId,
+) -> Vec<tsz_solver::def::DefId> {
+    tsz_solver::visitor::collect_lazy_def_ids(db, root)
+}
+
+pub(crate) fn collect_type_queries(
+    db: &dyn TypeDatabase,
+    root: TypeId,
+) -> Vec<tsz_solver::types::SymbolRef> {
+    tsz_solver::visitor::collect_type_queries(db, root)
+}
+
+pub(crate) fn is_string_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_string_literal(db, type_id)
+}
+
+pub(crate) fn callable_shape_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::types::CallableShapeId> {
+    tsz_solver::visitor::callable_shape_id(db, type_id)
+}
+
+pub(crate) fn enum_components(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<(tsz_solver::def::DefId, TypeId)> {
+    tsz_solver::visitor::enum_components(db, type_id)
+}
+
+pub(crate) fn union_list_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::types::TypeListId> {
+    tsz_solver::visitor::union_list_id(db, type_id)
+}
+
 /// Factory for `BinaryOpEvaluator` — single construction point through the boundary.
 ///
 /// All checker code that needs binary-op evaluation must construct the evaluator

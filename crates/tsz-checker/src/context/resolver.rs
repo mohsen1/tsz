@@ -234,7 +234,9 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                     // tripping during deep recursive type resolution). Fall through to
                     // the type environment, which may have the correct resolved type from
                     // an earlier successful resolution.
-                } else if tsz_solver::visitor::lazy_def_id(self.types, ty) == Some(def_id) {
+                } else if crate::query_boundaries::common::lazy_def_id(self.types, ty)
+                    == Some(def_id)
+                {
                     // Defer this self-wrapper until after the type environment fallback.
                 } else {
                     if let Some(override_ty) = self.lib_heritage_cache_override(Some(sym_id), ty) {
@@ -287,7 +289,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         if let Some(sym_id) = self.def_to_symbol_id_with_fallback(def_id)
             && !has_local_symbol_collision
             && let Some(&ty) = self.symbol_types.get(&sym_id)
-            && tsz_solver::visitor::lazy_def_id(self.types, ty) == Some(def_id)
+            && crate::query_boundaries::common::lazy_def_id(self.types, ty) == Some(def_id)
             && self
                 .definition_store
                 .get_name(def_id)
@@ -453,8 +455,8 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         type_id: tsz_solver::TypeId,
         interner: &dyn tsz_solver::TypeDatabase,
     ) -> Option<tsz_solver::TypeId> {
+        use crate::query_boundaries::common::callable_shape_id;
         use crate::query_boundaries::common::{lazy_def_id, object_symbol};
-        use tsz_solver::visitor::callable_shape_id;
 
         // 1. First try Lazy types (type aliases, class/interface references)
         if let Some(def_id) = lazy_def_id(self.types, type_id) {
@@ -650,10 +652,11 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         _interner: &dyn tsz_solver::TypeDatabase,
     ) -> bool {
         use tsz_binder::symbol_flags;
-        use tsz_solver::visitor;
 
         // Case 1: Direct Enum type key
-        if let Some((def_id, _inner)) = visitor::enum_components(self.types, type_id) {
+        if let Some((def_id, _inner)) =
+            crate::query_boundaries::common::enum_components(self.types, type_id)
+        {
             // Convert DefId to SymbolId
             let Some(sym_id) = self.def_to_symbol_id(def_id) else {
                 return false;
@@ -670,7 +673,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         }
 
         // Case 2: Union of Enum members (e.g., the full enum type E = E.A | E.B | ...)
-        if let Some(members) = visitor::union_list_id(self.types, type_id) {
+        if let Some(members) = crate::query_boundaries::common::union_list_id(self.types, type_id) {
             let member_list = self.types.type_list(members);
 
             // Check if all members are enum members from the same parent enum
@@ -678,7 +681,9 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
             let mut has_enum_members = false;
 
             for &member in member_list.iter() {
-                if let Some((def_id, _inner)) = visitor::enum_components(self.types, member) {
+                if let Some((def_id, _inner)) =
+                    crate::query_boundaries::common::enum_components(self.types, member)
+                {
                     has_enum_members = true;
 
                     // Check if this is an enum member (not the enum type itself)

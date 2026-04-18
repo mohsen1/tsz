@@ -9,6 +9,7 @@ use crate::query_boundaries::assignability::{
     get_union_members, is_assignable_bivariant_with_resolver, is_assignable_with_overrides,
     is_relation_cacheable, is_type_parameter_like, keyof_object_properties, map_compound_members,
 };
+use crate::query_boundaries::common::{collect_lazy_def_ids, collect_type_queries};
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
 use tracing::trace;
@@ -20,7 +21,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::NarrowingContext;
 use tsz_solver::TypeId;
-use tsz_solver::visitor::{collect_lazy_def_ids, collect_type_queries};
 
 // =============================================================================
 // Assignability Checking Methods

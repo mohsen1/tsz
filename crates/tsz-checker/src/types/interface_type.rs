@@ -9,6 +9,7 @@
 //! - Index signature handling
 //! - Type parameter instantiation for generic bases
 
+use crate::query_boundaries::common::is_template_literal_type;
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
@@ -17,7 +18,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
-use tsz_solver::visitor::is_template_literal_type;
 
 // =============================================================================
 // Interface Type Resolution

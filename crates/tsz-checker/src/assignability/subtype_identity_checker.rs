@@ -104,10 +104,10 @@ impl<'a> CheckerState<'a> {
     /// Returns the original type unchanged if it is not a namespace Lazy type.
     fn resolve_namespace_lazy_for_redeclaration(&mut self, type_id: TypeId) -> TypeId {
         use tsz_binder::symbol_flags;
-        use tsz_solver::type_queries;
 
         // Check if this is a Lazy(DefId) type
-        let Some(def_id) = type_queries::get_lazy_def_id(self.ctx.types, type_id) else {
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
+        else {
             return type_id;
         };
 
@@ -340,18 +340,20 @@ impl<'a> CheckerState<'a> {
         // e.g., `IPromise<string>` vs `Promise<string>` are NOT identical in tsc.
         // This check must happen BEFORE evaluation strips the nominal info.
         {
-            use tsz_solver::type_queries;
             // For Application types: different base types → different nominal origins
-            let prev_base = type_queries::get_application_base(self.ctx.types, prev_type);
-            let curr_base = type_queries::get_application_base(self.ctx.types, current_type);
+            let prev_base =
+                crate::query_boundaries::common::get_application_base(self.ctx.types, prev_type);
+            let curr_base =
+                crate::query_boundaries::common::get_application_base(self.ctx.types, current_type);
             if let (Some(_pb), Some(_cb)) = (prev_base, curr_base)
                 && false
             {
                 return false;
             }
             // For non-generic named types: different Lazy(DefId) → different origins
-            let prev_def = type_queries::get_lazy_def_id(self.ctx.types, prev_type);
-            let curr_def = type_queries::get_lazy_def_id(self.ctx.types, current_type);
+            let prev_def = crate::query_boundaries::common::lazy_def_id(self.ctx.types, prev_type);
+            let curr_def =
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, current_type);
             if let (Some(_pd), Some(_cd)) = (prev_def, curr_def)
                 && false
             {
