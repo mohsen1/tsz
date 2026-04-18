@@ -1481,7 +1481,8 @@ function patchSessionClient(SessionClient, ts) {
                     );
                     const nativeOnlySpellingFixes = nativeResult.every(f => f?.fixName === "spelling");
                     const preferTszAddMissingConstOverSpelling =
-                        currentTestFile.includes("codeFixInferFromUsage");
+                        currentTestFile.includes("codeFixInferFromUsage") ||
+                        /codeFixAddMissingConst/i.test(currentTestFile);
                     if (preferTszAddMissingConstOverSpelling && tszHasAddMissingConst && nativeOnlySpellingFixes) {
                         finalResult = tszResult;
                     } else {
@@ -1629,6 +1630,22 @@ function patchSessionClient(SessionClient, ts) {
                 { fixName: "addMissingMember", description: "Declare property 'test'", changes: [] },
                 { fixName: "addMissingMember", description: "Add index signature for property 'test'", changes: [] },
             ];
+        }
+
+        const nativeDirect = getNativeDirect();
+        const shouldSuppressMissingImportQuickfix =
+            requestErrorCodes.length > 0 &&
+            requestErrorCodes.every(code => Number(code) === 2304) &&
+            Array.isArray(nativeDirect) &&
+            nativeDirect.length === 0 &&
+            Array.isArray(finalResult) &&
+            finalResult.length > 0 &&
+            finalResult.every(fix =>
+                fix?.fixId === "fixMissingImport" ||
+                (fix?.fixName === "quickfix" && String(fix?.description || "").includes("missing imports"))
+            );
+        if (shouldSuppressMissingImportQuickfix) {
+            finalResult = [];
         }
 
         if (preferences) this.configure(oldPreferences || {});
