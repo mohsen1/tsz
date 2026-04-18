@@ -3208,6 +3208,52 @@ mod tests {
     }
 
     #[test]
+    fn sort_tsserver_completion_items_prefers_bare_package_source_over_parent_relative() {
+        let mut items = vec![
+            CompletionItem::new("MyClass".to_string(), CompletionItemKind::Class)
+                .with_sort_text("16".to_string())
+                .with_has_action()
+                .with_source("../packages/mylib".to_string()),
+            CompletionItem::new("MyClass".to_string(), CompletionItemKind::Class)
+                .with_sort_text("16".to_string())
+                .with_has_action()
+                .with_source("mylib".to_string()),
+        ];
+
+        Server::sort_tsserver_completion_items(&mut items);
+
+        let ordered_sources: Vec<Option<&str>> =
+            items.iter().map(|item| item.source.as_deref()).collect();
+        assert_eq!(
+            ordered_sources,
+            vec![Some("mylib"), Some("../packages/mylib")]
+        );
+    }
+
+    #[test]
+    fn sort_tsserver_completion_items_prefers_package_root_over_deep_package_subpath() {
+        let mut items = vec![
+            CompletionItem::new("PatternValidator".to_string(), CompletionItemKind::Class)
+                .with_sort_text("16".to_string())
+                .with_has_action()
+                .with_source("@angular/forms/forms".to_string()),
+            CompletionItem::new("PatternValidator".to_string(), CompletionItemKind::Class)
+                .with_sort_text("16".to_string())
+                .with_has_action()
+                .with_source("@angular/forms".to_string()),
+        ];
+
+        Server::sort_tsserver_completion_items(&mut items);
+
+        let ordered_sources: Vec<Option<&str>> =
+            items.iter().map(|item| item.source.as_deref()).collect();
+        assert_eq!(
+            ordered_sources,
+            vec![Some("@angular/forms"), Some("@angular/forms/forms")]
+        );
+    }
+
+    #[test]
     fn sort_tsserver_completion_items_uses_numeric_aware_ui_order() {
         let mut items = vec![
             CompletionItem::new("Int16Array".to_string(), CompletionItemKind::Variable)

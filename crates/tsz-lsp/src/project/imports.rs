@@ -1064,8 +1064,7 @@ impl Project {
                             },
                             is_type_only,
                         });
-                        if is_type_only
-                            && Self::file_has_type_namespace_import(file, &export_text)
+                        if is_type_only && Self::file_has_type_namespace_import(file, &export_text)
                         {
                             matches.push(ExportMatch {
                                 kind: ImportCandidateKind::Named {
@@ -1454,6 +1453,9 @@ impl Project {
                     .checked_sub(1)
                     .and_then(|offset| self.identifier_at_offset(file, offset))
             })
+            .or_else(|| {
+                Self::identifier_text_from_source_span(file.source_text(), start_offset, end_offset)
+            })
     }
 
     fn identifier_at_offset(&self, file: &ProjectFile, offset: u32) -> Option<String> {
@@ -1466,6 +1468,72 @@ impl Project {
         file.arena()
             .get_identifier_text(node_idx)
             .map(std::string::ToString::to_string)
+    }
+
+    fn identifier_text_from_source_span(
+        source_text: &str,
+        start_offset: u32,
+        end_offset: u32,
+    ) -> Option<String> {
+        let mut probe_offsets = Vec::with_capacity(4);
+        probe_offsets.push(start_offset as usize);
+        if end_offset > 0 {
+            probe_offsets.push((end_offset - 1) as usize);
+        }
+        if start_offset > 0 {
+            probe_offsets.push((start_offset - 1) as usize);
+        }
+        if end_offset as usize > start_offset as usize {
+            probe_offsets.push(((start_offset as usize + end_offset as usize) / 2).saturating_sub(1));
+        }
+
+        for probe in probe_offsets {
+            if let Some(text) = Self::identifier_text_around_offset(source_text, probe) {
+                return Some(text);
+            }
+        }
+
+        None
+    }
+
+    fn identifier_text_around_offset(source_text: &str, probe_offset: usize) -> Option<String> {
+        let bytes = source_text.as_bytes();
+        if bytes.is_empty() {
+            return None;
+        }
+
+        let mut idx = probe_offset.min(bytes.len() - 1);
+        if !Self::is_ascii_identifier_continue(bytes[idx]) {
+            if idx > 0 && Self::is_ascii_identifier_continue(bytes[idx - 1]) {
+                idx -= 1;
+            } else {
+                return None;
+            }
+        }
+
+        let mut start = idx;
+        while start > 0 && Self::is_ascii_identifier_continue(bytes[start - 1]) {
+            start -= 1;
+        }
+
+        let mut end = idx + 1;
+        while end < bytes.len() && Self::is_ascii_identifier_continue(bytes[end]) {
+            end += 1;
+        }
+
+        if start >= end || !Self::is_ascii_identifier_start(bytes[start]) {
+            return None;
+        }
+
+        source_text.get(start..end).map(std::string::ToString::to_string)
+    }
+
+    fn is_ascii_identifier_start(byte: u8) -> bool {
+        byte.is_ascii_alphabetic() || byte == b'_' || byte == b'$'
+    }
+
+    fn is_ascii_identifier_continue(byte: u8) -> bool {
+        byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
     }
 
     pub(crate) fn identifier_at_position(
@@ -1763,6 +1831,157 @@ mod tests {
         assert!(
             specs.iter().any(|spec| spec == "@monorepo/utils"),
             "expected @monorepo/utils candidate from file-linked workspace dependency, got {specs:?}"
+        );
+    }
+
+    #[test]
+    fn auto_import_candidates_prefer_workspace_dependency_name_for_reexported_symbol() {
+        let mut project = Project::new();
+        project.set_file(
+            "/home/src/workspaces/project/package.json".to_string(),
+            r#"{
+  "dependencies": {
+    "mylib": "file:packages/mylib"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/mylib/package.json".to_string(),
+            r#"{
+  "name": "mylib",
+  "version": "1.0.0",
+  "main": "index.js",
+  "types": "index"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/mylib/index.ts".to_string(),
+            "export * from \"./mySubDir\";".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/mylib/mySubDir/index.ts".to_string(),
+            "export * from \"./myClass\";".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/mylib/mySubDir/myClass.ts".to_string(),
+            "export class MyClass {}".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/src/index.ts".to_string(),
+            "const a = new MyClass();".to_string(),
+        );
+
+        let specs: Vec<String> = project
+            .get_import_candidates_for_prefix(
+                "/home/src/workspaces/project/src/index.ts",
+                "MyClass",
+            )
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "MyClass")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+
+        assert!(
+            specs.iter().any(|spec| spec == "mylib"),
+            "expected workspace dependency specifier 'mylib' for re-exported symbol, got {specs:?}"
+        );
+    }
+
+    #[test]
+    fn project_relative_sort_prefers_workspace_dependency_for_reexported_symbol() {
+        let mut project = Project::new();
+        project.set_import_module_specifier_preference(Some("project-relative".to_string()));
+        project.set_file(
+            "/home/src/workspaces/project/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "lib": ["es5"],
+    "module": "commonjs"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/package.json".to_string(),
+            r#"{
+  "dependencies": {
+    "mylib": "file:packages/mylib"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/mylib/package.json".to_string(),
+            r#"{
+  "name": "mylib",
+  "version": "1.0.0",
+  "main": "index.js",
+  "types": "index"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/mylib/index.ts".to_string(),
+            "export * from \"./mySubDir\";".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/mylib/mySubDir/index.ts".to_string(),
+            "export * from \"./myClass\";".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/mylib/mySubDir/myClass.ts".to_string(),
+            "export class MyClass {}".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/src/index.ts".to_string(),
+            "const a = new MyClass();".to_string(),
+        );
+
+        let mut specs: Vec<String> = project
+            .get_import_candidates_for_prefix(
+                "/home/src/workspaces/project/src/index.ts",
+                "MyClass",
+            )
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "MyClass")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+
+        specs.sort_by(|a, b| {
+            let a_segments = a.matches('/').count();
+            let b_segments = b.matches('/').count();
+            let candidate_rank = |candidate: &str| -> u8 {
+                if candidate.starts_with("./") {
+                    0
+                } else if !candidate.starts_with('.') {
+                    1
+                } else if candidate.starts_with("../") {
+                    2
+                } else {
+                    3
+                }
+            };
+            let index_penalty = |candidate: &str| -> u8 {
+                if candidate == "." || candidate == ".." || candidate.ends_with("/index") {
+                    1
+                } else {
+                    0
+                }
+            };
+            a_segments
+                .cmp(&b_segments)
+                .then_with(|| candidate_rank(a).cmp(&candidate_rank(b)))
+                .then_with(|| index_penalty(a).cmp(&index_penalty(b)))
+                .then_with(|| a.len().cmp(&b.len()))
+                .then_with(|| a.cmp(b))
+        });
+
+        assert_eq!(
+            specs.first().map(String::as_str),
+            Some("mylib"),
+            "expected project-relative ordering to still prefer workspace dependency alias, got {specs:?}"
         );
     }
 
@@ -2109,18 +2328,16 @@ export = ts;
             reports_deprecated: None,
         }];
 
-        let has_default_ns = project
-            .get_import_candidates_for_diagnostics("/e.ts", &diagnostics)
-            .into_iter()
-            .any(|candidate| {
-                candidate.local_name == "ns"
-                    && candidate.module_specifier == "./ns"
-                    && matches!(candidate.kind, ImportCandidateKind::Default)
-            });
+        let candidates = project.get_import_candidates_for_diagnostics("/e.ts", &diagnostics);
+        let has_default_ns = candidates.iter().any(|candidate| {
+            candidate.local_name == "ns"
+                && candidate.module_specifier == "./ns"
+                && matches!(candidate.kind, ImportCandidateKind::Default)
+        });
 
         assert!(
             has_default_ns,
-            "expected default import candidate for `ns` from `./ns` when re-exported via `export * as default`"
+            "expected default import candidate for `ns` from `./ns` when re-exported via `export * as default`, got: {candidates:?}"
         );
     }
 
@@ -2175,6 +2392,348 @@ export = ts;
         assert!(
             has_config,
             "expected re-exported type namespace `Config` auto-import candidate from @jest/types"
+        );
+    }
+
+    #[test]
+    fn diagnostics_import_candidates_include_package_typings_root_specifier() {
+        let mut project = Project::new();
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/@angular/forms/package.json".to_string(),
+            r#"{
+  "name": "@angular/forms",
+  "typings": "./forms.d.ts"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/@angular/forms/forms.d.ts".to_string(),
+            "export class PatternValidator {}\n".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "lib": ["es5"]
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/package.json".to_string(),
+            r#"{
+  "dependencies": {
+    "@angular/forms": "*"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/index.ts".to_string(),
+            "PatternValidator".to_string(),
+        );
+
+        let diagnostics = vec![LspDiagnostic {
+            range: Range::new(Position::new(0, 0), Position::new(0, 16)),
+            message: "Cannot find name 'PatternValidator'.".to_string(),
+            code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+            severity: None,
+            source: None,
+            related_information: None,
+            reports_unnecessary: None,
+            reports_deprecated: None,
+        }];
+
+        let specs: Vec<String> = project
+            .get_import_candidates_for_diagnostics(
+                "/home/src/workspaces/project/index.ts",
+                &diagnostics,
+            )
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "PatternValidator")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+
+        assert!(
+            specs.iter().any(|specifier| specifier == "@angular/forms"),
+            "expected diagnostics auto-import candidate from @angular/forms, got {specs:?}"
+        );
+    }
+
+    #[test]
+    fn diagnostics_import_candidates_include_pnpm_store_dependency_alias() {
+        let mut project = Project::new();
+        project.set_file(
+            "/home/src/workspaces/project/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "lib": ["es5"]
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/package.json".to_string(),
+            r#"{
+  "dependencies": {
+    "mobx": "*"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/.pnpm/mobx@6.0.4/node_modules/mobx/package.json"
+                .to_string(),
+            r#"{
+  "types": "dist/mobx.d.ts"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/.pnpm/mobx@6.0.4/node_modules/mobx/dist/mobx.d.ts"
+                .to_string(),
+            "export declare function autorun(): void;\n".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/index.ts".to_string(),
+            "autorun".to_string(),
+        );
+
+        let diagnostics = vec![LspDiagnostic {
+            range: Range::new(Position::new(0, 0), Position::new(0, 7)),
+            message: "Cannot find name 'autorun'.".to_string(),
+            code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+            severity: None,
+            source: None,
+            related_information: None,
+            reports_unnecessary: None,
+            reports_deprecated: None,
+        }];
+
+        let specs: Vec<String> = project
+            .get_import_candidates_for_diagnostics(
+                "/home/src/workspaces/project/index.ts",
+                &diagnostics,
+            )
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "autorun")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+
+        assert!(
+            specs.iter().any(|specifier| specifier == "mobx"),
+            "expected diagnostics auto-import candidate from pnpm package alias `mobx`, got {specs:?}"
+        );
+    }
+
+    #[test]
+    fn diagnostics_import_candidates_non_relative_pref_keeps_relative_cross_project_specifier() {
+        let mut project = Project::new();
+        project.set_import_module_specifier_preference(Some("non-relative".to_string()));
+        project.set_file(
+            "/home/src/workspaces/project/common/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "lib": ["es5"],
+    "module": "commonjs",
+    "outDir": "dist",
+    "composite": true
+  },
+  "include": ["src"]
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/common/src/MyModule.ts".to_string(),
+            "export function square(n: number) { return n * 2; }\n".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/web/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "lib": ["es5"],
+    "module": "esnext",
+    "moduleResolution": "node",
+    "noEmit": true,
+    "baseUrl": "."
+  },
+  "include": ["src"],
+  "references": [{ "path": "../common" }]
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/web/src/MyApp.ts".to_string(),
+            "import { square } from \"../../common/dist/src/MyModule\";\n".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/web/src/Helper.ts".to_string(),
+            "square(2);\n".to_string(),
+        );
+
+        let diagnostics = vec![LspDiagnostic {
+            range: Range::new(Position::new(0, 0), Position::new(0, 6)),
+            message: "Cannot find name 'square'.".to_string(),
+            code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+            severity: None,
+            source: None,
+            related_information: None,
+            reports_unnecessary: None,
+            reports_deprecated: None,
+        }];
+
+        let specs: Vec<String> = project
+            .get_import_candidates_for_diagnostics(
+                "/home/src/workspaces/project/web/src/Helper.ts",
+                &diagnostics,
+            )
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "square")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+
+        assert!(
+            specs
+                .iter()
+                .any(|specifier| specifier == "../../common/src/MyModule"),
+            "expected diagnostics auto-import candidate ../../common/src/MyModule under non-relative preference, got {specs:?}"
+        );
+    }
+
+    #[test]
+    fn diagnostics_import_candidates_include_symlinked_workspace_dependency_name() {
+        let mut project = Project::new();
+        project.set_file(
+            "/home/src/workspaces/project/a/package.json".to_string(),
+            r#"{
+  "dependencies": {
+    "b": "*"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/a/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "lib": ["es5"],
+    "module": "commonjs",
+    "target": "esnext"
+  },
+  "references": [{ "path": "../b" }]
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/a/index.ts".to_string(),
+            "new Shape".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/b/package.json".to_string(),
+            r#"{
+  "types": "out/index.d.ts"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/b/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "lib": ["es5"],
+    "outDir": "out",
+    "composite": true
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/b/index.ts".to_string(),
+            "export class Shape {}\n".to_string(),
+        );
+
+        let diagnostics = vec![LspDiagnostic {
+            range: Range::new(Position::new(0, 4), Position::new(0, 9)),
+            message: "Cannot find name 'Shape'.".to_string(),
+            code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+            severity: None,
+            source: None,
+            related_information: None,
+            reports_unnecessary: None,
+            reports_deprecated: None,
+        }];
+
+        let specs: Vec<String> = project
+            .get_import_candidates_for_diagnostics("/home/src/workspaces/project/a/index.ts", &diagnostics)
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "Shape")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+
+        assert!(
+            specs.iter().any(|specifier| specifier == "b"),
+            "expected diagnostics auto-import candidate `b` for referenced workspace package, got {specs:?}"
+        );
+    }
+
+    #[test]
+    fn diagnostics_import_candidates_include_bare_and_deep_paths_for_reexported_types_entry() {
+        let mut project = Project::new();
+        project.set_file(
+            "/home/src/workspaces/project/package.json".to_string(),
+            r#"{
+  "dependencies": {
+    "react-hook-form": "*"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/react-hook-form/package.json".to_string(),
+            r#"{
+  "types": "dist/index.d.ts"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/react-hook-form/dist/index.d.ts".to_string(),
+            "export * from \"./useForm\";\n".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/react-hook-form/dist/useForm.d.ts"
+                .to_string(),
+            "export declare function useForm(): void;\n".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/index.ts".to_string(),
+            "useForm".to_string(),
+        );
+
+        let diagnostics = vec![LspDiagnostic {
+            range: Range::new(Position::new(0, 0), Position::new(0, 7)),
+            message: "Cannot find name 'useForm'.".to_string(),
+            code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+            severity: None,
+            source: None,
+            related_information: None,
+            reports_unnecessary: None,
+            reports_deprecated: None,
+        }];
+
+        let specs: Vec<String> = project
+            .get_import_candidates_for_diagnostics("/home/src/workspaces/project/index.ts", &diagnostics)
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "useForm")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+
+        assert!(
+            specs.iter().any(|specifier| specifier == "react-hook-form"),
+            "expected bare react-hook-form diagnostics auto-import candidate, got {specs:?}"
+        );
+        assert!(
+            specs.iter().any(|specifier| specifier == "react-hook-form/dist/useForm"),
+            "expected deep react-hook-form/dist/useForm diagnostics auto-import candidate, got {specs:?}"
         );
     }
 }
