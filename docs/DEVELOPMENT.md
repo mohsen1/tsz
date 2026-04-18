@@ -189,7 +189,7 @@ cargo build --release -p tsz-cli
 cargo check -p tsz-wasm --target wasm32-unknown-unknown
 
 # Build WASM package
-wasm-pack build crates/tsz-wasm --target web --out-dir pkg
+wasm-pack build crates/tsz-wasm --target web --out-dir pkg --no-opt
 ```
 
 ## Architecture Rules

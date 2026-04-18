@@ -118,7 +118,9 @@ jobs:
       - name: Build WASM (web target)
         run: |
           cp LICENSE.txt crates/tsz-wasm/LICENSE.txt
-          wasm-pack build crates/tsz-wasm --target web --out-dir ../../pkg/web
+          # wasm-opt currently produces a web build that fails during
+          # __wbindgen_init_externref_table in the playground runtime.
+          wasm-pack build crates/tsz-wasm --target web --out-dir ../../pkg/web --no-opt
 
       - name: Upload WASM artifact
         uses: actions/upload-artifact@v4
