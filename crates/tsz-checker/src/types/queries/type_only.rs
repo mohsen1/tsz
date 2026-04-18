@@ -782,10 +782,11 @@ impl<'a> CheckerState<'a> {
         let target_binder = target_file_idx
             .and_then(|idx| self.ctx.get_binder_for_file(idx))
             .unwrap_or(self.ctx.binder);
-        let Some(mut target_sym) = target_binder
-            .get_symbol(target_sym_id)
-            .or_else(|| self.ctx.binder.get_symbol_with_libs(target_sym_id, &lib_binders))
-        else {
+        let Some(mut target_sym) = target_binder.get_symbol(target_sym_id).or_else(|| {
+            self.ctx
+                .binder
+                .get_symbol_with_libs(target_sym_id, &lib_binders)
+        }) else {
             return false;
         };
         let mut target_candidate_id = target_sym_id;
@@ -838,9 +839,8 @@ impl<'a> CheckerState<'a> {
                     target_ns_sym_id.or_else(|| target_binder.file_locals.get(ident_name));
 
                 if let Some(target_ns_sym_id) = target_ns_sym_id
-                    && let Some(resolved_target) = target_binder
-                        .get_symbol(target_ns_sym_id)
-                        .or_else(|| {
+                    && let Some(resolved_target) =
+                        target_binder.get_symbol(target_ns_sym_id).or_else(|| {
                             self.ctx
                                 .binder
                                 .get_symbol_with_libs(target_ns_sym_id, &lib_binders)
@@ -1431,11 +1431,10 @@ impl<'a> CheckerState<'a> {
                                     & (symbol_flags::NAMESPACE_MODULE
                                         | symbol_flags::VALUE_MODULE))
                                     != 0
-                                    && !self
-                                        .symbol_has_runtime_value_in_binder(
-                                            target_binder,
-                                            target_sym_id,
-                                        ))
+                                    && !self.symbol_has_runtime_value_in_binder(
+                                        target_binder,
+                                        target_sym_id,
+                                    ))
                             {
                                 return true;
                             }
