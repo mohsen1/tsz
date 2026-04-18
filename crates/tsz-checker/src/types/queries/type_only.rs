@@ -1382,6 +1382,29 @@ impl<'a> CheckerState<'a> {
                         return true;
                     }
                 }
+                // A pure type-alias/interface symbol can be paired with an
+                // `export * as Name from "./mod"` namespace ALIAS partner —
+                // the name has both a TYPE meaning and a value NAMESPACE
+                // meaning. If the partner aliases a module whose exports
+                // include any runtime value, this name IS usable as a value.
+                let has_namespace_alias_partner = target_binder
+                    .alias_partners
+                    .get(&sym_id)
+                    .copied()
+                    .is_some_and(|partner_id| {
+                        target_binder
+                            .get_symbol(partner_id)
+                            .is_some_and(|partner_sym| {
+                                partner_sym.flags & symbol_flags::ALIAS != 0
+                                    && self.symbol_has_runtime_value_in_binder(
+                                        target_binder,
+                                        partner_id,
+                                    )
+                            })
+                    });
+                if has_namespace_alias_partner {
+                    return false;
+                }
                 if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
                     return true;
                 }
