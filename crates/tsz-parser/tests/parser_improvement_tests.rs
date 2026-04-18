@@ -2,6 +2,7 @@
 
 use crate::parser::ParserState;
 use tsz_common::diagnostics::diagnostic_codes;
+use tsz_common::position::LineMap;
 
 #[test]
 fn test_index_signature_with_modifier_emits_ts1071() {
@@ -3412,6 +3413,60 @@ fn test_tsx_fragment_errors_actual_conformance_file_matches_expected_codes() {
             diagnostic_codes::EXPECTED,
         ],
         "Expected TS17015/TS17014/TS1005 on actual tsxFragmentErrors conformance file, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_tsx_fragment_errors_stripped_source_matches_expected_positions() {
+    let source = r#"
+declare namespace JSX {
+	interface Element { }
+	interface IntrinsicElements {
+		[s: string]: any;
+	}
+}
+declare var React: any;
+
+<>hi</div> // Error
+
+<>eof   // Error
+"#
+    .to_string();
+    let line_map = LineMap::build(&source);
+    let mut parser = ParserState::new("file.tsx".to_string(), source.clone());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<(u32, u32, u32)> = diagnostics
+        .iter()
+        .filter(|diag| {
+            matches!(
+                diag.code,
+                diagnostic_codes::EXPECTED_CORRESPONDING_CLOSING_TAG_FOR_JSX_FRAGMENT
+                    | diagnostic_codes::JSX_FRAGMENT_HAS_NO_CORRESPONDING_CLOSING_TAG
+            )
+        })
+        .map(|diag| {
+            let pos = line_map.offset_to_position(diag.start, &source);
+            (diag.code, pos.line + 1, pos.character + 1)
+        })
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (
+                diagnostic_codes::EXPECTED_CORRESPONDING_CLOSING_TAG_FOR_JSX_FRAGMENT,
+                10,
+                7,
+            ),
+            (
+                diagnostic_codes::JSX_FRAGMENT_HAS_NO_CORRESPONDING_CLOSING_TAG,
+                10,
+                11,
+            ),
+        ],
+        "Expected JSX fragment recovery positions to match tsc for tsxFragmentErrors.tsx, got {diagnostics:?}"
     );
 }
 

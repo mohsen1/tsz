@@ -1,8 +1,7 @@
 //! Library and global type availability queries for `CheckerContext`.
 //!
 //! These methods check whether specific types (Promise, Symbol, etc.) are
-//! available in lib files or global scope, and classify known global types
-//! for diagnostic selection (TS2304 vs TS2318 vs TS2583).
+//! available in lib files or global scope.
 
 use std::sync::Arc;
 
@@ -123,50 +122,5 @@ impl<'a> CheckerContext<'a> {
         self.lib_contexts
             .iter()
             .any(|lib_ctx| Arc::ptr_eq(&lib_ctx.arena, symbol_arena))
-    }
-
-    /// Check if a name is a known global type that should emit TS2318/TS2583 when missing.
-    /// This helps distinguish between "unknown name" (TS2304) and "missing global type" (TS2318/TS2583).
-    pub fn is_known_global_type(&self, name: &str) -> bool {
-        use tsz_binder::lib_loader;
-
-        // ES2015+ types
-        if lib_loader::is_es2015_plus_type(name) {
-            return true;
-        }
-
-        // Pre-ES2015 global types that are commonly used
-        // These are always available in lib.d.ts but should emit TS2318 when @noLib is enabled
-        matches!(
-            name,
-            "Object"
-                | "Function"
-                | "Array"
-                | "String"
-                | "Number"
-                | "Boolean"
-                | "Date"
-                | "RegExp"
-                | "Error"
-                | "Math"
-                | "JSON"
-                | "console"
-                | "window"
-                | "document"
-                | "ArrayBuffer"
-                | "DataView"
-                | "Int8Array"
-                | "Uint8Array"
-                | "Uint8ClampedArray"
-                | "Int16Array"
-                | "Uint16Array"
-                | "Int32Array"
-                | "Uint32Array"
-                | "Float32Array"
-                | "Float64Array"
-                | "this"
-                | "globalThis"
-                | "IArguments"
-        )
     }
 }
