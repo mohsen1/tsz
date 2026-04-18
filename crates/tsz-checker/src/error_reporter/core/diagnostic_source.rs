@@ -636,11 +636,19 @@ impl<'a> CheckerState<'a> {
             .definition_store
             .find_type_alias_by_body(ty)
             .is_some();
+        let has_namespace_name = self.ctx.namespace_module_names.contains_key(&ty);
         // If this type was produced by evaluating a generic application
         // (e.g., `Omit<this, K>` → `{}`), fall through to
         // `format_type_for_assignability_message` which respects the display_alias
         // mechanism and renders `Omit<this, K>` instead of the structural form.
         let has_display_alias = self.ctx.types.get_display_alias(ty).is_some();
+        // Preserve namespace identity (`typeof import("...")`) for CommonJS
+        // namespace objects that are represented as anonymous object shapes.
+        // Structural widening here drops the namespace tag and expands the full
+        // object literal in diagnostics.
+        if has_namespace_name {
+            return self.format_type_diagnostic(ty);
+        }
         if has_object_shape && !has_def && !has_alias && !has_display_alias {
             let widened = self.widen_fresh_object_literal_properties_for_display(ty);
             return self.format_type_diagnostic_widened(widened);
