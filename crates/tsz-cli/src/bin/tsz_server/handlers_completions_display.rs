@@ -7,6 +7,7 @@
 //! - `tokenize_*` / `type_display_kind` — structured display-parts tokenizers
 
 use super::{Server, TsServerRequest, TsServerResponse};
+use std::collections::HashMap;
 use tsz::lsp::position::LineMap;
 use tsz::lsp::signature_help::SignatureHelpProvider;
 use tsz::parser::node::NodeAccess;
@@ -157,12 +158,17 @@ impl Server {
                 }
             }
             CompletionItemKind::Alias => {
-                // For import aliases, show as "import <name>"
                 parts.push(serde_json::json!({"text": "(", "kind": "punctuation"}));
                 parts.push(serde_json::json!({"text": "alias", "kind": "text"}));
                 parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
                 parts.push(serde_json::json!({"text": " ", "kind": "space"}));
-                parts.push(serde_json::json!({"text": name, "kind": "aliasName"}));
+                if let Some(detail) = item.detail.as_deref()
+                    && !detail.is_empty()
+                {
+                    parts.push(serde_json::json!({"text": detail, "kind": "text"}));
+                } else {
+                    parts.push(serde_json::json!({"text": name, "kind": "aliasName"}));
+                }
             }
             CompletionItemKind::Variable
             | CompletionItemKind::Const
@@ -625,7 +631,195 @@ impl Server {
                 }
             }
         }
+
+        if let Some(function_type) =
+            Self::function_initializer_type_annotation(name, binder, arena, source_text)
+        {
+            parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+            parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+            parts.push(serde_json::json!({
+                "text": function_type,
+                "kind": Self::type_display_kind(&function_type)
+            }));
+            return true;
+        }
+
         false
+    }
+
+    pub(crate) fn function_initializer_type_annotation(
+        name: &str,
+        binder: &tsz::binder::BinderState,
+        arena: &tsz::parser::node::NodeArena,
+        source_text: &str,
+    ) -> Option<String> {
+        use tsz::parser::syntax_kind_ext;
+
+        let symbol_id = binder.file_locals.get(name)?;
+        let sym = binder.symbols.get(symbol_id)?;
+        let decl = if sym.value_declaration.is_some() {
+            sym.value_declaration
+        } else {
+            *sym.declarations.first()?
+        };
+        let node = arena.get(decl)?;
+        if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let var_decl = arena.get_variable_declaration(node)?;
+        if !var_decl.initializer.is_some() {
+            return None;
+        }
+        let initializer = var_decl.initializer;
+        let initializer_node = arena.get(initializer)?;
+        if initializer_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+            && initializer_node.kind != syntax_kind_ext::ARROW_FUNCTION
+        {
+            return None;
+        }
+
+        let function = arena.get_function(initializer_node)?;
+        let jsdoc_anchor = if let Some(ext) = arena.get_extended(decl) {
+            let list_idx = ext.parent;
+            if let Some(list_node) = arena.get(list_idx) {
+                if list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                    if let Some(list_ext) = arena.get_extended(list_idx) {
+                        let stmt_idx = list_ext.parent;
+                        if let Some(stmt_node) = arena.get(stmt_idx) {
+                            if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                                stmt_node.pos as usize
+                            } else {
+                                node.pos as usize
+                            }
+                        } else {
+                            node.pos as usize
+                        }
+                    } else {
+                        node.pos as usize
+                    }
+                } else {
+                    node.pos as usize
+                }
+            } else {
+                node.pos as usize
+            }
+        } else {
+            node.pos as usize
+        };
+        let jsdoc = Self::leading_jsdoc_block_before_offset(source_text, jsdoc_anchor);
+        let (jsdoc_param_types, jsdoc_return_type) = jsdoc
+            .map(Self::parse_jsdoc_function_tag_types)
+            .unwrap_or_else(|| (HashMap::new(), None));
+
+        let mut params = Vec::new();
+        for &param_idx in &function.parameters.nodes {
+            let param_node = arena.get(param_idx)?;
+            let param = arena.get_parameter(param_node)?;
+
+            let param_name = arena
+                .get_identifier_text(param.name)
+                .map(std::string::ToString::to_string)
+                .or_else(|| {
+                    Self::node_text_slice(param.name, arena, source_text)
+                        .map(std::string::ToString::to_string)
+                })
+                .unwrap_or_else(|| "_".to_string());
+
+            let param_type = if param.type_annotation.is_some() {
+                Self::node_text_slice(param.type_annotation, arena, source_text)
+                    .map(std::string::ToString::to_string)
+            } else {
+                jsdoc_param_types.get(&param_name).cloned()
+            }
+            .unwrap_or_else(|| "any".to_string());
+
+            params.push(format!("{param_name}: {param_type}"));
+        }
+
+        let return_type = if function.type_annotation.is_some() {
+            Self::node_text_slice(function.type_annotation, arena, source_text)
+                .map(std::string::ToString::to_string)
+        } else {
+            jsdoc_return_type
+        }
+        .unwrap_or_else(|| "void".to_string());
+
+        Some(format!("({}) => {return_type}", params.join(", ")))
+    }
+
+    fn leading_jsdoc_block_before_offset(source_text: &str, offset: usize) -> Option<&str> {
+        let clamped = offset.min(source_text.len());
+        let prefix = &source_text[..clamped];
+        let comment_end = prefix.rfind("*/")?;
+        let after_comment = &prefix[comment_end + 2..];
+        if !after_comment.chars().all(char::is_whitespace) {
+            return None;
+        }
+        let comment_start = prefix[..comment_end].rfind("/**")?;
+        Some(&prefix[comment_start + 3..comment_end])
+    }
+
+    fn parse_jsdoc_function_tag_types(jsdoc: &str) -> (HashMap<String, String>, Option<String>) {
+        let mut param_types = HashMap::new();
+        let mut return_type = None;
+
+        for raw_line in jsdoc.lines() {
+            let mut line = raw_line.trim();
+            if let Some(stripped) = line.strip_prefix('*') {
+                line = stripped.trim_start();
+            }
+
+            if let Some(rest) = line.strip_prefix("@param") {
+                let Some((type_text, after_type)) = Self::parse_jsdoc_tag_type_payload(rest) else {
+                    continue;
+                };
+                let Some(raw_name) = after_type.split_whitespace().next() else {
+                    continue;
+                };
+                let param_name = Self::normalize_jsdoc_param_name(raw_name);
+                if !param_name.is_empty() {
+                    param_types.insert(param_name, type_text);
+                }
+                continue;
+            }
+
+            let tag_payload = line
+                .strip_prefix("@returns")
+                .or_else(|| line.strip_prefix("@return"));
+            if let Some(rest) = tag_payload
+                && let Some((type_text, _)) = Self::parse_jsdoc_tag_type_payload(rest)
+            {
+                return_type = Some(type_text);
+            }
+        }
+
+        (param_types, return_type)
+    }
+
+    fn parse_jsdoc_tag_type_payload(payload: &str) -> Option<(String, &str)> {
+        let trimmed = payload.trim();
+        let type_payload = trimmed.strip_prefix('{')?;
+        let close_brace = type_payload.find('}')?;
+        let type_text = type_payload[..close_brace].trim();
+        if type_text.is_empty() {
+            return None;
+        }
+        let after_type = type_payload[close_brace + 1..].trim_start();
+        Some((type_text.to_string(), after_type))
+    }
+
+    fn normalize_jsdoc_param_name(name: &str) -> String {
+        let mut normalized = name.trim();
+        if normalized.starts_with('[') && normalized.ends_with(']') && normalized.len() > 2 {
+            normalized = &normalized[1..normalized.len() - 1];
+        }
+        if let Some(eq_idx) = normalized.find('=') {
+            normalized = &normalized[..eq_idx];
+        }
+        if let Some(rest) = normalized.strip_prefix("...") {
+            normalized = rest;
+        }
+        normalized.trim().to_string()
     }
 
     fn is_const_variable_symbol(
