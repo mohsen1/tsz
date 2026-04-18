@@ -521,6 +521,35 @@ function patchSessionClient(SessionClient, ts) {
             }
         } catch { /* ignore */ }
 
+        // When completions are requested inside a quoted call argument and a
+        // following argument is already present (e.g. `f("|", 0)`), tsz may
+        // currently leak literal candidates from the wrong overload. If native
+        // LS reports no completions here, prefer the empty result.
+        if (
+            result &&
+            Array.isArray(result.entries) &&
+            result.entries.length > 0 &&
+            (!nativeResult || !Array.isArray(nativeResult.entries) || nativeResult.entries.length === 0)
+        ) {
+            const sourceText = getSourceText();
+            if (typeof sourceText === "string") {
+                const start = Math.max(0, position - 256);
+                const end = Math.min(sourceText.length, position + 256);
+                const prefix = sourceText.slice(start, position);
+                const suffix = sourceText.slice(position, end);
+                const isModuleSpecifierContext =
+                    /(?:^|[^\w$])import\s*["'][^"'`]*$/.test(prefix) ||
+                    /(?:import|export)\s+[\s\S]*?\bfrom\s*["'][^"'`]*$/.test(prefix) ||
+                    /import\s*\(\s*["'][^"'`]*$/.test(prefix) ||
+                    /require\s*\(\s*["'][^"'`]*$/.test(prefix);
+                const isInQuotedArgument = /(?:^|[,(]\s*)["'][^"'`]*$/.test(prefix);
+                const hasFollowingArgument = /^["']\s*,/.test(suffix);
+                if (isInQuotedArgument && hasFollowingArgument && !isModuleSpecifierContext) {
+                    return undefined;
+                }
+            }
+        }
+
         // Class-member snippet completions (override/implement stubs) are
         // heavily preference-driven; prefer native LS for exact tsserver shape.
         if (preferences?.includeCompletionsWithClassMemberSnippets && nativeResult) {
