@@ -559,6 +559,10 @@ fn format_object_many_properties_truncated() {
         result.contains("..."),
         "Object with >=10 properties should truncate, got: {result}"
     );
+    assert!(
+        result.contains("more"),
+        "Truncated object display should include omitted-count tail, got: {result}"
+    );
 }
 
 #[test]

@@ -1062,6 +1062,7 @@ impl<'a> CheckerState<'a> {
                 let mut props: Vec<PropertyInfo> = Vec::new();
                 for (name, &sym_id) in exports_table.iter() {
                     if name == "export="
+                        || self.should_skip_namespace_export_name(&exports_table, name, sym_id)
                         || self.is_type_only_export_symbol(sym_id)
                         || self.is_export_from_type_only_wildcard(module_name, name)
                         || self.export_symbol_has_no_value(sym_id)
@@ -1116,36 +1117,50 @@ impl<'a> CheckerState<'a> {
             }
 
             let has_named_props = !props.is_empty();
+            let preserve_namespace_display =
+                !(module_is_non_module_entity && self.ctx.allow_synthetic_default_imports());
+            let display_module_name = (has_named_props && preserve_namespace_display)
+                .then(|| self.resolve_namespace_display_module_name(&exports_table, module_name));
             let namespace_type = has_named_props.then(|| {
                 let namespace_type = factory.object(props);
-                let preserve_namespace_display =
-                    !(module_is_non_module_entity && self.ctx.allow_synthetic_default_imports());
-                if preserve_namespace_display {
-                    let display_module_name =
-                        self.resolve_namespace_display_module_name(&exports_table, module_name);
+                if let Some(display_module_name) = display_module_name.as_ref() {
                     self.ctx
                         .namespace_module_names
-                        .insert(namespace_type, display_module_name);
+                        .insert(namespace_type, display_module_name.clone());
                 }
                 namespace_type
             });
             if let Some(export_equals_type) = export_equals_type {
-                if module_is_non_module_entity {
+                let result = if module_is_non_module_entity {
                     if self.ctx.allow_synthetic_default_imports() {
-                        return Some(namespace_type.unwrap_or(export_equals_type));
+                        namespace_type.unwrap_or(export_equals_type)
+                    } else {
+                        export_equals_type
                     }
-                    return Some(export_equals_type);
-                }
-                return Some(
+                } else {
                     namespace_type
                         .map(|namespace_type| {
                             factory.intersection2(export_equals_type, namespace_type)
                         })
-                        .unwrap_or(export_equals_type),
-                );
+                        .unwrap_or(export_equals_type)
+                };
+                if let Some(display_module_name) = display_module_name {
+                    self.ctx
+                        .namespace_module_names
+                        .entry(result)
+                        .or_insert(display_module_name);
+                }
+                return Some(result);
             }
 
-            return namespace_type;
+            if let Some(namespace_type) = namespace_type {
+                if module_is_non_module_entity {
+                    return Some(namespace_type);
+                }
+                return Some(namespace_type);
+            }
+
+            return None;
         }
 
         // Use the unified JS export surface for the no-export-table fallback.

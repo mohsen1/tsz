@@ -63,6 +63,55 @@ pub(crate) fn extract_jsx_pragma(source: &str) -> Option<String> {
     None
 }
 
+/// Extract the `@jsxFrag` pragma factory name from a source file's leading comments.
+///
+/// Mirrors `extract_jsx_pragma` behavior, but for fragment factory pragmas.
+/// Returns values like `"React.Fragment"` or `"Fragment"`.
+pub(crate) fn extract_jsx_frag_pragma(source: &str) -> Option<String> {
+    let scan_limit = source.len().min(4096);
+    let text = &source[..scan_limit];
+
+    let mut pos = 0;
+    let bytes = text.as_bytes();
+    while pos < bytes.len() {
+        if bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+            continue;
+        }
+        if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'*' {
+            let comment_start = pos + 2;
+            if let Some(end_offset) = text[comment_start..].find("*/") {
+                let comment_body = &text[comment_start..comment_start + end_offset];
+                if let Some(jsx_frag_pos) = comment_body.find("@jsxFrag") {
+                    let after = &comment_body[jsx_frag_pos + "@jsxFrag".len()..];
+                    let factory: String = after
+                        .trim_start()
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$' || *c == '.')
+                        .collect();
+                    if !factory.is_empty() {
+                        return Some(factory);
+                    }
+                }
+                pos = comment_start + end_offset + 2;
+            } else {
+                break;
+            }
+            continue;
+        }
+        if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'/' {
+            if let Some(nl) = text[pos..].find('\n') {
+                pos += nl + 1;
+            } else {
+                break;
+            }
+            continue;
+        }
+        break;
+    }
+    None
+}
+
 /// Extract the `@jsxRuntime` pragma from a source file's comments.
 ///
 /// Scans ALL block comments for `@jsxRuntime classic` or `@jsxRuntime automatic`.
@@ -324,8 +373,10 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check that JSX fragments have a valid fragment factory when jsxFactory is set (TS17016),
-    /// and that the fragment factory is in scope (TS2879).
+    /// Check JSX fragment factory diagnostics:
+    /// - TS17016 for config-only `jsxFactory` without `jsxFragmentFactory`
+    /// - TS17017 for `@jsx` pragma without `@jsxFrag` pragma
+    /// - TS2879 when fragment factory root identifier is missing from scope
     pub(crate) fn check_jsx_fragment_factory(&mut self, node_idx: NodeIndex) {
         use tsz_common::checker_options::JsxMode;
 
@@ -338,7 +389,29 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if self.ctx.compiler_options.jsx_factory_from_config {
+        let (pragma_factory, pragma_fragment_factory) = self
+            .ctx
+            .arena
+            .source_files
+            .first()
+            .map(|sf| {
+                (
+                    extract_jsx_pragma(&sf.text),
+                    extract_jsx_frag_pragma(&sf.text),
+                )
+            })
+            .unwrap_or_default();
+
+        if pragma_factory.is_some() {
+            if pragma_fragment_factory.is_none() {
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node_msg(
+                    node_idx,
+                    diagnostic_codes::AN_JSXFRAG_PRAGMA_IS_REQUIRED_WHEN_USING_AN_JSX_PRAGMA_WITH_JSX_FRAGMENTS,
+                    &[],
+                );
+            }
+        } else if self.ctx.compiler_options.jsx_factory_from_config {
             // When jsxFragmentFactory is configured, mark it as referenced
             // so unused-import checking (TS6192) doesn't flag it.
             if self.ctx.compiler_options.jsx_fragment_factory_from_config {
@@ -359,10 +432,15 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2879: check that the fragment factory root identifier is in scope.
-        // Default fragment factory is React.Fragment, so root is "React" (or
-        // whatever reactNamespace is configured to).
-        let factory = self.ctx.compiler_options.jsx_factory.clone();
-        let root_ident_owned = factory.split('.').next().unwrap_or(&factory).to_string();
+        // Fragment scope uses @jsxFrag if present, otherwise jsxFragmentFactory
+        // (default React.Fragment).
+        let fragment_factory = pragma_fragment_factory
+            .unwrap_or_else(|| self.ctx.compiler_options.jsx_fragment_factory.clone());
+        let root_ident_owned = fragment_factory
+            .split('.')
+            .next()
+            .unwrap_or(&fragment_factory)
+            .to_string();
         if root_ident_owned.is_empty() {
             return;
         }
@@ -438,7 +516,12 @@ impl<'a> CheckerState<'a> {
         // tsc 6.0 skips scope checking when jsxFactory is explicitly set.
         // However, we still need to mark the factory symbol as referenced
         // so that unused-import checking (TS6192) doesn't flag it.
-        if self.ctx.compiler_options.jsx_factory_from_config {
+        let is_fragment = self
+            .ctx
+            .arena
+            .get(node_idx)
+            .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::JSX_FRAGMENT);
+        if self.ctx.compiler_options.jsx_factory_from_config && !is_fragment {
             self.mark_jsx_name_as_referenced(
                 &self.ctx.compiler_options.jsx_factory.clone(),
                 node_idx,
@@ -453,9 +536,19 @@ impl<'a> CheckerState<'a> {
             .source_files
             .first()
             .and_then(|sf| extract_jsx_pragma(&sf.text));
+        let pragma_fragment_factory = self
+            .ctx
+            .arena
+            .source_files
+            .first()
+            .and_then(|sf| extract_jsx_frag_pragma(&sf.text));
 
-        let factory =
-            pragma_factory.unwrap_or_else(|| self.ctx.compiler_options.jsx_factory.clone());
+        let factory = if is_fragment {
+            pragma_fragment_factory
+                .unwrap_or_else(|| self.ctx.compiler_options.jsx_fragment_factory.clone())
+        } else {
+            pragma_factory.unwrap_or_else(|| self.ctx.compiler_options.jsx_factory.clone())
+        };
         let root_ident = factory.split('.').next().unwrap_or(&factory);
 
         if root_ident.is_empty() {

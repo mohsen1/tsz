@@ -888,6 +888,19 @@ impl<'a> CheckerState<'a> {
                     })
             };
 
+            if is_local
+                && self.is_js_file()
+                && self.ctx.should_resolve_jsdoc()
+                && self.is_local_symbol_type_only(&name_str)
+            {
+                self.error_at_node(
+                    name_idx,
+                    crate::diagnostics::diagnostic_messages::TYPES_CANNOT_APPEAR_IN_EXPORT_DECLARATIONS_IN_JAVASCRIPT_FILES,
+                    crate::diagnostics::diagnostic_codes::TYPES_CANNOT_APPEAR_IN_EXPORT_DECLARATIONS_IN_JAVASCRIPT_FILES,
+                );
+                continue;
+            }
+
             if !is_local {
                 // Symbol is not local to the current module/file.
                 // Distinguish between accessible-but-not-local (TS2661) and truly missing (TS2304).
@@ -921,6 +934,82 @@ impl<'a> CheckerState<'a> {
                         crate::query_boundaries::name_resolution::NameLookupKind::Value,
                     );
                 }
+            }
+        }
+    }
+
+    /// TS18043 for re-exports in JavaScript files:
+    /// `export { T } from "mod"` where `T` resolves to a type-only export.
+    pub(crate) fn check_js_type_only_reexports(
+        &mut self,
+        named_exports_idx: NodeIndex,
+        module_specifier_idx: NodeIndex,
+    ) {
+        use tsz_scanner::SyntaxKind;
+
+        if !self.is_js_file() || !self.ctx.should_resolve_jsdoc() || !module_specifier_idx.is_some()
+        {
+            return;
+        }
+
+        let module_specifier = self
+            .ctx
+            .arena
+            .get(module_specifier_idx)
+            .and_then(|n| self.ctx.arena.get_literal(n))
+            .map(|l| l.text.clone());
+        let Some(module_specifier) = module_specifier else {
+            return;
+        };
+
+        let Some(clause_node) = self.ctx.arena.get(named_exports_idx) else {
+            return;
+        };
+        let Some(named_exports) = self.ctx.arena.get_named_imports(clause_node) else {
+            return;
+        };
+
+        for &specifier_idx in &named_exports.elements.nodes {
+            let Some(spec_node) = self.ctx.arena.get(specifier_idx) else {
+                continue;
+            };
+            let Some(specifier) = self.ctx.arena.get_specifier(spec_node) else {
+                continue;
+            };
+            if specifier.is_type_only {
+                continue;
+            }
+
+            let source_name_idx = if specifier.property_name.is_some() {
+                specifier.property_name
+            } else {
+                specifier.name
+            };
+            if !source_name_idx.is_some() {
+                continue;
+            }
+
+            let source_name_is_string_literal = self
+                .ctx
+                .arena
+                .get(source_name_idx)
+                .is_some_and(|name_node| name_node.kind == SyntaxKind::StringLiteral as u16);
+            if source_name_is_string_literal {
+                continue;
+            }
+
+            let Some(source_name) = self.get_identifier_text_from_idx(source_name_idx) else {
+                continue;
+            };
+
+            if self.is_import_specifier_type_only(&module_specifier, &source_name)
+                || self.is_export_type_only_across_binders(&module_specifier, &source_name)
+            {
+                self.error_at_node(
+                    source_name_idx,
+                    crate::diagnostics::diagnostic_messages::TYPES_CANNOT_APPEAR_IN_EXPORT_DECLARATIONS_IN_JAVASCRIPT_FILES,
+                    crate::diagnostics::diagnostic_codes::TYPES_CANNOT_APPEAR_IN_EXPORT_DECLARATIONS_IN_JAVASCRIPT_FILES,
+                );
             }
         }
     }

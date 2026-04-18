@@ -269,6 +269,25 @@ class Derived extends Base {
 }
 
 #[test]
+fn test_js_plain_function_this_read_reports_ts2339() {
+    let source = r#"
+function toString() {
+    this.yadda;
+    this.someValue = "";
+}
+"#;
+    let diagnostics = check_js(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, msg)| *code == 2339 && msg.contains("'yadda'"))
+        .collect();
+    assert!(
+        !ts2339.is_empty(),
+        "Expected TS2339 for unknown `this.yadda` in JS function, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_js_static_block_super_expando_reports_ts2565() {
     let source = r#"
 class C {

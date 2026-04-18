@@ -415,7 +415,12 @@ impl<'a> CheckerState<'a> {
     /// TS2694 error messages.
     fn build_qualified_symbol_name(&self, sym_id: SymbolId, symbol: &tsz_binder::Symbol) -> String {
         let lib_binders = self.get_lib_binders();
-        let mut parts = vec![symbol.escaped_name.clone()];
+        let mut saw_export_equals = symbol.escaped_name == "export=";
+        let mut parts = if saw_export_equals {
+            Vec::new()
+        } else {
+            vec![symbol.escaped_name.clone()]
+        };
         let mut current = symbol.parent;
         let mut root_symbol = symbol;
 
@@ -436,7 +441,11 @@ impl<'a> CheckerState<'a> {
                     if self.is_string_literal_module_symbol_for_display(p) {
                         break;
                     }
-                    parts.push(p.escaped_name.clone());
+                    if p.escaped_name == "export=" {
+                        saw_export_equals = true;
+                    } else {
+                        parts.push(p.escaped_name.clone());
+                    }
                     root_symbol = p;
                     // Stop after adding this symbol if its parent is the root
                     if p.parent == SymbolId::NONE {
@@ -451,10 +460,21 @@ impl<'a> CheckerState<'a> {
         let qualified_name = if parts.len() > 1 {
             parts.reverse();
             parts.join(".")
-        } else {
+        } else if parts.len() == 1 {
             // Just the simple name - use the original symbol's escaped_name
             let _ = sym_id; // suppress unused warning
-            symbol.escaped_name.clone()
+            parts[0].clone()
+        } else {
+            String::new()
+        };
+        let qualified_name = if saw_export_equals {
+            if qualified_name.is_empty() {
+                String::from("export=")
+            } else {
+                format!("{qualified_name}.export=")
+            }
+        } else {
+            qualified_name
         };
 
         // External-module qualification only applies when the outermost namespace

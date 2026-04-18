@@ -615,7 +615,8 @@ impl<'a> CheckerState<'a> {
                         self.ctx.binder.node_symbols.get(&decl_idx.0) == Some(&sym_id)
                     });
 
-                    if import_has_value && is_value && has_local_declaration {
+                    let is_type_alias = (sym.flags & symbol_flags::TYPE_ALIAS) != 0;
+                    if import_has_value && (is_value || is_type_alias) && has_local_declaration {
                         let message = format_message(
                             diagnostic_messages::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
                             &[name],
@@ -1647,7 +1648,10 @@ impl<'a> CheckerState<'a> {
             | syntax_kind_ext::CLASS_DECLARATION
             | syntax_kind_ext::ENUM_DECLARATION
             | syntax_kind_ext::VARIABLE_DECLARATION
-            | syntax_kind_ext::VARIABLE_STATEMENT => true,
+            | syntax_kind_ext::VARIABLE_STATEMENT
+            // Type aliases occupy the type namespace and conflict with import-equals.
+            // tsc TS2440 fires for type aliases even though they have no runtime value.
+            | syntax_kind_ext::TYPE_ALIAS_DECLARATION => true,
             syntax_kind_ext::MODULE_DECLARATION => {
                 self.is_namespace_declaration_instantiated(decl_idx)
             }

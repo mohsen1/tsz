@@ -18,6 +18,39 @@ const fn checker_resolution_mode_override(
     }
 }
 
+fn checker_lookup_resolution_mode(
+    module_resolver: &mut ModuleResolver,
+    options: &ResolvedCompilerOptions,
+    file_path: &Path,
+    import_kind: tsz::module_resolver::ImportKind,
+    resolution_mode_override: Option<tsz::module_resolver::ImportingModuleKind>,
+) -> Option<tsz::checker::context::ResolutionModeOverride> {
+    use tsz::module_resolver::{ImportKind, ImportingModuleKind, ModuleExtension};
+
+    let mode = resolution_mode_override.unwrap_or_else(|| match options.checker.module {
+        // Mirror ModuleResolver::resolve_with_kind_and_module_kind() so request-keyed
+        // checker maps line up with the actual lookup mode used by the resolver.
+        ModuleKind::Preserve => {
+            let extension = ModuleExtension::from_path(file_path);
+            if extension.forces_esm() {
+                ImportingModuleKind::Esm
+            } else if extension.forces_cjs() {
+                ImportingModuleKind::CommonJs
+            } else {
+                match import_kind {
+                    ImportKind::EsmImport | ImportKind::DynamicImport | ImportKind::EsmReExport => {
+                        ImportingModuleKind::Esm
+                    }
+                    ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
+                }
+            }
+        }
+        _ => module_resolver.get_importing_module_kind(file_path),
+    });
+
+    checker_resolution_mode_override(Some(mode))
+}
+
 pub(super) struct CollectDiagnosticsResult {
     pub diagnostics: Vec<Diagnostic>,
     pub request_cache_counters: RequestCacheCounters,
@@ -654,6 +687,13 @@ pub(super) fn collect_diagnostics(
                     no_implicit_any: options.checker.no_implicit_any,
                     implied_classic_resolution: options.checker.implied_classic_resolution,
                 };
+                let request_mode_key = checker_lookup_resolution_mode(
+                    &mut module_resolver,
+                    options,
+                    file_path,
+                    *import_kind,
+                    *resolution_mode_override,
+                );
 
                 let result = module_resolver.lookup(
                     &request,
@@ -708,11 +748,7 @@ pub(super) fn collect_diagnostics(
                         if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
                             resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
                             resolved_module_request_paths.insert(
-                                (
-                                    file_idx,
-                                    specifier.clone(),
-                                    checker_resolution_mode_override(*resolution_mode_override),
-                                ),
+                                (file_idx, specifier.clone(), request_mode_key),
                                 target_idx,
                             );
                         }
@@ -731,11 +767,7 @@ pub(super) fn collect_diagnostics(
                         },
                     );
                     resolved_module_request_errors.insert(
-                        (
-                            file_idx,
-                            specifier.clone(),
-                            checker_resolution_mode_override(*resolution_mode_override),
-                        ),
+                        (file_idx, specifier.clone(), request_mode_key),
                         tsz::checker::context::ResolutionError {
                             code: error.code,
                             message: error.message.clone(),
@@ -3255,6 +3287,102 @@ let x2: string = f;
         assert!(
             f_diags.iter().all(|diag| diag.code != 2339),
             "did not expect follow-on TS2339 once TS1361 fired, got: {f_diags:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_collect_diagnostics_bundler_dual_package_modes_do_not_emit_ts2305() {
+        let dir = std::env::temp_dir().join("tsz_check_bundler_dual_package_modes");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("node_modules/dual")).unwrap();
+
+        let package_json_path = dir.join("node_modules/dual/package.json");
+        let index_js_path = dir.join("node_modules/dual/index.js");
+        let index_d_ts_path = dir.join("node_modules/dual/index.d.ts");
+        let index_cjs_path = dir.join("node_modules/dual/index.cjs");
+        let index_d_cts_path = dir.join("node_modules/dual/index.d.cts");
+        let main_ts_path = dir.join("main.ts");
+        let main_mts_path = dir.join("main.mts");
+        let main_cts_path = dir.join("main.cts");
+
+        fs::write(
+            &package_json_path,
+            r#"{
+  "name": "dual",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.cjs",
+  "types": "index.d.cts",
+  "exports": {
+    ".": {
+      "import": "./index.js",
+      "require": "./index.cjs"
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+        fs::write(&index_js_path, "export const esm = 0;\n").unwrap();
+        fs::write(&index_d_ts_path, "export const esm: number;\n").unwrap();
+        fs::write(&index_cjs_path, "exports.cjs = 0;\n").unwrap();
+        fs::write(&index_d_cts_path, "export const cjs: number;\n").unwrap();
+        fs::write(&main_ts_path, "import { esm, cjs } from \"dual\";\n").unwrap();
+        fs::write(&main_mts_path, "import { esm, cjs } from \"dual\";\n").unwrap();
+        fs::write(&main_cts_path, "import { esm, cjs } from \"dual\";\n").unwrap();
+
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(crate::config::ModuleResolutionKind::Bundler),
+            resolve_package_json_exports: true,
+            module_suffixes: vec![String::new()],
+            printer: tsz::emitter::PrinterOptions {
+                module: ModuleKind::Preserve,
+                target: tsz_common::common::ScriptTarget::ES2015,
+                ..Default::default()
+            },
+            checker: tsz::checker::context::CheckerOptions {
+                module: ModuleKind::Preserve,
+                target: tsz_common::common::ScriptTarget::ES2015,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (
+                    main_ts_path.to_str().unwrap(),
+                    "import { esm, cjs } from \"dual\";\n",
+                ),
+                (
+                    main_mts_path.to_str().unwrap(),
+                    "import { esm, cjs } from \"dual\";\n",
+                ),
+                (
+                    main_cts_path.to_str().unwrap(),
+                    "import { esm, cjs } from \"dual\";\n",
+                ),
+            ],
+            &options,
+            &dir,
+        );
+
+        let import_diags: Vec<_> = diagnostics
+            .iter()
+            .filter(|diag| {
+                let file = Path::new(&diag.file);
+                (file == main_ts_path.as_path()
+                    || file == main_mts_path.as_path()
+                    || file == main_cts_path.as_path())
+                    && diag.code != 2318
+            })
+            .collect();
+
+        assert!(
+            import_diags.iter().all(|diag| diag.code != 2305),
+            "expected no TS2305 for bundler dual-package import/require mode selection, got: {import_diags:?}"
         );
 
         let _ = fs::remove_dir_all(&dir);
