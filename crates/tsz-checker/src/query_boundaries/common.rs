@@ -607,6 +607,14 @@ pub(crate) fn enum_def_id(
     tsz_solver::type_queries::get_enum_def_id(db, type_id)
 }
 
+/// Check if a type is a plain object type (properties only, no index signatures).
+///
+/// Returns `true` for `TypeData::Object` but not `TypeData::ObjectWithIndex`.
+/// Used to choose between `factory.object()` and `factory.object_with_index()`.
+pub(crate) fn is_plain_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::object_shape_id(db, type_id).is_some()
+}
+
 /// Get application info (base type + type arguments) for a type application.
 pub(crate) fn application_info(
     db: &dyn TypeDatabase,
