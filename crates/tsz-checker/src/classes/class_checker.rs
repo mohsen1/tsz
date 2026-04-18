@@ -459,7 +459,7 @@ impl<'a> CheckerState<'a> {
             None,
             base_class_name,
             derived_class_name,
-            base_member_names,
+            base_instance_member_names,
             no_implicit_override,
         );
 

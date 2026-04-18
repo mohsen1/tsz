@@ -398,6 +398,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     .get(clause_idx)
                     .is_some_and(|n| n.kind == syntax_kind_ext::NAMED_EXPORTS)
                 {
+                    if export_decl.module_specifier.is_some() {
+                        self.check_js_type_only_reexports(clause_idx, export_decl.module_specifier);
+                    }
+
                     // TS2207: Check for specifier-level `type` modifier when
                     // `export type { ... }` is used at the statement level.
                     if export_decl.is_type_only {
