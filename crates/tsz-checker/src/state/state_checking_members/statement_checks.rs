@@ -3,6 +3,7 @@
 use crate::state::CheckerState;
 use crate::statements::StatementCheckCallbacks;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> CheckerState<'a> {
@@ -226,10 +227,74 @@ impl<'a> CheckerState<'a> {
         }
 
         // Type-check the with-expression for name resolution (TS2304).
-        if let Some(node) = self.ctx.arena.get(stmt_idx)
-            && let Some(with_data) = self.ctx.arena.get_with_statement(node)
+        // Also walk the body to surface TS1101 on nested `with` statements.
+        // tsc's checker doesn't recurse into `with` bodies, so TS1300 and TS2410
+        // remain anchored at the outermost `with`. TS1101, however, comes from the
+        // binder's strict-mode pass which visits every `with` node, so we need a
+        // dedicated walk here to keep parity.
+        let body_idx = self
+            .ctx
+            .arena
+            .get(stmt_idx)
+            .and_then(|node| self.ctx.arena.get_with_statement(node))
+            .map(|with_data| {
+                self.get_type_of_node(with_data.expression);
+                with_data.then_statement
+            });
+        if let Some(body_idx) = body_idx
+            && !self.has_syntax_parse_errors()
         {
-            self.get_type_of_node(with_data.expression);
+            self.report_strict_mode_with_in_subtree(body_idx);
+        }
+    }
+
+    /// Walk `root_idx` and its descendants emitting TS1101 for every nested
+    /// `with` statement that sits in a strict-mode context. The walk stops at
+    /// function/class boundaries because those introduce their own strict-mode
+    /// scope and are visited via the normal statement dispatcher.
+    fn report_strict_mode_with_in_subtree(&mut self, root_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if root_idx.is_none() {
+            return;
+        }
+
+        let mut stack: Vec<NodeIndex> = vec![root_idx];
+        while let Some(node_idx) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                continue;
+            };
+
+            // Don't cross function-like or class boundaries; they get their own
+            // strict-mode pass via the normal dispatcher.
+            if matches!(
+                node.kind,
+                syntax_kind_ext::FUNCTION_DECLARATION
+                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                    | syntax_kind_ext::ARROW_FUNCTION
+                    | syntax_kind_ext::METHOD_DECLARATION
+                    | syntax_kind_ext::CONSTRUCTOR
+                    | syntax_kind_ext::GET_ACCESSOR
+                    | syntax_kind_ext::SET_ACCESSOR
+                    | syntax_kind_ext::CLASS_DECLARATION
+                    | syntax_kind_ext::CLASS_EXPRESSION
+                    | syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+                    | syntax_kind_ext::MODULE_DECLARATION
+            ) {
+                continue;
+            }
+
+            if node.kind == syntax_kind_ext::WITH_STATEMENT
+                && self.is_with_statement_in_strict_mode_context(node_idx)
+            {
+                self.error_at_node(
+                    node_idx,
+                    diagnostic_messages::WITH_STATEMENTS_ARE_NOT_ALLOWED_IN_STRICT_MODE,
+                    diagnostic_codes::WITH_STATEMENTS_ARE_NOT_ALLOWED_IN_STRICT_MODE,
+                );
+            }
+
+            stack.extend(self.ctx.arena.get_children(node_idx));
         }
     }
 
