@@ -40,11 +40,10 @@ impl<'a> TypeFormatter<'a> {
         let mut head_count = 0usize;
         let mut used_chars = 0usize;
 
-        for idx in 0..(total - 1) {
+        for (idx, part) in parts.iter().enumerate().take(total - 1) {
             if head_count >= MAX_HEAD_PARTS {
                 break;
             }
-            let part = &parts[idx];
             let part_cost = if head_count == 0 {
                 part.len()
             } else {

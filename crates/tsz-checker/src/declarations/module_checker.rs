@@ -877,7 +877,8 @@ impl<'a> CheckerState<'a> {
             let name_str = self
                 .get_identifier_text_from_idx(name_idx)
                 .unwrap_or_else(|| String::from("unknown"));
-            let has_local_jsdoc_typedef = self.is_js_file()
+            let has_local_jsdoc_typedef = !inside_ambient_module
+                && self.is_js_file()
                 && self.ctx.should_resolve_jsdoc()
                 && self.file_has_jsdoc_typedef_named(self.ctx.current_file_idx, &name_str);
 
@@ -909,7 +910,7 @@ impl<'a> CheckerState<'a> {
                 && self.is_js_file()
                 && self.ctx.should_resolve_jsdoc()
                 && !enclosing_export_is_type_only
-                && self.is_local_symbol_type_only(&name_str)
+                && (self.is_local_symbol_type_only(&name_str) || has_local_jsdoc_typedef)
             {
                 self.error_at_node(
                     name_idx,
@@ -1884,7 +1885,10 @@ impl<'a> CheckerState<'a> {
             | symbol_flags::ENUM_MEMBER
             | symbol_flags::VALUE_MODULE;
 
-        if self.file_has_jsdoc_typedef_named(self.ctx.current_file_idx, name) {
+        if self.is_js_file()
+            && self.ctx.should_resolve_jsdoc()
+            && self.file_has_jsdoc_typedef_named(self.ctx.current_file_idx, name)
+        {
             return true;
         }
 

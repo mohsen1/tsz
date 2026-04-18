@@ -813,6 +813,10 @@ impl<'a> CheckerState<'a> {
         let got = type_args_list.nodes.len();
         let type_arg_error_anchor = type_args_list.nodes.first().copied().unwrap_or(call_idx);
 
+        if shape.construct_signatures.is_empty() {
+            return;
+        }
+
         // For callable types with overloaded construct signatures, prefer
         // a signature whose type parameter arity matches the provided args.
         let type_params = {

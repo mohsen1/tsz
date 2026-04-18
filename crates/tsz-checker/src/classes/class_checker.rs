@@ -280,10 +280,11 @@ impl<'a> CheckerState<'a> {
         base_instance_member_names: &rustc_hash::FxHashSet<String>,
         base_static_member_names: &rustc_hash::FxHashSet<String>,
         no_implicit_override: bool,
-        base_instance_type: Option<TypeId>,
-        base_static_type: Option<TypeId>,
+        base_types: (Option<TypeId>, Option<TypeId>),
     ) {
         use crate::query_boundaries::class::build_own_member_summary;
+
+        let (base_instance_type, base_static_type) = base_types;
 
         let (_derived_type_params, derived_type_param_updates) =
             self.push_type_parameters(&class_data.type_parameters);
@@ -396,14 +397,7 @@ impl<'a> CheckerState<'a> {
                         let resolved_member_type = self.resolve_type_query_type(member_type);
                         let resolved_base_type = self.resolve_type_query_type(base_type);
 
-                        let should_report = if info.is_method {
-                            should_report_member_type_mismatch_bivariant(
-                                self,
-                                resolved_member_type,
-                                resolved_base_type,
-                                info.name_idx,
-                            )
-                        } else if info.is_static {
+                        let should_report = if info.is_method || info.is_static {
                             should_report_member_type_mismatch_bivariant(
                                 self,
                                 resolved_member_type,
@@ -1293,8 +1287,7 @@ impl<'a> CheckerState<'a> {
                         &base_instance_member_names,
                         &base_static_member_names,
                         no_implicit_override,
-                        Some(instance_type),
-                        base_static_type,
+                        (Some(instance_type), base_static_type),
                     );
                     return;
                 }
@@ -1354,8 +1347,7 @@ impl<'a> CheckerState<'a> {
                         &base_instance_member_names,
                         &base_static_member_names,
                         no_implicit_override,
-                        Some(instance_type),
-                        base_static_type,
+                        (Some(instance_type), base_static_type),
                     );
                     return;
                 }

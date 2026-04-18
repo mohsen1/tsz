@@ -7,6 +7,9 @@ use super::super::object_literal_context::ContextualPropertyPresence;
 use crate::context::TypingRequest;
 use crate::context::speculation::DiagnosticSpeculationGuard;
 use crate::state::CheckerState;
+use crate::symbols_domain::name_text::{
+    is_zero_arg_call_like_expr_in_arena, simple_computed_name_expr_text_in_arena,
+};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -47,63 +50,11 @@ impl<'a> CheckerState<'a> {
     }
 
     fn simple_computed_name_expr_text_for_duplicates(&self, expr_idx: NodeIndex) -> Option<String> {
-        let expr_node = self.ctx.arena.get(expr_idx)?;
-        match expr_node.kind {
-            k if k == tsz_scanner::SyntaxKind::Identifier as u16 => self
-                .ctx
-                .arena
-                .get_identifier(expr_node)
-                .map(|ident| ident.escaped_text.clone()),
-            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
-                let access = self.ctx.arena.get_access_expr(expr_node)?;
-                let left = self.simple_computed_name_expr_text_for_duplicates(access.expression)?;
-                let right = self
-                    .ctx
-                    .arena
-                    .get_identifier_text(access.name_or_argument)?;
-                Some(format!("{left}.{right}"))
-            }
-            k if k == syntax_kind_ext::CALL_EXPRESSION => {
-                let call = self.ctx.arena.get_call_expr(expr_node)?;
-                let callee = self.simple_computed_name_expr_text_for_duplicates(call.expression)?;
-                let args = call.arguments.as_ref()?;
-                if !args.nodes.is_empty() {
-                    return None;
-                }
-                Some(format!("{callee}()"))
-            }
-            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                let paren = self.ctx.arena.get_parenthesized(expr_node)?;
-                self.simple_computed_name_expr_text_for_duplicates(paren.expression)
-            }
-            _ => None,
-        }
+        simple_computed_name_expr_text_in_arena(self.ctx.arena, expr_idx)
     }
 
     fn is_zero_arg_call_like_expr_for_duplicates(&self, expr_idx: NodeIndex) -> bool {
-        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
-            return false;
-        };
-        match expr_node.kind {
-            k if k == syntax_kind_ext::CALL_EXPRESSION => {
-                self.ctx.arena.get_call_expr(expr_node).is_some_and(|call| {
-                    call.arguments
-                        .as_ref()
-                        .is_some_and(|args| args.nodes.is_empty())
-                        && self
-                            .simple_computed_name_expr_text_for_duplicates(call.expression)
-                            .is_some()
-                })
-            }
-            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => self
-                .ctx
-                .arena
-                .get_parenthesized(expr_node)
-                .is_some_and(|paren| {
-                    self.is_zero_arg_call_like_expr_for_duplicates(paren.expression)
-                }),
-            _ => false,
-        }
+        is_zero_arg_call_like_expr_in_arena(self.ctx.arena, expr_idx)
     }
 
     fn simple_computed_call_name_for_duplicates(&self, name_idx: NodeIndex) -> Option<String> {

@@ -74,7 +74,7 @@ impl<'a> CheckerState<'a> {
 
         // For anonymous function expressions (e.g., `exports.A = function() { this.x = 1; }`),
         // no symbol may exist. Fall back to using the expression node directly as a function.
-        let (func, func_name_str) = if let Some(sym_id) = sym_id {
+        let (func, func_name_str, _func_node_idx) = if let Some(sym_id) = sym_id {
             let symbol = self.ctx.binder.get_symbol(sym_id)?;
             let value_decl = self
                 .checked_js_constructor_value_declaration(
@@ -99,7 +99,7 @@ impl<'a> CheckerState<'a> {
                     .get(func.name)
                     .and_then(|n| self.ctx.arena.get_identifier(n))
                     .map(|ident| ident.escaped_text.clone());
-                (func, func_name)
+                (func, func_name, value_decl)
             } else if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
                 let init_node = self.ctx.arena.get(var_decl.initializer)?;
                 if init_node.kind != tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION {
@@ -119,7 +119,7 @@ impl<'a> CheckerState<'a> {
                             .and_then(|n| self.ctx.arena.get_identifier(n))
                             .map(|ident| ident.escaped_text.clone())
                     });
-                (func, func_name)
+                (func, func_name, var_decl.initializer)
             } else {
                 return None;
             }
@@ -139,7 +139,7 @@ impl<'a> CheckerState<'a> {
                         .and_then(|n| self.ctx.arena.get_identifier(n))
                 })
                 .map(|ident| ident.escaped_text.clone());
-            (func, func_name)
+            (func, func_name, expr_idx)
         } else {
             return None;
         };
@@ -148,47 +148,92 @@ impl<'a> CheckerState<'a> {
         if body_idx.is_none() {
             return None;
         }
+        let func_node_idx = self.ctx.arena.get_extended(body_idx).map(|ext| ext.parent);
 
-        // Check if the constructor function has @template type params
+        // Build effective template/parameter data for JS generic constructors.
         let func_shape =
             tsz_solver::type_queries::get_function_shape(self.ctx.types, constructor_type);
-        let is_generic = func_shape
+        let mut effective_type_params: Vec<tsz_solver::TypeParamInfo> = func_shape
             .as_ref()
-            .is_some_and(|s| !s.type_params.is_empty());
+            .map(|shape| shape.type_params.clone())
+            .unwrap_or_default();
+        let mut effective_param_types: Vec<TypeId> = func_shape
+            .as_ref()
+            .map(|shape| shape.params.iter().map(|param| param.type_id).collect())
+            .unwrap_or_default();
+        let mut fallback_param_type_map: Option<FxHashMap<String, TypeId>> = None;
+
+        if effective_type_params.is_empty() || effective_param_types.is_empty() {
+            let fallback = self.js_class_body_param_type_map(body_idx);
+
+            if effective_param_types.is_empty() {
+                effective_param_types = func
+                    .parameters
+                    .nodes
+                    .iter()
+                    .map(|&param_idx| {
+                        self.ctx
+                            .arena
+                            .get(param_idx)
+                            .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                            .and_then(|param| self.ctx.arena.get(param.name))
+                            .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                            .and_then(|ident| fallback.get(&ident.escaped_text).copied())
+                            .unwrap_or(TypeId::ANY)
+                    })
+                    .collect();
+            }
+
+            if effective_type_params.is_empty() {
+                let mut seen = rustc_hash::FxHashSet::default();
+                for &param_type in fallback.values() {
+                    if let Some(tp_info) = tsz_solver::type_queries::get_type_parameter_info(
+                        self.ctx.types,
+                        param_type,
+                    ) && seen.insert(tp_info.name)
+                    {
+                        effective_type_params.push(tp_info);
+                    }
+                }
+            }
+
+            fallback_param_type_map = Some(fallback);
+        }
+
+        let is_generic = !effective_type_params.is_empty();
 
         let mut properties: FxHashMap<tsz_common::interner::Atom, PropertyInfo> =
             FxHashMap::default();
+        let mut scope_restore: Vec<(String, Option<TypeId>)> = Vec::new();
 
         if is_generic {
-            // For generic constructor functions, we build the instance type using
-            // the function shape's correctly-resolved parameter types (which were
-            // created during get_type_of_function when @template was in scope).
             // We cannot use collect_js_constructor_this_properties here because
             // get_type_of_node resolves types in the call site context, not the
             // function declaration context.
-            let shape = func_shape
-                .as_ref()
-                .expect("is_generic guard ensures func_shape is Some");
-
-            // Build param name → type map from the function shape
-            let param_type_map: FxHashMap<String, TypeId> = func
-                .parameters
-                .nodes
-                .iter()
-                .zip(shape.params.iter())
-                .filter_map(|(&param_idx, param_info)| {
-                    let param_node = self.ctx.arena.get(param_idx)?;
-                    let param_data = self.ctx.arena.get_parameter(param_node)?;
-                    let name_node = self.ctx.arena.get(param_data.name)?;
-                    let ident = self.ctx.arena.get_identifier(name_node)?;
-                    Some((ident.escaped_text.clone(), param_info.type_id))
-                })
-                .collect();
+            let param_type_map: FxHashMap<String, TypeId> = if let Some(shape) = func_shape.as_ref()
+                && !shape.params.is_empty()
+            {
+                func.parameters
+                    .nodes
+                    .iter()
+                    .zip(shape.params.iter())
+                    .filter_map(|(&param_idx, param_info)| {
+                        let param_node = self.ctx.arena.get(param_idx)?;
+                        let param_data = self.ctx.arena.get_parameter(param_node)?;
+                        let name_node = self.ctx.arena.get(param_data.name)?;
+                        let ident = self.ctx.arena.get_identifier(name_node)?;
+                        Some((ident.escaped_text.clone(), param_info.type_id))
+                    })
+                    .collect()
+            } else {
+                fallback_param_type_map
+                    .clone()
+                    .unwrap_or_else(|| self.js_class_body_param_type_map(body_idx))
+            };
 
             // Push type params into scope for @type resolution
-            let mut scope_restore: Vec<(String, Option<TypeId>)> = Vec::new();
             let factory = self.ctx.types.factory();
-            for tp in &shape.type_params {
+            for tp in &effective_type_params {
                 let name = self.ctx.types.resolve_atom(tp.name);
                 let ty = factory.type_param(*tp);
                 let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
@@ -202,18 +247,69 @@ impl<'a> CheckerState<'a> {
                 &mut properties,
                 sym_id,
             );
+        } else {
+            if !arg_types.is_empty()
+                && let Some(func_node_idx) = func_node_idx
+                && let Some(jsdoc) = self.get_jsdoc_for_function(func_node_idx)
+            {
+                let template_names: rustc_hash::FxHashSet<String> =
+                    Self::jsdoc_template_type_params(&jsdoc)
+                        .into_iter()
+                        .map(|(name, _)| name)
+                        .collect();
+                if !template_names.is_empty() {
+                    let jsdoc_param_names: Vec<String> = Self::extract_jsdoc_param_names(&jsdoc)
+                        .into_iter()
+                        .map(|(name, _)| name)
+                        .collect();
+                    let mut inserted_templates = rustc_hash::FxHashSet::default();
 
-            // Restore type_parameter_scope
-            for (name, previous) in scope_restore {
-                if let Some(prev) = previous {
-                    self.ctx.type_parameter_scope.insert(name, prev);
-                } else {
-                    self.ctx.type_parameter_scope.remove(&name);
+                    for (pi, &param_idx) in func.parameters.nodes.iter().enumerate() {
+                        let Some(&arg_ty) = arg_types.get(pi) else {
+                            continue;
+                        };
+                        let Some(param) = self.ctx.arena.get_parameter_at(param_idx) else {
+                            continue;
+                        };
+                        let pname =
+                            self.effective_jsdoc_param_name(param.name, &jsdoc_param_names, pi);
+                        let Some(type_expr) = Self::extract_jsdoc_param_type_string(&jsdoc, &pname)
+                        else {
+                            continue;
+                        };
+                        let normalized = type_expr
+                            .trim()
+                            .trim_end_matches('=')
+                            .trim_start_matches("...")
+                            .trim()
+                            .to_string();
+                        if !template_names.contains(&normalized)
+                            || !inserted_templates.insert(normalized.clone())
+                        {
+                            continue;
+                        }
+
+                        let widened_arg =
+                            crate::query_boundaries::common::widen_type(self.ctx.types, arg_ty);
+                        let previous = self
+                            .ctx
+                            .type_parameter_scope
+                            .insert(normalized.clone(), widened_arg);
+                        scope_restore.push((normalized, previous));
+                    }
                 }
             }
-        } else {
+
             // Non-generic: use standard property collection
             self.collect_js_constructor_this_properties(body_idx, &mut properties, sym_id, true);
+        }
+
+        for (name, previous) in scope_restore {
+            if let Some(prev) = previous {
+                self.ctx.type_parameter_scope.insert(name, prev);
+            } else {
+                self.ctx.type_parameter_scope.remove(&name);
+            }
         }
 
         // Also scan Foo.prototype.m = ... patterns for:
@@ -306,18 +402,15 @@ impl<'a> CheckerState<'a> {
         let factory = self.ctx.types.factory();
         let instance_type = factory.object(props);
 
-        // If the constructor function has @template type params, instantiate the
+        // If the constructor function has template type params, instantiate the
         // instance type by inferring type arguments from the actual call arguments.
-        if let Some(ref shape) = func_shape
-            && !shape.type_params.is_empty()
-            && !arg_types.is_empty()
-        {
-            let mut type_args = Vec::with_capacity(shape.type_params.len());
-            for tp in &shape.type_params {
+        if !effective_type_params.is_empty() && !arg_types.is_empty() {
+            let mut type_args = Vec::with_capacity(effective_type_params.len());
+            for tp in &effective_type_params {
                 let tp_id = self.ctx.types.factory().type_param(*tp);
                 let mut inferred = None;
-                for (i, param) in shape.params.iter().enumerate() {
-                    if param.type_id == tp_id
+                for (i, &param_type) in effective_param_types.iter().enumerate() {
+                    if param_type == tp_id
                         && let Some(&arg_ty) = arg_types.get(i)
                     {
                         // Widen literal types (e.g., 1 → number)
@@ -334,7 +427,7 @@ impl<'a> CheckerState<'a> {
             let instantiated = tsz_solver::instantiate_generic(
                 self.ctx.types,
                 instance_type,
-                &shape.type_params,
+                &effective_type_params,
                 &type_args,
             );
             return Some(instantiated);
@@ -359,11 +452,10 @@ impl<'a> CheckerState<'a> {
         >,
         parent_sym: Option<tsz_binder::SymbolId>,
     ) {
-        use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
         use tsz_solver::{PropertyInfo, Visibility};
 
-        let stmts: Vec<NodeIndex> = {
+        let top_level_stmts: Vec<NodeIndex> = {
             let Some(body_node) = self.ctx.arena.get(body_idx) else {
                 return;
             };
@@ -372,79 +464,82 @@ impl<'a> CheckerState<'a> {
             };
             block.statements.nodes.clone()
         };
+        let mut stmts = Vec::new();
+        for stmt_idx in top_level_stmts {
+            self.collect_nested_js_this_assignment_statements(stmt_idx, &mut stmts);
+        }
+        let this_aliases = self.collect_this_aliases(&stmts);
 
         for &stmt_idx in &stmts {
-            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-                continue;
-            }
-            let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt_node) else {
-                continue;
-            };
-            let Some(expr_node) = self.ctx.arena.get(expr_stmt.expression) else {
-                continue;
-            };
-
-            // Case 1: `this.prop = rhs` (binary assignment)
-            if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-                if let Some(binary) = self.ctx.arena.get_binary_expr(expr_node)
-                    && binary.operator_token == SyntaxKind::EqualsToken as u16
-                    && let Some((prop_name, rhs_type, report_idx)) = self
-                        .extract_generic_this_assignment(
-                            binary.left,
-                            binary.right,
-                            param_type_map,
-                            stmt_idx,
-                        )
-                {
-                    if rhs_type == TypeId::UNDEFINED
-                        || rhs_type == TypeId::VOID
-                        || self.js_assignment_rhs_is_void_zero(binary.right)
-                    {
-                        if let Some(parent_sym) = parent_sym
-                            && let Some(symbol) = self.ctx.binder.get_symbol(parent_sym)
-                        {
-                            self.error_at_node(
-                                report_idx,
-                                &format!(
-                                    "Property '{prop_name}' does not exist on type '{}'.",
-                                    symbol.escaped_name
-                                ),
-                                crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                            );
-                        }
-                        continue;
-                    }
-                    let name_atom = self.ctx.types.intern_string(&prop_name);
-                    properties.entry(name_atom).or_insert(PropertyInfo {
-                        name: name_atom,
-                        type_id: rhs_type,
-                        write_type: rhs_type,
-                        optional: false,
-                        readonly: false,
-                        is_method: false,
-                        is_class_prototype: false,
-                        visibility: Visibility::Public,
-                        parent_id: parent_sym,
-                        declaration_order: 0,
-                        is_string_named: false,
-                    });
-                }
-                continue;
-            }
-
-            // Case 2: bare `this.prop` with `/** @type {T} */` annotation
-            if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                && let Some(access) = self.ctx.arena.get_access_expr(expr_node)
-                && let Some(obj_node) = self.ctx.arena.get(access.expression)
-                && obj_node.kind == SyntaxKind::ThisKeyword as u16
-                && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
-                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            if let Some((prop_name, rhs_idx, is_private, report_idx)) =
+                self.extract_this_property_assignment(stmt_idx, &this_aliases)
             {
-                let prop_name = ident.escaped_text.clone();
-                // Check for @type annotation on the expression statement
+                if is_private {
+                    continue;
+                }
+
+                let rhs_type = if let Some(jsdoc_type) = self.js_statement_declared_type(stmt_idx) {
+                    jsdoc_type
+                } else {
+                    let Some(rhs_node) = self.ctx.arena.get(rhs_idx) else {
+                        continue;
+                    };
+                    if rhs_node.kind == SyntaxKind::Identifier as u16 {
+                        if let Some(rhs_ident) = self.ctx.arena.get_identifier(rhs_node) {
+                            param_type_map
+                                .get(rhs_ident.escaped_text.as_str())
+                                .copied()
+                                .unwrap_or_else(|| self.get_type_of_node(rhs_idx))
+                        } else {
+                            self.get_type_of_node(rhs_idx)
+                        }
+                    } else {
+                        self.get_type_of_node(rhs_idx)
+                    }
+                };
+
+                if rhs_type == TypeId::UNDEFINED
+                    || rhs_type == TypeId::VOID
+                    || self.js_assignment_rhs_is_void_zero(rhs_idx)
+                {
+                    if let Some(parent_sym) = parent_sym
+                        && let Some(symbol) = self.ctx.binder.get_symbol(parent_sym)
+                    {
+                        self.error_at_node(
+                            report_idx,
+                            &format!(
+                                "Property '{prop_name}' does not exist on type '{}'.",
+                                symbol.escaped_name
+                            ),
+                            crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                        );
+                    }
+                    continue;
+                }
+
+                let name_atom = self.ctx.types.intern_string(&prop_name);
+                properties.entry(name_atom).or_insert(PropertyInfo {
+                    name: name_atom,
+                    type_id: rhs_type,
+                    write_type: rhs_type,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: parent_sym,
+                    declaration_order: 0,
+                    is_string_named: false,
+                });
+                continue;
+            }
+
+            if let Some((prop_name, is_private, _report_idx)) =
+                self.extract_jsdoc_this_property_declaration(stmt_idx, &this_aliases)
+            {
+                if is_private {
+                    continue;
+                }
                 if let Some(jsdoc_type) = self.js_statement_declared_type(stmt_idx) {
                     if jsdoc_type == TypeId::UNDEFINED {
                         continue;
@@ -480,6 +575,7 @@ impl<'a> CheckerState<'a> {
         rhs_idx: NodeIndex,
         param_type_map: &rustc_hash::FxHashMap<String, TypeId>,
         stmt_idx: NodeIndex,
+        this_aliases: &[String],
     ) -> Option<(String, TypeId, NodeIndex)> {
         use tsz_scanner::SyntaxKind;
 
@@ -489,7 +585,21 @@ impl<'a> CheckerState<'a> {
         }
         let access = self.ctx.arena.get_access_expr(lhs_node)?;
         let obj_node = self.ctx.arena.get(access.expression)?;
-        if obj_node.kind != SyntaxKind::ThisKeyword as u16 {
+        let is_this_or_alias = if obj_node.kind == SyntaxKind::ThisKeyword as u16 {
+            true
+        } else if obj_node.kind == SyntaxKind::Identifier as u16 {
+            self.ctx
+                .arena
+                .get_identifier(obj_node)
+                .is_some_and(|ident| {
+                    this_aliases
+                        .iter()
+                        .any(|alias| alias == &ident.escaped_text)
+                })
+        } else {
+            false
+        };
+        if !is_this_or_alias {
             return None;
         }
         let name_node = self.ctx.arena.get(access.name_or_argument)?;

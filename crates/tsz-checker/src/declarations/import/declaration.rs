@@ -817,9 +817,29 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Skip module resolution checks when unresolved-import reporting is disabled.
+        // Most import semantics still need to run for already-resolved modules even when
+        // unresolved-import reporting is disabled (the lightweight multi-file harness
+        // uses this mode). Only skip entirely when the module also can't be resolved.
         if !self.ctx.report_unresolved_imports {
-            return;
+            let resolution_mode =
+                self.requested_resolution_mode(import.attributes, is_type_only_import);
+            let module_resolves = self
+                .ctx
+                .resolve_import_target_from_file_with_mode(
+                    self.ctx.current_file_idx,
+                    module_name,
+                    resolution_mode,
+                )
+                .or_else(|| {
+                    self.ctx
+                        .resolve_import_target_from_file(self.ctx.current_file_idx, module_name)
+                })
+                .or_else(|| self.ctx.resolve_import_target(module_name))
+                .is_some()
+                || self.ctx.binder.module_exports.contains_key(module_name);
+            if !module_resolves {
+                return;
+            }
         }
         // Side-effect imports (bare `import "module"`) are silently ignored when
         // noUncheckedSideEffectImports is disabled (the default). tsc suppresses
@@ -1149,9 +1169,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if module was successfully resolved
-        if let Some(ref resolved) = self.ctx.resolved_modules
-            && resolved.contains(module_name)
-        {
+        if self.resolved_module_set_contains_specifier(module_name) {
             let resolution_mode =
                 self.requested_resolution_mode(import.attributes, is_type_only_import);
             if let Some(target_idx) = self
@@ -1458,6 +1476,14 @@ impl<'a> CheckerState<'a> {
         }
 
         self.ctx.import_resolution_stack.pop();
+    }
+
+    fn resolved_module_set_contains_specifier(&self, module_name: &str) -> bool {
+        self.ctx.resolved_modules.as_ref().is_some_and(|resolved| {
+            crate::module_resolution::module_specifier_candidates(module_name)
+                .iter()
+                .any(|candidate| resolved.contains(candidate))
+        })
     }
 
     // =========================================================================

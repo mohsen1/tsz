@@ -1,6 +1,7 @@
 //! Helpers for computing type aliases in `compute_type_of_symbol`.
 
 use crate::state::CheckerState;
+use crate::symbols_domain::name_text::expression_name_text_in_arena;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_lowering::TypeLowering;
 use tsz_parser::parser::node::{NodeAccess, NodeArena, TypeAliasData};
@@ -309,36 +310,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn cross_arena_expression_name_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
-        let node = arena.get(idx)?;
-
-        if node.kind == SyntaxKind::Identifier as u16 {
-            return arena
-                .get_identifier(node)
-                .map(|ident| ident.escaped_text.clone());
-        }
-
-        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            let qn = arena.get_qualified_name(node)?;
-            let left = Self::cross_arena_expression_name_text(arena, qn.left)?;
-            let right = Self::cross_arena_expression_name_text(arena, qn.right)?;
-            return Some(format!("{left}.{right}"));
-        }
-
-        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            let paren = arena.get_parenthesized(node)?;
-            return Self::cross_arena_expression_name_text(arena, paren.expression);
-        }
-
-        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && let Some(access) = arena.get_access_expr(node)
-        {
-            let left = Self::cross_arena_expression_name_text(arena, access.expression)?;
-            let right_node = arena.get(access.name_or_argument)?;
-            let right = arena.get_identifier(right_node)?;
-            return Some(format!("{left}.{}", right.escaped_text));
-        }
-
-        None
+        expression_name_text_in_arena(arena, idx)
     }
 
     fn cross_arena_symbol_is_unique(&self, sym_id: SymbolId) -> bool {

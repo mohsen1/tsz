@@ -15,14 +15,16 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn file_has_jsdoc_typedef_named(&self, file_idx: usize, export_name: &str) -> bool {
+        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+
         let arena = self.ctx.get_arena_for_file(file_idx as u32);
         arena.source_files.iter().any(|source_file| {
             source_file.comments.iter().any(|comment| {
-                let content = source_file
-                    .text
-                    .get(comment.pos as usize..comment.end as usize)
-                    .unwrap_or("");
-                Self::parse_jsdoc_typedefs(content)
+                if !is_jsdoc_comment(comment, &source_file.text) {
+                    return false;
+                }
+                let content = get_jsdoc_content(comment, &source_file.text);
+                Self::parse_jsdoc_typedefs(&content)
                     .iter()
                     .any(|(name, _)| name == export_name)
             })
@@ -34,21 +36,21 @@ impl<'a> CheckerState<'a> {
         file_idx: usize,
         export_name: &str,
     ) -> bool {
+        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+
+        let namespace_tag = format!("@namespace {export_name}");
+        let namespace_prefix = format!("{export_name}.");
         let arena = self.ctx.get_arena_for_file(file_idx as u32);
         arena.source_files.iter().any(|source_file| {
             source_file.comments.iter().any(|comment| {
-                let content = source_file
-                    .text
-                    .get(comment.pos as usize..comment.end as usize)
-                    .unwrap_or("");
-                Self::parse_jsdoc_typedefs(content).iter().any(|(name, _)| {
-                    name == export_name
-                        || (name.starts_with(export_name)
-                            && name
-                                .as_bytes()
-                                .get(export_name.len())
-                                .is_some_and(|b| *b == b'.'))
-                })
+                if !is_jsdoc_comment(comment, &source_file.text) {
+                    return false;
+                }
+                let content = get_jsdoc_content(comment, &source_file.text);
+                content.contains(&namespace_tag)
+                    || Self::parse_jsdoc_typedefs(&content)
+                        .iter()
+                        .any(|(name, _)| name == export_name || name.starts_with(&namespace_prefix))
             })
         })
     }
@@ -1032,10 +1034,14 @@ impl<'a> CheckerState<'a> {
             _ => return None,
         };
 
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let symbol = self.get_cross_file_symbol(sym_id)?;
         let exports = symbol.exports.as_ref()?;
         let member_sym_id = exports.get(property_name)?;
-        let member_sym = self.ctx.binder.get_symbol(member_sym_id)?;
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id) {
+            self.ctx
+                .register_symbol_file_target(member_sym_id, file_idx);
+        }
+        let member_sym = self.get_cross_file_symbol(member_sym_id)?;
         let concrete_value = symbol_flags::VARIABLE
             | symbol_flags::FUNCTION
             | symbol_flags::CLASS
@@ -1056,6 +1062,18 @@ impl<'a> CheckerState<'a> {
         // type aliases) should fall through to TS2693/TS2339 handling.
         if member_sym.flags & (symbol_flags::VALUE | symbol_flags::ALIAS) == 0 {
             return None;
+        }
+
+        let is_pure_namespace =
+            (member_sym.flags & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE)) != 0
+                && (member_sym.flags & (symbol_flags::CLASS | symbol_flags::FUNCTION)) == 0;
+        if is_pure_namespace {
+            return Some(
+                self.ctx
+                    .types
+                    .factory()
+                    .lazy(self.ctx.get_or_create_def_id(member_sym_id)),
+            );
         }
 
         // For enum members, return the runtime enum object type so that
@@ -1301,6 +1319,9 @@ impl<'a> CheckerState<'a> {
         export_name: &str,
         visited: &mut rustc_hash::FxHashSet<(usize, String)>,
     ) -> bool {
+        const PURE_TYPE: u32 =
+            symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::TYPE_PARAMETER;
+
         // Resolve the specifier to a target file index
         let Some(target_file_idx) = self
             .ctx
@@ -1341,6 +1362,15 @@ impl<'a> CheckerState<'a> {
                 .get_symbol(sym_id)
                 .or_else(|| self.ctx.binder.get_symbol(sym_id));
             if let Some(sym) = sym_opt {
+                const PURE_TYPE: u32 = symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS;
+                const VALUE: u32 = symbol_flags::VARIABLE
+                    | symbol_flags::FUNCTION
+                    | symbol_flags::CLASS
+                    | symbol_flags::ENUM
+                    | symbol_flags::ENUM_MEMBER
+                    | symbol_flags::VALUE_MODULE
+                    | symbol_flags::NAMESPACE_MODULE;
+
                 if sym.is_type_only {
                     // A merged symbol like `import type { A }` + `const A = 0`
                     // has both ALIAS and VALUE flags. The value binding overrides
@@ -1351,6 +1381,14 @@ impl<'a> CheckerState<'a> {
                     {
                         return true;
                     }
+                }
+                if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
+                    return true;
+                }
+                if (sym.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
+                    && !self.symbol_has_runtime_value_in_binder(target_binder, sym_id)
+                {
+                    return true;
                 }
                 let concrete_value = symbol_flags::VARIABLE
                     | symbol_flags::FUNCTION
@@ -1372,18 +1410,41 @@ impl<'a> CheckerState<'a> {
                     | symbol_flags::FUNCTION
                     | symbol_flags::CLASS
                     | symbol_flags::ENUM;
-                if sym.flags & symbol_flags::ALIAS != 0
-                    && sym.flags & concrete_value == 0
-                    && let Some(ref import_module) = sym.import_module
-                {
-                    let import_name = sym.import_name.as_deref().unwrap_or(&sym.escaped_name);
-                    if self.is_export_type_only_in_file(
-                        target_file_idx,
-                        import_module,
-                        import_name,
-                        visited,
-                    ) {
-                        return true;
+                if sym.flags & symbol_flags::ALIAS != 0 && sym.flags & concrete_value == 0 {
+                    let mut visited_aliases = Vec::new();
+                    if let Some(resolved_sym_id) =
+                        self.resolve_alias_symbol(sym_id, &mut visited_aliases)
+                    {
+                        for alias_id in visited_aliases {
+                            if target_binder
+                                .get_symbol(alias_id)
+                                .or_else(|| self.ctx.binder.get_symbol(alias_id))
+                                .is_some_and(|alias_sym| alias_sym.is_type_only)
+                            {
+                                return true;
+                            }
+                        }
+
+                        if let Some(resolved_sym) = target_binder
+                            .get_symbol(resolved_sym_id)
+                            .or_else(|| self.ctx.binder.get_symbol(resolved_sym_id))
+                            && ((resolved_sym.flags & PURE_TYPE) != 0
+                                && (resolved_sym.flags & concrete_value) == 0)
+                        {
+                            return true;
+                        }
+                    }
+
+                    if let Some(ref import_module) = sym.import_module {
+                        let import_name = sym.import_name.as_deref().unwrap_or(&sym.escaped_name);
+                        if self.is_export_type_only_in_file(
+                            target_file_idx,
+                            import_module,
+                            import_name,
+                            visited,
+                        ) {
+                            return true;
+                        }
                     }
                 }
 

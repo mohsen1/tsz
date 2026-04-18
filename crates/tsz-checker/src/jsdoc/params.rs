@@ -247,14 +247,14 @@ impl<'a> CheckerState<'a> {
         let Some(parent_node) = self.ctx.arena.get(ext.parent) else {
             return false;
         };
-        match parent_node.kind {
+        matches!(
+            parent_node.kind,
             syntax_kind_ext::VARIABLE_DECLARATION
-            | syntax_kind_ext::PROPERTY_ASSIGNMENT
-            | syntax_kind_ext::PARAMETER
-            | syntax_kind_ext::BINARY_EXPRESSION
-            | syntax_kind_ext::PROPERTY_DECLARATION => true,
-            _ => false,
-        }
+                | syntax_kind_ext::PROPERTY_ASSIGNMENT
+                | syntax_kind_ext::PARAMETER
+                | syntax_kind_ext::BINARY_EXPRESSION
+                | syntax_kind_ext::PROPERTY_DECLARATION
+        )
     }
 
     fn function_uses_implicit_arguments_object(&self, func_idx: NodeIndex) -> bool {

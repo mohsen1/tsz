@@ -723,6 +723,20 @@ impl<'a> CheckerState<'a> {
             }
 
             if (flags & tsz_binder::symbol_flags::NAMESPACE_MODULE) != 0 {
+                if let Some(exports) = symbol.exports.as_ref() {
+                    for (_, &member_sym_id) in exports.iter() {
+                        if !binder_symbol_has_no_runtime_value(binder, member_sym_id, visited) {
+                            return false;
+                        }
+                    }
+                }
+                if let Some(members) = symbol.members.as_ref() {
+                    for (_, &member_sym_id) in members.iter() {
+                        if !binder_symbol_has_no_runtime_value(binder, member_sym_id, visited) {
+                            return false;
+                        }
+                    }
+                }
                 return true;
             }
             if (flags & tsz_binder::symbol_flags::TYPE) != 0 {
@@ -805,11 +819,20 @@ impl<'a> CheckerState<'a> {
                         })
                     })
                     .unwrap_or_else(|| self.export_symbol_has_no_value(export_sym_id));
+                let export_is_namespace_module = self
+                    .get_symbol_globally(export_sym_id)
+                    .or_else(|| self.get_cross_file_symbol(export_sym_id))
+                    .is_some_and(|symbol| {
+                        (symbol.flags
+                            & (tsz_binder::symbol_flags::NAMESPACE_MODULE
+                                | tsz_binder::symbol_flags::VALUE_MODULE))
+                            != 0
+                    });
                 if name == "export="
                     || self.is_type_only_export_symbol(export_sym_id)
                     || target_export_is_type_only
                     || self.is_export_from_type_only_wildcard(module_name, name)
-                    || target_export_has_no_value
+                    || (target_export_has_no_value && !export_is_namespace_module)
                     || exports_table_target.is_some_and(|target_idx| {
                         self.file_has_jsdoc_typedef_named(target_idx, name)
                     })
@@ -828,7 +851,8 @@ impl<'a> CheckerState<'a> {
                 {
                     continue;
                 }
-                let prop_type = self.get_type_of_symbol(export_sym_id);
+                let prop_type =
+                    self.namespace_import_export_property_type(module_name, export_sym_id);
                 props.push(PropertyInfo {
                     name: self.ctx.types.intern_string(name),
                     type_id: prop_type,
@@ -884,18 +908,52 @@ impl<'a> CheckerState<'a> {
         let mut resolved_segments: Vec<String> = Vec::new();
         let mut segments_iter = segments.into_iter().peekable();
         while let Some((segment_idx, segment)) = segments_iter.next() {
-            let access = self.resolve_property_access_with_env(current, &segment);
+            let access = if self.is_namespace_value_type(current) {
+                self.resolve_namespace_value_member(current, &segment)
+                    .or_else(|| self.resolve_namespace_typeof_member(current, &segment))
+                    .map(
+                        |type_id| crate::query_boundaries::common::PropertyAccessResult::Success {
+                            type_id,
+                            write_type: None,
+                            from_index_signature: false,
+                        },
+                    )
+                    .unwrap_or(
+                        crate::query_boundaries::common::PropertyAccessResult::PropertyNotFound {
+                            type_id: current,
+                            property_name: self.ctx.types.intern_string(&segment),
+                        },
+                    )
+            } else {
+                self.resolve_property_access_with_env(current, &segment)
+            };
             current = match access {
                 crate::query_boundaries::common::PropertyAccessResult::Success {
                     type_id, ..
                 } => {
                     resolved_segments.push(segment.clone());
-                    self.resolve_type_query_type(type_id)
+                    if self.is_namespace_value_type(type_id)
+                        || self.ctx.namespace_module_names.contains_key(&type_id)
+                    {
+                        type_id
+                    } else {
+                        self.resolve_type_query_type(type_id)
+                    }
                 }
                 crate::query_boundaries::common::PropertyAccessResult::PropertyNotFound {
                     ..
                 }
                 | crate::query_boundaries::common::PropertyAccessResult::IsUnknown => {
+                    if let Some(type_id) = self.try_resolve_typeof_import_segment_via_export_equals(
+                        &module_name,
+                        &resolved_segments,
+                        &segment,
+                        resolution_mode_override,
+                    ) {
+                        resolved_segments.push(segment.clone());
+                        current = self.resolve_type_query_type(type_id);
+                        continue;
+                    }
                     let namespace_name = self
                         .ctx
                         .namespace_module_names
@@ -943,5 +1001,20 @@ impl<'a> CheckerState<'a> {
             };
         }
         Some(current)
+    }
+
+    fn try_resolve_typeof_import_segment_via_export_equals(
+        &mut self,
+        module_name: &str,
+        resolved_segments: &[String],
+        next_segment: &str,
+        _resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
+    ) -> Option<TypeId> {
+        if !resolved_segments.is_empty() {
+            return None;
+        }
+
+        let sym_id = self.resolve_named_export_via_export_equals(module_name, next_segment)?;
+        Some(self.get_type_of_symbol(sym_id))
     }
 }

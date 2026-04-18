@@ -583,7 +583,7 @@ fn test_completion_default_and_named_auto_import_conflict_preserves_distinct_ent
             Some((start, start + length, new_text))
         })
         .collect();
-    edits.sort_by(|a, b| b.0.cmp(&a.0));
+    edits.sort_by_key(|edit| std::cmp::Reverse(edit.0));
     for (start, end, new_text) in edits {
         updated_text.replace_range(start..end, &new_text);
     }
@@ -2170,7 +2170,7 @@ export * from "./myClass2";"#
         .filter_map(|entry| entry.get("source").and_then(serde_json::Value::as_str))
         .collect();
     assert!(
-        sources.iter().any(|source| *source == "mylib"),
+        sources.contains(&"mylib"),
         "expected MyClass auto-import candidates to include bare package source, got {sources:?}"
     );
     assert_eq!(

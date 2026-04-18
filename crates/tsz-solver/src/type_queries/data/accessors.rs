@@ -91,8 +91,12 @@ pub fn extract_type_params_for_call(
         }
         Some(TypeData::Callable(shape_id)) => {
             let shape = db.callable_shape(shape_id);
-            let matching: Vec<_> = shape
+            let all_sigs: Vec<_> = shape
                 .call_signatures
+                .iter()
+                .chain(shape.construct_signatures.iter())
+                .collect();
+            let matching: Vec<_> = all_sigs
                 .iter()
                 .filter(|sig| {
                     let max = sig.type_params.len();
@@ -104,17 +108,14 @@ pub fn extract_type_params_for_call(
                     type_arg_count >= min && type_arg_count <= max
                 })
                 .collect();
-            // Multiple overloads match → skip (overload resolution handles it)
             if matching.len() > 1 {
                 return None;
             }
             if let Some(sig) = matching.first() {
                 Some(sig.type_params.clone())
             } else {
-                // Fall back to first signature for diagnostics
                 Some(
-                    shape
-                        .call_signatures
+                    all_sigs
                         .first()
                         .map(|sig| sig.type_params.clone())
                         .unwrap_or_default(),

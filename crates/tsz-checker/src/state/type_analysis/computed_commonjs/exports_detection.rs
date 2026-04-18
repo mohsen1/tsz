@@ -561,7 +561,11 @@ impl<'a> CheckerState<'a> {
 
         Some((
             args.nodes[0],
-            self.current_file_commonjs_static_member_name(args.nodes[1])?,
+            self.constant_define_property_name_in_file(
+                self.ctx.current_file_idx,
+                self.ctx.arena,
+                args.nodes[1],
+            )?,
         ))
     }
 
