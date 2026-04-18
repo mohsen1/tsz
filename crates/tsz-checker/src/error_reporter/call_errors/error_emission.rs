@@ -269,7 +269,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        use tsz_solver::PendingDiagnostic;
+        use crate::query_boundaries::common::PendingDiagnostic;
 
         let argument_failures: Vec<_> = failures
             .iter()
