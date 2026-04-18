@@ -237,9 +237,43 @@ impl Project {
         }
 
         if dependency_specifier.is_none()
+            && from_package.is_none()
+            && self.prefers_project_relative_workspace_fallback_without_requesting_package()
+            && let Some(candidate_target_dir) = target_package_dir.as_deref()
+            && let Some(candidate_target_json) = target_package_json.as_ref()
+            && Self::target_matches_package_root_specifier(
+                target_file,
+                candidate_target_dir,
+                Some(candidate_target_json),
+            )
+            && let Some(target_package_name) = candidate_target_json
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+        {
+            dependency_specifier = Some(target_package_name.to_string());
+        }
+
+        if dependency_specifier.is_none()
             && from_package.is_some()
             && let Some((inferred_specifier, inferred_package_dir)) =
                 Self::inferred_workspace_package_specifier_from_path(&normalized_target_file)
+        {
+            dependency_specifier = Some(inferred_specifier);
+            target_package_dir = Some(inferred_package_dir);
+        }
+
+        if dependency_specifier.is_none()
+            && from_package.is_none()
+            && self.prefers_project_relative_workspace_fallback_without_requesting_package()
+            && let Some((inferred_specifier, inferred_package_dir)) =
+                Self::inferred_workspace_package_specifier_from_path(&normalized_target_file)
+            && Self::target_matches_package_root_specifier(
+                target_file,
+                &inferred_package_dir,
+                target_package_json.as_ref(),
+            )
         {
             dependency_specifier = Some(inferred_specifier);
             target_package_dir = Some(inferred_package_dir);
@@ -507,6 +541,49 @@ impl Project {
             ""
         );
         Some((package_specifier, package_root))
+    }
+
+    fn prefers_project_relative_workspace_fallback_without_requesting_package(&self) -> bool {
+        self.import_module_specifier_preference.as_deref() == Some("project-relative")
+    }
+
+    fn target_matches_package_root_specifier(
+        target_file: &str,
+        target_package_dir: &str,
+        target_package_json: Option<&serde_json::Value>,
+    ) -> bool {
+        let normalized_target_file = normalize_path(Path::new(target_file))
+            .to_string_lossy()
+            .replace('\\', "/");
+        let package_dir_prefix = format!("{target_package_dir}/");
+        let target_relative = normalized_target_file
+            .strip_prefix(&package_dir_prefix)
+            .unwrap_or_default();
+        let target_relative =
+            path_to_string(&strip_js_ts_extension(Path::new(target_relative))).replace('\\', "/");
+        if target_relative.is_empty() {
+            return true;
+        }
+
+        if let Some(target_package_json) = target_package_json {
+            let package_root = "__pkg__";
+            let runtime_relative = package_runtime_specifier_from_target_path(&target_relative);
+            let runtime_spec = if runtime_relative.is_empty() {
+                package_root.to_string()
+            } else {
+                format!("{package_root}/{runtime_relative}")
+            };
+            return package_main_module_specifier_for_target(
+                target_package_json,
+                package_root,
+                &runtime_spec,
+                &normalized_target_file,
+            )
+            .as_deref()
+                == Some(package_root);
+        }
+
+        normalize_package_entry_for_match(&target_relative) == "index"
     }
 
     fn resolve_dependency_path(from_package_dir: &str, specifier: &str) -> Option<String> {

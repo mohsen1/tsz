@@ -540,9 +540,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let Some(name) =
-                self.literal_define_property_name_in_file(self.ctx.arena, args.nodes[1])
-            else {
+            let Some(name) = self.constant_define_property_name_in_file(
+                self.ctx.current_file_idx,
+                self.ctx.arena,
+                args.nodes[1],
+            ) else {
                 continue;
             };
 
@@ -945,8 +947,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let Some(name) = self.literal_define_property_name_in_file(&target_arena, name_expr)
-            else {
+            let Some(name) = self.constant_define_property_name_in_file(
+                target_file_idx,
+                &target_arena,
+                name_expr,
+            ) else {
                 continue;
             };
             let name_atom = self.ctx.types.intern_string(&name);

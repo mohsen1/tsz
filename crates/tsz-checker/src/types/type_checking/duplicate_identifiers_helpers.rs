@@ -650,12 +650,6 @@ impl<'a> CheckerState<'a> {
         let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
             return Vec::new();
         };
-        if self
-            .current_file_default_export_identifier_named(name)
-            .is_none()
-        {
-            return Vec::new();
-        }
         if self.ctx.binder.is_external_module() {
             return Vec::new();
         }
@@ -1144,6 +1138,9 @@ impl<'a> CheckerState<'a> {
         let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
             return Vec::new();
         };
+        if !self.default_export_identifier_named_requires_alias_conflict(name) {
+            return Vec::new();
+        }
 
         let mut declarations = Vec::new();
         let mut seen = FxHashSet::default();
@@ -1254,6 +1251,46 @@ impl<'a> CheckerState<'a> {
         }
 
         declarations
+    }
+
+    fn default_export_identifier_named_requires_alias_conflict(&self, name: &str) -> bool {
+        if self
+            .current_file_default_export_identifier_named(name)
+            .is_none()
+        {
+            return false;
+        }
+
+        let sym_id = self.ctx.binder.file_locals.get(name).or_else(|| {
+            self.ctx
+                .binder
+                .module_exports
+                .values()
+                .find_map(|exports| exports.get(name))
+        });
+        let Some(sym_id) = sym_id else {
+            return false;
+        };
+
+        if self.symbol_is_type_only(sym_id, Some(name))
+            || self.alias_resolves_to_uninstantiated_namespace(sym_id)
+        {
+            return true;
+        }
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let concrete_value = symbol_flags::VARIABLE
+            | symbol_flags::FUNCTION
+            | symbol_flags::CLASS
+            | symbol_flags::ENUM;
+        if (symbol.flags & concrete_value) != 0 {
+            return false;
+        }
+
+        (symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
+            && !self.symbol_has_runtime_value_in_binder(self.ctx.binder, sym_id)
     }
 
     pub(super) fn current_file_default_export_identifier_named(

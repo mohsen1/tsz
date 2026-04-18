@@ -148,6 +148,7 @@ impl<'a> CheckerState<'a> {
         if body_idx.is_none() {
             return None;
         }
+        let func_node_idx = self.ctx.arena.get_extended(body_idx).map(|ext| ext.parent);
 
         // Check if the constructor function has @template type params
         let func_shape =
@@ -158,6 +159,7 @@ impl<'a> CheckerState<'a> {
 
         let mut properties: FxHashMap<tsz_common::interner::Atom, PropertyInfo> =
             FxHashMap::default();
+        let mut scope_restore: Vec<(String, Option<TypeId>)> = Vec::new();
 
         if is_generic {
             // For generic constructor functions, we build the instance type using
@@ -186,7 +188,6 @@ impl<'a> CheckerState<'a> {
                 .collect();
 
             // Push type params into scope for @type resolution
-            let mut scope_restore: Vec<(String, Option<TypeId>)> = Vec::new();
             let factory = self.ctx.types.factory();
             for tp in &shape.type_params {
                 let name = self.ctx.types.resolve_atom(tp.name);
@@ -202,18 +203,69 @@ impl<'a> CheckerState<'a> {
                 &mut properties,
                 sym_id,
             );
+        } else {
+            if !arg_types.is_empty()
+                && let Some(func_node_idx) = func_node_idx
+                && let Some(jsdoc) = self.get_jsdoc_for_function(func_node_idx)
+            {
+                let template_names: rustc_hash::FxHashSet<String> =
+                    Self::jsdoc_template_type_params(&jsdoc)
+                        .into_iter()
+                        .map(|(name, _)| name)
+                        .collect();
+                if !template_names.is_empty() {
+                    let jsdoc_param_names: Vec<String> = Self::extract_jsdoc_param_names(&jsdoc)
+                        .into_iter()
+                        .map(|(name, _)| name)
+                        .collect();
+                    let mut inserted_templates = rustc_hash::FxHashSet::default();
 
-            // Restore type_parameter_scope
-            for (name, previous) in scope_restore {
-                if let Some(prev) = previous {
-                    self.ctx.type_parameter_scope.insert(name, prev);
-                } else {
-                    self.ctx.type_parameter_scope.remove(&name);
+                    for (pi, &param_idx) in func.parameters.nodes.iter().enumerate() {
+                        let Some(&arg_ty) = arg_types.get(pi) else {
+                            continue;
+                        };
+                        let Some(param) = self.ctx.arena.get_parameter_at(param_idx) else {
+                            continue;
+                        };
+                        let pname =
+                            self.effective_jsdoc_param_name(param.name, &jsdoc_param_names, pi);
+                        let Some(type_expr) = Self::extract_jsdoc_param_type_string(&jsdoc, &pname)
+                        else {
+                            continue;
+                        };
+                        let normalized = type_expr
+                            .trim()
+                            .trim_end_matches('=')
+                            .trim_start_matches("...")
+                            .trim()
+                            .to_string();
+                        if !template_names.contains(&normalized)
+                            || !inserted_templates.insert(normalized.clone())
+                        {
+                            continue;
+                        }
+
+                        let widened_arg =
+                            crate::query_boundaries::common::widen_type(self.ctx.types, arg_ty);
+                        let previous = self
+                            .ctx
+                            .type_parameter_scope
+                            .insert(normalized.clone(), widened_arg);
+                        scope_restore.push((normalized, previous));
+                    }
                 }
             }
-        } else {
+
             // Non-generic: use standard property collection
             self.collect_js_constructor_this_properties(body_idx, &mut properties, sym_id, true);
+        }
+
+        for (name, previous) in scope_restore {
+            if let Some(prev) = previous {
+                self.ctx.type_parameter_scope.insert(name, prev);
+            } else {
+                self.ctx.type_parameter_scope.remove(&name);
+            }
         }
 
         // Also scan Foo.prototype.m = ... patterns for:
@@ -359,11 +411,10 @@ impl<'a> CheckerState<'a> {
         >,
         parent_sym: Option<tsz_binder::SymbolId>,
     ) {
-        use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
         use tsz_solver::{PropertyInfo, Visibility};
 
-        let stmts: Vec<NodeIndex> = {
+        let top_level_stmts: Vec<NodeIndex> = {
             let Some(body_node) = self.ctx.arena.get(body_idx) else {
                 return;
             };
@@ -372,79 +423,82 @@ impl<'a> CheckerState<'a> {
             };
             block.statements.nodes.clone()
         };
+        let mut stmts = Vec::new();
+        for stmt_idx in top_level_stmts {
+            self.collect_nested_js_this_assignment_statements(stmt_idx, &mut stmts);
+        }
+        let this_aliases = self.collect_this_aliases(&stmts);
 
         for &stmt_idx in &stmts {
-            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-                continue;
-            }
-            let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt_node) else {
-                continue;
-            };
-            let Some(expr_node) = self.ctx.arena.get(expr_stmt.expression) else {
-                continue;
-            };
-
-            // Case 1: `this.prop = rhs` (binary assignment)
-            if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-                if let Some(binary) = self.ctx.arena.get_binary_expr(expr_node)
-                    && binary.operator_token == SyntaxKind::EqualsToken as u16
-                    && let Some((prop_name, rhs_type, report_idx)) = self
-                        .extract_generic_this_assignment(
-                            binary.left,
-                            binary.right,
-                            param_type_map,
-                            stmt_idx,
-                        )
-                {
-                    if rhs_type == TypeId::UNDEFINED
-                        || rhs_type == TypeId::VOID
-                        || self.js_assignment_rhs_is_void_zero(binary.right)
-                    {
-                        if let Some(parent_sym) = parent_sym
-                            && let Some(symbol) = self.ctx.binder.get_symbol(parent_sym)
-                        {
-                            self.error_at_node(
-                                report_idx,
-                                &format!(
-                                    "Property '{prop_name}' does not exist on type '{}'.",
-                                    symbol.escaped_name
-                                ),
-                                crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                            );
-                        }
-                        continue;
-                    }
-                    let name_atom = self.ctx.types.intern_string(&prop_name);
-                    properties.entry(name_atom).or_insert(PropertyInfo {
-                        name: name_atom,
-                        type_id: rhs_type,
-                        write_type: rhs_type,
-                        optional: false,
-                        readonly: false,
-                        is_method: false,
-                        is_class_prototype: false,
-                        visibility: Visibility::Public,
-                        parent_id: parent_sym,
-                        declaration_order: 0,
-                        is_string_named: false,
-                    });
-                }
-                continue;
-            }
-
-            // Case 2: bare `this.prop` with `/** @type {T} */` annotation
-            if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                && let Some(access) = self.ctx.arena.get_access_expr(expr_node)
-                && let Some(obj_node) = self.ctx.arena.get(access.expression)
-                && obj_node.kind == SyntaxKind::ThisKeyword as u16
-                && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
-                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            if let Some((prop_name, rhs_idx, is_private, report_idx)) =
+                self.extract_this_property_assignment(stmt_idx, &this_aliases)
             {
-                let prop_name = ident.escaped_text.clone();
-                // Check for @type annotation on the expression statement
+                if is_private {
+                    continue;
+                }
+
+                let rhs_type = if let Some(jsdoc_type) = self.js_statement_declared_type(stmt_idx) {
+                    jsdoc_type
+                } else {
+                    let Some(rhs_node) = self.ctx.arena.get(rhs_idx) else {
+                        continue;
+                    };
+                    if rhs_node.kind == SyntaxKind::Identifier as u16 {
+                        if let Some(rhs_ident) = self.ctx.arena.get_identifier(rhs_node) {
+                            param_type_map
+                                .get(rhs_ident.escaped_text.as_str())
+                                .copied()
+                                .unwrap_or_else(|| self.get_type_of_node(rhs_idx))
+                        } else {
+                            self.get_type_of_node(rhs_idx)
+                        }
+                    } else {
+                        self.get_type_of_node(rhs_idx)
+                    }
+                };
+
+                if rhs_type == TypeId::UNDEFINED
+                    || rhs_type == TypeId::VOID
+                    || self.js_assignment_rhs_is_void_zero(rhs_idx)
+                {
+                    if let Some(parent_sym) = parent_sym
+                        && let Some(symbol) = self.ctx.binder.get_symbol(parent_sym)
+                    {
+                        self.error_at_node(
+                            report_idx,
+                            &format!(
+                                "Property '{prop_name}' does not exist on type '{}'.",
+                                symbol.escaped_name
+                            ),
+                            crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                        );
+                    }
+                    continue;
+                }
+
+                let name_atom = self.ctx.types.intern_string(&prop_name);
+                properties.entry(name_atom).or_insert(PropertyInfo {
+                    name: name_atom,
+                    type_id: rhs_type,
+                    write_type: rhs_type,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: parent_sym,
+                    declaration_order: 0,
+                    is_string_named: false,
+                });
+                continue;
+            }
+
+            if let Some((prop_name, is_private, _report_idx)) =
+                self.extract_jsdoc_this_property_declaration(stmt_idx, &this_aliases)
+            {
+                if is_private {
+                    continue;
+                }
                 if let Some(jsdoc_type) = self.js_statement_declared_type(stmt_idx) {
                     if jsdoc_type == TypeId::UNDEFINED {
                         continue;
@@ -480,6 +534,7 @@ impl<'a> CheckerState<'a> {
         rhs_idx: NodeIndex,
         param_type_map: &rustc_hash::FxHashMap<String, TypeId>,
         stmt_idx: NodeIndex,
+        this_aliases: &[String],
     ) -> Option<(String, TypeId, NodeIndex)> {
         use tsz_scanner::SyntaxKind;
 
@@ -489,7 +544,21 @@ impl<'a> CheckerState<'a> {
         }
         let access = self.ctx.arena.get_access_expr(lhs_node)?;
         let obj_node = self.ctx.arena.get(access.expression)?;
-        if obj_node.kind != SyntaxKind::ThisKeyword as u16 {
+        let is_this_or_alias = if obj_node.kind == SyntaxKind::ThisKeyword as u16 {
+            true
+        } else if obj_node.kind == SyntaxKind::Identifier as u16 {
+            self.ctx
+                .arena
+                .get_identifier(obj_node)
+                .is_some_and(|ident| {
+                    this_aliases
+                        .iter()
+                        .any(|alias| alias == &ident.escaped_text)
+                })
+        } else {
+            false
+        };
+        if !is_this_or_alias {
             return None;
         }
         let name_node = self.ctx.arena.get(access.name_or_argument)?;

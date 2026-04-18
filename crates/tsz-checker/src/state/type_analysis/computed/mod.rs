@@ -35,6 +35,9 @@ impl<'a> CheckerState<'a> {
         let Some(default_sym_id) = exports_table.get("default") else {
             return false;
         };
+        if export_name == "_default" {
+            return true;
+        }
         if default_sym_id == export_sym_id {
             return true;
         }
@@ -69,6 +72,36 @@ impl<'a> CheckerState<'a> {
                 .any(|decl| default_symbol.declarations.contains(decl))
     }
 
+    pub(crate) fn namespace_import_export_property_type(
+        &mut self,
+        module_name: &str,
+        export_sym_id: SymbolId,
+    ) -> TypeId {
+        let symbol_flags_opt = self
+            .get_cross_file_symbol(export_sym_id)
+            .or_else(|| self.get_symbol_globally(export_sym_id))
+            .map(|symbol| symbol.flags);
+        let is_pure_namespace = symbol_flags_opt.is_some_and(|flags| {
+            (flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
+                && (flags & (symbol_flags::CLASS | symbol_flags::FUNCTION)) == 0
+        });
+        if is_pure_namespace {
+            let prop_type = self.build_namespace_object_type(export_sym_id);
+            self.ctx.namespace_module_names.insert(
+                prop_type,
+                self.imported_namespace_display_module_name(module_name),
+            );
+            return prop_type;
+        }
+
+        let mut prop_type = self.get_type_of_symbol(export_sym_id);
+        if symbol_flags_opt.is_some_and(|flags| {
+            (flags & symbol_flags::ENUM) != 0 && (flags & symbol_flags::ENUM_MEMBER) == 0
+        }) {
+            prop_type = self.get_enum_namespace_type_for_value(prop_type);
+        }
+        prop_type
+    }
     pub(crate) fn append_export_equals_import_type_namespace_props(
         &mut self,
         module_name: &str,
@@ -124,7 +157,11 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut nested_exports = tsz_binder::SymbolTable::new();
-        self.merge_export_equals_import_type_members(export_equals_symbol, &mut nested_exports);
+        self.merge_export_equals_import_type_members(
+            export_equals_symbol,
+            declaring_file_idx,
+            &mut nested_exports,
+        );
 
         for (name, &export_sym_id) in nested_exports.iter() {
             if self.should_skip_namespace_export_name(&nested_exports, name, export_sym_id) {
@@ -136,16 +173,26 @@ impl<'a> CheckerState<'a> {
             {
                 continue;
             }
+            let export_is_namespace_module = self
+                .get_symbol_globally(export_sym_id)
+                .or_else(|| self.get_cross_file_symbol(export_sym_id))
+                .is_some_and(|symbol| {
+                    (symbol.flags
+                        & (tsz_binder::symbol_flags::NAMESPACE_MODULE
+                            | tsz_binder::symbol_flags::VALUE_MODULE))
+                        != 0
+                });
             if self.is_type_only_export_symbol(export_sym_id)
                 || self.is_export_from_type_only_wildcard(module_name, name)
-                || self.export_symbol_has_no_value(export_sym_id)
+                || (self.export_symbol_has_no_value(export_sym_id) && !export_is_namespace_module)
                 || self.is_export_type_only_from_file(module_name, name, declaring_file_idx)
             {
                 continue;
             }
 
             self.record_cross_file_symbol_if_needed(export_sym_id, name, module_name);
-            let mut prop_type = self.get_type_of_symbol(export_sym_id);
+            let mut prop_type =
+                self.namespace_import_export_property_type(module_name, export_sym_id);
             prop_type = self.apply_module_augmentations(module_name, name, prop_type);
             let declaration_order = if name == "default" {
                 1
