@@ -190,15 +190,9 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        let Some(source_file_idx) = self.current_source_file_idx else {
-            return None;
-        };
-        let Some(source_file_node) = self.arena.get(source_file_idx) else {
-            return None;
-        };
-        let Some(source_file) = self.arena.get_source_file(source_file_node) else {
-            return None;
-        };
+        let source_file_idx = self.current_source_file_idx?;
+        let source_file_node = self.arena.get(source_file_idx)?;
+        let source_file = self.arena.get_source_file(source_file_node)?;
 
         let has_shadowed_local_class =
             source_file
@@ -311,15 +305,9 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        let Some(source_file_idx) = self.current_source_file_idx else {
-            return None;
-        };
-        let Some(source_file_node) = self.arena.get(source_file_idx) else {
-            return None;
-        };
-        let Some(source_file) = self.arena.get_source_file(source_file_node) else {
-            return None;
-        };
+        let source_file_idx = self.current_source_file_idx?;
+        let source_file_node = self.arena.get(source_file_idx)?;
+        let source_file = self.arena.get_source_file(source_file_node)?;
 
         let has_secondary_exports = source_file
             .statements
