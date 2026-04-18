@@ -983,15 +983,21 @@ impl Server {
     fn inferred_project_info(&self, active_file: &str) -> (Vec<String>, bool, Vec<String>) {
         // Prefer the projectInfo-only view populated by
         // `apply_inferred_project_options` — it carries the raw lib/target/noLib
-        // from the `compilerOptionsForInferredProjects` call. Falling back to
-        // default lib names keeps us honest when no pragma was set.
-        let (lib_override, target_override, no_lib): (Option<Vec<String>>, Option<&str>, bool) =
+        // from the `compilerOptionsForInferredProjects` call. When that mirror
+        // state is absent (e.g. direct test setup), fall back to
+        // `inferred_check_options` so `noLib` and lib/target overrides still
+        // affect projectInfo consistently.
+        let (lib_override, target_override, no_lib): (Option<Vec<String>>, Option<String>, bool) =
             match self.inferred_projectinfo_options.as_ref() {
-                Some(opts) => (opts.lib.clone(), opts.target.as_deref(), opts.no_lib),
-                None => (None, None, false),
+                Some(opts) => (opts.lib.clone(), opts.target.clone(), opts.no_lib),
+                None => (
+                    self.inferred_check_options.lib.clone(),
+                    self.inferred_check_options.target.clone(),
+                    self.inferred_check_options.no_lib,
+                ),
             };
         let lib_names =
-            lib_override.unwrap_or_else(|| Self::default_lib_names_for_target(target_override));
+            lib_override.unwrap_or_else(|| Self::default_lib_names_for_target(target_override.as_deref()));
 
         let mut project_files: Vec<String> = Vec::new();
         if self.open_files.contains_key(active_file) {

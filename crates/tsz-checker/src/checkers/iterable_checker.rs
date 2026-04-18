@@ -892,9 +892,60 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // Generic mapped tuple/object forms (`{ [K in keyof T]: ... }`) are used
+        // as spread sources in variadic generic flows. tsc does not report TS2488
+        // for these unresolved generic mapped types at this point.
+        if crate::query_boundaries::common::is_generic_mapped_type(self.ctx.types, spread_type) {
+            let anchor = self.spread_iterability_error_anchor(expr_idx);
+            if anchor != expr_idx {
+                self.emit_ts2589_spread_instantiation_depth(anchor);
+                return false;
+            }
+            return true;
+        }
+
+        // Some recursive generic mapped/tuple spreads overflow type instantiation
+        // depth during assignability-style evaluation (tsc reports TS2589 in these
+        // cases instead of a follow-on TS2488 at the spread operand).
+        let prev_depth_exceeded = self.ctx.depth_exceeded.get();
+        self.ctx.depth_exceeded.set(false);
+        self.evaluate_type_for_assignability(spread_type);
+        let depth_exceeded = self.ctx.depth_exceeded.get();
+        self.ctx
+            .depth_exceeded
+            .set(prev_depth_exceeded || depth_exceeded);
+        if depth_exceeded {
+            self.emit_ts2589_spread_instantiation_depth(self.spread_iterability_error_anchor(expr_idx));
+            return false;
+        }
+
         // Not iterable - emit TS2488
         self.emit_ts2488_not_iterable(spread_type, expr_idx, false);
         false
+    }
+
+    fn spread_iterability_error_anchor(&self, expr_idx: NodeIndex) -> NodeIndex {
+        let mut current = self.ctx.arena.get_extended(expr_idx).map(|ext| ext.parent);
+        while let Some(parent_idx) = current {
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+            if parent_node.kind == tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION
+                || parent_node.kind == tsz_parser::parser::syntax_kind_ext::NEW_EXPRESSION
+            {
+                return parent_idx;
+            }
+            current = self.ctx.arena.get_extended(parent_idx).map(|ext| ext.parent);
+        }
+        expr_idx
+    }
+
+    fn emit_ts2589_spread_instantiation_depth(&mut self, error_node: NodeIndex) {
+        self.error_at_node(
+            error_node,
+            diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+            diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+        );
     }
 
     /// Check iterability for array destructuring patterns and emit TS2488 if not iterable.
