@@ -727,8 +727,7 @@ impl Project {
             .get("module")
             .and_then(serde_json::Value::as_str)
             .is_some_and(|module| {
-                module.eq_ignore_ascii_case("node16")
-                    || module.eq_ignore_ascii_case("nodenext")
+                module.eq_ignore_ascii_case("node16") || module.eq_ignore_ascii_case("nodenext")
             })
     }
 
@@ -1102,14 +1101,12 @@ impl Project {
         let marker = "/node_modules/";
         let marker_idx = normalized.find(marker)?;
         let node_modules_root = &normalized[..marker_idx + marker.len() - 1];
-        if let Some(specifier) =
-            self.package_specifier_from_nearest_package_manifest(
-                &normalized,
-                node_modules_root,
-                supports_package_exports,
-                exports_mode,
-            )
-        {
+        if let Some(specifier) = self.package_specifier_from_nearest_package_manifest(
+            &normalized,
+            node_modules_root,
+            supports_package_exports,
+            exports_mode,
+        ) {
             return Some(specifier);
         }
 
@@ -1131,9 +1128,9 @@ impl Project {
 
         if supports_package_exports
             && package_json
-            .as_ref()
-            .and_then(|json| json.get("exports"))
-            .is_some()
+                .as_ref()
+                .and_then(|json| json.get("exports"))
+                .is_some()
         {
             return self.package_specifier_from_package_exports(
                 &normalized,
@@ -1192,8 +1189,7 @@ impl Project {
                     .filter(|name| !name.is_empty())
                     .or_else(|| Self::infer_package_name_from_node_modules_dir(&dir_normalized))
             {
-                if supports_package_exports
-                    && let Some(exports_value) = package_json.get("exports")
+                if supports_package_exports && let Some(exports_value) = package_json.get("exports")
                 {
                     return self.package_specifier_from_package_exports_value(
                         normalized_target,
@@ -1314,7 +1310,8 @@ impl Project {
                 continue;
             };
 
-            let (type_targets, default_targets) = collect_exports_targets(export_target, exports_mode);
+            let (type_targets, default_targets) =
+                collect_exports_targets(export_target, exports_mode);
             let should_append_js = key_pattern.contains('*')
                 && !has_source_extension(key_pattern)
                 && default_targets
@@ -2478,7 +2475,9 @@ mod tests {
             "/home/src/workspaces/project/node_modules/dependency/lib/lol.d.ts",
         );
         assert!(
-            cts_specs.iter().any(|specifier| specifier == "dependency/lol"),
+            cts_specs
+                .iter()
+                .any(|specifier| specifier == "dependency/lol"),
             "expected .cts importer to follow require branch for dependency/lol, got {cts_specs:?}"
         );
 
@@ -2487,7 +2486,9 @@ mod tests {
             "/home/src/workspaces/project/node_modules/dependency/lib/index.d.ts",
         );
         assert!(
-            mts_specs.iter().any(|specifier| specifier == "dependency/lol"),
+            mts_specs
+                .iter()
+                .any(|specifier| specifier == "dependency/lol"),
             "expected .mts importer to follow import branch for dependency/lol, got {mts_specs:?}"
         );
     }

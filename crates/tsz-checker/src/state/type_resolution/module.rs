@@ -1200,11 +1200,15 @@ impl<'a> CheckerState<'a> {
                     })
                 })
                 .or_else(|| {
-                    export_equals_symbol.declarations.iter().find_map(|&decl_idx| {
-                        arena.get(decl_idx).and_then(|node| {
-                            (node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT).then_some(decl_idx)
+                    export_equals_symbol
+                        .declarations
+                        .iter()
+                        .find_map(|&decl_idx| {
+                            arena.get(decl_idx).and_then(|node| {
+                                (node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT)
+                                    .then_some(decl_idx)
+                            })
                         })
-                    })
                 });
 
             if let Some(export_assign_idx) = export_assign_decl

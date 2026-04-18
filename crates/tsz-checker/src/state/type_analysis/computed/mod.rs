@@ -110,7 +110,12 @@ impl<'a> CheckerState<'a> {
                         .get(module_name)
                         .and_then(|table| table.get("export="))
                 })
-                .or_else(|| target_binder.module_exports.values().find_map(|table| table.get("export=")));
+                .or_else(|| {
+                    target_binder
+                        .module_exports
+                        .values()
+                        .find_map(|table| table.get("export="))
+                });
             if let Some(target_export_equals_sym) = target_export_equals_sym
                 && let Some(target_symbol) = target_binder.get_symbol(target_export_equals_sym)
             {

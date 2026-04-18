@@ -1735,7 +1735,10 @@ fn test_completion_info_auto_import_discovers_dependency_files_from_disk() {
     let root = std::env::temp_dir().join(unique);
     let project_dir = root.join("project");
     let src_dir = project_dir.join("src");
-    let dep_lib_dir = project_dir.join("node_modules").join("dependency").join("lib");
+    let dep_lib_dir = project_dir
+        .join("node_modules")
+        .join("dependency")
+        .join("lib");
     std::fs::create_dir_all(&src_dir).expect("should create src dir");
     std::fs::create_dir_all(&dep_lib_dir).expect("should create dependency lib dir");
 
@@ -1762,7 +1765,10 @@ fn test_completion_info_auto_import_discovers_dependency_files_from_disk() {
     )
     .expect("should write package.json");
 
-    let dep_package_json_path = project_dir.join("node_modules").join("dependency").join("package.json");
+    let dep_package_json_path = project_dir
+        .join("node_modules")
+        .join("dependency")
+        .join("package.json");
     std::fs::write(
         &dep_package_json_path,
         r#"{
@@ -1777,12 +1783,18 @@ fn test_completion_info_auto_import_discovers_dependency_files_from_disk() {
     .expect("should write dependency package.json");
 
     let dep_index_path = dep_lib_dir.join("index.d.ts");
-    std::fs::write(&dep_index_path, "export declare function fooFromIndex(): void;\n")
-        .expect("should write dependency index declarations");
+    std::fs::write(
+        &dep_index_path,
+        "export declare function fooFromIndex(): void;\n",
+    )
+    .expect("should write dependency index declarations");
 
     let dep_lol_path = dep_lib_dir.join("lol.d.ts");
-    std::fs::write(&dep_lol_path, "export declare function fooFromLol(): void;\n")
-        .expect("should write dependency lol declarations");
+    std::fs::write(
+        &dep_lol_path,
+        "export declare function fooFromLol(): void;\n",
+    )
+    .expect("should write dependency lol declarations");
 
     let source_path = src_dir.join("foo.ts");
     let source_path_str = source_path.to_string_lossy().to_string();
