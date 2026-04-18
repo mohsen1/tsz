@@ -3241,8 +3241,7 @@ fn test_project_info_lib_files_use_fourslash_virtual_folder() {
         .map(String::as_str)
         .collect();
     assert!(
-        libs.iter()
-            .any(|p| *p == "/home/src/tslibs/TS/Lib/lib.es5.d.ts"),
+        libs.contains(&"/home/src/tslibs/TS/Lib/lib.es5.d.ts"),
         "expected lib.es5.d.ts under fourslash virtual lib folder, got {libs:?}"
     );
     // @lib: es5 pulls in decorators + decorators.legacy via transitive refs.
