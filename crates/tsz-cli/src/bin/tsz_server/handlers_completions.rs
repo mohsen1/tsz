@@ -436,7 +436,8 @@ impl Server {
         if !is_member_completion {
             return items;
         }
-        if !Self::looks_like_merged_class_member_completion_context(source_text, completion_offset) {
+        if !Self::looks_like_merged_class_member_completion_context(source_text, completion_offset)
+        {
             return items;
         }
         if !items.iter().any(|item| item.label == "prototype") {
@@ -2433,7 +2434,8 @@ mod tests {
         let source_text = "Foo./**/";
         let offset = source_text.find('/').expect("marker start exists") as u32;
         assert!(Server::looks_like_merged_class_member_completion_context(
-            source_text, offset
+            source_text,
+            offset
         ));
 
         let lower_source = "foo./**/";

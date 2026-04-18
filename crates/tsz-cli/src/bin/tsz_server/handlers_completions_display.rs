@@ -101,9 +101,10 @@ impl Server {
                 parts.push(serde_json::json!({"text": "method", "kind": "text"}));
                 parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
                 parts.push(serde_json::json!({"text": " ", "kind": "space"}));
-                let qualified_name = Self::function_member_display_parent(item, member_parent, name)
-                    .map(|parent| format!("{parent}.{name}"))
-                    .unwrap_or_else(|| name.to_string());
+                let qualified_name =
+                    Self::function_member_display_parent(item, member_parent, name)
+                        .map(|parent| format!("{parent}.{name}"))
+                        .unwrap_or_else(|| name.to_string());
                 parts.push(serde_json::json!({"text": qualified_name, "kind": "methodName"}));
                 if let Some(sig) = item
                     .detail
@@ -134,9 +135,10 @@ impl Server {
                 } else {
                     format!("\"{name}\"")
                 };
-                let qualified_name = Self::function_member_display_parent(item, member_parent, name)
-                    .map(|parent| format!("{parent}.{display_name}"))
-                    .unwrap_or(display_name);
+                let qualified_name =
+                    Self::function_member_display_parent(item, member_parent, name)
+                        .map(|parent| format!("{parent}.{display_name}"))
+                        .unwrap_or(display_name);
                 parts.push(serde_json::json!({"text": qualified_name, "kind": "propertyName"}));
                 let has_annotation = Self::append_type_annotation_from_source(
                     &mut parts,
@@ -177,16 +179,7 @@ impl Server {
                         CompletionItemKind::Const => "const",
                         CompletionItemKind::Let => "let",
                         _ => Self::get_var_keyword_from_source(name, binder, arena, source_text)
-                            .unwrap_or({
-                                if let Some(ref detail) = item.detail {
-                                    match detail.as_str() {
-                                        "var" => "var",
-                                        _ => "var",
-                                    }
-                                } else {
-                                    "var"
-                                }
-                            }),
+                            .unwrap_or("var"),
                     };
                     parts.push(serde_json::json!({"text": keyword, "kind": "keyword"}));
                     parts.push(serde_json::json!({"text": " ", "kind": "space"}));

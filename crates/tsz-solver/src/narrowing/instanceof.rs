@@ -915,7 +915,7 @@ impl<'a> NarrowingContext<'a> {
 
     /// Check if two types refer to the same nominal declaration.
     ///
-    /// Compares DefIds (for Lazy references) or resolved TypeIds. Two classes
+    /// Compares `DefId`s (for Lazy references) or resolved `TypeId`s. Two classes
     /// with identical structure but different declarations are NOT considered
     /// matching, which is the correct semantics for `.constructor ===`.
     fn types_match_nominally(&self, a: TypeId, b: TypeId, resolved_b: TypeId) -> bool {
