@@ -6,9 +6,9 @@ use crate::query_boundaries::common::{
     self as common, ContextualLiteralAllowKind, TypeTraversalKind, are_same_base_literal_kind,
     classify_for_contextual_literal, classify_for_traversal, contains_type_parameters,
     index_access_types, intersection_members, is_conditional_type, is_index_access_type,
-    is_keyof_type, is_this_type, lazy_def_id, mapped_type_info, number_literal_value,
-    object_shape_for_type, string_literal_value, type_application, type_parameter_constraint,
-    union_members,
+    is_keyof_type, is_this_type, keyof_inner_type, lazy_def_id, mapped_type_info,
+    number_literal_value, object_shape_for_type, string_literal_value, type_application,
+    type_parameter_constraint, union_members,
 };
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -18,7 +18,6 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::keyof_inner_type;
 
 impl<'a> CheckerState<'a> {
     fn raw_contextual_signature_available(&self, type_id: TypeId) -> bool {

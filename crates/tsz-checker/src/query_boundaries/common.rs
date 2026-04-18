@@ -13,8 +13,13 @@ use tsz_solver::{
 // Re-export solver value types used by checker call computation.
 pub(crate) use tsz_solver::ContextualTypeContext;
 pub(crate) use tsz_solver::FunctionShape;
+pub(crate) use tsz_solver::MappedType;
 pub(crate) use tsz_solver::ObjectFlags;
 pub(crate) use tsz_solver::ParamInfo;
+pub(crate) use tsz_solver::PendingDiagnosticBuilder;
+pub(crate) use tsz_solver::SourceLocation;
+pub(crate) use tsz_solver::TypeFormatter;
+pub(crate) use tsz_solver::TypeInstantiator;
 #[allow(unused_imports)]
 pub(crate) use tsz_solver::TypeInterner;
 
@@ -492,6 +497,12 @@ pub(crate) fn unwrap_readonly_or_noinfer(db: &dyn TypeDatabase, type_id: TypeId)
     tsz_solver::unwrap_readonly_or_noinfer(db, type_id)
 }
 
+/// Apply a `const` assertion to a type, recursively converting mutable literals
+/// to their `readonly` / literal-preserving forms (e.g. `string[]` → `readonly ["a"]`).
+pub(crate) fn apply_const_assertion(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::widening::apply_const_assertion(db, type_id)
+}
+
 /// Widen a literal type to its base primitive (e.g. `"hello"` → `string`).
 pub(crate) fn widen_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::widen_type(db, type_id)
@@ -599,12 +610,45 @@ pub(crate) fn find_property_in_object(
     tsz_solver::type_queries::find_property_in_object(db, type_id, name)
 }
 
+/// Extract the inner type of a `keyof T` type, returning `None` if the type is
+/// not a keyof type.
+pub(crate) fn keyof_inner_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::keyof_inner_type(db, type_id)
+}
+
+/// Instantiate a type, returning the result and a flag indicating whether the
+/// depth limit was exceeded during instantiation.
+pub(crate) fn instantiate_type_with_depth_status(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    substitution: &TypeSubstitution,
+) -> (TypeId, bool) {
+    tsz_solver::instantiate_type_with_depth_status(db, type_id, substitution)
+}
+
+/// Substitute `this` type references in `type_id` with `this_type`.
+pub(crate) fn substitute_this_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    this_type: TypeId,
+) -> TypeId {
+    tsz_solver::substitute_this_type(db, type_id, this_type)
+}
+
 /// Get the enum `DefId` for an enum type.
 pub(crate) fn enum_def_id(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<tsz_solver::def::DefId> {
     tsz_solver::type_queries::get_enum_def_id(db, type_id)
+}
+
+/// Check if a type is a plain object type (properties only, no index signatures).
+///
+/// Returns `true` for `TypeData::Object` but not `TypeData::ObjectWithIndex`.
+/// Used to choose between `factory.object()` and `factory.object_with_index()`.
+pub(crate) fn is_plain_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::object_shape_id(db, type_id).is_some()
 }
 
 /// Get application info (base type + type arguments) for a type application.
