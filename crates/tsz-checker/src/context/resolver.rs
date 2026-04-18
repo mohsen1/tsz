@@ -317,22 +317,19 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         if let Some(sym_id) = sym_id
             && let Some(file_idx) = definition_file_idx
             && file_idx != self.current_file_idx
-        {
-            if let Some(resolved) = self
+            && let Some(resolved) = self
                 .definition_store
                 .get_resolved_symbol_type(sym_id.0, file_idx as u32)
-            {
-                if resolved != tsz_solver::TypeId::ERROR {
-                    tracing::trace!(
-                        def_id = def_id.0,
-                        sym_id = sym_id.0,
-                        file_idx = file_idx,
-                        type_id = resolved.0,
-                        "resolve_lazy: found in shared resolved_symbol_types cache"
-                    );
-                    return Some(resolved);
-                }
-            }
+            && resolved != tsz_solver::TypeId::ERROR
+        {
+            tracing::trace!(
+                def_id = def_id.0,
+                sym_id = sym_id.0,
+                file_idx = file_idx,
+                type_id = resolved.0,
+                "resolve_lazy: found in shared resolved_symbol_types cache"
+            );
+            return Some(resolved);
         }
 
         tracing::trace!(def_id = def_id.0, "resolve_lazy: NOT FOUND");
@@ -357,10 +354,10 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                 return Some(cached);
             }
             // Fallback within enclosing class: look up the instance type via the binder symbol.
-            if let Some(sym_id) = self.binder.get_node_symbol(class_info.class_idx) {
-                if let Some(ty) = self.symbol_instance_types.get(&sym_id).copied() {
-                    return Some(ty);
-                }
+            if let Some(sym_id) = self.binder.get_node_symbol(class_info.class_idx)
+                && let Some(ty) = self.symbol_instance_types.get(&sym_id).copied()
+            {
+                return Some(ty);
             }
         }
         None

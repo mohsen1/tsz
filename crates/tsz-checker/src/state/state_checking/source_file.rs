@@ -15,7 +15,7 @@ impl<'a> CheckerState<'a> {
     /// Check if the file contains property/element access expressions that need
     /// boxed type registration. Uses the binder's pre-computed flag when available,
     /// avoiding an O(N) AST scan.
-    fn needs_boxed_type_registration(&self) -> bool {
+    const fn needs_boxed_type_registration(&self) -> bool {
         // PERF: The binder already walks every node during binding. We check its
         // has_property_access flag first (O(1)). If the binder doesn't track this
         // yet, fall back to a conservative `true` — almost all non-trivial files

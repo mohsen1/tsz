@@ -997,9 +997,7 @@ impl<'a> CheckerState<'a> {
 
         // 2) Match runtime file by suffix under node_modules and query that file's
         // export surface directly.
-        let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
-            return None;
-        };
+        let all_arenas = self.ctx.all_arenas.as_ref()?;
 
         let mut suffixes = Vec::new();
         for module_spec in &runtime_candidates {

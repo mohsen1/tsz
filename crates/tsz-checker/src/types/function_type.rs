@@ -378,33 +378,32 @@ impl<'a> CheckerState<'a> {
             && self.is_js_file()
             && let Some(ref jsdoc) = func_jsdoc
             && jsdoc.contains("@this")
+            && let Some(sf) = self.source_file_data_for_node(idx)
         {
-            if let Some(sf) = self.source_file_data_for_node(idx) {
-                let source_text = sf.text.to_string();
-                let comments = sf.comments.clone();
-                if let Some((_, jsdoc_start)) =
-                    self.try_jsdoc_with_ancestor_walk_and_pos(idx, &comments, &source_text)
-                {
-                    // jsdoc_start is the comment's pos (start of `/**`).
-                    // Search from there to find `@this` in the raw source.
-                    let search_start = jsdoc_start as usize;
-                    if let Some(this_off) = source_text[search_start..].find("@this") {
-                        // Verify this is @this tag, not a substring of another tag
-                        let at_pos = search_start + this_off;
-                        let after = &source_text[at_pos + 5..];
-                        let is_this_tag = after.starts_with(' ')
-                            || after.starts_with('{')
-                            || after.starts_with('\n')
-                            || after.starts_with('\r');
-                        if is_this_tag {
-                            // tsc points at "this" (after the "@"), not "@this"
-                            self.ctx.error(
+            let source_text = sf.text.to_string();
+            let comments = sf.comments.clone();
+            if let Some((_, jsdoc_start)) =
+                self.try_jsdoc_with_ancestor_walk_and_pos(idx, &comments, &source_text)
+            {
+                // jsdoc_start is the comment's pos (start of `/**`).
+                // Search from there to find `@this` in the raw source.
+                let search_start = jsdoc_start as usize;
+                if let Some(this_off) = source_text[search_start..].find("@this") {
+                    // Verify this is @this tag, not a substring of another tag
+                    let at_pos = search_start + this_off;
+                    let after = &source_text[at_pos + 5..];
+                    let is_this_tag = after.starts_with(' ')
+                        || after.starts_with('{')
+                        || after.starts_with('\n')
+                        || after.starts_with('\r');
+                    if is_this_tag {
+                        // tsc points at "this" (after the "@"), not "@this"
+                        self.ctx.error(
                                 (at_pos + 1) as u32,
                                 4, // length of "this"
                                 "An arrow function cannot have a 'this' parameter.".to_string(),
                                 crate::diagnostics::diagnostic_codes::AN_ARROW_FUNCTION_CANNOT_HAVE_A_THIS_PARAMETER,
                             );
-                        }
                     }
                 }
             }
@@ -1082,19 +1081,16 @@ impl<'a> CheckerState<'a> {
                             .arena
                             .get_constructor(node)
                             .is_some_and(|c| self.has_private_modifier(&c.modifiers)));
-                // When ctx_helper's expected type is  (e.g. a mapped type property
-                // mapping excess keys to ), no param contextual types can be derived.
-                // Do not defer TS7006: the second pass will use the inferred type (possibly
-                // ) and incorrectly suppress TS7006. Emit immediately.
-                let ctx_helper_expected_is_never = ctx_helper
-                    .as_ref()
-                    .and_then(tsz_solver::ContextualTypeContext::expected)
-                    .is_some_and(|t| t == TypeId::NEVER);
+                // When ctx_helper IS present, we definitively know the contextual callable
+                // signature. If a parameter has no contextual type from that signature
+                // (e.g., `() => any` has 0 params), we should emit TS7006 immediately
+                // rather than deferring — we won't learn more in the statement-checking pass.
+                // Only defer when ctx_helper is NONE (we don't know the contextual type yet).
                 let skip_implicit_any = is_setter
                     || (is_closure
                         && !self.ctx.is_checking_statements
                         && !has_effective_contextual_type
-                        && !ctx_helper_expected_is_never)
+                        && ctx_helper.is_none())
                     || (is_in_decorator && !has_effective_contextual_type)
                     || is_in_jsdoc_type_cast
                     || closure_already_checked
@@ -1769,7 +1765,14 @@ impl<'a> CheckerState<'a> {
                 TypeId::ANY
             } else if has_type_annotation || has_contextual_return || jsdoc_return_context.is_some()
             {
-                return_type
+                // Use the pre-evaluation annotated return type when available.
+                // evaluate_application_type() (line 1305) expands Application
+                // types (e.g., Promise<U>) into structural object forms, which
+                // destroys the Application wrapper needed for correct type
+                // display in TS2322 messages. The annotated type preserves
+                // the original Application so the formatter can show
+                // "Promise<U>" instead of just "Promise".
+                annotated_return_type.unwrap_or(return_type)
             } else {
                 // When the return type was purely inferred from the body (no
                 // annotation, no contextual type, no JSDoc @returns), push ANY

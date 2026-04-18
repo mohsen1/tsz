@@ -30,6 +30,11 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::is_compiler_managed_type;
 
+/// Map from identifier name to the list of `(file_idx, SymbolId)` pairs where
+/// the name appears in a binder's `file_locals` table. Used as the `O(1)` fast
+/// path when resolving a name across all binders.
+pub(crate) type FileLocalsIndex = FxHashMap<String, Vec<(usize, tsz_binder::SymbolId)>>;
+
 /// Stub value resolver for lib lowering — lib declarations have no runtime values.
 ///
 /// All four lib-lowering sites (`resolve_lib_type_by_name`, `prime_lib_type_params`,
@@ -224,13 +229,12 @@ pub(crate) fn lib_def_id_from_node_in_lib_contexts(
 /// [`CheckerContext::get_lib_def_id`] (`SymbolId` → `DefId`).  Using this
 /// instead of inline two-step resolution at each callsite keeps the pattern
 /// consistent with [`lib_def_id_from_node`].
-#[allow(clippy::type_complexity)]
 pub(crate) fn augmentation_def_id_from_node(
     ctx: &crate::context::CheckerContext<'_>,
     binder: &tsz_binder::BinderState,
     arena: &NodeArena,
     node_idx: NodeIndex,
-    global_file_locals_index: Option<&FxHashMap<String, Vec<(usize, tsz_binder::SymbolId)>>>,
+    global_file_locals_index: Option<&FileLocalsIndex>,
     all_binders: Option<&[std::sync::Arc<tsz_binder::BinderState>]>,
     lib_contexts: &[crate::context::LibContext],
 ) -> Option<tsz_solver::DefId> {
@@ -316,11 +320,10 @@ pub(crate) fn resolve_scope_chain(
 /// inlined in augmentation resolver closures (with a per-call
 /// `RefCell<FxHashMap>` cache that added complexity for negligible benefit
 /// given the O(1) nature of each tier).
-#[allow(clippy::type_complexity)]
 pub(crate) fn resolve_name_to_lib_symbol(
     name: &str,
     primary_binder: &tsz_binder::BinderState,
-    global_file_locals_index: Option<&FxHashMap<String, Vec<(usize, tsz_binder::SymbolId)>>>,
+    global_file_locals_index: Option<&FileLocalsIndex>,
     all_binders: Option<&[std::sync::Arc<tsz_binder::BinderState>]>,
     lib_contexts: &[crate::context::LibContext],
 ) -> Option<tsz_binder::SymbolId> {
@@ -409,12 +412,11 @@ pub(crate) fn resolve_lib_node_in_lib_contexts(
 ///    / lib-contexts multi-tier fallback (same as standalone function above).
 ///
 /// Returns `None` for compiler-managed types (e.g., `__String`).
-#[allow(clippy::type_complexity)]
 pub(crate) fn resolve_augmentation_node(
     binder: &tsz_binder::BinderState,
     arena: &NodeArena,
     node_idx: NodeIndex,
-    global_file_locals_index: Option<&FxHashMap<String, Vec<(usize, tsz_binder::SymbolId)>>>,
+    global_file_locals_index: Option<&FileLocalsIndex>,
     all_binders: Option<&[std::sync::Arc<tsz_binder::BinderState>]>,
     lib_contexts: &[crate::context::LibContext],
 ) -> Option<tsz_binder::SymbolId> {
@@ -1023,10 +1025,10 @@ impl<'a> CheckerState<'a> {
             // registration uses the pre-merge TypeId which changes after heritage
             // merging and global augmentations add more members.
             let name_atom = self.ctx.types.intern_string(name);
-            if let Some(defs) = self.ctx.definition_store.find_defs_by_name(name_atom) {
-                if let Some(&def_id) = defs.first() {
-                    self.ctx.definition_store.register_type_to_def(ty, def_id);
-                }
+            if let Some(defs) = self.ctx.definition_store.find_defs_by_name(name_atom)
+                && let Some(&def_id) = defs.first()
+            {
+                self.ctx.definition_store.register_type_to_def(ty, def_id);
             }
         }
 
@@ -1130,17 +1132,17 @@ impl<'a> CheckerState<'a> {
         // post-merge TypeId directly.
         if let Some(ty) = lib_type_id {
             let name_atom = self.ctx.types.intern_string(name);
-            if let Some(defs) = self.ctx.definition_store.find_defs_by_name(name_atom) {
-                if let Some(&def_id) = defs.first() {
-                    self.ctx.definition_store.register_type_to_def(ty, def_id);
-                    // Update the TypeEnvironment so that Lazy(DefId) resolves to the
-                    // fully-merged type (post-heritage, post-augmentation).  The initial
-                    // register_lib_def_resolved call registered the pre-merge body;
-                    // this overwrites it with the final merged result.
-                    let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
-                    self.ctx
-                        .register_def_auto_params_in_envs(def_id, ty, type_params);
-                }
+            if let Some(defs) = self.ctx.definition_store.find_defs_by_name(name_atom)
+                && let Some(&def_id) = defs.first()
+            {
+                self.ctx.definition_store.register_type_to_def(ty, def_id);
+                // Update the TypeEnvironment so that Lazy(DefId) resolves to the
+                // fully-merged type (post-heritage, post-augmentation).  The initial
+                // register_lib_def_resolved call registered the pre-merge body;
+                // this overwrites it with the final merged result.
+                let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+                self.ctx
+                    .register_def_auto_params_in_envs(def_id, ty, type_params);
             }
             // Update the symbol_types cache for the INTERFACE type position.
             // compute_type_of_symbol may have cached a DIFFERENT TypeId
@@ -1153,12 +1155,13 @@ impl<'a> CheckerState<'a> {
             //      (first call to this function for this name)
             // This preserves user-file augmentations while fixing the
             // mismatch between annotation and literal type resolution paths.
-            if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
-                if let Some(&old) = self.ctx.symbol_types.get(&sym_id) {
-                    if old != ty && old != TypeId::ERROR && old != TypeId::ANY {
-                        self.ctx.symbol_types.insert(sym_id, ty);
-                    }
-                }
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
+                && let Some(&old) = self.ctx.symbol_types.get(&sym_id)
+                && old != ty
+                && old != TypeId::ERROR
+                && old != TypeId::ANY
+            {
+                self.ctx.symbol_types.insert(sym_id, ty);
             }
         }
 

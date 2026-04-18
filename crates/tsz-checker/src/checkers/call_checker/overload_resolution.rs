@@ -96,11 +96,11 @@ impl<'a> CheckerState<'a> {
                     {
                         return true;
                     }
-                    if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                        if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
-                            current = paren.expression;
-                            continue;
-                        }
+                    if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                        && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+                    {
+                        current = paren.expression;
+                        continue;
                     }
                     return false;
                 }

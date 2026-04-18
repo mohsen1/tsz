@@ -38,15 +38,16 @@ impl<'a> CheckerState<'a> {
         // Compiler-provided intrinsic type aliases whose body is `intrinsic` cannot
         // be resolved from the AST. Intercept BuiltinIteratorReturn early, before
         // any fallback/delegation logic that might treat ANY as "unresolved".
-        if let Some((ref name, flags, _, _)) = symbol_meta {
-            if name == "BuiltinIteratorReturn" && (flags & symbol_flags::TYPE_ALIAS) != 0 {
-                self.ctx.leave_recursion();
-                return if self.ctx.compiler_options.strict_builtin_iterator_return {
-                    TypeId::UNDEFINED
-                } else {
-                    TypeId::ANY
-                };
-            }
+        if let Some((ref name, flags, _, _)) = symbol_meta
+            && name == "BuiltinIteratorReturn"
+            && (flags & symbol_flags::TYPE_ALIAS) != 0
+        {
+            self.ctx.leave_recursion();
+            return if self.ctx.compiler_options.strict_builtin_iterator_return {
+                TypeId::UNDEFINED
+            } else {
+                TypeId::ANY
+            };
         }
 
         if let Some((ref escaped_name, flags, ref declarations, value_declaration)) = symbol_meta {
@@ -329,44 +330,44 @@ impl<'a> CheckerState<'a> {
             let should_attempt_type_alias_resolution = has_type_alias_decl
                 || ((flags & symbol_flags::TYPE_ALIAS) != 0
                     && (value_declaration.is_some() || !declarations.is_empty()));
-            if should_attempt_type_alias_resolution {
-                if has_type_alias_decl || (flags & symbol_flags::TYPE_ALIAS) != 0 {
-                    // Return structural type directly for type aliases (not Lazy) so
-                    // conditional types are fully resolved during assignability checking.
-                    let mut structural_type = self.get_type_of_symbol(sym_id);
-                    if (structural_type == TypeId::ANY
-                        || structural_type == TypeId::UNKNOWN
-                        || structural_type == TypeId::ERROR)
-                        && let Some((delegate_type, _)) =
-                            self.delegate_cross_arena_symbol_resolution(sym_id)
-                        && delegate_type != TypeId::UNKNOWN
-                        && delegate_type != TypeId::ERROR
-                    {
-                        structural_type = delegate_type;
-                    }
-                    let preserve_deferred_keyof =
-                        crate::query_boundaries::state::checking::keyof_target(
-                            self.ctx.types,
-                            structural_type,
-                        )
-                        .is_some();
-                    let structural_type = if structural_type != TypeId::ERROR
-                        && structural_type != TypeId::UNKNOWN
-                        && !preserve_deferred_keyof
-                        && !crate::query_boundaries::common::contains_type_parameters(
-                            self.ctx.types,
-                            structural_type,
-                        ) {
-                        self.evaluate_type_with_resolution(structural_type)
-                    } else {
-                        structural_type
-                    };
-                    // Register for alias-name formatting in diagnostics
-                    self.ctx
-                        .register_resolved_type(sym_id, structural_type, Vec::new());
-                    self.ctx.leave_recursion();
-                    return structural_type;
+            if should_attempt_type_alias_resolution
+                && (has_type_alias_decl || (flags & symbol_flags::TYPE_ALIAS) != 0)
+            {
+                // Return structural type directly for type aliases (not Lazy) so
+                // conditional types are fully resolved during assignability checking.
+                let mut structural_type = self.get_type_of_symbol(sym_id);
+                if (structural_type == TypeId::ANY
+                    || structural_type == TypeId::UNKNOWN
+                    || structural_type == TypeId::ERROR)
+                    && let Some((delegate_type, _)) =
+                        self.delegate_cross_arena_symbol_resolution(sym_id)
+                    && delegate_type != TypeId::UNKNOWN
+                    && delegate_type != TypeId::ERROR
+                {
+                    structural_type = delegate_type;
                 }
+                let preserve_deferred_keyof =
+                    crate::query_boundaries::state::checking::keyof_target(
+                        self.ctx.types,
+                        structural_type,
+                    )
+                    .is_some();
+                let structural_type = if structural_type != TypeId::ERROR
+                    && structural_type != TypeId::UNKNOWN
+                    && !preserve_deferred_keyof
+                    && !crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        structural_type,
+                    ) {
+                    self.evaluate_type_with_resolution(structural_type)
+                } else {
+                    structural_type
+                };
+                // Register for alias-name formatting in diagnostics
+                self.ctx
+                    .register_resolved_type(sym_id, structural_type, Vec::new());
+                self.ctx.leave_recursion();
+                return structural_type;
             }
         }
         // For ALIAS symbols (e.g., `import b = a.c`), resolve to the target

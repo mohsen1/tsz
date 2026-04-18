@@ -510,12 +510,12 @@ impl<'a> Printer<'a> {
                     }
                 }
             }
-            if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
-                if let Some(func_decl) = self.arena.get_function(stmt_node) {
-                    let func_name = self.get_identifier_text_idx(func_decl.name);
-                    if !func_name.is_empty() {
-                        names.insert(func_name);
-                    }
+            if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_decl) = self.arena.get_function(stmt_node)
+            {
+                let func_name = self.get_identifier_text_idx(func_decl.name);
+                if !func_name.is_empty() {
+                    names.insert(func_name);
                 }
             }
         }
@@ -937,25 +937,24 @@ impl<'a> Printer<'a> {
                 // Hoist `var` declarations from for/for-in/for-of loop initializers.
                 // In System modules, `for (var x in ...)` becomes `var x;` at the
                 // module scope and `for (x in ...)` inside execute().
-                if stmt_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
-                    || stmt_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                if (stmt_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                    || stmt_node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
+                    && let Some(for_data) = self.arena.get_for_in_of(stmt_node)
                 {
-                    if let Some(for_data) = self.arena.get_for_in_of(stmt_node) {
-                        self.collect_var_names_from_initializer(
-                            for_data.initializer,
-                            &mut names,
-                            &mut seen,
-                        );
-                    }
+                    self.collect_var_names_from_initializer(
+                        for_data.initializer,
+                        &mut names,
+                        &mut seen,
+                    );
                 }
-                if stmt_node.kind == syntax_kind_ext::FOR_STATEMENT {
-                    if let Some(loop_data) = self.arena.get_loop(stmt_node) {
-                        self.collect_var_names_from_initializer(
-                            loop_data.initializer,
-                            &mut names,
-                            &mut seen,
-                        );
-                    }
+                if stmt_node.kind == syntax_kind_ext::FOR_STATEMENT
+                    && let Some(loop_data) = self.arena.get_loop(stmt_node)
+                {
+                    self.collect_var_names_from_initializer(
+                        loop_data.initializer,
+                        &mut names,
+                        &mut seen,
+                    );
                 }
                 if has_top_level_using {
                     let needs_default_temp = (stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT

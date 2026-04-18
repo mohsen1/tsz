@@ -461,7 +461,18 @@ impl<'a> CheckerState<'a> {
         // in the chain is itself exported from the file module. Nested local
         // namespaces inside a module should still print as `foo.bar.baz`, not
         // `"file".foo.bar.baz`.
-        if root_symbol.parent == SymbolId::NONE
+        //
+        // The root symbol is at file level if:
+        // 1. Its parent is SymbolId::NONE, or
+        // 2. Its parent has an empty name (the file scope symbol)
+        let is_at_file_level = root_symbol.parent == SymbolId::NONE
+            || self
+                .ctx
+                .binder
+                .get_symbol_with_libs(root_symbol.parent, &lib_binders)
+                .is_some_and(|p| p.escaped_name.is_empty() || p.escaped_name == "__global");
+
+        if is_at_file_level
             && let Some(module_name) = self.external_module_display_name_for_symbol(root_symbol)
         {
             return format!("{module_name}.{qualified_name}");
@@ -477,6 +488,13 @@ impl<'a> CheckerState<'a> {
         if !symbol.is_exported {
             return None;
         }
+
+        // tsc includes the module prefix (e.g., '"test".c') for exported namespaces
+        // in external modules. The one exception is global/ambient namespaces that are
+        // re-exported via `export { X }` (where the namespace declaration itself
+        // doesn't have the export modifier). However, detecting this reliably across
+        // arenas is complex, so we conservatively include the prefix for all exported
+        // symbols in external modules. This matches tsc's behavior in the common case.
 
         let (is_external_module, file_name) = if symbol.decl_file_idx != u32::MAX {
             let file_idx = symbol.decl_file_idx as usize;

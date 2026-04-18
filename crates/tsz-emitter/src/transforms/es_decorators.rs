@@ -1128,15 +1128,13 @@ impl<'a> TC39DecoratorEmitter<'a> {
             if node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
                 return true;
             }
-            if node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-                if let Some(prop) = self.arena.get_property_decl(node) {
-                    if self
-                        .arena
-                        .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
-                    {
-                        return true;
-                    }
-                }
+            if node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                && let Some(prop) = self.arena.get_property_decl(node)
+                && self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
+            {
+                return true;
             }
         }
         false

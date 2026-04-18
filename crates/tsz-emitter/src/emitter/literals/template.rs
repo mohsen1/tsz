@@ -21,12 +21,11 @@ impl<'a> Printer<'a> {
 
         // When the tag is `super` with type arguments (which are stripped),
         // tsc emits `super. ` to preserve the intent of a property access.
-        if tagged.type_arguments.is_some() {
-            if let Some(tag_node) = self.arena.get(tagged.tag) {
-                if tag_node.kind == SyntaxKind::SuperKeyword as u16 {
-                    self.write(".");
-                }
-            }
+        if tagged.type_arguments.is_some()
+            && let Some(tag_node) = self.arena.get(tagged.tag)
+            && tag_node.kind == SyntaxKind::SuperKeyword as u16
+        {
+            self.write(".");
         }
 
         self.write_space();

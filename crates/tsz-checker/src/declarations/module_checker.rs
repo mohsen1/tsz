@@ -223,12 +223,11 @@ impl<'a> CheckerState<'a> {
         //   export * from './module'           → export_clause is NONE
         //   export * as ns from './module'     → export_clause is Identifier/StringLiteral
         // Named exports (export { foo } from) use NAMED_EXPORTS and are not affected.
-        if export_decl.export_clause.is_some() {
-            if let Some(clause_node) = self.ctx.arena.get(export_decl.export_clause) {
-                if clause_node.kind == syntax_kind_ext::NAMED_EXPORTS {
-                    return;
-                }
-            }
+        if export_decl.export_clause.is_some()
+            && let Some(clause_node) = self.ctx.arena.get(export_decl.export_clause)
+            && clause_node.kind == syntax_kind_ext::NAMED_EXPORTS
+        {
+            return;
         }
 
         // Get module specifier text
@@ -263,7 +262,7 @@ impl<'a> CheckerState<'a> {
                 .or_else(|| display_name.strip_suffix(".tsx"))
                 .or_else(|| display_name.strip_suffix(".jsx"))
                 .unwrap_or(display_name);
-            let quoted = format!("\"{}\"", display_name);
+            let quoted = format!("\"{display_name}\"");
             self.error_at_node_msg(
                 export_decl.module_specifier,
                 diagnostic_codes::MODULE_USES_EXPORT_AND_CANNOT_BE_USED_WITH_EXPORT,
@@ -288,14 +287,14 @@ impl<'a> CheckerState<'a> {
         };
         // Scan top-level statements for EXPORT_ASSIGNMENT
         for &stmt_idx in &source_file.statements.nodes {
-            if let Some(stmt_node) = target_arena.get(stmt_idx) {
-                if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
-                    // Verify it's `export =` (not `export default`)
-                    if let Some(assign) = target_arena.get_export_assignment(stmt_node) {
-                        if assign.is_export_equals {
-                            return true;
-                        }
-                    }
+            if let Some(stmt_node) = target_arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+            {
+                // Verify it's `export =` (not `export default`)
+                if let Some(assign) = target_arena.get_export_assignment(stmt_node)
+                    && assign.is_export_equals
+                {
+                    return true;
                 }
             }
         }
@@ -380,12 +379,11 @@ impl<'a> CheckerState<'a> {
             let Some(stmt_node) = target_arena.get(stmt_idx) else {
                 continue;
             };
-            if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::EXPORT_ASSIGNMENT {
-                if let Some(assign) = target_arena.get_export_assignment(stmt_node) {
-                    if assign.is_export_equals {
-                        return true;
-                    }
-                }
+            if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::EXPORT_ASSIGNMENT
+                && let Some(assign) = target_arena.get_export_assignment(stmt_node)
+                && assign.is_export_equals
+            {
+                return true;
             }
         }
         false
@@ -1455,20 +1453,18 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if is_circular {
-                if let Some((_, error_node)) = alias_map.get(&start_name) {
-                    let message = format_message(
-                        diagnostic_messages::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
-                        &[&start_name],
-                    );
-                    self.error_at_node(
-                        *error_node,
-                        &message,
-                        diagnostic_codes::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
-                    );
-                    for name in &visited {
-                        reported.insert(name.clone());
-                    }
+            if is_circular && let Some((_, error_node)) = alias_map.get(&start_name) {
+                let message = format_message(
+                    diagnostic_messages::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
+                    &[&start_name],
+                );
+                self.error_at_node(
+                    *error_node,
+                    &message,
+                    diagnostic_codes::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
+                );
+                for name in &visited {
+                    reported.insert(name.clone());
                 }
             }
         }
@@ -1803,10 +1799,10 @@ impl<'a> CheckerState<'a> {
         if current_file.ends_with(".mts") || current_file.ends_with(".mjs") {
             return false;
         }
-        if self.ctx.compiler_options.module.is_node_module() {
-            if let Some(is_esm) = self.ctx.file_is_esm {
-                return !is_esm;
-            }
+        if self.ctx.compiler_options.module.is_node_module()
+            && let Some(is_esm) = self.ctx.file_is_esm
+        {
+            return !is_esm;
         }
         !self.ctx.compiler_options.module.is_es_module()
     }

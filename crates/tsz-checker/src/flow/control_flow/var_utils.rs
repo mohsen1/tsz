@@ -343,10 +343,10 @@ impl<'a> FlowAnalyzer<'a> {
 
     /// Check if a CONDITION flow node represents an impossible (dead) branch.
     ///
-    /// For example, `true || false ? a : b` creates TRUE_CONDITION and
-    /// FALSE_CONDITION flow nodes for the condition `true || false`. Since
-    /// `true || false` is always truthy, the FALSE_CONDITION branch is dead.
-    /// Similarly, `false && true` is always falsy, so its TRUE_CONDITION
+    /// For example, `true || false ? a : b` creates `TRUE_CONDITION` and
+    /// `FALSE_CONDITION` flow nodes for the condition `true || false`. Since
+    /// `true || false` is always truthy, the `FALSE_CONDITION` branch is dead.
+    /// Similarly, `false && true` is always falsy, so its `TRUE_CONDITION`
     /// branch is dead.
     ///
     /// tsc recognizes these dead branches and does not emit TS2454 for
@@ -412,16 +412,16 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         // Binary logical operators
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(bin) = self.arena.get_binary_expr(node) {
-                // `a || b`: truthy if a is always truthy (short-circuits)
-                if bin.operator_token == SyntaxKind::BarBarToken as u16 {
-                    return self.is_always_truthy(bin.left);
-                }
-                // `a && b`: truthy only if both are always truthy
-                if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16 {
-                    return self.is_always_truthy(bin.left) && self.is_always_truthy(bin.right);
-                }
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(bin) = self.arena.get_binary_expr(node)
+        {
+            // `a || b`: truthy if a is always truthy (short-circuits)
+            if bin.operator_token == SyntaxKind::BarBarToken as u16 {
+                return self.is_always_truthy(bin.left);
+            }
+            // `a && b`: truthy only if both are always truthy
+            if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16 {
+                return self.is_always_truthy(bin.left) && self.is_always_truthy(bin.right);
             }
         }
 
@@ -470,16 +470,16 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         // Binary logical operators
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(bin) = self.arena.get_binary_expr(node) {
-                // `a && b`: falsy if a is always falsy (short-circuits)
-                if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16 {
-                    return self.is_always_falsy(bin.left);
-                }
-                // `a || b`: falsy only if both are always falsy
-                if bin.operator_token == SyntaxKind::BarBarToken as u16 {
-                    return self.is_always_falsy(bin.left) && self.is_always_falsy(bin.right);
-                }
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(bin) = self.arena.get_binary_expr(node)
+        {
+            // `a && b`: falsy if a is always falsy (short-circuits)
+            if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16 {
+                return self.is_always_falsy(bin.left);
+            }
+            // `a || b`: falsy only if both are always falsy
+            if bin.operator_token == SyntaxKind::BarBarToken as u16 {
+                return self.is_always_falsy(bin.left) && self.is_always_falsy(bin.right);
             }
         }
 
@@ -667,17 +667,16 @@ impl<'a> FlowAnalyzer<'a> {
         let Some(node) = self.arena.get(expr) else {
             return false;
         };
-        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && let Some(access) = self.arena.get_access_expr(node)
         {
-            if let Some(access) = self.arena.get_access_expr(node) {
-                // Optional chaining (`ref?.prop`) does NOT prove assignment —
-                // the access short-circuits when the base is nullish.
-                if !access.question_dot_token
-                    && self.is_matching_reference(access.expression, reference)
-                {
-                    return true;
-                }
+            // Optional chaining (`ref?.prop`) does NOT prove assignment —
+            // the access short-circuits when the base is nullish.
+            if !access.question_dot_token
+                && self.is_matching_reference(access.expression, reference)
+            {
+                return true;
             }
         }
         false
@@ -941,24 +940,21 @@ impl<'a> FlowAnalyzer<'a> {
         }
         let var_decl = self.arena.get_variable_declaration(decl_data)?;
         let node_types = self.node_types?;
-        if var_decl.type_annotation.is_none() {
-            if !self.var_decl_has_jsdoc_type_annotation(assignment_node) {
-                if let Some(nullish_type) = self.nullish_literal_type(var_decl.initializer) {
-                    if let Some(declared_type) = node_types
-                        .get(&assignment_node.0)
-                        .copied()
-                        .or_else(|| node_types.get(&var_decl.name.0).copied())
-                    {
-                        if declared_type != TypeId::ANY
-                            && declared_type != nullish_type
-                            && declared_type != TypeId::ERROR
-                        {
-                            return Some(declared_type);
-                        }
-                    }
-                }
-                return None;
+        if var_decl.type_annotation.is_none()
+            && !self.var_decl_has_jsdoc_type_annotation(assignment_node)
+        {
+            if let Some(nullish_type) = self.nullish_literal_type(var_decl.initializer)
+                && let Some(declared_type) = node_types
+                    .get(&assignment_node.0)
+                    .copied()
+                    .or_else(|| node_types.get(&var_decl.name.0).copied())
+                && declared_type != TypeId::ANY
+                && declared_type != nullish_type
+                && declared_type != TypeId::ERROR
+            {
+                return Some(declared_type);
             }
+            return None;
         }
         if var_decl.type_annotation.is_some() {
             node_types.get(&var_decl.type_annotation.0).copied()
@@ -975,9 +971,7 @@ impl<'a> FlowAnalyzer<'a> {
         assignment_node: NodeIndex,
         target: NodeIndex,
     ) -> Option<TypeId> {
-        let Some(node_data) = self.arena.get(assignment_node) else {
-            return None;
-        };
+        let node_data = self.arena.get(assignment_node)?;
         if node_data.kind == syntax_kind_ext::VARIABLE_DECLARATION {
             return self.annotation_type_from_var_decl_node(assignment_node);
         }
@@ -1032,9 +1026,7 @@ impl<'a> FlowAnalyzer<'a> {
             if node.kind == syntax_kind_ext::SOURCE_FILE {
                 return self.arena.get_source_file(node);
             }
-            let Some(info) = self.arena.node_info(current) else {
-                return None;
-            };
+            let info = self.arena.node_info(current)?;
             if info.parent.is_none() {
                 return None;
             }

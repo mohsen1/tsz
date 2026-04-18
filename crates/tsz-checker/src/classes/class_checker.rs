@@ -404,8 +404,7 @@ impl<'a> CheckerState<'a> {
                             self.error_at_node(
                                     info.name_idx,
                                     &format!(
-                                        "Property '{display_name}' in type '{}' is not assignable to the same property in base type '{}'.",
-                                        derived_class_name, base_class_name
+                                        "Property '{display_name}' in type '{derived_class_name}' is not assignable to the same property in base type '{base_class_name}'."
                                     ),
                                     diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                                 );
@@ -2088,8 +2087,7 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(
                         info.name_idx,
                         &format!(
-                            "Property '{display_name}' in type '{}' is not assignable to the same property in base type '{}'.",
-                            derived_class_name, base_class_name
+                            "Property '{display_name}' in type '{derived_class_name}' is not assignable to the same property in base type '{base_class_name}'."
                         ),
                         diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                     );

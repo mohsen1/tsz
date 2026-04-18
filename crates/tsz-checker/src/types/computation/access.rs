@@ -540,12 +540,11 @@ impl<'a> CheckerState<'a> {
             // expression's validity, returning the index signature's value
             // type. This is important for downstream checks (e.g., TS2356
             // arithmetic operand type check on `ENUM1[undeclared]--`).
-            if !skip_flow_narrowing {
-                if let Some(index_sig_type) =
+            if !skip_flow_narrowing
+                && let Some(index_sig_type) =
                     self.resolve_index_signature_for_error_index(object_type_for_access)
-                {
-                    return index_sig_type;
-                }
+            {
+                return index_sig_type;
             }
             return TypeId::ERROR;
         }
@@ -763,60 +762,55 @@ impl<'a> CheckerState<'a> {
 
             if result_type.is_none()
                 && self.namespace_has_type_only_member(object_type_for_access, name)
+                && self.is_js_file()
+                && self.ctx.compiler_options.check_js
+                && let Some(ns_name) = self.entity_name_text(access.expression)
+                && let Some(member_sym_id) =
+                    self.resolve_namespace_member_from_all_binders(&ns_name, name)
             {
-                if self.is_js_file()
-                    && self.ctx.compiler_options.check_js
-                    && let Some(ns_name) = self.entity_name_text(access.expression)
-                    && let Some(member_sym_id) =
-                        self.resolve_namespace_member_from_all_binders(&ns_name, name)
+                let recovered_type = if !self.symbol_member_is_type_only(member_sym_id, Some(name))
                 {
-                    let recovered_type = if !self
-                        .symbol_member_is_type_only(member_sym_id, Some(name))
-                    {
-                        let value_type = self.get_type_of_symbol(member_sym_id);
+                    let value_type = self.get_type_of_symbol(member_sym_id);
+                    (value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR)
+                        .then_some(value_type)
+                } else {
+                    let checked_js_decl = self
+                        .ctx
+                        .binder
+                        .get_symbol(member_sym_id)
+                        .or_else(|| self.get_cross_file_symbol(member_sym_id))
+                        .map(|member_symbol| {
+                            (
+                                member_symbol.value_declaration,
+                                member_symbol.declarations.clone(),
+                            )
+                        })
+                        .and_then(|(value_declaration, declarations)| {
+                            if value_declaration.is_some() {
+                                self.checked_js_constructor_value_declaration(
+                                    member_sym_id,
+                                    value_declaration,
+                                    &declarations,
+                                )
+                            } else {
+                                declarations.into_iter().find(|&decl_idx| {
+                                    self.declaration_is_checked_js_constructor_value_declaration(
+                                        member_sym_id,
+                                        decl_idx,
+                                    )
+                                })
+                            }
+                        });
+                    checked_js_decl.and_then(|checked_js_decl| {
+                        let value_type = self
+                            .type_of_value_declaration_for_symbol(member_sym_id, checked_js_decl);
                         (value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR)
                             .then_some(value_type)
-                    } else {
-                        let checked_js_decl = self
-                            .ctx
-                            .binder
-                            .get_symbol(member_sym_id)
-                            .or_else(|| self.get_cross_file_symbol(member_sym_id))
-                            .map(|member_symbol| {
-                                (
-                                    member_symbol.value_declaration,
-                                    member_symbol.declarations.clone(),
-                                )
-                            })
-                            .and_then(|(value_declaration, declarations)| {
-                                if value_declaration.is_some() {
-                                    self.checked_js_constructor_value_declaration(
-                                        member_sym_id,
-                                        value_declaration,
-                                        &declarations,
-                                    )
-                                } else {
-                                    declarations.into_iter().find(|&decl_idx| {
-                                        self.declaration_is_checked_js_constructor_value_declaration(
-                                            member_sym_id,
-                                            decl_idx,
-                                        )
-                                    })
-                                }
-                            });
-                        checked_js_decl.and_then(|checked_js_decl| {
-                            let value_type = self.type_of_value_declaration_for_symbol(
-                                member_sym_id,
-                                checked_js_decl,
-                            );
-                            (value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR)
-                                .then_some(value_type)
-                        })
-                    };
-                    if let Some(recovered_type) = recovered_type {
-                        result_type = Some(recovered_type);
-                        use_index_signature_check = false;
-                    }
+                    })
+                };
+                if let Some(recovered_type) = recovered_type {
+                    result_type = Some(recovered_type);
+                    use_index_signature_check = false;
                 }
             }
 

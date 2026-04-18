@@ -54,13 +54,13 @@ impl<'a> Printer<'a> {
         self.write("[");
         // Emit any inline comments between `[` and the first element
         // (e.g., `[/*comment*/ a]` in catch destructuring)
-        if let Some(&first_elem) = pattern.elements.nodes.first() {
-            if let Some(elem_node) = self.arena.get(first_elem) {
-                self.emit_comments_before_pos(elem_node.pos);
-                if self.pending_block_comment_space {
-                    self.write_space();
-                    self.pending_block_comment_space = false;
-                }
+        if let Some(&first_elem) = pattern.elements.nodes.first()
+            && let Some(elem_node) = self.arena.get(first_elem)
+        {
+            self.emit_comments_before_pos(elem_node.pos);
+            if self.pending_block_comment_space {
+                self.write_space();
+                self.pending_block_comment_space = false;
             }
         }
         self.emit_comma_separated(&pattern.elements.nodes);

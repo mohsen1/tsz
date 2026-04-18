@@ -686,7 +686,7 @@ impl<'a> CheckerState<'a> {
         {
             let name = self.ctx.types.resolve_atom(def.name);
             if !name.is_empty() {
-                return Some(name.to_string());
+                return Some(name);
             }
         }
 
@@ -871,14 +871,11 @@ impl<'a> CheckerState<'a> {
                                 self.ctx.types,
                                 *member,
                             )
-                        {
-                            if let Some(prop) =
+                            && let Some(prop) =
                                 member_shape.properties.iter().find(|p| p.name == name)
-                            {
-                                if self.type_contains_string_literal(prop.type_id) {
-                                    return Some(prop.type_id);
-                                }
-                            }
+                            && self.type_contains_string_literal(prop.type_id)
+                        {
+                            return Some(prop.type_id);
                         }
                     }
                     None
@@ -886,11 +883,11 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|target_prop_type| {
                     self.type_contains_string_literal(target_prop_type)
                 });
-            if target_accepts_literal {
-                if let Some(literal_display) = self.literal_expression_display(prop.initializer) {
-                    parts.push(format!("{display_name}: {literal_display}"));
-                    continue;
-                }
+            if target_accepts_literal
+                && let Some(literal_display) = self.literal_expression_display(prop.initializer)
+            {
+                parts.push(format!("{display_name}: {literal_display}"));
+                continue;
             }
 
             // For nested object literals, recurse
@@ -987,13 +984,13 @@ impl<'a> CheckerState<'a> {
         // return the interface name directly. This prevents get_type_of_node from
         // resolving the Lazy to its structural form, losing the name (e.g., showing
         // "{ constraint: Constraint<this>; ... }" instead of "Num").
-        if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, source) {
-            if let Some(def) = self.ctx.definition_store.get(def_id) {
-                if def.kind == tsz_solver::def::DefKind::Interface && def.type_params.is_empty() {
-                    let name = self.ctx.types.resolve_atom_ref(def.name);
-                    return name.to_string();
-                }
-            }
+        if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, source)
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+            && def.kind == tsz_solver::def::DefKind::Interface
+            && def.type_params.is_empty()
+        {
+            let name = self.ctx.types.resolve_atom_ref(def.name);
+            return name.to_string();
         }
 
         if let Some(display) = self.jsdoc_annotated_expression_display(anchor_idx, target) {
@@ -1368,64 +1365,62 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if display_target == target {
-            if let Some(display) = self.declared_type_annotation_text_for_expression(target_expr) {
-                let preserve_literal_surface = self.target_preserves_literal_surface(source);
-                let fallback = if preserve_literal_surface {
-                    self.format_type_diagnostic(target)
-                } else {
-                    // Use diagnostic mode to avoid synthetic `?: undefined` in unions
-                    self.format_type_diagnostic_widened(
-                        self.widen_fresh_object_literal_properties_for_display(target),
-                    )
-                };
-                // Generic callable targets preserve type alias names from annotations
-                let target_is_generic_callable =
-                    crate::query_boundaries::common::callable_shape_for_type(
-                        self.ctx.types,
-                        target,
-                    )
+        if display_target == target
+            && let Some(display) = self.declared_type_annotation_text_for_expression(target_expr)
+        {
+            let preserve_literal_surface = self.target_preserves_literal_surface(source);
+            let fallback = if preserve_literal_surface {
+                self.format_type_diagnostic(target)
+            } else {
+                // Use diagnostic mode to avoid synthetic `?: undefined` in unions
+                self.format_type_diagnostic_widened(
+                    self.widen_fresh_object_literal_properties_for_display(target),
+                )
+            };
+            // Generic callable targets preserve type alias names from annotations
+            let target_is_generic_callable =
+                crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, target)
                     .is_some_and(|shape| {
                         shape
                             .call_signatures
                             .iter()
                             .chain(shape.construct_signatures.iter())
                             .any(|sig| !sig.type_params.is_empty())
-                    }) || crate::query_boundaries::common::function_shape_for_type(
+                    })
+                    || crate::query_boundaries::common::function_shape_for_type(
                         self.ctx.types,
                         target,
                     )
                     .is_some_and(|shape| !shape.type_params.is_empty());
-                if target_is_generic_callable {
-                    return self.format_annotation_like_type(&display);
-                }
-                if Self::display_has_member_literals_assignability(&display) {
-                    return self.format_annotation_like_type(&display);
-                }
-                if Self::display_has_member_literals_assignability(&fallback)
-                    && !Self::display_has_member_literals_assignability(&display)
-                {
-                    return self.format_annotation_like_type(&display);
-                }
-                // When the fallback produces duplicate names in a union or tuple
-                // (e.g., `Yep | Yep` or `[Yep, Yep]`) but the annotation text preserves
-                // namespace-qualified names (e.g., `Foo.Yep | Bar.Yep` or
-                // `[Foo.Yep, Bar.Yep]`), prefer the annotation text. This matches tsc's
-                // behavior of qualifying types when they'd otherwise be ambiguous.
-                if Self::has_duplicate_union_member_names(&fallback)
-                    && !Self::has_duplicate_union_member_names(&display)
-                {
-                    return self.format_annotation_like_type(&display);
-                }
-                // When the target is an enum type, format_type() may resolve to
-                // an unrelated type name (e.g., a DOM interface that shares the
-                // same structural shape). Use the assignability formatter which
-                // correctly produces namespace-qualified enum names.
-                if tsz_solver::type_queries::get_enum_def_id(self.ctx.types, target).is_some() {
-                    return self.format_assignability_type_for_message(target, source);
-                }
-                return fallback;
+            if target_is_generic_callable {
+                return self.format_annotation_like_type(&display);
             }
+            if Self::display_has_member_literals_assignability(&display) {
+                return self.format_annotation_like_type(&display);
+            }
+            if Self::display_has_member_literals_assignability(&fallback)
+                && !Self::display_has_member_literals_assignability(&display)
+            {
+                return self.format_annotation_like_type(&display);
+            }
+            // When the fallback produces duplicate names in a union or tuple
+            // (e.g., `Yep | Yep` or `[Yep, Yep]`) but the annotation text preserves
+            // namespace-qualified names (e.g., `Foo.Yep | Bar.Yep` or
+            // `[Foo.Yep, Bar.Yep]`), prefer the annotation text. This matches tsc's
+            // behavior of qualifying types when they'd otherwise be ambiguous.
+            if Self::has_duplicate_union_member_names(&fallback)
+                && !Self::has_duplicate_union_member_names(&display)
+            {
+                return self.format_annotation_like_type(&display);
+            }
+            // When the target is an enum type, format_type() may resolve to
+            // an unrelated type name (e.g., a DOM interface that shares the
+            // same structural shape). Use the assignability formatter which
+            // correctly produces namespace-qualified enum names.
+            if tsz_solver::type_queries::get_enum_def_id(self.ctx.types, target).is_some() {
+                return self.format_assignability_type_for_message(target, source);
+            }
+            return fallback;
         }
 
         // When the target is an enum type without annotation text, use the
@@ -1948,14 +1943,11 @@ impl<'a> CheckerState<'a> {
         // when the target is non-nullable, leaving only "number").
         if (expr_display_type == TypeId::NULL || expr_display_type == TypeId::UNDEFINED)
             && expr_display_type != declared_type
-        {
-            if let Some(members) =
+            && let Some(members) =
                 crate::query_boundaries::common::union_members(self.ctx.types, declared_type)
-            {
-                if members.contains(&expr_display_type) {
-                    return None;
-                }
-            }
+            && members.contains(&expr_display_type)
+        {
+            return None;
         }
 
         if let Some(display) = self.identifier_array_object_literal_source_display(expr_idx, target)

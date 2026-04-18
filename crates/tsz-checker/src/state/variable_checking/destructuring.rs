@@ -1399,8 +1399,7 @@ impl<'a> CheckerState<'a> {
                                     self.format_type_for_assignability_message(parent_type)
                                 };
                                 let message = format!(
-                                    "Property '{}' does not exist on type '{}'.",
-                                    prop_name_str, type_str
+                                    "Property '{prop_name_str}' does not exist on type '{type_str}'."
                                 );
                                 self.error_at_node(
                                     ce,

@@ -119,32 +119,32 @@ impl<'a> CheckerState<'a> {
         // 1. Computed bodies (intersection reduction, conditional evaluation) → expand.
         // 2. Aliases wrapping a generic application (e.g. `type Foo = Id<{...}>`) →
         //    show the inner application.  Detected via display_alias on the evaluated result.
-        if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, ty) {
-            if let Some(def) = self.ctx.definition_store.get(def_id) {
-                if def.kind == tsz_solver::def::DefKind::TypeAlias && def.type_params.is_empty() {
-                    if let Some(body) = def.body {
-                        if self.assignability_display_has_own_signature_type_params(body) {
-                            let evaluated = self.evaluate_type_with_env(ty);
-                            return self.format_type_diagnostic(evaluated);
-                        }
-                        if self.ctx.definition_store.is_computed_body(body) {
-                            let evaluated = self.evaluate_type_with_env(ty);
-                            return self.format_type_diagnostic(evaluated);
-                        }
-                    }
-                    // Evaluate and check if the result wraps a generic application.
-                    // tsc shows `Id<{...}>` not `Foo` for `type Foo = Id<{...}>`.
+        if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, ty)
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+            && def.kind == tsz_solver::def::DefKind::TypeAlias
+            && def.type_params.is_empty()
+        {
+            if let Some(body) = def.body {
+                if self.assignability_display_has_own_signature_type_params(body) {
                     let evaluated = self.evaluate_type_with_env(ty);
-                    if is_generic_callable(self, evaluated) {
-                        return format_with_def_store(self, evaluated);
-                    }
-                    if evaluated != ty && self.ctx.types.get_display_alias(evaluated).is_some() {
-                        return self.format_type_for_assignability_message(evaluated);
-                    }
-                    let name = self.ctx.types.resolve_atom_ref(def.name);
-                    return name.to_string();
+                    return self.format_type_diagnostic(evaluated);
+                }
+                if self.ctx.definition_store.is_computed_body(body) {
+                    let evaluated = self.evaluate_type_with_env(ty);
+                    return self.format_type_diagnostic(evaluated);
                 }
             }
+            // Evaluate and check if the result wraps a generic application.
+            // tsc shows `Id<{...}>` not `Foo` for `type Foo = Id<{...}>`.
+            let evaluated = self.evaluate_type_with_env(ty);
+            if is_generic_callable(self, evaluated) {
+                return format_with_def_store(self, evaluated);
+            }
+            if evaluated != ty && self.ctx.types.get_display_alias(evaluated).is_some() {
+                return self.format_type_for_assignability_message(evaluated);
+            }
+            let name = self.ctx.types.resolve_atom_ref(def.name);
+            return name.to_string();
         }
 
         if let Some(collapsed) = self.format_union_with_collapsed_enum_display(ty) {
@@ -500,11 +500,7 @@ impl<'a> CheckerState<'a> {
 
         let export_equals_default_name = |state: &mut Self, candidate: TypeId| {
             let default_name = state.ctx.types.intern_string("default");
-            let Some(shape) =
-                tsz_solver::type_queries::get_object_shape(state.ctx.types, candidate)
-            else {
-                return None;
-            };
+            let shape = tsz_solver::type_queries::get_object_shape(state.ctx.types, candidate)?;
             let default_prop = shape
                 .properties
                 .iter()
@@ -1341,10 +1337,10 @@ impl<'a> CheckerState<'a> {
         }
         // Skip aliases whose body was computed by intersection reduction or
         // conditional evaluation. tsc shows the expanded form for these.
-        if let Some(body) = def.body {
-            if self.ctx.definition_store.is_computed_body(body) {
-                return None;
-            }
+        if let Some(body) = def.body
+            && self.ctx.definition_store.is_computed_body(body)
+        {
+            return None;
         }
         let name = self.ctx.types.resolve_atom_ref(def.name);
         Some(name.to_string())

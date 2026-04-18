@@ -449,10 +449,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)
-        else {
-            return None;
-        };
+        let shape = tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)?;
         let has_string_index = shape.string_index.is_some();
 
         for attr in &info.attrs {

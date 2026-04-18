@@ -22,20 +22,20 @@ fn read_checker_source_file(path: &str) -> String {
         let mut combined = String::new();
         if let Ok(entries) = fs::read_dir(p) {
             for entry in entries.flatten() {
-                if entry.path().extension().and_then(|e| e.to_str()) == Some("rs") {
-                    if let Ok(c) = fs::read_to_string(entry.path()) {
-                        combined.push_str(&c);
-                    }
+                if entry.path().extension().and_then(|e| e.to_str()) == Some("rs")
+                    && let Ok(c) = fs::read_to_string(entry.path())
+                {
+                    combined.push_str(&c);
                 }
             }
         }
         return combined;
     }
     // Try stripping .rs extension and treating as directory
-    if let Some(dir_path) = path.strip_suffix(".rs") {
-        if Path::new(dir_path).is_dir() {
-            return read_checker_source_file(dir_path);
-        }
+    if let Some(dir_path) = path.strip_suffix(".rs")
+        && Path::new(dir_path).is_dir()
+    {
+        return read_checker_source_file(dir_path);
     }
     String::new()
 }
@@ -690,10 +690,10 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         for entry in fs::read_dir(dir).expect("failed to read assignment_checker directory") {
             let entry = entry.expect("failed to read directory entry");
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("rs") {
-                if let Ok(content) = fs::read_to_string(&path) {
-                    s.push_str(&content);
-                }
+            if path.extension().and_then(|e| e.to_str()) == Some("rs")
+                && let Ok(content) = fs::read_to_string(&path)
+            {
+                s.push_str(&content);
             }
         }
         assert!(
@@ -2934,10 +2934,10 @@ fn semantic_diagnostic_reporters_must_route_primary_anchor_selection_through_fin
             for entry in fs::read_dir(&path).unwrap_or_else(|e| panic!("read dir {file}: {e}")) {
                 let entry = entry.expect("failed to read dir entry");
                 let p = entry.path();
-                if p.extension().and_then(|e| e.to_str()) == Some("rs") {
-                    if let Ok(c) = fs::read_to_string(&p) {
-                        combined.push_str(&c);
-                    }
+                if p.extension().and_then(|e| e.to_str()) == Some("rs")
+                    && let Ok(c) = fs::read_to_string(&p)
+                {
+                    combined.push_str(&c);
                 }
             }
             combined

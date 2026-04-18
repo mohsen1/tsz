@@ -457,19 +457,18 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-                if !found {
-                    if let Some(shape) =
+                if !found
+                    && let Some(shape) =
                         crate::query_boundaries::state::type_analysis::callable_shape_for_type(
                             self.ctx.types,
                             resolved_type,
                         )
-                    {
-                        let prop_atom = self.ctx.types.intern_string(&property_name);
-                        for prop in &shape.properties {
-                            if prop.name == prop_atom {
-                                found = true;
-                                break;
-                            }
+                {
+                    let prop_atom = self.ctx.types.intern_string(&property_name);
+                    for prop in &shape.properties {
+                        if prop.name == prop_atom {
+                            found = true;
+                            break;
                         }
                     }
                 }

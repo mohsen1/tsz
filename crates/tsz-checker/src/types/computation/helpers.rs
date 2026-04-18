@@ -1717,7 +1717,17 @@ impl<'a> CheckerState<'a> {
             };
 
             if sig.type_annotation.is_some() {
-                return self.get_type_from_type_node(sig.type_annotation);
+                let base = self.get_type_from_type_node(sig.type_annotation);
+                // Optional property signatures carry an implicit `| undefined`
+                // in their type. The sibling helper `get_type_of_interface_member`
+                // preserves this via `PropertyInfo.optional`; this "simple"
+                // variant (used by cross-arena / cross-file delegation) was
+                // dropping `?:` so `configuration.server?: IServer` flowed
+                // across `import = require(...)` aliases as plain `IServer`.
+                if sig.question_token {
+                    return factory.union(vec![base, TypeId::UNDEFINED]);
+                }
+                return base;
             }
             return TypeId::ANY;
         }

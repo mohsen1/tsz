@@ -1019,14 +1019,7 @@ pub(super) fn collect_diagnostics(
         // Check all files in parallel — each file gets its own CheckerState and QueryCache.
         // TypeInterner (DashMap) is thread-safe; QueryCache uses RefCell/Cell per-thread.
         #[cfg(not(target_arch = "wasm32"))]
-        #[allow(clippy::type_complexity)]
-        let file_results: Vec<(
-            Vec<Diagnostic>,
-            Option<TypeCache>,
-            RequestCacheCounters,
-            tsz_solver::QueryCacheStatistics,
-            tsz_solver::StoreStatistics,
-        )> = {
+        let file_results: Vec<CheckFileResult> = {
             use rayon::iter::{
                 IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
                 ParallelIterator,
@@ -1089,13 +1082,7 @@ pub(super) fn collect_diagnostics(
         };
 
         #[cfg(target_arch = "wasm32")]
-        let file_results: Vec<(
-            Vec<Diagnostic>,
-            Option<TypeCache>,
-            RequestCacheCounters,
-            tsz_solver::QueryCacheStatistics,
-            tsz_solver::StoreStatistics,
-        )> = work_items
+        let file_results: Vec<CheckFileResult> = work_items
             .iter()
             .zip(per_file_binders.into_iter())
             .map(|(&file_idx, binder)| {
@@ -1755,6 +1742,17 @@ pub(super) struct CheckFileForParallelContext<'a> {
     program_has_real_syntax_errors: bool,
 }
 
+/// Result of checking a single file for the parallel checking path: diagnostics,
+/// optional `TypeCache` snapshot, per-file request counters, and solver
+/// query-cache / definition-store statistics aggregated by the caller.
+pub(super) type CheckFileResult = (
+    Vec<Diagnostic>,
+    Option<TypeCache>,
+    RequestCacheCounters,
+    tsz_solver::QueryCacheStatistics,
+    tsz_solver::StoreStatistics,
+);
+
 /// Check a single file for the parallel checking path.
 ///
 /// This is extracted from the work queue loop so it can be called from rayon's `par_iter`.
@@ -1763,13 +1761,7 @@ pub(super) struct CheckFileForParallelContext<'a> {
 /// The `TypeInterner` is shared across threads via `DashMap` (thread-safe).
 pub(super) fn check_file_for_parallel<'a>(
     context: CheckFileForParallelContext<'a>,
-) -> (
-    Vec<Diagnostic>,
-    Option<TypeCache>,
-    RequestCacheCounters,
-    tsz_solver::QueryCacheStatistics,
-    tsz_solver::StoreStatistics,
-) {
+) -> CheckFileResult {
     let CheckFileForParallelContext {
         file_idx,
         binder,

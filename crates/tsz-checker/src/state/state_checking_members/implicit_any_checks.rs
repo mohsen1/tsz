@@ -372,14 +372,13 @@ impl<'a> CheckerState<'a> {
             }
             // Do not suppress for data-* and aria-* attributes -- these are untyped
             // HTML custom data attributes that don't provide contextual types.
-            if let Some(attr_data) = self.ctx.arena.get_jsx_attribute(jsx_parent_node) {
-                if let Some(name_node) = self.ctx.arena.get(attr_data.name)
-                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                {
-                    let name = ident.escaped_text.as_str();
-                    if name.starts_with("data-") || name.starts_with("aria-") {
-                        return false;
-                    }
+            if let Some(attr_data) = self.ctx.arena.get_jsx_attribute(jsx_parent_node)
+                && let Some(name_node) = self.ctx.arena.get(attr_data.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                let name = ident.escaped_text.as_str();
+                if name.starts_with("data-") || name.starts_with("aria-") {
+                    return false;
                 }
             }
         } else if parent_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {

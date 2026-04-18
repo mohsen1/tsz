@@ -54,7 +54,7 @@ impl ClassInitializationSummary {
 }
 
 /// Unified per-member entry that stores all attributes in one allocation.
-/// Replaces 3 separate hashmaps (lookup, display_name, kind) per axis.
+/// Replaces 3 separate hashmaps (lookup, `display_name`, kind) per axis.
 #[derive(Clone)]
 pub(crate) struct MemberEntry {
     pub(crate) info: ClassMemberInfo,
@@ -561,7 +561,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Extract extends-clause type arguments for a class, returning the resolved
-    /// base class node index and evaluated type argument TypeIds.
+    /// base class node index and evaluated type argument `TypeIds`.
     /// Must be called while the class's type parameters are in scope.
     fn get_extends_clause_type_args(
         &mut self,
@@ -657,7 +657,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Record a member into the unified map structure.
-    /// Each member is stored once with all its attributes (info, display_name, kind, visibility).
+    /// Each member is stored once with all its attributes (info, `display_name`, kind, visibility).
     fn record_unified_member(
         info: ClassMemberInfo,
         is_visible: bool,
@@ -901,8 +901,8 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Record a JS-implicit member kind into the unified map structure.
-    /// These members have no ClassMemberInfo (they come from `this.x = ...` patterns),
-    /// so we create a minimal placeholder entry with just the kind and display_name.
+    /// These members have no `ClassMemberInfo` (they come from `this.x = ...` patterns),
+    /// so we create a minimal placeholder entry with just the kind and `display_name`.
     fn record_member_kind_unified(
         name: String,
         display_name: String,
@@ -918,7 +918,7 @@ impl<'a> CheckerState<'a> {
         };
         map.entry(name.clone()).or_insert(MemberEntry {
             info: ClassMemberInfo {
-                name: name.clone(),
+                name,
                 type_id: TypeId::ANY,
                 name_idx: NodeIndex::NONE,
                 visibility: MemberVisibility::Public,

@@ -922,23 +922,19 @@ impl<'a> CheckerState<'a> {
     fn generic_jsx_component_has_defaults(&self, component_type: TypeId) -> bool {
         if let Some(sigs) =
             tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)
-        {
-            if sigs
+            && sigs
                 .iter()
                 .any(|s| s.type_params.iter().any(|tp| tp.default.is_some()))
-            {
-                return true;
-            }
+        {
+            return true;
         }
         if let Some(sigs) =
             tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
-        {
-            if sigs
+            && sigs
                 .iter()
                 .any(|s| s.type_params.iter().any(|tp| tp.default.is_some()))
-            {
-                return true;
-            }
+        {
+            return true;
         }
         false
     }
@@ -1077,9 +1073,7 @@ impl<'a> CheckerState<'a> {
                 // attribute type checking for class-based JSX elements. Only fall
                 // back to the `props` property when a JSX namespace exists but
                 // doesn't define `ElementAttributesProperty`.
-                if self.get_jsx_namespace_type().is_none() {
-                    return None;
-                }
+                self.get_jsx_namespace_type()?;
 
                 // In React-style JSX setups, class components frequently expose
                 // their props through an inherited instance `props` member even
@@ -1245,7 +1239,7 @@ impl<'a> CheckerState<'a> {
         };
 
         shape.properties.iter().all(|prop| {
-            let prop_name = self.ctx.types.resolve_atom(prop.name).to_string();
+            let prop_name = self.ctx.types.resolve_atom(prop.name);
             matches!(
                 self.resolve_property_access_with_env(managed_props, &prop_name),
                 PropertyAccessResult::Success { .. }
@@ -1333,15 +1327,15 @@ impl<'a> CheckerState<'a> {
             if shape.properties.len() > 1 {
                 // Emit at the ElementAttributesProperty declaration, not the JSX element
                 // Look up the symbol to get its declaration position
-                if let Some(eap_symbol) = self.ctx.binder.get_symbol(eap_sym_id) {
-                    if let Some(&decl_idx) = eap_symbol.declarations.first() {
-                        use crate::diagnostics::diagnostic_codes;
-                        self.error_at_node_msg(
-                            decl_idx,
-                            diagnostic_codes::THE_GLOBAL_TYPE_JSX_MAY_NOT_HAVE_MORE_THAN_ONE_PROPERTY,
-                            &["ElementAttributesProperty"],
-                        );
-                    }
+                if let Some(eap_symbol) = self.ctx.binder.get_symbol(eap_sym_id)
+                    && let Some(&decl_idx) = eap_symbol.declarations.first()
+                {
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node_msg(
+                        decl_idx,
+                        diagnostic_codes::THE_GLOBAL_TYPE_JSX_MAY_NOT_HAVE_MORE_THAN_ONE_PROPERTY,
+                        &["ElementAttributesProperty"],
+                    );
                 }
                 return Some(String::new());
             }

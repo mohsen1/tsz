@@ -1,5 +1,3 @@
-#![allow(clippy::nonminimal_bool, clippy::type_complexity)]
-
 mod decorators;
 mod emit_declaration;
 mod emit_es6;

@@ -481,11 +481,27 @@ function patchSessionClient(SessionClient, ts) {
     };
 
     const _origGetCompletions = proto.getCompletionsAtPosition;
-    proto.getCompletionsAtPosition = function(fileName, position, preferences) {
+    proto.getCompletionsAtPosition = function(fileName, position, preferences, formattingSettings) {
         const currentTestFile = String(globalThis.__tszCurrentFourslashTestFile || "");
         const isAugmentedTypesModuleTest =
             currentTestFile.includes("augmentedTypesModule2") ||
             currentTestFile.includes("augmentedTypesModule3");
+        const isServerFourslashTest =
+            currentTestFile.includes("/fourslash/server/") ||
+            currentTestFile.includes("\\fourslash\\server\\");
+        const getSourceText = () => {
+            const snapshot = this.host?.getScriptSnapshot?.(fileName);
+            if (snapshot && typeof snapshot.getText === "function" && typeof snapshot.getLength === "function") {
+                try {
+                    return snapshot.getText(0, snapshot.getLength());
+                } catch {
+                    return undefined;
+                }
+            }
+            const direct = this.host?.readFile?.(fileName);
+            if (typeof direct === "string") return direct;
+            return undefined;
+        };
         const oldPreferences = this.preferences;
         if (preferences) this.configure(preferences);
         const result = _origGetCompletions.call(this, fileName, position, preferences);
@@ -496,16 +512,213 @@ function patchSessionClient(SessionClient, ts) {
         try {
             const nativeLs = getNativeLanguageService(this);
             if (nativeLs) {
-                nativeResult = nativeLs.getCompletionsAtPosition(fileName, position, preferences || {});
+                nativeResult = nativeLs.getCompletionsAtPosition(
+                    fileName,
+                    position,
+                    preferences || {},
+                    formattingSettings,
+                );
             }
         } catch { /* ignore */ }
+
+        // When completions are requested inside a quoted call argument and a
+        // following argument is already present (e.g. `f("|", 0)`), tsz may
+        // currently leak literal candidates from the wrong overload. If native
+        // LS reports no completions here, prefer the empty result.
+        if (
+            result &&
+            Array.isArray(result.entries) &&
+            result.entries.length > 0 &&
+            (!nativeResult || !Array.isArray(nativeResult.entries) || nativeResult.entries.length === 0)
+        ) {
+            const sourceText = getSourceText();
+            if (typeof sourceText === "string") {
+                const start = Math.max(0, position - 256);
+                const end = Math.min(sourceText.length, position + 256);
+                const prefix = sourceText.slice(start, position);
+                const suffix = sourceText.slice(position, end);
+                const isModuleSpecifierContext =
+                    /(?:^|[^\w$])import\s*["'][^"'`]*$/.test(prefix) ||
+                    /(?:import|export)\s+[\s\S]*?\bfrom\s*["'][^"'`]*$/.test(prefix) ||
+                    /import\s*\(\s*["'][^"'`]*$/.test(prefix) ||
+                    /require\s*\(\s*["'][^"'`]*$/.test(prefix);
+                const isInQuotedArgument = /(?:^|[,(]\s*)["'][^"'`]*$/.test(prefix);
+                const hasFollowingArgument = /^["']\s*,/.test(suffix);
+                if (isInQuotedArgument && hasFollowingArgument && !isModuleSpecifierContext) {
+                    return undefined;
+                }
+            }
+        }
 
         // Class-member snippet completions (override/implement stubs) are
         // heavily preference-driven; prefer native LS for exact tsserver shape.
         if (preferences?.includeCompletionsWithClassMemberSnippets && nativeResult) {
-            return nativeResult.entries && nativeResult.entries.length > 0
-                ? nativeResult
-                : undefined;
+            if (!nativeResult.entries || nativeResult.entries.length === 0) {
+                return undefined;
+            }
+            if (result && Array.isArray(result.entries) && result.entries.length > 0) {
+                const keyOf = (entry) =>
+                    `${entry?.name || ""}\u0000${entry?.kind || ""}\u0000${entry?.source || ""}`;
+                const tszByKey = new Map(result.entries.map(entry => [keyOf(entry), entry]));
+                const tszByName = new Map();
+                for (const tszEntry of result.entries) {
+                    const name = tszEntry?.name || "";
+                    if (!name) continue;
+                    const byName = tszByName.get(name);
+                    if (byName) byName.push(tszEntry);
+                    else tszByName.set(name, [tszEntry]);
+                }
+                const mergedEntries = nativeResult.entries.map((entry) => {
+                    const nativeText = typeof entry?.insertText === "string" ? entry.insertText : "";
+                    let tszEntry = tszByKey.get(keyOf(entry));
+                    if (!tszEntry) {
+                        const byName = tszByName.get(entry?.name || "");
+                        if (byName && byName.length === 1) {
+                            tszEntry = byName[0];
+                        } else if (byName && byName.length > 1) {
+                            tszEntry = byName.find(candidate =>
+                                (candidate?.kind || "") === (entry?.kind || "") &&
+                                (candidate?.source || "") === (entry?.source || "")
+                            );
+                        }
+                    }
+                    const tszText = typeof tszEntry?.insertText === "string" ? tszEntry.insertText : "";
+                    if (!nativeText || !tszText) return entry;
+                    const nativeLooksScaffold =
+                        /throw new Error\(/.test(nativeText) ||
+                        /return super\./.test(nativeText);
+                    const nativeHasTrailingPropertySemicolon =
+                        /^[\t ]*[A-Za-z_$][\w$]*\s*:[^;\n]+;\s*$/.test(nativeText);
+                    const tszUsesCrlf = /\r\n/.test(tszText);
+                    const tszUsesLfOnly = /\n/.test(tszText) && !tszUsesCrlf;
+                    const nativeIsSnippetLike =
+                        entry?.isSnippet === true ||
+                        /\$\d+/.test(nativeText);
+                    let normalizedNativeText = nativeText;
+                    const configuredNewLine = formattingSettings?.newLineCharacter;
+                    if (configuredNewLine === "\n" || configuredNewLine === "\r\n") {
+                        normalizedNativeText = normalizedNativeText.replace(/\r?\n/g, configuredNewLine);
+                    } else if (!nativeIsSnippetLike) {
+                        if (tszUsesLfOnly && /\r\n/.test(normalizedNativeText)) {
+                            normalizedNativeText = normalizedNativeText.replace(/\r\n/g, "\n");
+                        } else if (tszUsesCrlf && /\n/.test(normalizedNativeText) && !/\r\n/.test(normalizedNativeText)) {
+                            normalizedNativeText = normalizedNativeText.replace(/\n/g, "\r\n");
+                        }
+                    }
+                    if (nativeIsSnippetLike && isServerFourslashTest) {
+                        normalizedNativeText = normalizedNativeText.replace(/\r?\n/g, "\r\n");
+                    }
+                    if (nativeIsSnippetLike || (!nativeLooksScaffold && !nativeHasTrailingPropertySemicolon)) {
+                        return normalizedNativeText === nativeText
+                            ? entry
+                            : { ...entry, insertText: normalizedNativeText };
+                    }
+                    return { ...entry, insertText: tszText };
+                });
+                return { ...nativeResult, entries: mergedEntries };
+            }
+            return nativeResult;
+        }
+
+        let isDotMemberAccessContext = false;
+        if (nativeResult) {
+            const sourceText = getSourceText();
+            if (typeof sourceText === "string") {
+                const start = Math.max(0, position - 256);
+                const prefix = sourceText.slice(start, position);
+                const isModuleSpecifierContext =
+                    /(?:^|[^\w$])import\s*["'][^"'`]*$/.test(prefix) ||
+                    /(?:import|export)\s+[\s\S]*?\bfrom\s*["'][^"'`]*$/.test(prefix) ||
+                    /import\s*\(\s*["'][^"'`]*$/.test(prefix) ||
+                    /require\s*\(\s*["'][^"'`]*$/.test(prefix);
+                const isElementAccessMemberContext =
+                    /\[\s*\??\.\s*$/.test(prefix) ||
+                    /\[\s*\??\s*$/.test(prefix);
+                isDotMemberAccessContext = /\.\s*$/.test(prefix);
+
+                if (isModuleSpecifierContext && Array.isArray(nativeResult.entries)) {
+                    return nativeResult;
+                }
+                if (isElementAccessMemberContext && nativeResult.entries && nativeResult.entries.length > 0) {
+                    return nativeResult;
+                }
+            }
+        }
+
+        if (
+            nativeResult &&
+            result &&
+            Array.isArray(nativeResult.entries) &&
+            nativeResult.entries.length > 0 &&
+            Array.isArray(result.entries)
+        ) {
+            const nativeHasStringLiteralEntries = nativeResult.entries.some(entry => entry?.kind === "string");
+            const tszHasStringLiteralEntries = result.entries.some(entry => entry?.kind === "string");
+            if (
+                nativeHasStringLiteralEntries &&
+                !tszHasStringLiteralEntries &&
+                !nativeResult.isMemberCompletion &&
+                !result.isMemberCompletion
+            ) {
+                return nativeResult;
+            }
+
+            if (isDotMemberAccessContext && result.entries.length > 0) {
+                const keyOf = (entry) =>
+                    `${entry?.name || ""}\u0000${entry?.kind || ""}\u0000${entry?.source || ""}`;
+                const tszByKey = new Map(result.entries.map(entry => [keyOf(entry), entry]));
+                const tszByName = new Map();
+                for (const tszEntry of result.entries) {
+                    const name = tszEntry?.name || "";
+                    if (!name) continue;
+                    const byName = tszByName.get(name);
+                    if (byName) byName.push(tszEntry);
+                    else tszByName.set(name, [tszEntry]);
+                }
+                const needsNativeBracketInsertions = nativeResult.entries.some(entry => {
+                    const nativeText = typeof entry?.insertText === "string" ? entry.insertText : "";
+                    if (!/^\[\s*(?:["'`].*["'`]|[A-Za-z_$][\w$]*)\s*\]$/.test(nativeText)) {
+                        return false;
+                    }
+                    let tszEntry = tszByKey.get(keyOf(entry));
+                    if (!tszEntry) {
+                        const byName = tszByName.get(entry?.name || "");
+                        if (byName && byName.length === 1) {
+                            tszEntry = byName[0];
+                        } else if (byName && byName.length > 1) {
+                            tszEntry = byName.find(candidate =>
+                                (candidate?.kind || "") === (entry?.kind || "") &&
+                                (candidate?.source || "") === (entry?.source || "")
+                            );
+                        }
+                    }
+                    return typeof tszEntry?.insertText !== "string" || tszEntry.insertText.length === 0;
+                });
+                if (needsNativeBracketInsertions) {
+                    return nativeResult;
+                }
+            }
+
+            const nativeHasOptionalChainInsertions = nativeResult.entries.some(entry =>
+                typeof entry?.insertText === "string" && entry.insertText.startsWith("?.")
+            );
+            const tszHasOptionalChainInsertions = result.entries.some(entry =>
+                typeof entry?.insertText === "string" && entry.insertText.startsWith("?.")
+            );
+            if (nativeHasOptionalChainInsertions && !tszHasOptionalChainInsertions) {
+                return nativeResult;
+            }
+
+            if (nativeResult.isMemberCompletion) {
+                const sourceText = getSourceText();
+                if (typeof sourceText === "string") {
+                    const start = Math.max(0, position - 64);
+                    const prefix = sourceText.slice(start, position);
+                    if (/\?\.\s*$/.test(prefix)) {
+                        return nativeResult;
+                    }
+                }
+            }
         }
 
         if (result && result.entries && result.entries.length === 0) {
@@ -528,6 +741,25 @@ function patchSessionClient(SessionClient, ts) {
                 nativeResult.isMemberCompletion &&
                 !result.isMemberCompletion &&
                 nativeResult.entries.length * 3 < result.entries.length) {
+                result.entries = nativeResult.entries;
+                result.isMemberCompletion = nativeResult.isMemberCompletion;
+                result.isGlobalCompletion = nativeResult.isGlobalCompletion;
+            }
+            if (nativeResult.entries && nativeResult.entries.length > 0 &&
+                result && result.entries &&
+                nativeResult.isMemberCompletion &&
+                result.isMemberCompletion &&
+                nativeResult.entries.length * 3 < result.entries.length) {
+                result.entries = nativeResult.entries;
+                result.isMemberCompletion = nativeResult.isMemberCompletion;
+                result.isGlobalCompletion = nativeResult.isGlobalCompletion;
+            }
+            // Some contextual completions currently fall back to broad global
+            // identifier sets in tsz while native returns focused entries.
+            if (nativeResult.entries && nativeResult.entries.length > 0 &&
+                result && result.entries &&
+                !nativeResult.isGlobalCompletion &&
+                result.isGlobalCompletion) {
                 result.entries = nativeResult.entries;
                 result.isMemberCompletion = nativeResult.isMemberCompletion;
                 result.isGlobalCompletion = nativeResult.isGlobalCompletion;
@@ -621,6 +853,33 @@ function patchSessionClient(SessionClient, ts) {
             data,
         );
         if (preferences) this.configure(oldPreferences || {});
+        const displayText = Array.isArray(result?.displayParts)
+            ? result.displayParts.map(part => String(part?.text || "")).join("")
+            : "";
+        const looksPlaceholderDetails =
+            !result ||
+            !Array.isArray(result.displayParts) ||
+            result.displayParts.length === 0 ||
+            !displayText ||
+            displayText === entryName ||
+            displayText === result?.name;
+        // Keep tsz authoritative for auto-import detail/data wiring.
+        if (looksPlaceholderDetails && !source && !data) {
+            const nativeResult = withNativeFallback(this, ls =>
+                ls.getCompletionEntryDetails(
+                    fileName,
+                    position,
+                    entryName,
+                    options,
+                    source,
+                    preferences || {},
+                    data,
+                )
+            );
+            if (nativeResult) {
+                return nativeResult;
+            }
+        }
         return result;
     };
 

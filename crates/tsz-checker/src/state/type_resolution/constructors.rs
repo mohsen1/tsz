@@ -1524,14 +1524,12 @@ impl<'a> CheckerState<'a> {
         // Recurse into conditional types
         if node.kind == syntax_kind_ext::CONDITIONAL_TYPE
             && let Some(cond) = self.ctx.arena.get_conditional_type(node)
-        {
-            if self.extends_clause_has_constrained_infer_named(cond.check_type, name)
+            && (self.extends_clause_has_constrained_infer_named(cond.check_type, name)
                 || self.extends_clause_has_constrained_infer_named(cond.extends_type, name)
                 || self.extends_clause_has_constrained_infer_named(cond.true_type, name)
-                || self.extends_clause_has_constrained_infer_named(cond.false_type, name)
-            {
-                return true;
-            }
+                || self.extends_clause_has_constrained_infer_named(cond.false_type, name))
+        {
+            return true;
         }
 
         false

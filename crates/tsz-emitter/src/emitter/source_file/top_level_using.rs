@@ -1058,33 +1058,34 @@ impl<'a> Printer<'a> {
             emitted = emitted.replace(&exported_decorate, &format!("{binding_name} = __decorate("));
         }
 
-        if is_legacy_decorator_class && !self.ctx.target_es5 {
-            if let Some(first_stmt_end) = emitted.find(';') {
-                let first_stmt = emitted[..first_stmt_end].trim_start();
-                let mut remainder = emitted[first_stmt_end + 1..]
-                    .trim_start_matches(['\n', '\r'])
-                    .to_string();
-                let decorate_pattern = format!("{binding_name} = __decorate(");
-                let exported_decorate = format!("{export_prefix}{binding_name} = __decorate(");
-                if !remainder.contains(&exported_decorate) {
-                    remainder = remainder.replacen(&decorate_pattern, &exported_decorate, 1);
-                    if self.in_system_execute_body
-                        && let Some(relative_end) = remainder.rfind(");")
-                    {
-                        let end = relative_end;
-                        remainder.replace_range(end..end + 2, "));\n");
-                        if remainder.ends_with("\n\n") {
-                            remainder.pop();
-                        }
+        if is_legacy_decorator_class
+            && !self.ctx.target_es5
+            && let Some(first_stmt_end) = emitted.find(';')
+        {
+            let first_stmt = emitted[..first_stmt_end].trim_start();
+            let mut remainder = emitted[first_stmt_end + 1..]
+                .trim_start_matches(['\n', '\r'])
+                .to_string();
+            let decorate_pattern = format!("{binding_name} = __decorate(");
+            let exported_decorate = format!("{export_prefix}{binding_name} = __decorate(");
+            if !remainder.contains(&exported_decorate) {
+                remainder = remainder.replacen(&decorate_pattern, &exported_decorate, 1);
+                if self.in_system_execute_body
+                    && let Some(relative_end) = remainder.rfind(");")
+                {
+                    let end = relative_end;
+                    remainder.replace_range(end..end + 2, "));\n");
+                    if remainder.ends_with("\n\n") {
+                        remainder.pop();
                     }
                 }
-                let mut rewritten = format!("{export_prefix}{first_stmt}{export_suffix}");
-                if !remainder.trim().is_empty() {
-                    rewritten.push('\n');
-                    rewritten.push_str(&remainder);
-                }
-                return rewritten;
             }
+            let mut rewritten = format!("{export_prefix}{first_stmt}{export_suffix}");
+            if !remainder.trim().is_empty() {
+                rewritten.push('\n');
+                rewritten.push_str(&remainder);
+            }
+            return rewritten;
         }
 
         let trimmed = emitted.trim_end();

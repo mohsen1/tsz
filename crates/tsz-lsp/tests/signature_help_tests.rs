@@ -1191,8 +1191,7 @@ fn test_signature_help_nested_call() {
 #[test]
 fn test_signature_help_generic_function() {
     // Generic function called WITHOUT explicit type arguments:
-    // type parameter list is hidden and T is inferred from the literal argument
-    // and widened to its base primitive (matching tsc's signature-help display).
+    // infer type parameters from call arguments in the signature label.
     let source = "function identity<T>(value: T): T { return value; }\nidentity(42);";
     let (parser, binder, interner, line_map, root) = setup_provider(source);
     let provider = SignatureHelpProvider::new(
@@ -1208,7 +1207,7 @@ fn test_signature_help_generic_function() {
         .get_signature_help(root, Position::new(1, 9), &mut cache)
         .expect("Should find signature help for generic function");
     let sig = &help.signatures[help.active_signature as usize];
-    // No explicit type args -> type params hidden, T inferred from literal arg
+    // No explicit type args -> type params hidden, T instantiated from argument type
     assert!(
         !sig.label.contains("<T>"),
         "Label should NOT contain type parameter <T> when no explicit type args, got: {}",
@@ -1216,7 +1215,7 @@ fn test_signature_help_generic_function() {
     );
     assert_eq!(
         sig.label, "identity(value: number): number",
-        "Type params should be inferred from literal argument and widened"
+        "Type params should be instantiated from inferred argument types"
     );
     assert_eq!(sig.parameters.len(), 1);
     assert_eq!(sig.parameters[0].name, "value");
@@ -1264,7 +1263,7 @@ fn test_signature_help_generic_function_with_explicit_type_args() {
 #[test]
 fn test_signature_help_generic_with_constraint() {
     // Generic function with extends constraint, called WITHOUT explicit type args.
-    // TypeScript hides the type params and substitutes T with the constraint type.
+    // Type parameter is instantiated from argument type.
     let source = "function first<T extends any[]>(arr: T): T { return arr; }\nfirst([1, 2]);";
     let (parser, binder, interner, line_map, root) = setup_provider(source);
     let provider = SignatureHelpProvider::new(
@@ -1280,7 +1279,7 @@ fn test_signature_help_generic_with_constraint() {
         .get_signature_help(root, Position::new(1, 6), &mut cache)
         .expect("Should find signature help for generic function with constraint");
     let sig = &help.signatures[help.active_signature as usize];
-    // No explicit type args -> type params hidden, T replaced with constraint type (any[])
+    // No explicit type args -> type params hidden, T instantiated from argument type.
     assert!(
         !sig.label.contains("extends"),
         "Label should NOT contain 'extends' constraint without explicit type args, got: {}",
@@ -1288,7 +1287,7 @@ fn test_signature_help_generic_with_constraint() {
     );
     assert_eq!(
         sig.label, "first(arr: number[]): number[]",
-        "Type params should be inferred from literal argument"
+        "Type params should be instantiated from inferred argument types"
     );
 }
 
@@ -1744,9 +1743,7 @@ fn test_signature_help_constructor_with_new() {
 
 #[test]
 fn test_signature_help_generic_function_with_explicit_type_arg() {
-    // identity<string>("hello") — literal inference wins over explicit type arg
-    // in the current LSP signature-help display. Known divergence from tsc, which
-    // shows the explicit type arg instantiation.
+    // identity<string>(|) should show instantiated signature
     let source =
         "function identity<T>(value: T): T { return value; }\nidentity<string>(\"hello\");";
     let (parser, binder, interner, line_map, root) = setup_provider(source);
@@ -1772,8 +1769,8 @@ fn test_signature_help_generic_function_with_explicit_type_arg() {
         sig.label
     );
     assert!(
-        sig.label.contains("\"hello\"") || sig.label.contains("string"),
-        "Label should show either the literal-inferred type or the explicit instantiation, got: {}",
+        sig.label.contains("string") || sig.label.contains("\"hello\""),
+        "Label should show an instantiated explicit/string argument type, got: {}",
         sig.label
     );
 }
@@ -2881,8 +2878,7 @@ fn test_signature_help_four_params_third_arg() {
 
 #[test]
 fn test_signature_help_generic_with_default_type() {
-    // T has a default of `string`, but literal inference from the call argument
-    // takes precedence and widens `42` to `number`.
+    // T has a default of `string`, but a concrete argument should still infer `number`.
     let source = "function create<T = string>(val: T): T { return val; }\ncreate(42);";
     let (parser, binder, interner, line_map, root) = setup_provider(source);
     let provider = SignatureHelpProvider::new(
@@ -2901,14 +2897,13 @@ fn test_signature_help_generic_with_default_type() {
     assert_eq!(help.active_parameter, 0);
     assert_eq!(
         sig.label, "create(val: number): number",
-        "Literal inference from argument overrides the type-param default"
+        "Type param should be instantiated from argument type when inference is available"
     );
 }
 
 #[test]
 fn test_signature_help_generic_default_overrides_constraint() {
-    // V has both constraint `number` and default `42`, but literal inference
-    // from the call argument `1` takes precedence and widens to `number`.
+    // V has both a constraint and a default, but a concrete argument still infers `number`.
     let source = "function pick<V extends number = 42>(val: V): V { return val; }\npick(1);";
     let (parser, binder, interner, line_map, root) = setup_provider(source);
     let provider = SignatureHelpProvider::new(
@@ -2926,14 +2921,13 @@ fn test_signature_help_generic_default_overrides_constraint() {
     let sig = &help.signatures[help.active_signature as usize];
     assert_eq!(
         sig.label, "pick(val: number): number",
-        "Literal inference from argument overrides both constraint and default"
+        "Type param should be instantiated from argument type when inference is available"
     );
 }
 
 #[test]
 fn test_signature_help_generic_no_default_no_constraint() {
-    // T has neither default nor constraint; literal inference from the argument
-    // widens `42` to `number`.
+    // T has neither default nor constraint -> infer from argument type.
     let source = "function identity<T>(val: T): T { return val; }\nidentity(42);";
     let (parser, binder, interner, line_map, root) = setup_provider(source);
     let provider = SignatureHelpProvider::new(
@@ -2951,14 +2945,14 @@ fn test_signature_help_generic_no_default_no_constraint() {
     let sig = &help.signatures[help.active_signature as usize];
     assert_eq!(
         sig.label, "identity(val: number): number",
-        "Type param with no default/constraint should be inferred from the literal argument"
+        "Type param with no default/constraint should be inferred from argument type"
     );
 }
 
 #[test]
 fn test_signature_help_generic_mixed_type_params() {
     // A has default `boolean`, B has constraint `string`, C has neither.
-    // Literal inference: `true` -> boolean, 'hi' -> string literal, `1` -> number.
+    // All three should still instantiate from provided arguments.
     let source = "function mix<A = boolean, B extends string, C>(a: A, b: B, c: C): void {}\nmix(true, 'hi', 1);";
     let (parser, binder, interner, line_map, root) = setup_provider(source);
     let provider = SignatureHelpProvider::new(
@@ -2976,7 +2970,7 @@ fn test_signature_help_generic_mixed_type_params() {
     let sig = &help.signatures[help.active_signature as usize];
     assert_eq!(
         sig.label, "mix(a: boolean, b: 'hi', c: number): void",
-        "Each type param is inferred from the corresponding literal argument"
+        "Each type param should instantiate from the corresponding argument type"
     );
 }
 

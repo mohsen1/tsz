@@ -1075,8 +1075,8 @@ impl<'a> DeclarationEmitter<'a> {
                         collected_object_refs = true;
                     }
                 }
-                if !collected_object_refs {
-                    if !self.collect_symbol_member_type_references(
+                if !collected_object_refs
+                    && !self.collect_symbol_member_type_references(
                         sym_id,
                         results,
                         seen,
@@ -1084,18 +1084,18 @@ impl<'a> DeclarationEmitter<'a> {
                         visited_symbols,
                         visited_declaration_symbols,
                         visited_nodes,
-                    ) {
-                        self.collect_non_portable_references_in_symbol_declaration_inner(
-                            sym_id,
-                            true,
-                            results,
-                            seen,
-                            visited_types,
-                            visited_symbols,
-                            visited_declaration_symbols,
-                            visited_nodes,
-                        );
-                    }
+                    )
+                {
+                    self.collect_non_portable_references_in_symbol_declaration_inner(
+                        sym_id,
+                        true,
+                        results,
+                        seen,
+                        visited_types,
+                        visited_symbols,
+                        visited_declaration_symbols,
+                        visited_nodes,
+                    );
                 }
             } else {
                 self.collect_non_portable_references_in_type_node(
@@ -1140,10 +1140,9 @@ impl<'a> DeclarationEmitter<'a> {
                     visited_declaration_symbols,
                     visited_nodes,
                 )
+                && seen.insert(result.clone())
             {
-                if seen.insert(result.clone()) {
-                    results.push(result);
-                }
+                results.push(result);
             }
 
             self.collect_non_portable_references_in_symbol_declaration_inner(
@@ -1555,26 +1554,26 @@ impl<'a> DeclarationEmitter<'a> {
         // Skip truncation check for property access expressions (e.g., Foo.m1).
         // These are not truncation candidates - their types are typically short
         // function type references like () => void, not complex literal types.
-        if let Some(node) = self.arena.get(expr_idx) {
-            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                return false;
-            }
+        if let Some(node) = self.arena.get(expr_idx)
+            && node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        {
+            return false;
         }
 
         const NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH: usize = 1_000_000;
 
-        if let Some(estimated_length) = self.estimated_truncation_candidate_length(expr_idx) {
-            if estimated_length > NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH {
-                self.diagnostics
-                    .push(tsz_common::diagnostics::Diagnostic::from_code(
-                        7056,
-                        file,
-                        pos,
-                        length,
-                        &[],
-                    ));
-                return true;
-            }
+        if let Some(estimated_length) = self.estimated_truncation_candidate_length(expr_idx)
+            && estimated_length > NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH
+        {
+            self.diagnostics
+                .push(tsz_common::diagnostics::Diagnostic::from_code(
+                    7056,
+                    file,
+                    pos,
+                    length,
+                    &[],
+                ));
+            return true;
         }
 
         let Some(type_text) = self.truncation_candidate_type_text(expr_idx) else {

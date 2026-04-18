@@ -300,7 +300,7 @@ impl<'a> CheckerState<'a> {
                 )
                 .is_some()
                     || crate::query_boundaries::common::union_members(self.ctx.types, evaluated)
-                        .map_or(false, |members| {
+                        .is_some_and(|members| {
                             members.iter().any(|&m| {
                                 crate::query_boundaries::common::type_parameter_constraint(
                                     self.ctx.types,
@@ -660,22 +660,20 @@ impl<'a> CheckerState<'a> {
                     if elem_idx.is_none() {
                         continue;
                     }
-                    if let Some(elem_node) = self.ctx.arena.get(elem_idx) {
-                        if elem_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                            if let Some(expected_type) =
-                                helper.get_tuple_element_type_with_count(tuple_index, elem_count)
-                            {
-                                let elem_type = tuple_elements
-                                    .get(tuple_index)
-                                    .map(|te| te.type_id)
-                                    .unwrap_or(TypeId::ERROR);
-                                self.check_object_literal_excess_properties(
-                                    elem_type,
-                                    expected_type,
-                                    elem_idx,
-                                );
-                            }
-                        }
+                    if let Some(elem_node) = self.ctx.arena.get(elem_idx)
+                        && elem_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        && let Some(expected_type) =
+                            helper.get_tuple_element_type_with_count(tuple_index, elem_count)
+                    {
+                        let elem_type = tuple_elements
+                            .get(tuple_index)
+                            .map(|te| te.type_id)
+                            .unwrap_or(TypeId::ERROR);
+                        self.check_object_literal_excess_properties(
+                            elem_type,
+                            expected_type,
+                            elem_idx,
+                        );
                     }
                     tuple_index += 1;
                 }

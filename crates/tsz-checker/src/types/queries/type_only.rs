@@ -888,7 +888,7 @@ impl<'a> CheckerState<'a> {
     /// When a variable is typed as `typeof M` (where M is a namespace), the general
     /// property access pipeline may not find the property because it doesn't resolve
     /// the TypeQuery/Lazy type to an object with the namespace's exports. This helper
-    /// extracts the namespace symbol from the TypeQuery or Lazy type and checks its
+    /// extracts the namespace symbol from the `TypeQuery` or Lazy type and checks its
     /// exports table directly.
     pub(crate) fn resolve_namespace_typeof_member(
         &mut self,

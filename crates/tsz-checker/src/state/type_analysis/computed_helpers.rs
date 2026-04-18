@@ -376,7 +376,6 @@ impl<'a> CheckerState<'a> {
 
     /// True for direct circular aliases (`type A = B; type B = A`), false for
     /// structurally wrapped recursion. Marks all aliases on the resolution stack.
-    #[allow(clippy::only_used_in_recursion)]
     pub(crate) fn is_direct_circular_reference(
         &mut self,
         sym_id: SymbolId,
@@ -706,12 +705,11 @@ impl<'a> CheckerState<'a> {
             // A generic type reference (e.g. ReadonlyArray<T>, Promise<T>) provides
             // structural deferral via generic instantiation — the recursive reference
             // is behind a layer of indirection.
-            if k == syntax_kind_ext::TYPE_REFERENCE {
-                if let Some(tr) = self.ctx.arena.get_type_ref(body_node)
-                    && tr.type_arguments.is_some()
-                {
-                    return true;
-                }
+            if k == syntax_kind_ext::TYPE_REFERENCE
+                && let Some(tr) = self.ctx.arena.get_type_ref(body_node)
+                && tr.type_arguments.is_some()
+            {
+                return true;
             }
             if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE {
                 let children = self.ctx.arena.get_children(ta.type_node);

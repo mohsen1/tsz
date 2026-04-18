@@ -22,16 +22,17 @@ use tsz_solver::TypeInterner;
 // Test Helpers
 // =============================================================================
 
+type ModuleExportsFixture<'a> = Vec<(&'a str, Vec<(&'a str, u32)>)>;
+
 /// Helper to parse, bind, and check a single file with `module_exports` pre-populated.
 /// Returns the checker diagnostics as (code, message) pairs.
 ///
 /// `module_exports` maps module specifier -> list of export names.
 /// Each module's exports are created by parsing and binding a synthetic exporter file.
-#[allow(clippy::type_complexity)]
 fn check_with_module_exports(
     source: &str,
     file_name: &str,
-    module_exports: Vec<(&str, Vec<(&str, u32)>)>,
+    module_exports: ModuleExportsFixture<'_>,
     report_unresolved_imports: bool,
 ) -> Vec<(u32, String)> {
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());

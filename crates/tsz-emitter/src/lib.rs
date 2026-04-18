@@ -7,6 +7,7 @@
 //! - Source map generation
 
 #![allow(clippy::collapsible_if)]
+#![allow(clippy::collapsible_match)]
 #![allow(clippy::needless_borrow)]
 
 pub mod context;

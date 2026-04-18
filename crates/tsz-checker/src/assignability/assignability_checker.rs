@@ -92,10 +92,10 @@ impl<'a> CheckerState<'a> {
 
         if !is_callback {
             // Check for parenthesized expressions wrapping a callback
-            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
-                    return self.arg_is_callback_with_unannotated_params(paren.expression);
-                }
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+            {
+                return self.arg_is_callback_with_unannotated_params(paren.expression);
             }
             return false;
         }
@@ -408,10 +408,7 @@ impl<'a> CheckerState<'a> {
         if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id) {
             let result = self
                 .normalize_function_shape_for_assignability(&shape)
-                .map(|shape| {
-                    let func_type = self.ctx.types.factory().function(shape);
-                    func_type
-                })
+                .map(|shape| self.ctx.types.factory().function(shape))
                 .unwrap_or(type_id);
             return result;
         }
@@ -888,14 +885,13 @@ impl<'a> CheckerState<'a> {
         // This fixes false TS2769 errors when passing generic return types
         // (e.g., IterableIterator<T> from values()) to overloads.
         let is_generic_application_with_type_params = |ty: TypeId| -> bool {
-            if let Some(app) = tsz_solver::type_queries::get_type_application(self.ctx.types, ty) {
-                if app
+            if let Some(app) = tsz_solver::type_queries::get_type_application(self.ctx.types, ty)
+                && app
                     .args
                     .iter()
                     .any(|&arg| tsz_solver::contains_type_parameters(self.ctx.types, arg))
-                {
-                    return true;
-                }
+            {
+                return true;
             }
             false
         };
@@ -1060,10 +1056,10 @@ impl<'a> CheckerState<'a> {
     /// Check if a type contains an error application (recursively).
     fn type_contains_error_application(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
         // Check if it's a direct error application
-        if let Some(app) = tsz_solver::type_queries::get_type_application(db, type_id) {
-            if app.base == TypeId::ERROR {
-                return true;
-            }
+        if let Some(app) = tsz_solver::type_queries::get_type_application(db, type_id)
+            && app.base == TypeId::ERROR
+        {
+            return true;
         }
 
         // Check if it's a union type containing an error application
@@ -1085,10 +1081,10 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if it's a function type with error return
-        if let Some(fn_shape) = tsz_solver::type_queries::get_function_shape(db, type_id) {
-            if Self::type_contains_error_application(db, fn_shape.return_type) {
-                return true;
-            }
+        if let Some(fn_shape) = tsz_solver::type_queries::get_function_shape(db, type_id)
+            && Self::type_contains_error_application(db, fn_shape.return_type)
+        {
+            return true;
         }
 
         // Check if it's a callable type with error return

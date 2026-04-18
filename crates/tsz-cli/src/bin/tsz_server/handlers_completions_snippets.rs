@@ -56,22 +56,23 @@ impl Server {
             .kind_modifiers
             .as_deref()
             .is_some_and(|mods| mods.split(',').any(|m| m.trim() == "getter"));
+        let member_name = Self::class_member_snippet_member_name(item.kind, &item.label);
         match item.kind {
             tsz::lsp::completions::CompletionItemKind::Property => {
                 if is_getter {
                     let ty = if detail.is_empty() { "any" } else { detail };
                     return Some(format!(
                         "get {}(): {} {{\n}}",
-                        item.label,
+                        member_name,
                         ty.trim_end_matches(';').trim()
                     ));
                 }
                 if detail.is_empty() {
-                    Some(format!("{};", item.label))
+                    Some(format!("{member_name};"))
                 } else {
                     Some(format!(
                         "{}: {};",
-                        item.label,
+                        member_name,
                         detail.trim_end_matches(';').trim()
                     ))
                 }
@@ -90,6 +91,34 @@ impl Server {
             }
             _ => None,
         }
+    }
+
+    fn class_member_snippet_member_name(
+        kind: tsz::lsp::completions::CompletionItemKind,
+        label: &str,
+    ) -> String {
+        let should_quote = kind == tsz::lsp::completions::CompletionItemKind::Property
+            && Self::should_quote_class_member_name(label);
+        if should_quote {
+            let escaped = label.replace('\\', "\\\\").replace('\"', "\\\"");
+            format!("[\"{escaped}\"]")
+        } else {
+            label.to_string()
+        }
+    }
+
+    fn should_quote_class_member_name(name: &str) -> bool {
+        if name == "constructor" {
+            return true;
+        }
+        let mut chars = name.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
+            return true;
+        }
+        !chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
     }
 
     fn normalize_method_snippet_params(params: &str) -> String {
@@ -658,6 +687,7 @@ impl Server {
                 .as_snippet()
                 .with_has_action()
                 .with_source("ClassMemberSnippet/".to_string());
+            item.label = Self::class_member_snippet_member_name(candidate.kind, &candidate.label);
             if let Some(detail) = candidate.detail.as_ref() {
                 item = item.with_detail(detail.clone());
             }
@@ -806,6 +836,13 @@ impl Server {
                 .iter()
                 .position(|candidate| candidate.label == fallback.label)
             {
+                let provider_has_insert_text = provider_candidates[idx]
+                    .insert_text
+                    .as_ref()
+                    .is_some_and(|text| !text.trim().is_empty());
+                if provider_has_insert_text {
+                    continue;
+                }
                 let existing_ok =
                     Self::class_member_snippet_insert_text(&provider_candidates[idx]).is_some();
                 let fallback_ok = Self::class_member_snippet_insert_text(&fallback).is_some();
@@ -885,7 +922,7 @@ impl Server {
         }
 
         let mut out = Vec::new();
-        let mut base_names = Self::enclosing_class_extends_names(&arena, offset);
+        let mut base_names = Self::enclosing_class_heritage_names(&arena, offset);
         if base_names.is_empty() {
             if !Self::fallback_text_likely_in_class_body(&source_text, offset) {
                 return out;
@@ -914,7 +951,7 @@ impl Server {
         out
     }
 
-    fn enclosing_class_extends_names(
+    fn enclosing_class_heritage_names(
         arena: &tsz::parser::node::NodeArena,
         offset: u32,
     ) -> Vec<String> {
@@ -942,7 +979,7 @@ impl Server {
         }
 
         best_class
-            .map(|(_, _, class_data)| Self::class_extends_names(arena, class_data))
+            .map(|(_, _, class_data)| Self::class_heritage_names(arena, class_data))
             .unwrap_or_default()
     }
 
@@ -968,7 +1005,7 @@ impl Server {
         }
     }
 
-    fn class_extends_names(
+    fn class_heritage_names(
         arena: &tsz::parser::node::NodeArena,
         class_data: &tsz::parser::node::ClassData,
     ) -> Vec<String> {
@@ -1011,6 +1048,90 @@ impl Server {
         }
     }
 
+    fn strip_string_literal_quotes(text: &str) -> Option<String> {
+        if text.len() < 2 {
+            return None;
+        }
+        let bytes = text.as_bytes();
+        let first = bytes[0];
+        let last = bytes[text.len() - 1];
+        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+            return Some(text[1..text.len() - 1].to_string());
+        }
+        None
+    }
+
+    fn member_name_from_name_node(
+        arena: &tsz::parser::node::NodeArena,
+        source_text: &str,
+        name_node_idx: tsz::parser::NodeIndex,
+    ) -> Option<String> {
+        if let Some(name) = arena.get_identifier_text(name_node_idx) {
+            return Some(name.to_string());
+        }
+        let node = arena.get(name_node_idx)?;
+        let raw = Self::node_text(source_text, node);
+        if raw.is_empty() {
+            return None;
+        }
+        if let Some(stripped) = Self::strip_string_literal_quotes(raw.trim()) {
+            return Some(stripped);
+        }
+        if let Some(inner) = raw.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            let inner = inner.trim();
+            if let Some(stripped) = Self::strip_string_literal_quotes(inner) {
+                return Some(stripped);
+            }
+            if !inner.is_empty() {
+                return Some(inner.to_string());
+            }
+        }
+        None
+    }
+
+    fn collect_text_class_member_fallbacks(class_text: &str, out: &mut Vec<CompletionItem>) {
+        for line in class_text.lines() {
+            let trimmed = line.trim();
+            let quote = if trimmed.starts_with("[\"") {
+                '\"'
+            } else if trimmed.starts_with("['") {
+                '\''
+            } else {
+                continue;
+            };
+            let rest = &trimmed[2..];
+            let Some(end_quote) = rest.find(quote) else {
+                continue;
+            };
+            let member_name = rest[..end_quote].trim();
+            if member_name.is_empty() {
+                continue;
+            }
+            let after_quote = &rest[end_quote + 1..];
+            let Some(after_bracket) = after_quote.strip_prefix(']') else {
+                continue;
+            };
+            let Some(colon_idx) = after_bracket.find(':') else {
+                continue;
+            };
+            let detail = after_bracket[colon_idx + 1..]
+                .trim()
+                .trim_end_matches(';')
+                .trim();
+            if detail.is_empty() {
+                continue;
+            }
+            let item = CompletionItem::new(
+                member_name.to_string(),
+                tsz::lsp::completions::CompletionItemKind::Property,
+            )
+            .with_detail(detail.to_string());
+            if !out.iter().any(|i| i.label == item.label) {
+                out.push(item);
+            }
+        }
+    }
+
     fn collect_fallback_base_members_recursive(
         &self,
         class_name: &str,
@@ -1027,120 +1148,134 @@ impl Server {
                 continue;
             };
             for node in &arena.nodes {
-                if node.kind != tsz::parser::syntax_kind_ext::CLASS_DECLARATION
-                    && node.kind != tsz::parser::syntax_kind_ext::CLASS_EXPRESSION
+                if node.kind == tsz::parser::syntax_kind_ext::CLASS_DECLARATION
+                    || node.kind == tsz::parser::syntax_kind_ext::CLASS_EXPRESSION
                 {
-                    continue;
-                }
-                let Some(class_data) = arena.get_class(node) else {
-                    continue;
-                };
-                let Some(name) = arena.get_identifier_text(class_data.name) else {
-                    continue;
-                };
-                if !class_name.is_empty() && name != class_name {
-                    continue;
-                }
-
-                for &member_idx in &class_data.members.nodes {
-                    let Some(member_node) = arena.get(member_idx) else {
+                    let Some(class_data) = arena.get_class(node) else {
                         continue;
                     };
-                    match member_node.kind {
-                        k if k == tsz::parser::syntax_kind_ext::PROPERTY_DECLARATION => {
-                            let Some(prop) = arena.get_property_decl(member_node) else {
-                                continue;
-                            };
-                            let Some(member_name) = arena.get_identifier_text(prop.name) else {
-                                continue;
-                            };
-                            let detail = if prop.type_annotation.is_some() {
-                                arena
-                                    .get(prop.type_annotation)
-                                    .map(|n| Self::node_text(&source_text, n))
-                                    .unwrap_or_else(|| "any".to_string())
-                            } else {
-                                "any".to_string()
-                            };
-                            let item = CompletionItem::new(
-                                member_name.to_string(),
-                                tsz::lsp::completions::CompletionItemKind::Property,
-                            )
-                            .with_detail(detail);
-                            if !out.iter().any(|i| i.label == item.label) {
-                                out.push(item);
-                            }
-                        }
-                        k if k == tsz::parser::syntax_kind_ext::GET_ACCESSOR => {
-                            let Some(accessor) = arena.get_accessor(member_node) else {
-                                continue;
-                            };
-                            let Some(member_name) = arena.get_identifier_text(accessor.name) else {
-                                continue;
-                            };
-                            let detail = if accessor.type_annotation.is_some() {
-                                arena
-                                    .get(accessor.type_annotation)
-                                    .map(|n| Self::node_text(&source_text, n))
-                                    .unwrap_or_else(|| "any".to_string())
-                            } else {
-                                "any".to_string()
-                            };
-                            let item = CompletionItem::new(
-                                member_name.to_string(),
-                                tsz::lsp::completions::CompletionItemKind::Property,
-                            )
-                            .with_detail(detail)
-                            .with_kind_modifiers("getter".to_string());
-                            if !out.iter().any(|i| i.label == item.label) {
-                                out.push(item);
-                            }
-                        }
-                        k if k == tsz::parser::syntax_kind_ext::METHOD_DECLARATION => {
-                            let Some(method) = arena.get_method_decl(member_node) else {
-                                continue;
-                            };
-                            let Some(member_name) = arena.get_identifier_text(method.name) else {
-                                continue;
-                            };
-                            let mut params = Vec::new();
-                            for &param_idx in &method.parameters.nodes {
-                                let Some(param_node) = arena.get(param_idx) else {
+                    let Some(name) = arena.get_identifier_text(class_data.name) else {
+                        continue;
+                    };
+                    if !class_name.is_empty() && name != class_name {
+                        continue;
+                    }
+
+                    for &member_idx in &class_data.members.nodes {
+                        let Some(member_node) = arena.get(member_idx) else {
+                            continue;
+                        };
+                        match member_node.kind {
+                            k if k == tsz::parser::syntax_kind_ext::PROPERTY_DECLARATION => {
+                                let Some(prop) = arena.get_property_decl(member_node) else {
                                     continue;
                                 };
-                                let text = Self::node_text(&source_text, param_node);
-                                if !text.is_empty() {
-                                    params.push(text);
+                                let Some(member_name) = Self::member_name_from_name_node(
+                                    &arena,
+                                    &source_text,
+                                    prop.name,
+                                ) else {
+                                    continue;
+                                };
+                                let detail = if prop.type_annotation.is_some() {
+                                    arena
+                                        .get(prop.type_annotation)
+                                        .map(|n| Self::node_text(&source_text, n))
+                                        .unwrap_or_else(|| "any".to_string())
+                                } else {
+                                    "any".to_string()
+                                };
+                                let item = CompletionItem::new(
+                                    member_name,
+                                    tsz::lsp::completions::CompletionItemKind::Property,
+                                )
+                                .with_detail(detail);
+                                if !out.iter().any(|i| i.label == item.label) {
+                                    out.push(item);
                                 }
                             }
-                            let return_type = if method.type_annotation.is_some() {
-                                arena
-                                    .get(method.type_annotation)
-                                    .map(|n| Self::node_text(&source_text, n))
-                                    .unwrap_or_else(|| "void".to_string())
-                            } else {
-                                "void".to_string()
-                            };
-                            let detail = format!("({}) => {}", params.join(", "), return_type);
-                            let item = CompletionItem::new(
-                                member_name.to_string(),
-                                tsz::lsp::completions::CompletionItemKind::Method,
-                            )
-                            .with_detail(detail);
-                            if !out.iter().any(|i| i.label == item.label) {
-                                out.push(item);
+                            k if k == tsz::parser::syntax_kind_ext::GET_ACCESSOR => {
+                                let Some(accessor) = arena.get_accessor(member_node) else {
+                                    continue;
+                                };
+                                let Some(member_name) = Self::member_name_from_name_node(
+                                    &arena,
+                                    &source_text,
+                                    accessor.name,
+                                ) else {
+                                    continue;
+                                };
+                                let detail = if accessor.type_annotation.is_some() {
+                                    arena
+                                        .get(accessor.type_annotation)
+                                        .map(|n| Self::node_text(&source_text, n))
+                                        .unwrap_or_else(|| "any".to_string())
+                                } else {
+                                    "any".to_string()
+                                };
+                                let item = CompletionItem::new(
+                                    member_name,
+                                    tsz::lsp::completions::CompletionItemKind::Property,
+                                )
+                                .with_detail(detail)
+                                .with_kind_modifiers("getter".to_string());
+                                if !out.iter().any(|i| i.label == item.label) {
+                                    out.push(item);
+                                }
                             }
+                            k if k == tsz::parser::syntax_kind_ext::METHOD_DECLARATION => {
+                                let Some(method) = arena.get_method_decl(member_node) else {
+                                    continue;
+                                };
+                                let Some(member_name) = Self::member_name_from_name_node(
+                                    &arena,
+                                    &source_text,
+                                    method.name,
+                                ) else {
+                                    continue;
+                                };
+                                let mut params = Vec::new();
+                                for &param_idx in &method.parameters.nodes {
+                                    let Some(param_node) = arena.get(param_idx) else {
+                                        continue;
+                                    };
+                                    let text = Self::node_text(&source_text, param_node);
+                                    if !text.is_empty() {
+                                        params.push(text);
+                                    }
+                                }
+                                let return_type = if method.type_annotation.is_some() {
+                                    arena
+                                        .get(method.type_annotation)
+                                        .map(|n| Self::node_text(&source_text, n))
+                                        .unwrap_or_else(|| "void".to_string())
+                                } else {
+                                    "void".to_string()
+                                };
+                                let detail = format!("({}) => {}", params.join(", "), return_type);
+                                let item = CompletionItem::new(
+                                    member_name,
+                                    tsz::lsp::completions::CompletionItemKind::Method,
+                                )
+                                .with_detail(detail);
+                                if !out.iter().any(|i| i.label == item.label) {
+                                    out.push(item);
+                                }
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
-                }
+                    let class_text = Self::node_text(&source_text, node);
+                    Self::collect_text_class_member_fallbacks(&class_text, out);
 
-                if !class_name.is_empty() {
-                    for base in Self::class_extends_names(&arena, class_data) {
-                        self.collect_fallback_base_members_recursive(
-                            &base, scan_paths, visited, out,
-                        );
+                    if !class_name.is_empty() {
+                        for base in Self::class_heritage_names(&arena, class_data) {
+                            self.collect_fallback_base_members_recursive(
+                                &base, scan_paths, visited, out,
+                            );
+                        }
                     }
+                    continue;
                 }
             }
         }
