@@ -1,4 +1,5 @@
 use crate::state::CheckerState;
+use crate::symbols_domain::name_text::property_access_chain_text_in_arena;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -954,25 +955,7 @@ impl<'a> CheckerState<'a> {
 
     /// Extract a qualified name from a property access expression.
     fn qualified_name_from_property_access(&self, access_idx: NodeIndex) -> Option<String> {
-        let node = self.ctx.arena.get(access_idx)?;
-        let access = self.ctx.arena.get_access_expr(node)?;
-
-        let base_name = if let Some(base_node) = self.ctx.arena.get(access.expression) {
-            if let Some(ident) = self.ctx.arena.get_identifier(base_node) {
-                Some(ident.escaped_text.clone())
-            } else if base_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                self.qualified_name_from_property_access(access.expression)
-            } else {
-                None
-            }
-        } else {
-            None
-        }?;
-
-        let name_node = self.ctx.arena.get(access.name_or_argument)?;
-        let ident = self.ctx.arena.get_identifier(name_node)?;
-
-        Some(format!("{}.{}", base_name, ident.escaped_text))
+        property_access_chain_text_in_arena(self.ctx.arena, access_idx)
     }
 
     // =========================================================================

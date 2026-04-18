@@ -9,6 +9,9 @@ use super::lib_resolution::{
     resolve_lib_node_in_lib_contexts,
 };
 use crate::state::{CheckerState, MemberAccessLevel};
+use crate::symbols_domain::name_text::{
+    entity_name_text_in_arena, property_access_chain_text_in_arena,
+};
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_lowering::TypeLowering;
 use tsz_parser::parser::syntax_kind_ext;
@@ -540,22 +543,11 @@ impl<'a> CheckerState<'a> {
         }
 
         if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            return self.entity_name_text(idx);
+            return entity_name_text_in_arena(self.ctx.arena, idx);
         }
 
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            let access = self.ctx.arena.get_access_expr(node)?;
-            let left = self.heritage_name_text(access.expression)?;
-            let right = self
-                .ctx
-                .arena
-                .get_identifier_at(access.name_or_argument)
-                .map(|ident| ident.escaped_text.clone())?;
-            let mut combined = String::with_capacity(left.len() + 1 + right.len());
-            combined.push_str(&left);
-            combined.push('.');
-            combined.push_str(&right);
-            return Some(combined);
+            return property_access_chain_text_in_arena(self.ctx.arena, idx);
         }
 
         // Handle keyword literals in heritage clauses (e.g., extends null, extends true)

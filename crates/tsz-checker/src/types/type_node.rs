@@ -10,6 +10,7 @@ use super::type_node_helpers::{
     check_duplicate_parameters_in_type, check_parameter_initializers_in_type,
 };
 use crate::context::CheckerContext;
+use crate::symbols_domain::name_text::expression_name_text_in_arena;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -1776,35 +1777,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     }
 
     fn expression_name_text(&self, idx: NodeIndex) -> Option<String> {
-        let node = self.ctx.arena.get(idx)?;
-
-        if node.kind == SyntaxKind::Identifier as u16 {
-            return self
-                .ctx
-                .arena
-                .get_identifier(node)
-                .map(|ident| ident.escaped_text.clone());
-        }
-
-        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            return self.entity_name_text(idx);
-        }
-
-        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            let paren = self.ctx.arena.get_parenthesized(node)?;
-            return self.expression_name_text(paren.expression);
-        }
-
-        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && let Some(access) = self.ctx.arena.get_access_expr(node)
-        {
-            let left = self.expression_name_text(access.expression)?;
-            let right_node = self.ctx.arena.get(access.name_or_argument)?;
-            let right = self.ctx.arena.get_identifier(right_node)?;
-            return Some(format!("{left}.{}", right.escaped_text));
-        }
-
-        None
+        expression_name_text_in_arena(self.ctx.arena, idx)
     }
 
     fn symbol_refers_to_unique_symbol(&self, sym_id: SymbolId) -> bool {

@@ -5,6 +5,7 @@
 
 use crate::FlowAnalyzer;
 use crate::state::CheckerState;
+use crate::symbols_domain::name_text::property_access_chain_text_in_arena;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1132,25 +1133,8 @@ impl<'a> CheckerState<'a> {
     /// Check if the object expression has any unique-symbol-keyed expando properties
     /// recorded by the binder (i.e., any `__unique_*` entry in `expando_properties`).
     pub(crate) fn object_has_unique_symbol_expandos(&self, object_expr_idx: NodeIndex) -> bool {
-        fn property_access_chain(
-            arena: &tsz_parser::parser::node::NodeArena,
-            idx: NodeIndex,
-        ) -> Option<String> {
-            let node = arena.get(idx)?;
-            if node.kind == SyntaxKind::Identifier as u16 {
-                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
-            }
-            if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                let access = arena.get_access_expr(node)?;
-                let left = property_access_chain(arena, access.expression)?;
-                let right_node = arena.get(access.name_or_argument)?;
-                let right = arena.get_identifier(right_node)?.escaped_text.clone();
-                return Some(format!("{left}.{right}"));
-            }
-            None
-        }
-
-        let Some(obj_key) = property_access_chain(self.ctx.arena, object_expr_idx) else {
+        let Some(obj_key) = property_access_chain_text_in_arena(self.ctx.arena, object_expr_idx)
+        else {
             return false;
         };
 
