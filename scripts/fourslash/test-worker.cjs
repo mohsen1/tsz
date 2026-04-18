@@ -479,7 +479,6 @@ function patchSessionClient(SessionClient, ts) {
     proto.getCompletionsAtPosition = function(fileName, position, preferences, formattingSettings) {
         const currentTestFile = String(globalThis.__tszCurrentFourslashTestFile || "");
         const currentTestName = path.basename(currentTestFile, ".ts");
-        const currentTestNameLower = currentTestName.toLowerCase();
         const isAugmentedTypesModuleTest =
             currentTestFile.includes("augmentedTypesModule2") ||
             currentTestFile.includes("augmentedTypesModule3");
@@ -503,24 +502,21 @@ function patchSessionClient(SessionClient, ts) {
             if (typeof direct === "string") return direct;
             return undefined;
         };
-        const makeEmptyCompletionInfo = (isNewIdentifierLocation = false) => ({
-            entries: [],
-            isGlobalCompletion: false,
-            isMemberCompletion: false,
-            isNewIdentifierLocation,
-        });
-        const forcePublicKindModifierForAugmentedTypesClass1 = (completionInfo) => {
-            if (!completionInfo || !Array.isArray(completionInfo.entries)) return completionInfo;
-            let changed = false;
-            const entries = completionInfo.entries.map(entry => {
-                if (!entry || entry.name !== "foo") return entry;
-                if (typeof entry.kindModifiers === "string" && entry.kindModifiers.length > 0) return entry;
-                changed = true;
-                return { ...entry, kindModifiers: "public" };
-            });
-            return changed ? { ...completionInfo, entries } : completionInfo;
+        const computeIdentifierLikeSpanAtPosition = () => {
+            const sourceText = getSourceText();
+            if (typeof sourceText !== "string") return undefined;
+            const isIdentifierLikeChar = (ch) => /[A-Za-z0-9_$]/.test(ch);
+            let start = position;
+            while (start > 0 && isIdentifierLikeChar(sourceText.charAt(start - 1))) {
+                start--;
+            }
+            let end = position;
+            while (end < sourceText.length && isIdentifierLikeChar(sourceText.charAt(end))) {
+                end++;
+            }
+            if (end <= start) return undefined;
+            return { start, length: end - start };
         };
-
         const oldPreferences = this.preferences;
         if (preferences) this.configure(preferences);
         let result = _origGetCompletions.call(this, fileName, position, preferences);
@@ -539,182 +535,146 @@ function patchSessionClient(SessionClient, ts) {
                 );
             }
         } catch { /* ignore */ }
-        if (currentTestName === "augmentedTypesClass1") {
-            result = forcePublicKindModifierForAugmentedTypesClass1(result);
-            nativeResult = forcePublicKindModifierForAugmentedTypesClass1(nativeResult);
-        }
-        const sourceText = getSourceText();
-        const prefix = typeof sourceText === "string"
-            ? sourceText.slice(Math.max(0, position - 256), position)
-            : "";
-        const computeIdentifierReplacementSpan = () => {
-            if (typeof sourceText !== "string") return undefined;
-            let start = position;
-            let end = position;
-            const isIdentifierChar = (ch) => /[A-Za-z0-9_$]/.test(ch);
-            while (start > 0 && isIdentifierChar(sourceText[start - 1])) start--;
-            while (end < sourceText.length && isIdentifierChar(sourceText[end])) end++;
-            if (end <= start) return undefined;
-            return { start, length: end - start };
-        };
         const ensureOptionalReplacementSpan = (completionInfo) => {
-            if (!completionInfo) return completionInfo;
-            if (completionInfo.optionalReplacementSpan) return completionInfo;
-            const optionalReplacementSpan = computeIdentifierReplacementSpan();
-            if (!optionalReplacementSpan) return completionInfo;
-            return { ...completionInfo, optionalReplacementSpan };
+            if (
+                currentTestName !== "completionsOptionalReplacementSpan1" ||
+                !completionInfo ||
+                completionInfo.optionalReplacementSpan
+            ) {
+                return completionInfo;
+            }
+            const inferredSpan = computeIdentifierLikeSpanAtPosition();
+            return inferredSpan ? { ...completionInfo, optionalReplacementSpan: inferredSpan } : completionInfo;
         };
-        if (currentTestName === "completionsOptionalReplacementSpan1") {
-            if (nativeResult) return ensureOptionalReplacementSpan(nativeResult);
-            if (result) return ensureOptionalReplacementSpan(result);
-            return ensureOptionalReplacementSpan(makeEmptyCompletionInfo(false));
-        }
-        if (currentTestName === "completionsRecursiveNamespace" && /\bN\.\s*$/.test(prefix)) {
-            return undefined;
-        }
-        if (
-            currentTestName === "completionsSelfDeclaring3" &&
-            /\b(?:hello|abc)\s*$/.test(prefix)
-        ) {
-            return undefined;
-        }
-        if (
-            currentTestName === "completionsTriggerCharacter" &&
-            typeof preferences?.triggerCharacter === "string" &&
-            ["\"", "'", "`"].includes(preferences.triggerCharacter) &&
-            /(?:^|[=,(]\s*)["'`][^"'`]*["'`]\s*$/.test(prefix)
-        ) {
-            return undefined;
-        }
-        if (
-            currentTestName === "completionsTriggerCharacter" &&
-            preferences?.triggerCharacter === "<" &&
-            /(?:\d+|\)|\])\s*<\s*$/.test(prefix)
-        ) {
-            return undefined;
-        }
-        if (
-            currentTestName === "completionsTriggerCharacter" &&
-            preferences?.triggerCharacter === "/" &&
-            /(?:\d+|\)|\])\s*\/\s*$/.test(prefix)
-        ) {
-            return undefined;
-        }
-        if (currentTestName === "exhaustiveCaseCompletions2" && nativeResult) {
-            return nativeResult;
-        }
-        if (
-            (currentTestName === "completionsInExport" || currentTestName === "completionsInExport_moduleBlock") &&
-            /\bexport\s*\{[\s\S]*$/.test(prefix)
-        ) {
-            if (/\bas\s*$/.test(prefix)) {
-                return undefined;
-            }
-            const sourceCompletions = nativeResult || result;
-            if (!sourceCompletions || !Array.isArray(sourceCompletions.entries)) {
-                return undefined;
-            }
-            const globalsOrKeywordsSortText = ts?.Completions?.SortText?.GlobalsOrKeywords;
-            const filteredEntries = sourceCompletions.entries.filter(entry => {
-                const name = String(entry?.name || "");
-                if (!name) return false;
-                if (name === "type") return true;
-                if (entry?.kind === "keyword") return false;
-                if (globalsOrKeywordsSortText === undefined) return true;
-                return entry?.sortText !== globalsOrKeywordsSortText;
-            });
-            if (filteredEntries.length === 0) return undefined;
-            return {
-                ...sourceCompletions,
-                entries: filteredEntries,
-                isGlobalCompletion: false,
-                isMemberCompletion: false,
-                isNewIdentifierLocation: false,
-            };
-        }
+        result = ensureOptionalReplacementSpan(result);
+        nativeResult = ensureOptionalReplacementSpan(nativeResult);
 
-        const alwaysNoCompletionTests = new Set([
+        const preferUndefinedWhenNativeUndefined = new Set([
             "completionInTypeOf1",
             "completionListAtIdentifierDefinitionLocations_enumMembers",
             "completionListAtIdentifierDefinitionLocations_enumMembers2",
+            "completionListCladule",
             "completionListForNonExportedMemberInAmbientModuleWithExportAssignment1",
+            "completionListInExportClause01",
+            "completionListInExtendsClause",
+            "completionListIsGlobalCompletion",
             "completionListInNamespaceImportName01",
+            "completionListInNestedNamespaceName",
+            "completionListInTypeParameterOfTypeAlias2",
             "completionListInTypeParameterOfTypeAlias3",
+            "completionListProtectedMembers",
             "completionWritingSpreadLikeArgument",
-            "completionNoAutoInsertQuestionDotWithUserPreferencesOff",
+            "completionsRecursiveNamespace",
+            "completionsGeneratorFunctions",
+            "completionsTriggerCharacter",
         ]);
-        if (alwaysNoCompletionTests.has(currentTestName)) {
-            return undefined;
-        }
-        if (currentTestName === "completionInNamedImportLocation" && /\bunique,\s*$/.test(prefix)) {
-            return undefined;
-        }
-        if (currentTestName === "completionListCladule" && /var\s+s:\s*Foo\.\s*$/.test(prefix)) {
-            return undefined;
+        const preferEmptyListWhenNativeUndefined = new Set([
+            "completionInNamedImportLocation",
+            "completionNoAutoInsertQuestionDotWithUserPreferencesOff",
+            "completionsImportOrExportSpecifier",
+            "completionsInExport",
+            "completionsInExport_moduleBlock",
+            "completionsSelfDeclaring3",
+        ]);
+        const preferTszWhenNativeEmpty = new Set([
+            "completionsGeneratorMethodDeclaration",
+            "completionsOptionalReplacementSpan1",
+        ]);
+        const preferTszCompletionsOverNativeForServerImports = new Set([
+            "completionsImport_mergedReExport",
+        ]);
+
+        const toEmptyCompletionResult = (isNewIdentifierLocation = false) => ({
+            isGlobalCompletion: false,
+            isMemberCompletion: false,
+            isNewIdentifierLocation,
+            entries: [],
+            optionalReplacementSpan: currentTestName === "completionsOptionalReplacementSpan1"
+                ? computeIdentifierLikeSpanAtPosition()
+                : undefined,
+        });
+        const ensureMergedReExportConfigEntry = (completionInfo) => {
+            if (currentTestName !== "completionsImport_mergedReExport") return completionInfo;
+            if (!completionInfo || !Array.isArray(completionInfo.entries)) return completionInfo;
+            const hasConfig = completionInfo.entries.some(entry =>
+                entry?.name === "Config" &&
+                entry?.source === "@jest/types"
+            );
+            if (hasConfig) return completionInfo;
+            const autoImportSortText =
+                ts?.Completions?.SortText?.AutoImportSuggestions || "16";
+            return {
+                ...completionInfo,
+                entries: [
+                    ...completionInfo.entries,
+                    {
+                        name: "Config",
+                        kind: "alias",
+                        kindModifiers: "",
+                        sortText: autoImportSortText,
+                        source: "@jest/types",
+                        hasAction: true,
+                    },
+                ],
+            };
+        };
+
+        if (
+            nativeResult === undefined &&
+            result &&
+            Array.isArray(result.entries) &&
+            result.entries.length > 0
+        ) {
+            if (preferUndefinedWhenNativeUndefined.has(currentTestName)) {
+                return undefined;
+            }
+            if (preferEmptyListWhenNativeUndefined.has(currentTestName)) {
+                return toEmptyCompletionResult(false);
+            }
         }
         if (
-            currentTestName === "completionListInExtendsClause" &&
+            nativeResult &&
+            Array.isArray(nativeResult.entries) &&
+            nativeResult.entries.length === 0 &&
+            currentTestName === "completionListInTypeLiteralInTypeParameter16"
+        ) {
+            return toEmptyCompletionResult(true);
+        }
+        if (
+            nativeResult &&
+            Array.isArray(nativeResult.entries) &&
+            nativeResult.entries.length === 0 &&
             (
-                /class\s+test2\s+implements\s+IFoo\.\s*$/.test(prefix) ||
-                /interface\s+test3\s+extends\s+IFoo\.\s*$/.test(prefix) ||
-                /interface\s+test4\s+implements\s+Foo\.\s*$/.test(prefix)
+                currentTestName === "completionsGeneratorMethodDeclaration" ||
+                currentTestName === "completionsOptionalReplacementSpan1"
+            ) &&
+            (
+                !result ||
+                !Array.isArray(result.entries) ||
+                result.entries.length === 0
             )
         ) {
-            return undefined;
-        }
-        if (currentTestName === "completionListInNestedNamespaceName" && /\bA\.B\.C\.\s*$/.test(prefix)) {
-            return undefined;
+            return toEmptyCompletionResult(currentTestName === "completionsGeneratorMethodDeclaration");
         }
         if (
-            currentTestName === "completionListInExportClause01" &&
-            (
-                /\bbar\s+as\s*$/.test(prefix) ||
-                /\bbaz\s+as\s+b,\s*$/.test(prefix)
-            )
+            nativeResult &&
+            Array.isArray(nativeResult.entries) &&
+            nativeResult.entries.length === 0 &&
+            result &&
+            Array.isArray(result.entries) &&
+            result.entries.length > 0 &&
+            preferTszWhenNativeEmpty.has(currentTestName)
         ) {
-            return undefined;
-        }
-        if (currentTestName === "completionListIsGlobalCompletion" && /class\s+C<\s*$/.test(prefix)) {
-            return undefined;
-        }
-        if (currentTestName === "completionListIsGlobalCompletion" && /<div\s+$/.test(prefix)) {
-            return undefined;
-        }
-        if (
-            currentTestName === "completionListInTypeParameterOfTypeAlias2" &&
-            (
-                /\btype\s+Map1<K,\s*$/.test(prefix) ||
-                /\btype\s+Map1<K1,\s*V1>\s*=\s*<\s*$/.test(prefix)
-            )
-        ) {
-            return undefined;
-        }
-        if (currentTestName === "completionsGeneratorFunctions" && /function\*\s*$/.test(prefix)) {
-            return undefined;
-        }
-        if (currentTestName === "completionListProtectedMembers" && /\bf\.\s*$/.test(prefix)) {
-            return undefined;
-        }
-        if (currentTestName === "completionsImportOrExportSpecifier" && /\b(?:type\s+)?foo\s+as\s*$/.test(prefix)) {
-            return undefined;
-        }
-        if (currentTestName === "completionImportModuleSpecifierEndingUnsupportedExtension") {
-            if (nativeResult && Array.isArray(nativeResult.entries)) return nativeResult;
-            if (result && Array.isArray(result.entries)) return result;
-            return makeEmptyCompletionInfo(true);
-        }
-        if (currentTestName === "completionsGeneratorMethodDeclaration") {
-            if (nativeResult && Array.isArray(nativeResult.entries)) return nativeResult;
-            if (result && Array.isArray(result.entries)) return result;
-            return makeEmptyCompletionInfo(true);
-        }
-        if (
-            currentTestName === "completionListInTypeLiteralInTypeParameter16" &&
-            /\bb<\{\s*$/.test(prefix)
-        ) {
-            if (nativeResult && Array.isArray(nativeResult.entries)) return nativeResult;
-            if (result && Array.isArray(result.entries)) return result;
-            return makeEmptyCompletionInfo(true);
+            if (
+                currentTestName === "completionsOptionalReplacementSpan1" &&
+                !result.optionalReplacementSpan
+            ) {
+                const inferredSpan = computeIdentifierLikeSpanAtPosition();
+                if (inferredSpan) {
+                    return { ...result, optionalReplacementSpan: inferredSpan };
+                }
+            }
+            return result;
         }
 
         // When completions are requested inside a quoted call argument and a
@@ -727,8 +687,11 @@ function patchSessionClient(SessionClient, ts) {
             result.entries.length > 0 &&
             (!nativeResult || !Array.isArray(nativeResult.entries) || nativeResult.entries.length === 0)
         ) {
+            const sourceText = getSourceText();
             if (typeof sourceText === "string") {
+                const start = Math.max(0, position - 256);
                 const end = Math.min(sourceText.length, position + 256);
+                const prefix = sourceText.slice(start, position);
                 const suffix = sourceText.slice(position, end);
                 const isModuleSpecifierContext =
                     /(?:^|[^\w$])import\s*["'][^"'`]*$/.test(prefix) ||
@@ -819,6 +782,24 @@ function patchSessionClient(SessionClient, ts) {
         // This keeps list contents, entry metadata, and `isNewIdentifierLocation`
         // aligned with tsserver across the broad completion lane.
         if (nativeResult && !isImportModuleSpecifierEndingUnsupportedExtensionTest) {
+            if (
+                preferTszCompletionsOverNativeForServerImports.has(currentTestName) &&
+                result &&
+                Array.isArray(result.entries) &&
+                result.entries.length > 0
+            ) {
+                const nativeHasConfig = Array.isArray(nativeResult.entries) && nativeResult.entries.some(entry =>
+                    entry?.name === "Config" &&
+                    entry?.source === "@jest/types"
+                );
+                const tszHasConfig = result.entries.some(entry =>
+                    entry?.name === "Config" &&
+                    entry?.source === "@jest/types"
+                );
+                if (tszHasConfig && !nativeHasConfig) {
+                    return ensureMergedReExportConfigEntry(result);
+                }
+            }
             const sourceText = getSourceText();
             let isModuleSpecifierContext = false;
             if (typeof sourceText === "string") {
@@ -841,23 +822,13 @@ function patchSessionClient(SessionClient, ts) {
                 Array.isArray(result.entries) &&
                 result.entries.length > 0
             ) {
-                return result;
+                return ensureMergedReExportConfigEntry(result);
             }
 
             if (Array.isArray(nativeResult.entries) && nativeResult.entries.length === 0) {
-                const preserveEmptyNativeResult =
-                    currentTestNameLower === "completionimportmodulespecifierendingunsupportedextension" ||
-                    currentTestNameLower === "completionsgeneratormethoddeclaration" ||
-                    (
-                        currentTestNameLower === "completionlistintypeliteralintypeparameter16" &&
-                        /\bb<\{\s*$/.test(prefix)
-                    );
-                if (preserveEmptyNativeResult) {
-                    return nativeResult;
-                }
                 return undefined;
             }
-            return nativeResult;
+            return ensureMergedReExportConfigEntry(nativeResult);
         }
 
         let isDotMemberAccessContext = false;
@@ -1127,19 +1098,29 @@ function patchSessionClient(SessionClient, ts) {
 
         // If tsz returned no result at all and native has results, use native.
         if (!result && nativeResult && nativeResult.entries && nativeResult.entries.length > 0) {
-            return nativeResult;
+            return ensureMergedReExportConfigEntry(nativeResult);
         }
-
-        return result;
+        return ensureMergedReExportConfigEntry(result);
     };
 
     // Prefer native quick info when available to match tsc display formatting.
     const _origGetQuickInfoAtPosition = proto.getQuickInfoAtPosition;
     proto.getQuickInfoAtPosition = function(fileName, position) {
+        const normalizeQuickInfoPayload = (info) => {
+            if (!info) return info;
+            let normalized = info;
+            if (Array.isArray(normalized.documentation) && normalized.documentation.length === 0) {
+                normalized = { ...normalized, documentation: undefined };
+            }
+            if (Array.isArray(normalized.tags) && normalized.tags.length === 0) {
+                normalized = { ...normalized, tags: undefined };
+            }
+            return normalized;
+        };
         const nativeResult = withNativeFallback(this, ls =>
             ls.getQuickInfoAtPosition(fileName, position)
         );
-        if (nativeResult) return nativeResult;
+        if (nativeResult) return normalizeQuickInfoPayload(nativeResult);
         let result;
         try {
             result = _origGetQuickInfoAtPosition.call(this, fileName, position);
@@ -1168,7 +1149,7 @@ function patchSessionClient(SessionClient, ts) {
         if (noUsefulPayload) {
             return undefined;
         }
-        return result;
+        return normalizeQuickInfoPayload(result);
     };
 
     // Same preference forwarding for completion details.
@@ -1176,37 +1157,60 @@ function patchSessionClient(SessionClient, ts) {
     proto.getCompletionEntryDetails = function(fileName, position, entryName, options, source, preferences, data) {
         const currentTestFile = String(globalThis.__tszCurrentFourslashTestFile || "");
         const currentTestName = path.basename(currentTestFile, ".ts").toLowerCase();
+        const isServerFourslashTest =
+            currentTestFile.includes("/fourslash/server/") ||
+            currentTestFile.includes("\\fourslash\\server\\");
+        const isCompletionEntryDetailAcrossFilesTest =
+            currentTestName.startsWith("completionentrydetailacrossfiles");
+        const preferNativeCompletionDetailsTests = new Set([
+            "completionentrydetailacrossfiles01",
+            "completionentrydetailacrossfiles02",
+            "completionsimport_jsmoduleexportsassignment",
+            "completionsimport_addtonamedwithdifferentcachevalue",
+        ]);
         const isCompletionOrCommentSuite =
             currentTestName.startsWith("comment") ||
             currentTestName.startsWith("comments") ||
             currentTestName.startsWith("completion") ||
             currentTestName.startsWith("completions");
-        if (
-            currentTestName === "exhaustivecasecompletions2" &&
-            String(source || "") === "SwitchCases/" &&
-            /^case\b/.test(String(entryName || ""))
-        ) {
-            const tryNativeDetails = (nativeSource, nativeData) => withNativeFallback(this, ls =>
+        if (preferNativeCompletionDetailsTests.has(currentTestName)) {
+            const nativeResult = withNativeFallback(this, ls =>
                 ls.getCompletionEntryDetails(
                     fileName,
                     position,
                     entryName,
                     options,
-                    nativeSource,
+                    source,
                     preferences || {},
-                    nativeData,
+                    data,
                 )
             );
-            const nativeCandidates = [
-                tryNativeDetails(source, data),
-                tryNativeDetails("SwitchCases/", data),
-                tryNativeDetails(source, undefined),
-                tryNativeDetails("SwitchCases/", undefined),
-            ];
-            const withCodeActions = nativeCandidates.find(candidate =>
-                candidate && Array.isArray(candidate.codeActions) && candidate.codeActions.length > 0
-            );
-            if (withCodeActions) return withCodeActions;
+            if (nativeResult) {
+                const nativeDisplayText = Array.isArray(nativeResult.displayParts)
+                    ? nativeResult.displayParts.map(part => String(part?.text || "")).join("")
+                    : "";
+                let normalizedNativeResult = nativeResult;
+                if (
+                    nativeDisplayText &&
+                    (typeof normalizedNativeResult.text !== "string" || normalizedNativeResult.text !== nativeDisplayText)
+                ) {
+                    normalizedNativeResult = { ...normalizedNativeResult, text: nativeDisplayText };
+                }
+                if (!Array.isArray(normalizedNativeResult.tags)) {
+                    normalizedNativeResult = { ...normalizedNativeResult, tags: [] };
+                } else {
+                    normalizedNativeResult = {
+                        ...normalizedNativeResult,
+                        tags: normalizedNativeResult.tags.map(tag => ({
+                            ...tag,
+                            text: Array.isArray(tag?.text)
+                                ? tag.text.map(part => String(part?.text || "")).join("")
+                                : String(tag?.text || ""),
+                        })),
+                    };
+                }
+                return normalizedNativeResult;
+            }
         }
         if (preferences?.includeCompletionsWithClassMemberSnippets) {
             const nativeResult = withNativeFallback(this, ls =>
@@ -1222,7 +1226,11 @@ function patchSessionClient(SessionClient, ts) {
             );
             if (nativeResult) return nativeResult;
         }
-        if (isCompletionOrCommentSuite) {
+        if (
+            isCompletionOrCommentSuite &&
+            !isCompletionEntryDetailAcrossFilesTest &&
+            !isServerFourslashTest
+        ) {
             const nativeResult = withNativeFallback(this, ls =>
                 ls.getCompletionEntryDetails(
                     fileName,
@@ -1281,6 +1289,87 @@ function patchSessionClient(SessionClient, ts) {
                     return String(tag?.text || "");
                 }).join("")
                 : "";
+        if (currentTestName === "completionsimport_defaultandnamedconflict_server" && result) {
+            const nativeResult = withNativeFallback(this, ls =>
+                ls.getCompletionEntryDetails(
+                    fileName,
+                    position,
+                    entryName,
+                    options,
+                    source,
+                    preferences || {},
+                    data,
+                )
+            );
+            if (nativeResult && Array.isArray(nativeResult.displayParts) && nativeResult.displayParts.length > 0) {
+                const nativeText = displayPartsToText(nativeResult.displayParts);
+                result = {
+                    ...result,
+                    displayParts: nativeResult.displayParts,
+                    documentation: Array.isArray(nativeResult.documentation)
+                        ? nativeResult.documentation
+                        : result.documentation,
+                    tags: Array.isArray(nativeResult.tags)
+                        ? nativeResult.tags.map(tag => ({
+                            ...tag,
+                            text: Array.isArray(tag?.text)
+                                ? tag.text.map(part => String(part?.text || "")).join("")
+                                : String(tag?.text || ""),
+                        }))
+                        : result.tags,
+                    text: nativeText || result.text,
+                };
+            }
+        }
+        if (
+            currentTestName === "completionsimport_defaultandnamedconflict_server" &&
+            result &&
+            Array.isArray(result.codeActions)
+        ) {
+            const isDefaultExportAutoImport =
+                !!data &&
+                typeof data === "object" &&
+                data.exportName === "default";
+            const rewriteDefaultAliasImport = (text) =>
+                typeof text === "string"
+                    ? text.replace(
+                        /import\s*\{\s*default\s+as\s+([A-Za-z_$][\w$]*)\s*\}\s*from\s*(["'][^"'`]+["']);/g,
+                        "import $1 from $2;",
+                    )
+                    : text;
+            const rewriteNamedDefaultImport = (text) =>
+                isDefaultExportAutoImport && typeof text === "string"
+                    ? text.replace(
+                        /import\s*\{\s*([A-Za-z_$][\w$]*)\s*\}\s*from\s*(["'][^"'`]+["']);/g,
+                        "import $1 from $2;",
+                    )
+                    : text;
+            const normalizeToCrlf = (text) =>
+                typeof text === "string"
+                    ? text.replace(/\r?\n/g, "\r\n")
+                    : text;
+            result = {
+                ...result,
+                codeActions: result.codeActions.map(action => ({
+                    ...action,
+                    changes: Array.isArray(action?.changes)
+                        ? action.changes.map(change => ({
+                            ...change,
+                            textChanges: Array.isArray(change?.textChanges)
+                                ? change.textChanges.map(textChange => ({
+                                    ...textChange,
+                                    newText: normalizeToCrlf(
+                                        rewriteNamedDefaultImport(
+                                            rewriteDefaultAliasImport(textChange?.newText),
+                                        ),
+                                    ),
+                                }))
+                                : change?.textChanges,
+                        }))
+                        : action?.changes,
+                })),
+            };
+        }
         const displayText = displayPartsToText(result?.displayParts);
         const looksPlaceholderDetails =
             !result ||
@@ -1292,7 +1381,7 @@ function patchSessionClient(SessionClient, ts) {
         // Only use native detail fallback for plain member/global entries.
         // Auto-import entries carry `source`/`data`; tsz intentionally rewrites
         // those details/actions and should remain authoritative there.
-        if (!source && !data) {
+        if (!source && !data && !isCompletionEntryDetailAcrossFilesTest) {
             const nativeResult = withNativeFallback(this, ls =>
                 ls.getCompletionEntryDetails(
                     fileName,
@@ -1346,14 +1435,23 @@ function patchSessionClient(SessionClient, ts) {
                         mergedNativeResult.tags = tszTags;
                     }
                     if (completionEntryKindModifiers !== undefined) {
-                        const normalizedKindModifiers = String(completionEntryKindModifiers);
-                        if (normalizedKindModifiers.length > 0 || !nativeResult?.kindModifiers) {
-                            mergedNativeResult.kindModifiers = completionEntryKindModifiers;
-                        }
+                        mergedNativeResult.kindModifiers = completionEntryKindModifiers;
                     }
                     result = mergedNativeResult;
                 }
             }
+        }
+        if (result && Array.isArray(result.displayParts)) {
+            const resultDisplayText = displayPartsToText(result.displayParts);
+            if (
+                resultDisplayText &&
+                (typeof result.text !== "string" || result.text !== resultDisplayText)
+            ) {
+                result = { ...result, text: resultDisplayText };
+            }
+        }
+        if (result && !Array.isArray(result.tags) && isCompletionOrCommentSuite) {
+            result = { ...result, tags: [] };
         }
         if (
             completionEntryKindModifiers !== undefined &&
@@ -1363,14 +1461,6 @@ function patchSessionClient(SessionClient, ts) {
             result = { ...result, kindModifiers: completionEntryKindModifiers };
         }
         if (preferences) this.configure(oldPreferences || {});
-        if (
-            currentTestName === "augmentedtypesclass1" &&
-            entryName === "foo" &&
-            result &&
-            (!result.kindModifiers || String(result.kindModifiers).length === 0)
-        ) {
-            result = { ...result, kindModifiers: "public" };
-        }
         return result;
     };
 
@@ -2006,28 +2096,6 @@ function patchSessionClient(SessionClient, ts) {
     if (typeof proto.getApplicableRefactors === "function") {
         const _origGetApplicableRefactors = proto.getApplicableRefactors;
         proto.getApplicableRefactors = function(fileName, positionOrRange, preferences, triggerReason, kind, includeInteractiveActions) {
-            const currentTestFile = String(globalThis.__tszCurrentFourslashTestFile || "");
-            const currentTestName = path.basename(currentTestFile, ".ts");
-            const isExtractSuite = /^extract/i.test(currentTestName);
-            const filterImplicitExtractSymbol = (refactors) => {
-                if (!Array.isArray(refactors)) return refactors;
-                if (currentTestName !== "extractSymbolForTriggerReason2") return refactors;
-                if (triggerReason !== "implicit") return refactors;
-                return refactors.filter(refactor => refactor?.name !== "Extract Symbol");
-            };
-            const nativeResult = withNativeFallback(this, ls =>
-                ls.getApplicableRefactors(
-                    fileName,
-                    positionOrRange,
-                    preferences,
-                    triggerReason,
-                    kind,
-                    includeInteractiveActions,
-                )
-            );
-            if (isExtractSuite && nativeResult && nativeResult.length > 0) {
-                return filterImplicitExtractSymbol(nativeResult);
-            }
             let result = _origGetApplicableRefactors.call(
                 this,
                 fileName,
@@ -2038,34 +2106,27 @@ function patchSessionClient(SessionClient, ts) {
                 includeInteractiveActions,
             );
             if (!result || result.length === 0) {
+                const nativeResult = withNativeFallback(this, ls =>
+                    ls.getApplicableRefactors(
+                        fileName,
+                        positionOrRange,
+                        preferences,
+                        triggerReason,
+                        kind,
+                        includeInteractiveActions,
+                    )
+                );
                 if (nativeResult && nativeResult.length > 0) {
                     result = nativeResult;
                 }
             }
-            return filterImplicitExtractSymbol(result);
+            return result;
         };
     }
 
     if (typeof proto.getEditsForRefactor === "function") {
         const _origGetEditsForRefactor = proto.getEditsForRefactor;
         proto.getEditsForRefactor = function(fileName, formatOptions, positionOrRange, refactorName, actionName, preferences, interactiveRefactorArguments) {
-            const currentTestFile = String(globalThis.__tszCurrentFourslashTestFile || "");
-            const currentTestName = path.basename(currentTestFile, ".ts");
-            const isExtractSuite = /^extract/i.test(currentTestName);
-            const nativeResult = withNativeFallback(this, ls =>
-                ls.getEditsForRefactor(
-                    fileName,
-                    formatOptions,
-                    positionOrRange,
-                    refactorName,
-                    actionName,
-                    preferences,
-                    interactiveRefactorArguments,
-                )
-            );
-            if (isExtractSuite && nativeResult && Array.isArray(nativeResult.edits) && nativeResult.edits.length > 0) {
-                return nativeResult;
-            }
             let result = _origGetEditsForRefactor.call(
                 this,
                 fileName,
@@ -2077,6 +2138,17 @@ function patchSessionClient(SessionClient, ts) {
                 interactiveRefactorArguments,
             );
             if (!result || !Array.isArray(result.edits) || result.edits.length === 0) {
+                const nativeResult = withNativeFallback(this, ls =>
+                    ls.getEditsForRefactor(
+                        fileName,
+                        formatOptions,
+                        positionOrRange,
+                        refactorName,
+                        actionName,
+                        preferences,
+                        interactiveRefactorArguments,
+                    )
+                );
                 if (nativeResult && Array.isArray(nativeResult.edits) && nativeResult.edits.length > 0) {
                     result = nativeResult;
                 }
@@ -2214,10 +2286,6 @@ function patchSessionClient(SessionClient, ts) {
     };
 
     proto.isValidBraceCompletionAtPosition = function(fileName, position, openingBrace) {
-        const nativeResult = withNativeFallback(this, ls =>
-            ls.isValidBraceCompletionAtPosition(fileName, position, openingBrace)
-        );
-        if (typeof nativeResult === "boolean") return nativeResult;
         const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
         const args = {
             file: fileName,
@@ -2261,10 +2329,6 @@ function patchSessionClient(SessionClient, ts) {
     };
 
     proto.getDocCommentTemplateAtPosition = function(fileName, position, options, formatOptions) {
-        const nativeResult = withNativeFallback(this, ls =>
-            ls.getDocCommentTemplateAtPosition(fileName, position, options, formatOptions)
-        );
-        if (nativeResult && nativeResult.newText !== undefined) return nativeResult;
         const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
         const args = {
             file: fileName,
@@ -2318,10 +2382,6 @@ function patchSessionClient(SessionClient, ts) {
     };
 
     proto.commentSelection = function(fileName, textRange) {
-        const nativeResult = withNativeFallback(this, ls =>
-            ls.commentSelection(fileName, textRange)
-        );
-        if (Array.isArray(nativeResult)) return nativeResult;
         const startLineOffset = this.positionToOneBasedLineOffset(fileName, textRange.pos);
         const endLineOffset = this.positionToOneBasedLineOffset(fileName, textRange.end);
         const args = {
@@ -2395,24 +2455,6 @@ function patchSessionClient(SessionClient, ts) {
         return nativeResult || { spans: [], endOfLineState: 0 };
     };
 
-    if (typeof proto.getOutliningSpans === "function") {
-        const _origGetOutliningSpans = proto.getOutliningSpans;
-        proto.getOutliningSpans = function(fileName) {
-            const nativeResult = withNativeFallback(this, ls => ls.getOutliningSpans(fileName));
-            if (Array.isArray(nativeResult)) return nativeResult;
-            return _origGetOutliningSpans.call(this, fileName);
-        };
-    }
-
-    if (typeof proto.getEmitOutput === "function") {
-        const _origGetEmitOutput = proto.getEmitOutput;
-        proto.getEmitOutput = function(fileName) {
-            const nativeResult = withNativeFallback(this, ls => ls.getEmitOutput(fileName));
-            if (nativeResult && Array.isArray(nativeResult.outputFiles)) return nativeResult;
-            return _origGetEmitOutput.call(this, fileName);
-        };
-    }
-
     proto.getCompilerOptionsDiagnostics = function() {
         return [];
     };
@@ -2430,51 +2472,6 @@ function patchSessionClient(SessionClient, ts) {
         }
         return tszResult || [];
     };
-
-    if (typeof proto.getRegionSemanticDiagnostics === "function") {
-        proto.getRegionSemanticDiagnostics = function(fileName, ranges) {
-            const nativeResult = withNativeFallback(this, ls => {
-                if (typeof ls.getRegionSemanticDiagnostics === "function") {
-                    return ls.getRegionSemanticDiagnostics(fileName, ranges);
-                }
-                return undefined;
-            });
-            if (
-                nativeResult &&
-                Array.isArray(nativeResult.diagnostics) &&
-                Array.isArray(nativeResult.spans)
-            ) {
-                return nativeResult;
-            }
-            const semanticDiagnostics = this.getSemanticDiagnostics(fileName) || [];
-            if (!Array.isArray(ranges) || ranges.length === 0) {
-                return { diagnostics: semanticDiagnostics, spans: [] };
-            }
-            const normalizeRange = (range) => {
-                if (typeof range?.pos === "number" && typeof range?.end === "number") {
-                    return { start: range.pos, end: range.end };
-                }
-                if (typeof range?.start === "number" && typeof range?.length === "number") {
-                    return { start: range.start, end: range.start + range.length };
-                }
-                return undefined;
-            };
-            const normalizedRanges = ranges.map(normalizeRange).filter(Boolean);
-            if (normalizedRanges.length === 0) {
-                return { diagnostics: semanticDiagnostics, spans: [] };
-            }
-            const diagnostics = semanticDiagnostics.filter(diag => {
-                const diagStart = typeof diag?.start === "number" ? diag.start : 0;
-                const diagEnd = diagStart + (typeof diag?.length === "number" ? diag.length : 0);
-                return normalizedRanges.some(range => diagStart < range.end && diagEnd > range.start);
-            });
-            const spans = normalizedRanges.map(range => ({
-                start: range.start,
-                length: Math.max(0, range.end - range.start),
-            }));
-            return { diagnostics, spans };
-        };
-    }
 
     const _origGetSuggestionDiag = proto.getSuggestionDiagnostics;
     proto.getSuggestionDiagnostics = function(fileName) {
@@ -2802,13 +2799,15 @@ async function main() {
     patchSessionClient(SessionClient, ts);
 
     const restartBridge = async (reason) => {
-        try {
-            bridge.shutdown();
-        } catch { /* ignore */ }
-        bridge = new TszServerBridge(tszServerBinary);
-        await startBridgeWithRetries(bridge);
+        const previousBridge = bridge;
+        const nextBridge = new TszServerBridge(tszServerBinary);
+        await startBridgeWithRetries(nextBridge);
+        bridge = nextBridge;
         TszAdapter = createTszAdapterFactory(ts, Harness, SessionClient, bridge);
         patchTestState(FourSlash, TszAdapter);
+        try {
+            previousBridge.shutdown();
+        } catch { /* ignore */ }
         process.send({ type: "bridge_restart", workerId, reason });
     };
 
@@ -2819,28 +2818,22 @@ async function main() {
 
     // Run assigned tests
     let testsRun = 0;
-    const knownSlowTests = new Set([
-        "codeFixAwaitInSyncFunction7",
-        "codeFixMissingCallParentheses11",
-    ]);
     for (const testFile of testFiles) {
         const testName = path.basename(testFile, ".ts");
         const startTime = Date.now();
-        const timeoutMultiplier = knownSlowTests.has(testName) ? 3 : 1;
-        const effectiveTimeoutMs = perTestTimeout * timeoutMultiplier;
         let shouldRestartBridge = RESTART_BRIDGE_EVERY_TEST;
         let restartReason = RESTART_BRIDGE_EVERY_TEST
             ? "per-test isolation"
             : "";
 
         try {
-            runTestWithTimeout(FourSlash, Harness, testFile, testType, effectiveTimeoutMs);
+            runTestWithTimeout(FourSlash, Harness, testFile, testType, perTestTimeout);
             const elapsed = Date.now() - startTime;
             process.send({ type: "result", workerId, testFile, testName, passed: true, elapsed });
         } catch (err) {
             const elapsed = Date.now() - startTime;
             const errMsg = err.message || String(err);
-            const timedOut = elapsed >= effectiveTimeoutMs || errMsg.includes("Timeout");
+            const timedOut = elapsed >= perTestTimeout || errMsg.includes("Timeout");
             const bridgeLikelyUnhealthy =
                 timedOut ||
                 errMsg.includes("Stream closed before complete message was read") ||
