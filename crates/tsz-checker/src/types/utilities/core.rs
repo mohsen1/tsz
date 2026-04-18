@@ -321,7 +321,7 @@ impl<'a> CheckerState<'a> {
                                     if let Some(func_type) =
                                         self.jsdoc_type_annotation_for_node(current2)
                                     {
-                                        use tsz_solver::ContextualTypeContext;
+                                        use crate::query_boundaries::common::ContextualTypeContext;
                                         let evaluated = self.evaluate_contextual_type(func_type);
                                         let ctx_helper = ContextualTypeContext::with_expected(
                                             self.ctx.types,

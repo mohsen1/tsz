@@ -7,12 +7,13 @@ use crate::computation::complex::{
 use crate::context::TypingRequest;
 use crate::context::speculation::DiagnosticSpeculationGuard;
 use crate::diagnostics::format_message;
+use crate::query_boundaries::common::ContextualTypeContext;
 use crate::query_boundaries::type_checking_utilities as type_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{ContextualTypeContext, TypeId, TypeParamInfo};
+use tsz_solver::{TypeId, TypeParamInfo};
 impl<'a> CheckerState<'a> {
     fn is_jsx_body_child_closure(&self, func_idx: NodeIndex) -> bool {
         let mut current = func_idx;

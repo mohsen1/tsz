@@ -15,7 +15,7 @@ use crate::query_boundaries::flow_analysis::{
 use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{CallSignature, CallableShape, PropertyInfo, TypeId, types::ParamInfo};
+use tsz_solver::{CallSignature, CallableShape, ParamInfo, PropertyInfo, TypeId};
 
 impl<'a> FlowAnalyzer<'a> {
     pub(super) fn assigned_type_for_await_rhs(

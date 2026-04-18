@@ -303,7 +303,7 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::assignability::{
             ExcessPropertiesKind, classify_for_excess_properties,
         };
-        use tsz_solver::operations::property::PropertyAccessResult;
+        use crate::query_boundaries::common::PropertyAccessResult;
 
         let evaluated = self.evaluate_type_with_env(type_id);
         let evaluated = self.resolve_lazy_type(evaluated);

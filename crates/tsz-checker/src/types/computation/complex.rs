@@ -6,11 +6,12 @@
 use crate::call_checker::CallableContext;
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call as call_checker;
+use crate::query_boundaries::common::ContextualTypeContext;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use tracing::trace;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::{ContextualTypeContext, TypeId};
+use tsz_solver::TypeId;
 
 // Re-export for backwards compatibility with existing imports
 pub(crate) use super::contextual::{

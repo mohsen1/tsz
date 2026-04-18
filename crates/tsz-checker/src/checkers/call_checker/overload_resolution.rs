@@ -32,8 +32,7 @@ impl<'a> CheckerState<'a> {
         contextual_type: Option<TypeId>,
         actual_this_type: Option<TypeId>,
     ) -> Option<OverloadResolution> {
-        use tsz_solver::FunctionShape;
-        use tsz_solver::operations::CallResult;
+        use crate::query_boundaries::common::{CallResult, FunctionShape};
 
         tracing::debug!(
             "resolve_overloaded_call_with_signatures: signatures = {:?}, args = {:?}",
