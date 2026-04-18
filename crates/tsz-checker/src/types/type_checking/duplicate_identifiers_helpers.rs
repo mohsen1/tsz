@@ -1336,6 +1336,14 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<(NodeIndex, u32, bool, bool, DuplicateDeclarationOrigin)> {
         use tsz_parser::parser::syntax_kind_ext;
 
+        // External modules have their own scope — default imports in other files
+        // cannot create naming conflicts with declarations in the current module.
+        // This check only matters for script files (e.g., ambient .d.ts without
+        // module-level imports/exports) where declarations are global.
+        if self.ctx.binder.is_external_module() {
+            return Vec::new();
+        }
+
         let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
             return Vec::new();
         };
