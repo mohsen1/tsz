@@ -408,7 +408,12 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         self.check_type_modifier_on_type_only_export(clause_idx);
                     }
 
+                    // `export type { ... }` already carries the type-only
+                    // marker syntactically; tsc doesn't also run
+                    // local-named-export diagnostics (TS18043 in JS,
+                    // TS2661/TS2304 for unresolved names) against it.
                     if export_decl.module_specifier.is_none()
+                        && !export_decl.is_type_only
                         && (!self.is_inside_namespace_declaration(export_idx)
                             || self.is_inside_global_augmentation(export_idx))
                     {
