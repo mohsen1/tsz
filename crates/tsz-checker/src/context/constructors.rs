@@ -12,11 +12,11 @@ use std::sync::Arc;
 
 use crate::context::{CheckerContext, TypeCache};
 use crate::control_flow::FlowGraph;
+use crate::query_boundaries::common::{QueryDatabase, TypeEnvironment};
 use tsz_binder::BinderState;
 use tsz_common::checker_options::CheckerOptions;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::def::DefinitionStore;
-use tsz_solver::{QueryDatabase, TypeEnvironment};
 
 impl<'a> CheckerContext<'a> {
     fn normalize_options(

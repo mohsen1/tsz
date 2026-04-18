@@ -233,7 +233,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) -> Option<Vec<DiagnosticRelatedInformation>> {
-        use tsz_solver::SubtypeFailureReason;
+        use crate::query_boundaries::common::SubtypeFailureReason;
 
         let anchor = self.resolve_diagnostic_anchor(anchor_idx, DiagnosticAnchorKind::Exact)?;
         let start = anchor.start;
@@ -590,7 +590,7 @@ impl<'a> CheckerState<'a> {
         source_type: TypeId,
         target_type: TypeId,
     ) -> bool {
-        use tsz_solver::SubtypeFailureReason;
+        use crate::query_boundaries::common::SubtypeFailureReason;
 
         let analysis = self.analyze_assignability_failure(source_type, target_type);
         let Some(reason) = analysis.failure_reason else {

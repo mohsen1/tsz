@@ -3,8 +3,8 @@
 //! These methods provide convenient access to the `CheckerOptions` flags
 //! and derive solver configuration (`JudgeConfig`, `CompatChecker`) from them.
 
+use crate::query_boundaries::common::JudgeConfig;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::judge::JudgeConfig;
 
 use super::CheckerContext;
 

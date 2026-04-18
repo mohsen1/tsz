@@ -38,10 +38,11 @@ use tsz_common::interner::Atom;
 
 use crate::control_flow::FlowGraph;
 use crate::diagnostics::Diagnostic;
+use crate::query_boundaries::common::{QueryDatabase, TypeEnvironment};
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
+use tsz_solver::TypeId;
 use tsz_solver::def::{DefId, DefinitionStore};
-use tsz_solver::{QueryDatabase, TypeEnvironment, TypeId};
 
 // Re-export CheckerOptions and ScriptTarget from tsz-common
 use tsz_binder::{BinderState, ModuleAugmentation};
