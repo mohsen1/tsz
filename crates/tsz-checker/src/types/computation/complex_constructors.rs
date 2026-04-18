@@ -381,6 +381,41 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn js_prototype_binding_resolved_name(&mut self, name_idx: NodeIndex) -> Option<String> {
+        if let Some(name) = self.js_prototype_binding_literal_name(name_idx) {
+            return Some(name);
+        }
+
+        if let Some(symbol_name) = self.get_symbol_property_name_from_expr(name_idx) {
+            return Some(symbol_name);
+        }
+
+        let prev_preserve_literals = self.ctx.preserve_literal_types;
+        self.ctx.preserve_literal_types = true;
+        let key_type = self.get_type_of_node(name_idx);
+        self.ctx.preserve_literal_types = prev_preserve_literals;
+
+        let evaluated_key_type = self.evaluate_type_with_env(key_type);
+        let resolved_key_type = self.resolve_lazy_type(evaluated_key_type);
+
+        for candidate in [key_type, evaluated_key_type, resolved_key_type] {
+            if let Some(sym_ref) = tsz_solver::visitor::unique_symbol_ref(self.ctx.types, candidate)
+            {
+                return Some(format!("__unique_{}", sym_ref.0));
+            }
+            if let Some(atom) =
+                crate::query_boundaries::type_computation::access::literal_property_name(
+                    self.ctx.types,
+                    candidate,
+                )
+            {
+                return Some(self.ctx.types.resolve_atom(atom));
+            }
+        }
+
+        None
+    }
+
     /// Scan sibling statements for `FuncName.prototype.X = rhs` patterns.
     /// Returns two sets:
     /// - Prototype method bindings (`method_name` -> `method_type`) to be added as instance properties
@@ -535,7 +570,7 @@ impl<'a> CheckerState<'a> {
                     .get(lhs_access.name_or_argument)
                     .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
             let resolved_property_name = if is_computed_name {
-                self.js_prototype_binding_literal_name(lhs_access.name_or_argument)
+                self.js_prototype_binding_resolved_name(lhs_access.name_or_argument)
             } else {
                 self.get_property_name_resolved(lhs_access.name_or_argument)
             };
