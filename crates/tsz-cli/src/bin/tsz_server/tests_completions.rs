@@ -223,7 +223,8 @@ fn test_completion_entry_details_js_function_variable_uses_jsdoc_function_type()
     let mut server = make_server();
     server.open_files.insert(
         "/a.js".to_string(),
-        "/**\n * Modify the parameter\n * @param {string} p1\n */\nvar foo = function (p1) { }\nfo".to_string(),
+        "/**\n * Modify the parameter\n * @param {string} p1\n */\nvar foo = function (p1) { }\nfo"
+            .to_string(),
     );
 
     let req = make_request(
@@ -587,8 +588,7 @@ fn test_completion_default_and_named_auto_import_conflict_preserves_distinct_ent
         updated_text.replace_range(start..end, &new_text);
     }
     assert_eq!(
-        updated_text,
-        "import someModule from \"./someModule\";\r\n\r\nsomeMo",
+        updated_text, "import someModule from \"./someModule\";\r\n\r\nsomeMo",
         "expected default-export completion code action to insert default import"
     );
 }
@@ -658,7 +658,10 @@ fn test_completion_info_commonjs_require_member_fallback_includes_export_assignm
                 .collect::<String>()
         })
         .unwrap_or_default();
-    assert_eq!(display_text, "(alias) var foo: (p1: string) => void\nimport a.foo");
+    assert_eq!(
+        display_text,
+        "(alias) var foo: (p1: string) => void\nimport a.foo"
+    );
     let tags = first
         .get("tags")
         .and_then(serde_json::Value::as_array)
@@ -705,20 +708,21 @@ fn test_completion_info_includes_reexported_config_auto_import() {
         "C/**/".to_string(),
     );
 
-    let assert_has_config_completion =
-        |entries: &[serde_json::Value], context: &str| -> Result<(), String> {
-            if entries.iter().any(|entry| {
-                entry.get("name").and_then(serde_json::Value::as_str) == Some("Config")
-                    && entry.get("source").and_then(serde_json::Value::as_str) == Some("@jest/types")
-                    && entry.get("hasAction").and_then(serde_json::Value::as_bool) == Some(true)
-            }) {
-                Ok(())
-            } else {
-                Err(format!(
-                    "{context}: expected `Config` auto-import completion from @jest/types, got entries: {entries:?}"
-                ))
-            }
-        };
+    let assert_has_config_completion = |entries: &[serde_json::Value],
+                                        context: &str|
+     -> Result<(), String> {
+        if entries.iter().any(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("Config")
+                && entry.get("source").and_then(serde_json::Value::as_str) == Some("@jest/types")
+                && entry.get("hasAction").and_then(serde_json::Value::as_bool) == Some(true)
+        }) {
+            Ok(())
+        } else {
+            Err(format!(
+                "{context}: expected `Config` auto-import completion from @jest/types, got entries: {entries:?}"
+            ))
+        }
+    };
 
     let req_c = make_request(
         "completionInfo",
@@ -751,7 +755,9 @@ fn test_completion_info_includes_reexported_config_auto_import() {
     );
     let resp_c_legacy = server.handle_tsserver_request(req_c_legacy);
     assert!(resp_c_legacy.success);
-    let body_c_legacy = resp_c_legacy.body.expect("completions should return a body");
+    let body_c_legacy = resp_c_legacy
+        .body
+        .expect("completions should return a body");
     let entries_c_legacy = body_c_legacy["entries"]
         .as_array()
         .expect("completions should include entries");
@@ -794,7 +800,9 @@ fn test_completion_info_includes_reexported_config_auto_import() {
     );
     let resp_co_legacy = server.handle_tsserver_request(req_co_legacy);
     assert!(resp_co_legacy.success);
-    let body_co_legacy = resp_co_legacy.body.expect("completions should return a body");
+    let body_co_legacy = resp_co_legacy
+        .body
+        .expect("completions should return a body");
     let entries_co_legacy = body_co_legacy["entries"]
         .as_array()
         .expect("completions should include entries");
