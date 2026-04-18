@@ -31,12 +31,14 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::diagnostics::diagnostic_codes;
 
-        // In checked JavaScript files, TS7006/TS7019 diagnostics are enforced even
-        // when `noImplicitAny` is not enabled. In TS files, keep the usual
-        // `noImplicitAny` gate.
-        let implicit_any_diagnostics_enabled =
-            self.ctx.no_implicit_any() || (self.is_js_file() && self.ctx.should_resolve_jsdoc());
-        if !implicit_any_diagnostics_enabled || has_contextual_type {
+        // Implicit-any diagnostics (TS7006/TS7019/TS7031) are governed by
+        // `noImplicitAny`. `no_implicit_any()` already accounts for the
+        // checked-JS case (it returns true under `--checkJs --strict` even in
+        // `.js` files). When the user explicitly sets `noImplicitAny: false`,
+        // tsc suppresses these — previously we ORed on `is_js_file()` and
+        // force-emitted, breaking tests like
+        // jsxDeclarationsWithEsModuleInteropNoCrash.tsx.
+        if !self.ctx.no_implicit_any() || has_contextual_type {
             return;
         }
         // Skip rest parameters named 'arguments' — tsc emits TS1100 instead of TS7019
