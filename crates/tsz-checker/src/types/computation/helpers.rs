@@ -393,8 +393,8 @@ impl<'a> CheckerState<'a> {
         request: &TypingRequest,
     ) -> TypeId {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::query_boundaries::common::{LiteralTypeKind, classify_literal_type};
         use tsz_scanner::SyntaxKind;
-        use tsz_solver::type_queries::{LiteralTypeKind, classify_literal_type};
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;

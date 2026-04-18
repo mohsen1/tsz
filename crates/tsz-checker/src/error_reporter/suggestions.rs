@@ -184,7 +184,7 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::common::IntrinsicKind;
         use crate::query_boundaries::common::TypeResolver;
 
-        let kind = if tsz_solver::type_queries::is_string_type(self.ctx.types, type_id)
+        let kind = if crate::query_boundaries::common::is_string_type(self.ctx.types, type_id)
             || crate::query_boundaries::checkers::iterable::is_string_literal_type(
                 self.ctx.types,
                 type_id,
@@ -210,7 +210,7 @@ impl<'a> CheckerState<'a> {
     /// Resolve the binder SymbolId for a namespace/module type.
     /// Uses `classify_namespace_member` to find the symbol backing the type.
     fn resolve_namespace_symbol_for_type(&self, type_id: TypeId) -> Option<tsz_binder::SymbolId> {
-        use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
+        use crate::query_boundaries::common::{NamespaceMemberKind, classify_namespace_member};
 
         match classify_namespace_member(self.ctx.types, type_id) {
             NamespaceMemberKind::Lazy(def_id) => self.ctx.def_to_symbol_id(def_id),

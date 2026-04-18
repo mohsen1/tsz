@@ -1908,10 +1908,11 @@ impl<'a> CheckerState<'a> {
                                         expected_return_type,
                                     )
                                     .is_some()
-                                    || (tsz_solver::type_queries::is_symbol_or_unique_symbol(
+                                    || (crate::query_boundaries::common::is_symbol_or_unique_symbol(
                                         self.ctx.types,
                                         expected_return_type,
-                                    ) && expected_return_type != TypeId::SYMBOL)
+                                    )
+                                        && expected_return_type != TypeId::SYMBOL)
                                     || expected_return_type == TypeId::NEVER
                                     || tsz_solver::union_list_id(
                                         self.ctx.types,
@@ -2251,7 +2252,7 @@ impl<'a> CheckerState<'a> {
                         self.widen_literal_type(inferred_yield)
                     };
                     let final_yield = if !self.ctx.strict_null_checks()
-                        && tsz_solver::type_queries::is_only_null_or_undefined(
+                        && crate::query_boundaries::common::is_only_null_or_undefined(
                             self.ctx.types,
                             widened,
                         ) {

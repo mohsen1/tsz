@@ -1245,6 +1245,37 @@ pub(crate) fn map_compound_members_if_changed(
 }
 
 pub(crate) use tsz_solver::type_queries::AugmentationTargetKind;
+pub(crate) use tsz_solver::type_queries::classifiers::InterfaceMergeKind;
+pub(crate) use tsz_solver::type_queries::extended::NamespaceMemberKind;
+pub(crate) use tsz_solver::type_queries::extended::TypeResolutionKind;
+
+pub(crate) fn classify_namespace_member(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> NamespaceMemberKind {
+    tsz_solver::type_queries::classify_namespace_member(db, type_id)
+}
+
+pub(crate) fn classify_for_interface_merge(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> InterfaceMergeKind {
+    tsz_solver::type_queries::classify_for_interface_merge(db, type_id)
+}
+
+pub(crate) fn classify_for_type_resolution(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> TypeResolutionKind {
+    tsz_solver::type_queries::classify_for_type_resolution(db, type_id)
+}
+
+pub(crate) fn object_shape_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::ObjectShapeId> {
+    tsz_solver::type_queries::get_object_shape_id(db, type_id)
+}
 
 pub(crate) fn classify_for_augmentation(
     db: &dyn TypeDatabase,

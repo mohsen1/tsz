@@ -905,11 +905,11 @@ impl<'a> CheckerState<'a> {
                                     && inner != TypeId::ANY
                                     && inner != TypeId::UNKNOWN
                                     && let Some(exec_shape) =
-                                        query::get_function_shape(self.ctx.types, param_type)
+                                        query::function_shape_for_type(self.ctx.types, param_type)
                                 {
                                     let mut exec_shape = (*exec_shape).clone();
                                     if let Some(first_param) = exec_shape.params.first_mut()
-                                        && let Some(resolve_shape) = query::get_function_shape(
+                                        && let Some(resolve_shape) = query::function_shape_for_type(
                                             self.ctx.types,
                                             first_param.type_id,
                                         )

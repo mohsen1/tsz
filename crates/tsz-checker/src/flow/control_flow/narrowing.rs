@@ -565,7 +565,7 @@ impl<'a> FlowAnalyzer<'a> {
                 // Check if the parameter type is a function with a type predicate
                 // containing the unsubstituted type param
                 if let Some(param_fn_shape) =
-                    flow_query::get_function_shape(self.interner, param.type_id)
+                    flow_query::function_shape_for_type(self.interner, param.type_id)
                     && let Some(ref param_pred) = param_fn_shape.type_predicate
                     && let Some(param_pred_type) = param_pred.type_id
                     && flow_query::type_param_info(self.interner, param_pred_type)
@@ -576,7 +576,7 @@ impl<'a> FlowAnalyzer<'a> {
                     if let Some(&arg_idx) = args.get(i)
                         && let Some(&arg_type) = node_types.get(&arg_idx.0)
                         && let Some(arg_fn_shape) =
-                            flow_query::get_function_shape(self.interner, arg_type)
+                            flow_query::function_shape_for_type(self.interner, arg_type)
                         && let Some(ref arg_pred) = arg_fn_shape.type_predicate
                         && let Some(arg_pred_type) = arg_pred.type_id
                     {

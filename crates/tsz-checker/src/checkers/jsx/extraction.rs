@@ -458,7 +458,7 @@ impl<'a> CheckerState<'a> {
             return self.is_jsx_string_tag_type(constraint);
         }
 
-        if tsz_solver::type_queries::is_string_type(self.ctx.types, type_id)
+        if crate::query_boundaries::common::is_string_type(self.ctx.types, type_id)
             || crate::query_boundaries::checkers::iterable::is_string_literal_type(
                 self.ctx.types,
                 type_id,

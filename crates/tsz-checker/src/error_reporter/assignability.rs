@@ -165,7 +165,10 @@ impl<'a> CheckerState<'a> {
                 .and_then(|s| s.properties.iter().find(|p| p.name == target_prop.name))
                 .map(|p| p.type_id);
             if let Some(src_type) = source_prop_type
-                && tsz_solver::type_queries::type_includes_undefined(self.ctx.types, src_type)
+                && crate::query_boundaries::class_type::type_includes_undefined(
+                    self.ctx.types,
+                    src_type,
+                )
             {
                 return true;
             }

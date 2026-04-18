@@ -823,8 +823,8 @@ impl<'a> CheckerState<'a> {
         overload_type: tsz_solver::TypeId,
     ) -> bool {
         let constructors_only =
-            tsz_solver::type_queries::is_constructor_like_type(self.ctx.types, impl_type)
-                && tsz_solver::type_queries::is_constructor_like_type(
+            crate::query_boundaries::common::is_constructor_like_type(self.ctx.types, impl_type)
+                && crate::query_boundaries::common::is_constructor_like_type(
                     self.ctx.types,
                     overload_type,
                 );
