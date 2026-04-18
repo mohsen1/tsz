@@ -238,7 +238,8 @@ impl<'a> FlowAnalyzer<'a> {
                     let op_str = map_compound_assignment_to_binary(bin.operator_token)?;
 
                     // Evaluate the binary operation to get result type
-                    let evaluator = BinaryOpEvaluator::new(self.interner);
+                    let evaluator =
+                        crate::query_boundaries::common::new_binary_op_evaluator(self.interner);
                     return match evaluator.evaluate(left_type, right_type, op_str) {
                         BinaryOpResult::Success(result) => Some(result),
                         // For type errors, return ANY to prevent cascading errors

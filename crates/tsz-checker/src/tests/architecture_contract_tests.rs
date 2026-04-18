@@ -4515,11 +4515,11 @@ fn test_direct_binary_op_evaluator_construction_ceiling() {
         }
     }
 
-    const CEILING: usize = 24;
+    const CEILING: usize = 0;
     assert!(
         count <= CEILING,
         "BinaryOpEvaluator::new() usage ceiling exceeded: found {count} (ceiling: {CEILING}). \
-         Create query_boundaries wrappers instead of adding new direct usages.\n\
+         Use query_boundaries::common::new_binary_op_evaluator() instead.\n\
          Locations:\n{}",
         locations.join("\n")
     );

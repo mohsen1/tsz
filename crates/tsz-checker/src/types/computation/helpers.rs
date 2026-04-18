@@ -482,7 +482,8 @@ impl<'a> CheckerState<'a> {
 
                 // TS2469: unary +/- on symbol types
                 {
-                    let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                    let evaluator =
+                        crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                     if evaluator.is_symbol_like(operand_type) {
                         let op_str = if k == SyntaxKind::PlusToken as u16 {
                             "+"
@@ -512,7 +513,8 @@ impl<'a> CheckerState<'a> {
                     && operand_type != TypeId::ANY
                     && operand_type != TypeId::ERROR
                 {
-                    let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                    let evaluator =
+                        crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                     if evaluator.is_bigint_like(operand_type)
                         && let Some(operand_node) = self.ctx.arena.get(unary.operand)
                     {
@@ -566,7 +568,8 @@ impl<'a> CheckerState<'a> {
 
                 // Return bigint for bigint operands, number otherwise.
                 {
-                    let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                    let evaluator =
+                        crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                     let resolved = self.evaluate_type_with_env(operand_type);
                     if evaluator.is_bigint_like(resolved) {
                         TypeId::BIGINT
@@ -584,7 +587,8 @@ impl<'a> CheckerState<'a> {
 
                 // TS2469: unary ~ on symbol types
                 {
-                    let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                    let evaluator =
+                        crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                     if evaluator.is_symbol_like(operand_type)
                         && let Some(operand_node) = self.ctx.arena.get(unary.operand)
                     {
@@ -603,7 +607,8 @@ impl<'a> CheckerState<'a> {
 
                 // Return bigint for bigint operands, number otherwise.
                 {
-                    let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                    let evaluator =
+                        crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                     let resolved = self.evaluate_type_with_env(operand_type);
                     if evaluator.is_bigint_like(resolved) {
                         TypeId::BIGINT
@@ -636,7 +641,8 @@ impl<'a> CheckerState<'a> {
 
                 {
                     use crate::query_boundaries::common::BinaryOpEvaluator;
-                    let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+                    let evaluator =
+                        crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                     let (non_nullish, nullish_cause) = self.split_nullish_type(operand_type);
                     let nullish_can_flow_to_number = non_nullish.is_none_or(|ty| {
                         let evaluated = self.evaluate_type_with_env(ty);
@@ -677,7 +683,8 @@ impl<'a> CheckerState<'a> {
                 // Determine the result type: bigint for bigint operands, number otherwise.
                 // tsc returns the same numeric type as the operand for ++/--.
                 let result_type = {
-                    let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                    let evaluator =
+                        crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                     let resolved = self.evaluate_type_with_env(operand_type);
                     if evaluator.is_bigint_like(resolved) {
                         TypeId::BIGINT
@@ -974,7 +981,8 @@ impl<'a> CheckerState<'a> {
             // Constraint-resolved type parameters (e.g. `<S extends symbol>`)
             // are also caught via the solver's BinaryOpEvaluator helper.
             {
-                let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                let evaluator =
+                    crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                 use tsz_solver::TypeId as SolverTypeId;
                 let resolve_tp = |t: SolverTypeId| -> SolverTypeId {
                     crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, t)
