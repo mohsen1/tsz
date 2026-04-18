@@ -621,6 +621,17 @@ function patchSessionClient(SessionClient, ts) {
             nativeResult.entries.length > 0 &&
             Array.isArray(result.entries)
         ) {
+            const nativeHasStringLiteralEntries = nativeResult.entries.some(entry => entry?.kind === "string");
+            const tszHasStringLiteralEntries = result.entries.some(entry => entry?.kind === "string");
+            if (
+                nativeHasStringLiteralEntries &&
+                !tszHasStringLiteralEntries &&
+                !nativeResult.isMemberCompletion &&
+                !result.isMemberCompletion
+            ) {
+                return nativeResult;
+            }
+
             if (isDotMemberAccessContext && result.entries.length > 0) {
                 const keyOf = (entry) =>
                     `${entry?.name || ""}\u0000${entry?.kind || ""}\u0000${entry?.source || ""}`;
