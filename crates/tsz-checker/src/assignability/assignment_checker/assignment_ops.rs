@@ -623,8 +623,26 @@ impl<'a> CheckerState<'a> {
                     self.first_private_name_from_external_module_reference(right_type)
                 {
                     let quoted_module = format!("\"{module_specifier}\"");
+                    let report_node = self
+                        .ctx
+                        .arena
+                        .get(right_idx)
+                        .and_then(|right_node| {
+                            (right_node.kind == SyntaxKind::Identifier as u16).then_some(right_idx)
+                        })
+                        .and_then(|identifier_idx| self.resolve_identifier_symbol(identifier_idx))
+                        .and_then(|sym_id| self.get_symbol_from_any_binder(sym_id))
+                        .and_then(|symbol| {
+                            if symbol.value_declaration.is_some() {
+                                Some(symbol.value_declaration)
+                            } else {
+                                symbol.declarations.first().copied()
+                            }
+                        })
+                        .and_then(|decl_idx| self.enclosing_statement_node(decl_idx))
+                        .unwrap_or(left_idx);
                     self.error_at_node_msg(
-                        left_idx,
+                        report_node,
                         crate::diagnostics::diagnostic_codes::DECLARATION_EMIT_FOR_THIS_FILE_REQUIRES_USING_PRIVATE_NAME_FROM_MODULE_AN_EXPLIC,
                         &[&private_name, &quoted_module],
                     );
@@ -1290,6 +1308,20 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    fn enclosing_statement_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = idx;
+        while current.is_some() {
+            let node = self.ctx.arena.get(current)?;
+            if node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                || node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+            {
+                return Some(current);
+            }
+            current = self.ctx.arena.get_extended(current)?.parent;
+        }
+        None
     }
 
     fn array_destructuring_element_has_default_initializer(&self, element_idx: NodeIndex) -> bool {
