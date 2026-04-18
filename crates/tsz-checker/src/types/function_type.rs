@@ -1081,19 +1081,16 @@ impl<'a> CheckerState<'a> {
                             .arena
                             .get_constructor(node)
                             .is_some_and(|c| self.has_private_modifier(&c.modifiers)));
-                // When ctx_helper's expected type is  (e.g. a mapped type property
-                // mapping excess keys to ), no param contextual types can be derived.
-                // Do not defer TS7006: the second pass will use the inferred type (possibly
-                // ) and incorrectly suppress TS7006. Emit immediately.
-                let ctx_helper_expected_is_never = ctx_helper
-                    .as_ref()
-                    .and_then(tsz_solver::ContextualTypeContext::expected)
-                    .is_some_and(|t| t == TypeId::NEVER);
+                // When ctx_helper IS present, we definitively know the contextual callable
+                // signature. If a parameter has no contextual type from that signature
+                // (e.g., `() => any` has 0 params), we should emit TS7006 immediately
+                // rather than deferring — we won't learn more in the statement-checking pass.
+                // Only defer when ctx_helper is NONE (we don't know the contextual type yet).
                 let skip_implicit_any = is_setter
                     || (is_closure
                         && !self.ctx.is_checking_statements
                         && !has_effective_contextual_type
-                        && !ctx_helper_expected_is_never)
+                        && ctx_helper.is_none())
                     || (is_in_decorator && !has_effective_contextual_type)
                     || is_in_jsdoc_type_cast
                     || closure_already_checked
