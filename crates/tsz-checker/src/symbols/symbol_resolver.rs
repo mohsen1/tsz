@@ -1137,7 +1137,11 @@ impl<'a> CheckerState<'a> {
         // resolved symbol is an IMPORT_EQUALS_DECLARATION (not a general
         // namespace import, which has its own value/type distinction that
         // must not be bypassed).
-        if let Some(sym_id) = self.ctx.binder.get_node_symbol(idx)
+        if let Some(sym_id) = self
+            .ctx
+            .binder
+            .get_node_symbol(idx)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))
             && let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
             && (symbol.flags & symbol_flags::ALIAS) != 0
             && symbol.declarations.iter().copied().any(|decl_idx| {
