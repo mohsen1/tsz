@@ -1161,34 +1161,85 @@ impl<'a> CheckerState<'a> {
             return;
         }
         let decl_file_idx = export_equals_symbol.decl_file_idx as usize;
-        if self.ctx.get_binder_for_file(decl_file_idx).is_none() {
+        let Some(binder) = self.ctx.get_binder_for_file(decl_file_idx) else {
             return;
-        }
+        };
         let arena = self.ctx.get_arena_for_file(decl_file_idx as u32);
 
-        let decl_idx = if export_equals_symbol.value_declaration.is_some() {
-            export_equals_symbol.value_declaration
-        } else if let Some(&decl_idx) = export_equals_symbol.declarations.first() {
-            decl_idx
-        } else {
-            return;
+        let module_specifier_from_decl = |decl_idx: NodeIndex| -> Option<String> {
+            let node = arena.get(decl_idx)?;
+            if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+                return None;
+            }
+            let var_decl = arena.get_variable_declaration(node)?;
+            if !var_decl.type_annotation.is_some() {
+                return None;
+            }
+            self.import_type_module_specifier_from_type_node(arena, var_decl.type_annotation)
         };
-        let Some(node) = arena.get(decl_idx) else {
-            return;
-        };
-        if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
-            return;
+
+        let mut module_specifier = export_equals_symbol
+            .value_declaration
+            .into_option()
+            .and_then(module_specifier_from_decl)
+            .or_else(|| {
+                export_equals_symbol
+                    .declarations
+                    .iter()
+                    .find_map(|&decl_idx| module_specifier_from_decl(decl_idx))
+            });
+
+        // Handle `export = x` where `x` carries the import-type annotation.
+        if module_specifier.is_none() {
+            let export_assign_decl = export_equals_symbol
+                .value_declaration
+                .into_option()
+                .and_then(|decl_idx| {
+                    arena.get(decl_idx).and_then(|node| {
+                        (node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT).then_some(decl_idx)
+                    })
+                })
+                .or_else(|| {
+                    export_equals_symbol.declarations.iter().find_map(|&decl_idx| {
+                        arena.get(decl_idx).and_then(|node| {
+                            (node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT).then_some(decl_idx)
+                        })
+                    })
+                });
+
+            if let Some(export_assign_idx) = export_assign_decl
+                && let Some(assign) = arena
+                    .get(export_assign_idx)
+                    .and_then(|node| arena.get_export_assignment(node))
+                && let Some(target_sym_id) = binder
+                    .get_node_symbol(assign.expression)
+                    .or_else(|| binder.resolve_identifier(arena, assign.expression))
+            {
+                let resolved_target = {
+                    let mut visited = Vec::new();
+                    self.resolve_alias_symbol(target_sym_id, &mut visited)
+                        .unwrap_or(target_sym_id)
+                };
+                let target_symbol = binder
+                    .get_symbol(resolved_target)
+                    .or_else(|| self.get_symbol_globally(resolved_target))
+                    .or_else(|| self.get_cross_file_symbol(resolved_target));
+                if let Some(target_symbol) = target_symbol {
+                    module_specifier = target_symbol
+                        .value_declaration
+                        .into_option()
+                        .and_then(module_specifier_from_decl)
+                        .or_else(|| {
+                            target_symbol
+                                .declarations
+                                .iter()
+                                .find_map(|&decl_idx| module_specifier_from_decl(decl_idx))
+                        });
+                }
+            }
         }
-        let Some(var_decl) = arena.get_variable_declaration(node) else {
-            return;
-        };
-        let type_idx = var_decl.type_annotation;
-        if !type_idx.is_some() {
-            return;
-        }
-        let Some(module_specifier) =
-            self.import_type_module_specifier_from_type_node(arena, type_idx)
-        else {
+
+        let Some(module_specifier) = module_specifier else {
             return;
         };
 
