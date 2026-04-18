@@ -94,27 +94,17 @@ impl<'a> CheckerState<'a> {
         // guaranteed to appear in top-level scope tables, but they still participate in
         // duplicate-name checks for the current file.
         self.extend_duplicate_symbol_ids_with_local_augmentation_decls(&mut symbol_ids);
-
         let mut cross_file_conflicts = Vec::new();
         for &sym_id in &symbol_ids {
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                 continue;
             };
-            let module_augmentation_declarations = self
-                .module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
-            let script_scope_declarations =
-                self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name);
-            let global_scope_declarations =
-                self.global_scope_conflict_declarations_for_current_file(&symbol.escaped_name);
-            let jsx_runtime_conflict_declarations =
-                self.jsx_runtime_conflict_declarations_for_current_file(&symbol.escaped_name);
-            let default_import_alias_conflicts = self
-                .default_import_alias_conflict_declarations_for_current_file(&symbol.escaped_name);
-            let module_block_scoped_conflicts = self
-                .module_file_block_scoped_conflict_declarations_for_current_file(
-                    &symbol.escaped_name,
-                    symbol.flags,
-                );
+            let module_augmentation_declarations = self.module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let script_scope_declarations = self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name);
+            let global_scope_declarations = self.global_scope_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let jsx_runtime_conflict_declarations = self.jsx_runtime_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let default_import_alias_conflicts = self.default_import_alias_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let module_block_scoped_conflicts = self.module_file_block_scoped_conflict_declarations_for_current_file(&symbol.escaped_name, symbol.flags);
 
             // Check if single NodeIndex has multiple arenas (cross-file duplicate with
             // same NodeIndex due to identical file structure). In this case, declarations
@@ -177,12 +167,12 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if !module_augmentation_declarations.is_empty()
-                || !script_scope_declarations.is_empty()
-                || !global_scope_declarations.is_empty()
-                || !jsx_runtime_conflict_declarations.is_empty()
-                || !default_import_alias_conflicts.is_empty()
-                || !module_block_scoped_conflicts.is_empty()
+            if !(module_augmentation_declarations.is_empty()
+                && script_scope_declarations.is_empty()
+                && global_scope_declarations.is_empty()
+                && jsx_runtime_conflict_declarations.is_empty()
+                && default_import_alias_conflicts.is_empty()
+                && module_block_scoped_conflicts.is_empty())
             {
                 has_remote = true;
             }
@@ -249,21 +239,12 @@ impl<'a> CheckerState<'a> {
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                 continue;
             };
-            let module_augmentation_declarations = self
-                .module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
-            let script_scope_declarations =
-                self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name);
-            let global_scope_declarations =
-                self.global_scope_conflict_declarations_for_current_file(&symbol.escaped_name);
-            let jsx_runtime_conflict_declarations =
-                self.jsx_runtime_conflict_declarations_for_current_file(&symbol.escaped_name);
-            let default_import_alias_conflicts = self
-                .default_import_alias_conflict_declarations_for_current_file(&symbol.escaped_name);
-            let module_block_scoped_conflicts = self
-                .module_file_block_scoped_conflict_declarations_for_current_file(
-                    &symbol.escaped_name,
-                    symbol.flags,
-                );
+            let module_augmentation_declarations = self.module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let script_scope_declarations = self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name);
+            let global_scope_declarations = self.global_scope_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let jsx_runtime_conflict_declarations = self.jsx_runtime_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let default_import_alias_conflicts = self.default_import_alias_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let module_block_scoped_conflicts = self.module_file_block_scoped_conflict_declarations_for_current_file(&symbol.escaped_name, symbol.flags);
 
             if emit_ts6200
                 && cross_file_conflicts
