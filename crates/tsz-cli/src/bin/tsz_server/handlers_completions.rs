@@ -202,7 +202,6 @@ impl Server {
             } else if has_multiple_probes && !candidate_is_member && !selected_is_member {
                 score.1 > 0
                     && (selected_score.1 == 0
-                        || (selected_score.2 && !score.2)
                         || (score.2 == selected_score.2 && score.1 < selected_score.1))
             } else {
                 false
