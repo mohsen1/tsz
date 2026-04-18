@@ -29,6 +29,17 @@ impl<'a> Completions<'a> {
         if self.is_at_definition_location(offset) {
             return true;
         }
+        // JSX child text content is not a completion context. Matches TS's
+        // `isInJsxText` blocker used by `isCompletionListBlocker`.
+        if self.is_in_jsx_child_text(offset) {
+            return true;
+        }
+        // Type argument position on a non-generic target yields no completions.
+        // Matches TS's `getTypeArgumentConstraint` returning undefined for a
+        // non-generic `TypeReference`, which produces an empty completion list.
+        if self.is_in_type_argument_of_non_generic(offset) {
+            return true;
+        }
 
         // Check for comments before the offset >= len guard, since comments at
         // end-of-file (offset == len) should still suppress completions.
@@ -1103,5 +1114,220 @@ impl<'a> Completions<'a> {
             }
         }
         best
+    }
+
+    /// Check if the cursor is inside a JSX element's child text content. This
+    /// mirrors TypeScript's `isInJsxText` check used by
+    /// `isCompletionListBlocker`. Returns `true` when:
+    /// - The node at or just before the offset is a `JsxText` token, OR
+    /// - The cursor is positioned immediately after the `>` that closes a
+    ///   JSX opening, closing, or self-closing tag whose containing JSX
+    ///   element expects child content at that position.
+    pub(super) fn is_in_jsx_child_text(&self, offset: u32) -> bool {
+        // 1) Check the node at the lookup offset first, then (for cursors at a
+        //    token boundary) the node immediately before.
+        let bytes = self.source_text.as_bytes();
+        let len = bytes.len() as u32;
+        let candidates = [offset, offset.saturating_sub(1)];
+        for &probe in &candidates {
+            if probe >= len {
+                continue;
+            }
+            let node_idx = find_node_at_offset(self.arena, probe);
+            if !node_idx.is_some() {
+                continue;
+            }
+            let Some(node) = self.arena.get(node_idx) else {
+                continue;
+            };
+            if node.kind == SyntaxKind::JsxText as u16 {
+                return true;
+            }
+        }
+
+        // 2) Text-based fallback for the "`<div>/*...*/<div/>`" case where
+        //    the cursor sits between a `>` that closes a JSX tag and the
+        //    next JSX child. The AST for the marker's position is ambiguous
+        //    (the block comment lives inside the JSX element children), so
+        //    we scan backward past whitespace and comments to find the
+        //    governing `>` and confirm its enclosing JSX element context.
+        let mut cursor = offset.min(len);
+        loop {
+            while cursor > 0 {
+                let b = bytes[(cursor - 1) as usize];
+                if b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' {
+                    cursor -= 1;
+                    continue;
+                }
+                break;
+            }
+            if cursor >= 2
+                && bytes[(cursor - 2) as usize] == b'*'
+                && bytes[(cursor - 1) as usize] == b'/'
+            {
+                let mut scan = cursor - 2;
+                let mut found = false;
+                while scan >= 2 {
+                    if bytes[(scan - 2) as usize] == b'/' && bytes[(scan - 1) as usize] == b'*' {
+                        cursor = scan - 2;
+                        found = true;
+                        break;
+                    }
+                    scan -= 1;
+                }
+                if found {
+                    continue;
+                }
+                break;
+            }
+            break;
+        }
+        if cursor == 0 || bytes[(cursor - 1) as usize] != b'>' {
+            return false;
+        }
+        // Find the node whose `end` equals `cursor`: that's the `>` of a JSX
+        // opening/closing/self-closing element.
+        let gt_end = cursor;
+        for (i, node) in self.arena.nodes.iter().enumerate() {
+            if node.end != gt_end {
+                continue;
+            }
+            let kind = node.kind;
+            let is_jsx_tag = kind == syntax_kind_ext::JSX_OPENING_ELEMENT
+                || kind == syntax_kind_ext::JSX_CLOSING_ELEMENT
+                || kind == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT;
+            if !is_jsx_tag {
+                continue;
+            }
+            // Confirm the containing element expects child content: walk up
+            // ancestors to find a JsxElement/JsxFragment parent.
+            let mut current = NodeIndex(i as u32);
+            for _ in 0..6 {
+                let Some(ext) = self.arena.get_extended(current) else {
+                    break;
+                };
+                if !ext.parent.is_some() || ext.parent == current {
+                    break;
+                }
+                current = ext.parent;
+                if let Some(parent_node) = self.arena.get(current)
+                    && (parent_node.kind == syntax_kind_ext::JSX_ELEMENT
+                        || parent_node.kind == syntax_kind_ext::JSX_FRAGMENT)
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if the cursor is in a type argument of a type reference whose
+    /// target is non-generic (no type parameters). Matches TypeScript's
+    /// behavior where `getTypeArgumentConstraint(typeArg)` returns `undefined`
+    /// for a non-generic `TypeReference`, yielding an empty completion list.
+    pub(super) fn is_in_type_argument_of_non_generic(&self, offset: u32) -> bool {
+        let node_idx = find_node_at_offset(self.arena, offset);
+        let start = if !node_idx.is_some() && offset > 0 {
+            find_node_at_offset(self.arena, offset - 1)
+        } else {
+            node_idx
+        };
+        let mut current = start;
+        let mut depth = 0;
+        while current.is_some() && depth < 20 {
+            if let Some(node) = self.arena.get(current) {
+                if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                    if let Some(type_ref) = self.arena.get_type_ref(node)
+                        && let Some(type_args) = type_ref.type_arguments.as_ref()
+                    {
+                        let in_args = type_args.nodes.iter().any(|&arg_idx| {
+                            self.arena
+                                .get(arg_idx)
+                                .is_some_and(|arg| arg.pos <= offset && offset <= arg.end)
+                        });
+                        if in_args {
+                            let Some(name) = self.arena.get_identifier_text(type_ref.type_name)
+                            else {
+                                return false;
+                            };
+                            if self.type_name_refers_to_non_generic(name) {
+                                return true;
+                            }
+                        }
+                    }
+                    return false;
+                }
+                if node.kind == syntax_kind_ext::SOURCE_FILE {
+                    return false;
+                }
+            }
+            let Some(ext) = self.arena.get_extended(current) else {
+                break;
+            };
+            if !ext.parent.is_some() || ext.parent == current {
+                break;
+            }
+            current = ext.parent;
+            depth += 1;
+        }
+        false
+    }
+
+    /// Resolve the given type name in the current file and determine whether
+    /// its declaration(s) are non-generic. Returns `true` when the name is
+    /// bound to an interface, class, or type alias whose declarations have
+    /// no type parameters.
+    fn type_name_refers_to_non_generic(&self, name: &str) -> bool {
+        let Some(symbol_id) = self.binder.file_locals.get(name) else {
+            return false;
+        };
+        let Some(symbol) = self.binder.symbols.get(symbol_id) else {
+            return false;
+        };
+        let mut has_declaration = false;
+        for &decl_idx in &symbol.declarations {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let k = decl_node.kind;
+            if k == syntax_kind_ext::INTERFACE_DECLARATION {
+                has_declaration = true;
+                if let Some(iface) = self.arena.get_interface(decl_node)
+                    && iface
+                        .type_parameters
+                        .as_ref()
+                        .is_some_and(|params| !params.nodes.is_empty())
+                {
+                    return false;
+                }
+            } else if k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                has_declaration = true;
+                if let Some(class_decl) = self.arena.get_class(decl_node)
+                    && class_decl
+                        .type_parameters
+                        .as_ref()
+                        .is_some_and(|params| !params.nodes.is_empty())
+                {
+                    return false;
+                }
+            } else if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                has_declaration = true;
+                if let Some(alias) = self.arena.get_type_alias(decl_node)
+                    && alias
+                        .type_parameters
+                        .as_ref()
+                        .is_some_and(|params| !params.nodes.is_empty())
+                {
+                    return false;
+                }
+            } else {
+                // Conservative: unknown declaration shapes (e.g. imports)
+                // may be generic; avoid suppression in that case.
+                return false;
+            }
+        }
+        has_declaration
     }
 }
