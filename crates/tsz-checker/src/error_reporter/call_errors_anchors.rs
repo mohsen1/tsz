@@ -275,8 +275,8 @@ impl<'a> CheckerState<'a> {
         arg_idx: NodeIndex,
         param_type: TypeId,
     ) -> Option<NodeIndex> {
+        use crate::query_boundaries::common::SubtypeFailureReason;
         use tsz_parser::parser::syntax_kind_ext;
-        use tsz_solver::SubtypeFailureReason;
 
         let source_type = self.get_type_of_node(arg_idx);
         let effective_param_type = if let (Some(non_nullish), Some(_nullish_cause)) =

@@ -1233,7 +1233,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     // No narrowing or error - check if we should preserve declared_type
                     let has_index_sig = {
-                        use tsz_solver::{IndexKind, IndexSignatureResolver};
+                        use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
                         let resolver = IndexSignatureResolver::new(self.ctx.types);
                         resolver.has_index_signature(declared_type, IndexKind::String)
                             || resolver.has_index_signature(declared_type, IndexKind::Number)
@@ -1318,7 +1318,7 @@ impl<'a> CheckerState<'a> {
                 // This prevents false-positive TS2339 errors when accessing properties via
                 // index signatures.
                 let has_index_sig = {
-                    use tsz_solver::{IndexKind, IndexSignatureResolver};
+                    use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
                     let resolver = IndexSignatureResolver::new(self.ctx.types);
                     resolver.has_index_signature(declared_type, IndexKind::String)
                         || resolver.has_index_signature(declared_type, IndexKind::Number)

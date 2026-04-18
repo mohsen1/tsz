@@ -2280,7 +2280,7 @@ impl<'a> CheckerState<'a> {
                         // These are collected separately and only included in the final type
                         // when the literal has no explicit (non-spread) properties, matching tsc.
                         {
-                            use tsz_solver::IndexSignatureResolver;
+                            use crate::query_boundaries::common::IndexSignatureResolver;
                             let resolver = IndexSignatureResolver::new(self.ctx.types);
                             if let Some(string_index_value) =
                                 resolver.resolve_string_index(resolved_spread)

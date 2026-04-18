@@ -565,7 +565,7 @@ impl<'a> CheckerState<'a> {
                 return Some(body_type);
             }
 
-            use tsz_solver::instantiate_generic;
+            use crate::query_boundaries::common::instantiate_generic;
             let instantiated =
                 instantiate_generic(self.ctx.types, body_type, &type_params, &type_args);
             return Some(instantiated);
@@ -612,7 +612,7 @@ impl<'a> CheckerState<'a> {
         // Do NOT evaluate here — the caller (jsdoc_satisfies_annotation_with_pos)
         // calls judge_evaluate, which will expand mapped types while preserving
         // Lazy(DefId) references in value positions for correct type name display.
-        use tsz_solver::instantiate_generic;
+        use crate::query_boundaries::common::instantiate_generic;
         let instantiated = instantiate_generic(self.ctx.types, body_type, &type_params, &type_args);
         Some(instantiated)
     }
@@ -1492,7 +1492,7 @@ impl<'a> CheckerState<'a> {
             return Some(body_type);
         }
 
-        use tsz_solver::instantiate_generic;
+        use crate::query_boundaries::common::instantiate_generic;
         let instantiated = instantiate_generic(self.ctx.types, body_type, &type_params, type_args);
         let args_display = type_args
             .iter()

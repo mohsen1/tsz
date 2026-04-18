@@ -25,6 +25,12 @@ pub(crate) use tsz_solver::TypeInstantiator;
 #[allow(unused_imports)]
 pub(crate) use tsz_solver::TypeInterner;
 
+pub(crate) use tsz_solver::AssignabilityChecker;
+pub(crate) use tsz_solver::IndexKind;
+pub(crate) use tsz_solver::IndexSignatureResolver;
+pub(crate) use tsz_solver::SubtypeFailureReason;
+pub(crate) use tsz_solver::instantiate_generic;
+pub(crate) use tsz_solver::judge::{DefaultJudge, Judge, JudgeConfig};
 pub(crate) use tsz_solver::type_queries::TypeTraversalKind;
 
 /// Re-export of the solver's property access result type.
