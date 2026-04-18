@@ -1074,13 +1074,14 @@ impl<'a> CheckerState<'a> {
                         //   }
                         if derived_number_index_type.is_none() {
                             // Check if base has numeric index signature
-                            let base_num_index_value = tsz_solver::type_queries::get_object_shape(
-                                self.ctx.types,
-                                base_type,
-                            )
-                            .and_then(|shape| {
-                                shape.number_index.as_ref().map(|idx| idx.value_type)
-                            });
+                            let base_num_index_value =
+                                crate::query_boundaries::common::object_shape_for_type(
+                                    self.ctx.types,
+                                    base_type,
+                                )
+                                .and_then(|shape| {
+                                    shape.number_index.as_ref().map(|idx| idx.value_type)
+                                });
 
                             if let Some(base_index_val) = base_num_index_value {
                                 // Skip the index signature check when the base index value type

@@ -109,7 +109,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 && let Some(index_value) = self
                     .get_number_value_from_type_node(indexed_access.index_type)
                     .or_else(|| {
-                        tsz_solver::type_queries::get_number_literal_value(
+                        crate::query_boundaries::common::number_literal_value(
                             self.ctx.types,
                             index_type,
                         )
@@ -119,7 +119,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 && index_value < 0.0
             {
                 let object_for_tuple_check = self.resolve_object_for_tuple_check(object_type);
-                if tsz_solver::type_queries::is_tuple_type(self.ctx.types, object_for_tuple_check) {
+                if crate::query_boundaries::common::is_tuple_type(
+                    self.ctx.types,
+                    object_for_tuple_check,
+                ) {
                     let message = crate::diagnostics::diagnostic_messages::
                         A_TUPLE_TYPE_CANNOT_BE_INDEXED_WITH_A_NEGATIVE_VALUE
                         .to_string();
@@ -138,7 +141,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 && let Some(index_value) = self
                     .get_number_value_from_type_node(indexed_access.index_type)
                     .or_else(|| {
-                        tsz_solver::type_queries::get_number_literal_value(
+                        crate::query_boundaries::common::number_literal_value(
                             self.ctx.types,
                             index_type,
                         )

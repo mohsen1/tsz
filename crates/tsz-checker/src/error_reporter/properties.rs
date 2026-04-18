@@ -1411,7 +1411,7 @@ impl<'a> CheckerState<'a> {
             && !prefer_write_method
             && self.is_object_literal_backed_element_access_receiver(expr_idx)
             && let Some(union_members) =
-                tsz_solver::type_queries::get_union_members(self.ctx.types, index_type)
+                crate::query_boundaries::common::union_members(self.ctx.types, index_type)
         {
             // Find the first string literal member that doesn't exist as a property
             for member in union_members {

@@ -2105,7 +2105,8 @@ impl<'a> CheckerState<'a> {
     ) -> Option<tsz_solver::TypePredicate> {
         let type_expr = Self::jsdoc_extract_type_tag_expr(jsdoc)?;
         let resolved = self.resolve_jsdoc_type_str(&type_expr)?;
-        if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, resolved)
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, resolved)
         {
             return shape.type_predicate;
         }

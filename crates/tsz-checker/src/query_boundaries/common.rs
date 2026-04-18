@@ -1181,6 +1181,14 @@ pub(crate) fn is_primitive_or_literal_compound(db: &dyn TypeDatabase, type_id: T
     tsz_solver::type_queries::is_primitive_or_literal_compound(db, type_id)
 }
 
+pub(crate) fn is_array_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::is_array_type(db, type_id)
+}
+
+pub(crate) fn is_tuple_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::is_tuple_type(db, type_id)
+}
+
 pub(crate) fn is_only_null_or_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_only_null_or_undefined(db, type_id)
 }

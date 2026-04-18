@@ -138,7 +138,8 @@ impl<'a> CheckerState<'a> {
         let type_id = self.resolve_lazy_type(type_id);
         let type_id = self.evaluate_application_type(type_id);
 
-        if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id)
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
             && !shape.type_params.is_empty()
         {
             let display_type = self

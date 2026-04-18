@@ -1258,7 +1258,7 @@ impl<'a> CheckerState<'a> {
 
         // Single tuple case
         if let Some(tuple_elements) =
-            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, rhs)
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, rhs)
         {
             let has_rest_tail = tuple_elements.last().is_some_and(|element| element.rest);
             if has_rest_tail {
@@ -1320,7 +1320,7 @@ impl<'a> CheckerState<'a> {
                     && members.iter().all(|&m| {
                         let m = tsz_solver::type_queries::unwrap_readonly(self.ctx.types, m);
                         if let Some(elems) =
-                            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, m)
+                            crate::query_boundaries::common::tuple_elements(self.ctx.types, m)
                         {
                             let has_rest = elems.iter().any(|e| e.rest);
                             !has_rest && index >= elems.len()

@@ -1711,7 +1711,7 @@ impl<'a> CheckerState<'a> {
                 && ty != TypeId::ERROR
                 && !common::contains_type_parameters(self.ctx.types, ty)
                 && !common::contains_infer_types(self.ctx.types, ty)
-                && tsz_solver::type_queries::get_function_shape(self.ctx.types, ty)
+                && crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
                     .is_some_and(|shape| shape.params.iter().all(|param| !param.rest))
         });
         let raw_context_requires_generic_epc_skip = expected_context_type.is_some_and(|ty| {

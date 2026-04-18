@@ -22,7 +22,9 @@ impl<'a> CheckerState<'a> {
         &self,
         type_id: tsz_solver::TypeId,
     ) -> Option<usize> {
-        if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id) {
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
+        {
             return Some(
                 shape
                     .params

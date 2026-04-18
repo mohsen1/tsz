@@ -328,7 +328,7 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|anchor_idx| self.is_callback_expression_argument(anchor_idx));
         let callback_overloads_are_callable_only = argument_failures.iter().all(|failure| {
             matches!(failure.args.get(1), Some(tsz_solver::DiagnosticArg::Type(param_ty))
-                if tsz_solver::type_queries::get_function_shape(self.ctx.types, *param_ty).is_some()
+                if crate::query_boundaries::common::function_shape_for_type(self.ctx.types, *param_ty).is_some()
                     || crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, *param_ty).is_some())
         });
         let callback_argument_has_prior_diagnostics =

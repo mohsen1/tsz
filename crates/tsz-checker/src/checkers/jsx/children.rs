@@ -486,9 +486,9 @@ impl<'a> CheckerState<'a> {
     }
 
     fn type_has_jsx_children_callable_signature(&self, type_id: TypeId) -> bool {
-        tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id)
+        crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
             .is_some_and(|shape| !shape.is_constructor)
-            || tsz_solver::type_queries::get_call_signatures(self.ctx.types, type_id)
+            || crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, type_id)
                 .is_some_and(|sigs| !sigs.is_empty())
     }
 
@@ -714,12 +714,12 @@ impl<'a> CheckerState<'a> {
 
         let resolved_source = self.resolve_type_for_property_access(source_type);
         let Some(target_shape) =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_target)
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved_target)
         else {
             return false;
         };
         let source_props: rustc_hash::FxHashSet<_> =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_source)
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved_source)
                 .map(|shape| shape.properties.iter().map(|prop| prop.name).collect())
                 .unwrap_or_default();
         let missing_names: Vec<_> = target_shape
@@ -875,7 +875,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Object with numeric index signature
-        if tsz_solver::type_queries::get_object_shape(self.ctx.types, type_id)
+        if crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
             .is_some_and(|shape| shape.number_index.is_some())
         {
             return true;
@@ -921,7 +921,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Object with numeric index signature
-        if tsz_solver::type_queries::get_object_shape(self.ctx.types, type_id)
+        if crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
             .is_some_and(|shape| shape.number_index.is_some())
         {
             return true;

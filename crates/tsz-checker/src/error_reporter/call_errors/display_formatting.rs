@@ -785,7 +785,7 @@ impl<'a> CheckerState<'a> {
             ]
             .into_iter()
             .filter_map(|candidate| {
-                tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, candidate)
             })
             .find_map(|shape| {
                 shape
@@ -863,7 +863,7 @@ impl<'a> CheckerState<'a> {
         let index_value_type = candidates
             .into_iter()
             .filter_map(|candidate| {
-                tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, candidate)
             })
             .find_map(|shape| {
                 if prefer_number_index {
@@ -944,16 +944,17 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::common::union_members(self.ctx.types, candidate)
             {
                 for member in members {
-                    if let Some(shape) =
-                        tsz_solver::type_queries::get_object_shape(self.ctx.types, member)
-                        && shape.properties.iter().any(|p| p.name == prop_atom)
+                    if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                        self.ctx.types,
+                        member,
+                    ) && shape.properties.iter().any(|p| p.name == prop_atom)
                     {
                         return true;
                     }
                 }
             }
             if let Some(shape) =
-                tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, candidate)
                 && shape.properties.iter().any(|p| p.name == prop_atom)
             {
                 return true;
@@ -1052,8 +1053,11 @@ impl<'a> CheckerState<'a> {
 
         if crate::query_boundaries::common::is_mapped_type(self.ctx.types, display_type) {
             let evaluated_display = self.evaluate_type_for_assignability(display_type);
-            if tsz_solver::type_queries::get_object_shape(self.ctx.types, evaluated_display)
-                .is_some()
+            if crate::query_boundaries::common::object_shape_for_type(
+                self.ctx.types,
+                evaluated_display,
+            )
+            .is_some()
             {
                 display_type = evaluated_display;
             }
@@ -1245,7 +1249,7 @@ impl<'a> CheckerState<'a> {
         is_rest: bool,
     ) -> Option<String> {
         let params = if let Some(shape) =
-            tsz_solver::type_queries::get_function_shape(self.ctx.types, expected)
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, expected)
         {
             shape.params.clone()
         } else {
@@ -1287,7 +1291,7 @@ impl<'a> CheckerState<'a> {
         index: usize,
     ) -> Option<String> {
         let params = if let Some(shape) =
-            tsz_solver::type_queries::get_function_shape(self.ctx.types, expected)
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, expected)
         {
             shape.params.clone()
         } else {

@@ -69,7 +69,8 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> TypeId {
-        let Some(elements) = tsz_solver::type_queries::get_tuple_elements(self.ctx.types, type_id)
+        let Some(elements) =
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, type_id)
         else {
             return type_id;
         };
@@ -160,7 +161,8 @@ impl<'a> CheckerState<'a> {
         }
 
         let target_type = self.normalize_jsx_required_props_target(target_type);
-        if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, target_type)
+        if let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target_type)
         {
             let filtered_props: Vec<_> = shape
                 .properties
@@ -248,7 +250,8 @@ impl<'a> CheckerState<'a> {
 
         let resolved = self.resolve_type_for_property_access(props_type);
         let resolved = self.evaluate_type_with_env(resolved);
-        let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved)
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved)
         else {
             return false;
         };
@@ -265,7 +268,7 @@ impl<'a> CheckerState<'a> {
         anchor_idx: NodeIndex,
     ) {
         let source_str = if let Some(shape) =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, attrs_type)
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, attrs_type)
         {
             let fields = shape
                 .properties
@@ -530,9 +533,10 @@ impl<'a> CheckerState<'a> {
         let mut best_score = (true, usize::MAX, usize::MAX);
         for member in members {
             let resolved_member = self.normalize_jsx_required_props_target(member);
-            let Some(shape) =
-                tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_member)
-            else {
+            let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                self.ctx.types,
+                resolved_member,
+            ) else {
                 continue;
             };
 
@@ -715,9 +719,13 @@ impl<'a> CheckerState<'a> {
             has_construct |=
                 tsz_solver::type_queries::get_construct_signatures(self.ctx.types, member)
                     .is_some_and(|sigs| !sigs.is_empty());
-            has_call |= tsz_solver::type_queries::get_function_shape(self.ctx.types, member)
-                .is_some_and(|shape| !shape.is_constructor)
-                || tsz_solver::type_queries::get_call_signatures(self.ctx.types, member)
+            has_call |=
+                crate::query_boundaries::common::function_shape_for_type(self.ctx.types, member)
+                    .is_some_and(|shape| !shape.is_constructor)
+                    || crate::query_boundaries::common::call_signatures_for_type(
+                        self.ctx.types,
+                        member,
+                    )
                     .is_some_and(|sigs| !sigs.is_empty());
         }
 
@@ -800,7 +808,7 @@ impl<'a> CheckerState<'a> {
         props_type: TypeId,
     ) -> Option<std::sync::Arc<tsz_solver::ObjectShape>> {
         let resolved_props_type = self.normalize_jsx_required_props_target(props_type);
-        tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_props_type)
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved_props_type)
     }
 
     fn nearest_property_declaration_before(
@@ -870,7 +878,8 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
     ) -> TypeId {
         let type_id = self.resolve_type_for_property_access(type_id);
-        if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id)
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
             && shape.is_method
         {
             return self
@@ -962,11 +971,16 @@ impl<'a> CheckerState<'a> {
         tag_name_idx: NodeIndex,
     ) {
         // Only applies to generic SFCs (functions with type parameters)
-        let is_generic_sfc =
-            tsz_solver::type_queries::get_function_shape(self.ctx.types, component_type)
-                .is_some_and(|shape| !shape.type_params.is_empty() && !shape.is_constructor)
-                || tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
-                    .is_some_and(|sigs| sigs.iter().any(|s| !s.type_params.is_empty()));
+        let is_generic_sfc = crate::query_boundaries::common::function_shape_for_type(
+            self.ctx.types,
+            component_type,
+        )
+        .is_some_and(|shape| !shape.type_params.is_empty() && !shape.is_constructor)
+            || crate::query_boundaries::common::call_signatures_for_type(
+                self.ctx.types,
+                component_type,
+            )
+            .is_some_and(|sigs| sigs.iter().any(|s| !s.type_params.is_empty()));
 
         if !is_generic_sfc {
             return;

@@ -779,14 +779,17 @@ impl<'a> CheckerState<'a> {
             }
         }
         let has_callable_shape = |this: &mut Self, ty: TypeId| {
-            if tsz_solver::type_queries::get_function_shape(this.ctx.types, ty).is_some() {
+            if crate::query_boundaries::common::function_shape_for_type(this.ctx.types, ty)
+                .is_some()
+            {
                 return true;
             }
             if common::callable_shape_for_type(this.ctx.types, ty).is_some() {
                 return true;
             }
             let evaluated = this.evaluate_type_with_env(ty);
-            tsz_solver::type_queries::get_function_shape(this.ctx.types, evaluated).is_some()
+            crate::query_boundaries::common::function_shape_for_type(this.ctx.types, evaluated)
+                .is_some()
                 || common::callable_shape_for_type(this.ctx.types, evaluated).is_some()
         };
         let callable_mismatch =

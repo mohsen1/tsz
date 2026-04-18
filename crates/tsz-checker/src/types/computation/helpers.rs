@@ -872,7 +872,7 @@ impl<'a> CheckerState<'a> {
                                         self.is_property_optional(object_type, &prop_name);
                                     let optional_via_undefined =
                                         !self.ctx.compiler_options.exact_optional_property_types
-                                            && tsz_solver::type_queries::type_includes_undefined(
+                                            && crate::query_boundaries::class_type::type_includes_undefined(
                                                 self.ctx.types,
                                                 prop_type,
                                             );

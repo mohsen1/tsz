@@ -1286,8 +1286,10 @@ impl<'a> CheckerState<'a> {
         // named member of the target type's object shape.
         let number_index_suppress =
             source_has_number_index && target_has_number_index && !property_names.is_empty() && {
-                let target_shape =
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, target_type);
+                let target_shape = crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    target_type,
+                );
                 property_names.iter().all(|name| {
                     // If none of the missing properties are real named members of the
                     // target type, the "missing properties" came from index value type

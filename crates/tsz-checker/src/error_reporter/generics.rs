@@ -151,8 +151,10 @@ impl<'a> CheckerState<'a> {
             .properties
             .iter()
             .find(|prop| self.ctx.types.resolve_atom_ref(prop.name).as_ref() == "prototype")?;
-        let prototype_shape =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, prototype_prop.type_id)?;
+        let prototype_shape = crate::query_boundaries::common::object_shape_for_type(
+            self.ctx.types,
+            prototype_prop.type_id,
+        )?;
         let prototype_sym_id = prototype_shape.symbol?;
         let prototype_symbol = self.ctx.binder.get_symbol(prototype_sym_id)?;
         let type_param_count = self.symbol_type_parameter_count(prototype_sym_id);
@@ -203,8 +205,10 @@ impl<'a> CheckerState<'a> {
             .properties
             .iter()
             .find(|prop| self.ctx.types.resolve_atom_ref(prop.name).as_ref() == "prototype")?;
-        let prototype_shape =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, prototype_prop.type_id)?;
+        let prototype_shape = crate::query_boundaries::common::object_shape_for_type(
+            self.ctx.types,
+            prototype_prop.type_id,
+        )?;
         let sym_id = prototype_shape.symbol?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         let type_param_count = self.symbol_type_parameter_count(sym_id);
