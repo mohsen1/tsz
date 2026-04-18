@@ -1142,7 +1142,9 @@ impl<'a> TypePrinter<'a> {
             }
         }
 
-        if let Some(name) = self.type_cache.and_then(|cache| cache.def_to_name.get(&def_id))
+        if let Some(name) = self
+            .type_cache
+            .and_then(|cache| cache.def_to_name.get(&def_id))
             && matches!(name.as_str(), "Promise" | "PromiseLike")
         {
             return name.clone();

@@ -915,7 +915,9 @@ impl<'a> CheckerState<'a> {
             .depth_exceeded
             .set(prev_depth_exceeded || depth_exceeded);
         if depth_exceeded {
-            self.emit_ts2589_spread_instantiation_depth(self.spread_iterability_error_anchor(expr_idx));
+            self.emit_ts2589_spread_instantiation_depth(
+                self.spread_iterability_error_anchor(expr_idx),
+            );
             return false;
         }
 
@@ -935,7 +937,11 @@ impl<'a> CheckerState<'a> {
             {
                 return parent_idx;
             }
-            current = self.ctx.arena.get_extended(parent_idx).map(|ext| ext.parent);
+            current = self
+                .ctx
+                .arena
+                .get_extended(parent_idx)
+                .map(|ext| ext.parent);
         }
         expr_idx
     }

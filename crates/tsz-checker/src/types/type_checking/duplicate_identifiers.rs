@@ -34,7 +34,10 @@ impl<'a> CheckerState<'a> {
         use rustc_hash::FxHashMap;
 
         let has_libs = self.ctx.has_lib_loaded() || !self.ctx.binder.lib_symbol_ids.is_empty();
-        let is_external_module = self.ctx.is_external_module_by_file.as_ref()
+        let is_external_module = self
+            .ctx
+            .is_external_module_by_file
+            .as_ref()
             .and_then(|m| m.get(&self.ctx.file_name))
             .copied()
             .unwrap_or_else(|| self.ctx.binder.is_external_module());
