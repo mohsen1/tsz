@@ -815,7 +815,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         property_name: &str,
     ) -> Option<TypeId> {
-        use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
+        use crate::query_boundaries::common::{NamespaceMemberKind, classify_namespace_member};
 
         let classification = classify_namespace_member(self.ctx.types, object_type);
 

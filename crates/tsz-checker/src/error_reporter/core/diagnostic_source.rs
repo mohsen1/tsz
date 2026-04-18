@@ -600,10 +600,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn synthesized_object_parent_display_name(&self, ty: TypeId) -> Option<String> {
+        use crate::query_boundaries::common::object_shape_id;
         use tsz_binder::symbol_flags;
-        use tsz_solver::type_queries::get_object_shape_id;
 
-        let shape_id = get_object_shape_id(self.ctx.types, ty)?;
+        let shape_id = object_shape_id(self.ctx.types, ty)?;
         let shape = self.ctx.types.object_shape(shape_id);
         let has_js_ctor_brand = shape.properties.iter().any(|prop| {
             self.ctx
@@ -702,7 +702,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(shape_id) =
-            tsz_solver::type_queries::get_object_shape_id(self.ctx.types, type_id)
+            crate::query_boundaries::common::object_shape_id(self.ctx.types, type_id)
         {
             let shape = self.ctx.types.object_shape(shape_id);
             if let Some(sym_id) = shape.symbol
@@ -1767,7 +1767,7 @@ impl<'a> CheckerState<'a> {
         if crate::query_boundaries::common::enum_def_id(self.ctx.types, target).is_some() {
             return true;
         }
-        if tsz_solver::type_queries::is_symbol_or_unique_symbol(self.ctx.types, target)
+        if crate::query_boundaries::common::is_symbol_or_unique_symbol(self.ctx.types, target)
             && target != TypeId::SYMBOL
         {
             return true;

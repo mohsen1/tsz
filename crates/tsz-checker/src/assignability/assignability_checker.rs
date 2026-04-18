@@ -1368,7 +1368,7 @@ impl<'a> CheckerState<'a> {
 
         let db = self.ctx.types.as_type_database();
         // Use solver query API to get the shape id (handles Object and ObjectWithIndex)
-        let shape_id = match tsz_solver::type_queries::get_object_shape_id(db, type_id) {
+        let shape_id = match crate::query_boundaries::common::object_shape_id(db, type_id) {
             Some(sid) => sid,
             None => return type_id,
         };

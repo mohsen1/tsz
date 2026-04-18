@@ -1445,7 +1445,7 @@ impl<'a> CheckerState<'a> {
         if !is_union_or_intersection
             && !has_any_index_signature
             && let Some(num) =
-                tsz_solver::type_queries::get_number_literal_value(self.ctx.types, index_type)
+                crate::query_boundaries::common::number_literal_value(self.ctx.types, index_type)
             && !prefer_write_method
             && self.is_object_literal_backed_element_access_receiver(expr_idx)
         {
@@ -1952,8 +1952,8 @@ impl<'a> CheckerState<'a> {
     /// Get the display name for a namespace/module value type, if applicable.
     /// Returns `Some("M")` for `namespace M {}` types, enabling `typeof M` display.
     fn get_namespace_typeof_name(&self, type_id: TypeId) -> Option<String> {
+        use crate::query_boundaries::common::{NamespaceMemberKind, classify_namespace_member};
         use tsz_binder::{SymbolId, symbol_flags};
-        use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
 
         const fn is_pure_namespace(symbol: &tsz_binder::Symbol) -> bool {
             (symbol.flags & symbol_flags::MODULE) != 0
@@ -2076,7 +2076,7 @@ impl<'a> CheckerState<'a> {
         }
         // Try object shape symbol
         if let Some(shape_id) =
-            tsz_solver::type_queries::get_object_shape_id(self.ctx.types, type_id)
+            crate::query_boundaries::common::object_shape_id(self.ctx.types, type_id)
         {
             let shape = self.ctx.types.object_shape(shape_id);
             if let Some(sym_id) = shape.symbol

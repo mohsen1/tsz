@@ -9,6 +9,7 @@
 //! - TS2801: "This condition will always return true since this '{type}' is
 //!   always defined." (for Promise/awaitable types in conditions)
 
+use crate::query_boundaries::common::{LiteralTypeKind, classify_literal_type, enum_member_type};
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
@@ -16,7 +17,6 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::type_queries::{LiteralTypeKind, classify_literal_type, get_enum_member_type};
 
 /// Check if a numeric literal text represents zero in any notation.
 /// Handles decimal (0.0, .0, 0e0), hex (0x0), binary (0b0), octal (0o0),
@@ -226,9 +226,8 @@ impl<'a> CheckerState<'a> {
 
         let member_ty = self.get_type_of_symbol(sym_id);
         let member_ty = self.evaluate_type_with_env(member_ty);
-        let member_underlying =
-            get_enum_member_type(self.ctx.types, member_ty).unwrap_or(member_ty);
-        let expr_underlying = get_enum_member_type(self.ctx.types, ty).unwrap_or(ty);
+        let member_underlying = enum_member_type(self.ctx.types, member_ty).unwrap_or(member_ty);
+        let expr_underlying = enum_member_type(self.ctx.types, ty).unwrap_or(ty);
         let underlying = [member_underlying, expr_underlying, member_ty, ty]
             .into_iter()
             .find(|candidate| {

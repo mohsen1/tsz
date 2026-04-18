@@ -1232,7 +1232,7 @@ impl<'a> CheckerState<'a> {
                 present_property_names.push(name.clone());
                 // Get the literal type of the initializer without full type computation.
                 if let Some(lit_type) = self.literal_type_from_initializer(prop.initializer)
-                    && tsz_solver::type_queries::is_unit_type(self.ctx.types, lit_type)
+                    && crate::query_boundaries::common::is_unit_type(self.ctx.types, lit_type)
                 {
                     unit_discriminants.push((name, lit_type));
                 }
@@ -1247,7 +1247,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(lit_type) = self
                     .shorthand_const_literal_type(shorthand.name)
                     .or_else(|| self.literal_type_from_initializer(shorthand.name))
-                    && tsz_solver::type_queries::is_unit_type(self.ctx.types, lit_type)
+                    && crate::query_boundaries::common::is_unit_type(self.ctx.types, lit_type)
                 {
                     unit_discriminants.push((name, lit_type));
                 }

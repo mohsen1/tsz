@@ -540,8 +540,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 && expected_yield_type != TypeId::ERROR
                 && expected_yield_type != TypeId::VOID  // Allow bare yield for void
                 && !syntactic_yield_allows_undefined
-                && !tsz_solver::type_queries::type_includes_undefined(self.checker.ctx.types, expected_yield_type)
-                && !tsz_solver::type_queries::type_includes_undefined(self.checker.ctx.types, resolved_expected_yield_type);
+                && !crate::query_boundaries::class_type::type_includes_undefined(self.checker.ctx.types, expected_yield_type)
+                && !crate::query_boundaries::class_type::type_includes_undefined(self.checker.ctx.types, resolved_expected_yield_type);
 
             // For yield*, check that the delegated iterable's element type is
             // assignable to the containing generator's expected yield type.

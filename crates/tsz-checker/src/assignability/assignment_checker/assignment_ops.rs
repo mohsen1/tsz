@@ -1248,7 +1248,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn check_tuple_destructuring_bounds(&mut self, left_idx: NodeIndex, right_type: TypeId) {
-        let rhs = tsz_solver::type_queries::unwrap_readonly(self.ctx.types, right_type);
+        let rhs = crate::query_boundaries::common::unwrap_readonly(self.ctx.types, right_type);
 
         let Some(left_node) = self.ctx.arena.get(left_idx) else {
             return;
@@ -1319,7 +1319,7 @@ impl<'a> CheckerState<'a> {
 
                 let all_out_of_bounds = !members.is_empty()
                     && members.iter().all(|&m| {
-                        let m = tsz_solver::type_queries::unwrap_readonly(self.ctx.types, m);
+                        let m = crate::query_boundaries::common::unwrap_readonly(self.ctx.types, m);
                         if let Some(elems) =
                             crate::query_boundaries::common::tuple_elements(self.ctx.types, m)
                         {

@@ -1973,11 +1973,11 @@ impl<'a> CheckerState<'a> {
     /// for TS2367 display purposes. When types are from different families, tsc widens literals
     /// to their base primitive types in error messages.
     fn get_primitive_family(&self, type_id: TypeId) -> TypeId {
+        use crate::query_boundaries::common::LiteralTypeKind;
         use crate::query_boundaries::common::{
             classify_literal_type, is_string_intrinsic_type, is_template_literal_type,
             is_unique_symbol_type,
         };
-        use tsz_solver::type_queries::LiteralTypeKind;
 
         // Check direct primitive type IDs
         if type_id == TypeId::STRING

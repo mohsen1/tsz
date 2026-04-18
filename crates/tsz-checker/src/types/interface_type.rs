@@ -830,8 +830,8 @@ impl<'a> CheckerState<'a> {
     }
 
     fn merge_interface_types_impl(&mut self, derived: TypeId, base: TypeId) -> TypeId {
+        use crate::query_boundaries::common::{InterfaceMergeKind, classify_for_interface_merge};
         use tracing::trace;
-        use tsz_solver::type_queries::{InterfaceMergeKind, classify_for_interface_merge};
         use tsz_solver::{CallableShape, ObjectShape};
 
         // Bail out if type resolution fuel is exhausted to prevent
@@ -1119,7 +1119,7 @@ impl<'a> CheckerState<'a> {
         base_kind: tsz_solver::type_queries::InterfaceMergeKind,
     ) -> TypeId {
         use crate::query_boundaries::common::intersection_members;
-        use tsz_solver::type_queries::{InterfaceMergeKind, classify_for_interface_merge};
+        use crate::query_boundaries::common::{InterfaceMergeKind, classify_for_interface_merge};
 
         let factory = self.ctx.types.factory();
 
