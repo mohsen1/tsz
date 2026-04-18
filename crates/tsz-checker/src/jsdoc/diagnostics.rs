@@ -1701,8 +1701,64 @@ impl<'a> CheckerState<'a> {
                 self.ctx.jsdoc_typedef_anchor_pos.set(comment.pos);
                 let resolved = self.resolve_jsdoc_type_str(expr);
                 self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
+                let unresolved = resolved.is_none()
+                    || resolved.is_some_and(|ty| {
+                        ty == tsz_solver::TypeId::ERROR || ty == tsz_solver::TypeId::UNKNOWN
+                    });
 
-                if resolved.is_none()
+                if let Some((module_specifier, _segments)) =
+                    Self::parse_jsdoc_typeof_import_query(expr)
+                {
+                    let has_ambient_module = self
+                        .ctx
+                        .binder
+                        .declared_modules
+                        .contains(&module_specifier)
+                        || self
+                            .ctx
+                            .binder
+                            .shorthand_ambient_modules
+                            .contains(&module_specifier);
+                    let rooted_specifier = module_specifier.starts_with('/');
+                    let resolves = self
+                        .ctx
+                        .resolve_import_target_from_file(self.ctx.current_file_idx, &module_specifier)
+                        .is_some()
+                        || self.ctx.resolve_import_target(&module_specifier).is_some();
+                    let should_emit_module_not_found = if rooted_specifier {
+                        !has_ambient_module
+                    } else {
+                        !resolves && !has_ambient_module
+                    };
+
+                    if should_emit_module_not_found {
+                        let end = (comment.end as usize).min(source_text.len());
+                        let comment_range = &source_text[comment.pos as usize..end];
+                        let (start, length) =
+                            if let Some(import_offset) = comment_range.find("import(") {
+                                let mut cursor = import_offset + "import(".len();
+                                while cursor < comment_range.len()
+                                    && comment_range.as_bytes()[cursor].is_ascii_whitespace()
+                                {
+                                    cursor += 1;
+                                }
+                                (
+                                    comment.pos + cursor as u32,
+                                    (module_specifier.len() as u32).saturating_add(2),
+                                )
+                            } else {
+                                (comment.pos, (module_specifier.len() as u32).saturating_add(2))
+                            };
+                        let (message, code) = self.module_not_found_diagnostic_for_site(
+                            &module_specifier,
+                            crate::import::core::ModuleNotFoundSite::ImportType,
+                        );
+                        self.error_at_position(start, length, &message, code);
+                        continue;
+                    }
+                }
+
+                if unresolved
                     && let Some(dot_idx) = expr.find('.')
                 {
                     let root_name = expr[..dot_idx].trim();
@@ -1734,23 +1790,9 @@ impl<'a> CheckerState<'a> {
                     && Self::is_simple_type_name(expr)
                     && !expr.contains('<')
                     && !expr.contains('.')
-                    && resolved.is_none()
+                    && unresolved
                 {
-                    // Also check if it's a typedef (globally) that's just out of scope.
-                    // Use resolve_jsdoc_typedef_info (not resolve_jsdoc_typedef_type)
-                    // because the latter has an `.or(Some(ANY))` fallback that always
-                    // returns Some, making the existence check meaningless.
-                    let typedef_exists = self
-                        .resolve_jsdoc_typedef_info(expr, &comments, &source_text)
-                        .is_some();
-                    if typedef_exists {
-                        self.emit_jsdoc_cannot_find_name(
-                            expr,
-                            comment.pos,
-                            comment.end,
-                            &source_text,
-                        );
-                    }
+                    self.emit_jsdoc_cannot_find_name(expr, comment.pos, comment.end, &source_text);
                 }
             }
         }

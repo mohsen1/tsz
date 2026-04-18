@@ -268,11 +268,28 @@ impl<'a> CheckerState<'a> {
                 .map(|sf| sf.file_name.as_str())
                 .unwrap_or("");
 
-            for key in [module_name, normalized, target_file_name] {
+            let mut target_lookup_keys = vec![
+                module_name.to_string(),
+                normalized.to_string(),
+                target_file_name.to_string(),
+            ];
+            target_lookup_keys.extend(crate::module_resolution::module_specifier_candidates(
+                module_name,
+            ));
+            target_lookup_keys.extend(crate::module_resolution::module_specifier_candidates(
+                normalized,
+            ));
+            if !target_file_name.is_empty() {
+                target_lookup_keys.extend(crate::module_resolution::module_specifier_candidates(
+                    target_file_name,
+                ));
+            }
+
+            for key in target_lookup_keys {
                 if key.is_empty() {
                     continue;
                 }
-                if let Some(exports) = target_binder.module_exports.get(key) {
+                if let Some(exports) = target_binder.module_exports.get(&key) {
                     for candidate_name in import_names {
                         if let Some(sym_id) = exports.get(candidate_name)
                             && self.binder_symbol_is_type_only(target_binder, sym_id)
