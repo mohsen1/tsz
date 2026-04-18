@@ -16,7 +16,7 @@ impl<'a> CheckerState<'a> {
             || contains_infer_types(self.ctx.types, type_id)
     }
 
-    fn should_skip_namespace_export_name(
+    pub(crate) fn should_skip_namespace_export_name(
         &self,
         exports_table: &tsz_binder::SymbolTable,
         export_name: &str,
@@ -36,12 +36,17 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let lookup_symbol = |sym_id: SymbolId| {
-            self.ctx
-                .binder
-                .get_symbol(sym_id)
-                .or_else(|| self.get_cross_file_symbol(sym_id))
+        let lookup_symbol = |sym_id: SymbolId| self.get_cross_file_symbol(sym_id);
+
+        let resolve_alias_target = |sym_id: SymbolId| {
+            let mut visited = Vec::new();
+            self.resolve_alias_symbol(sym_id, &mut visited)
         };
+        let default_target = resolve_alias_target(default_sym_id).unwrap_or(default_sym_id);
+        let export_target = resolve_alias_target(export_sym_id).unwrap_or(export_sym_id);
+        if export_target == default_target {
+            return true;
+        }
 
         let Some(export_symbol) = lookup_symbol(export_sym_id) else {
             return false;
