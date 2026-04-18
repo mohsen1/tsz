@@ -1104,6 +1104,14 @@ impl ParserState {
         let raw = &bytes[content_start_offset..content_end_offset];
         let content_start = token_start + content_start_offset;
 
+        let is_template = matches!(
+            self.current_token,
+            SyntaxKind::NoSubstitutionTemplateLiteral
+                | SyntaxKind::TemplateHead
+                | SyntaxKind::TemplateMiddle
+                | SyntaxKind::TemplateTail
+        );
+
         let mut i = 0usize;
 
         while i < raw.len() {
@@ -1118,6 +1126,12 @@ impl ParserState {
                 b'x' => self.report_invalid_string_or_template_hex_escape(raw, content_start, i),
                 b'u' => {
                     self.report_invalid_string_or_template_unicode_escape(raw, content_start, i)
+                }
+                // Octal escapes (\0-\7 followed by octal digits) and the invalid
+                // \8 / \9 escapes are only reported in template literals here;
+                // string literals are handled at scanner-time in tsz-scanner.
+                b'0'..=b'9' if is_template => {
+                    self.report_invalid_template_octal_escape(raw, content_start, i)
                 }
                 _ => i + 1,
             };
@@ -1321,6 +1335,64 @@ impl ParserState {
     #[inline]
     const fn is_hex_digit(byte: u8) -> bool {
         byte.is_ascii_hexdigit()
+    }
+
+    /// Emit TS1487 for legacy octal escapes or TS1488 for `\8`/`\9` inside an
+    /// untagged template literal. Mirrors tsc's per-leading-digit maximum:
+    /// leading 0-3 allows up to 3 octal digits, leading 4-7 only up to 2.
+    fn report_invalid_template_octal_escape(
+        &mut self,
+        raw: &[u8],
+        content_start: usize,
+        i: usize,
+    ) -> usize {
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        let is_octal = |b: u8| (b'0'..=b'7').contains(&b);
+        let first = raw[i + 1];
+
+        if first == b'8' || first == b'9' {
+            let digit = first as char;
+            let msg = diagnostic_messages::ESCAPE_SEQUENCE_IS_NOT_ALLOWED
+                .replace("{0}", &format!("\\{digit}"));
+            self.parse_error_at(
+                self.u32_from_usize(content_start + i),
+                2,
+                &msg,
+                diagnostic_codes::ESCAPE_SEQUENCE_IS_NOT_ALLOWED,
+            );
+            return i + 2;
+        }
+
+        // \0 followed by non-digit is the NUL escape — not an octal sequence.
+        if first == b'0' && (i + 2 >= raw.len() || !raw[i + 2].is_ascii_digit()) {
+            return i + 2;
+        }
+
+        // Consume octal digits starting at i+1. Leading 0-3 may pull up to 3 digits;
+        // leading 4-7 only 2 (so '\477' parses as '\47' + '7').
+        let max_digits = if first <= b'3' { 3 } else { 2 };
+        let mut end = i + 2;
+        let mut count = 1;
+        while count < max_digits && end < raw.len() && is_octal(raw[end]) {
+            end += 1;
+            count += 1;
+        }
+
+        let mut value: u32 = 0;
+        for &byte in &raw[i + 1..end] {
+            value = value * 8 + u32::from(byte - b'0');
+        }
+        let suggestion = format!("\\x{value:02x}");
+        let msg = diagnostic_messages::OCTAL_ESCAPE_SEQUENCES_ARE_NOT_ALLOWED_USE_THE_SYNTAX
+            .replace("{0}", &suggestion);
+        self.parse_error_at(
+            self.u32_from_usize(content_start + i),
+            self.u32_from_usize(end - i),
+            &msg,
+            diagnostic_codes::OCTAL_ESCAPE_SEQUENCES_ARE_NOT_ALLOWED_USE_THE_SYNTAX,
+        );
+        end
     }
 
     /// Parse regex escape diagnostics for regex literals.
