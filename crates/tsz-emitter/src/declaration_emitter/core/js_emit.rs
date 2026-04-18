@@ -798,7 +798,7 @@ impl<'a> DeclarationEmitter<'a> {
                         self.emit_js_named_export_value_member(
                             prop.name,
                             &type_text,
-                            self.js_synthetic_export_value_keyword(prop.initializer),
+                            "declare let ",
                         );
                     } else {
                         self.emit_js_synthetic_value_declaration(prop.name, prop.initializer, true);
