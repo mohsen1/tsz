@@ -817,6 +817,19 @@ impl Project {
         if from_file.ends_with(".mts") || from_file.ends_with(".mjs") {
             return ExportsResolutionMode::Import;
         }
+        // For ambiguous .ts/.tsx/.js/.jsx files, fall back to the nearest
+        // package.json `type` field (Node's rules for resolving the dual
+        // conditions). `"type": "module"` implies ESM import resolution;
+        // anything else defaults to require.
+        if let Some((_, package_json)) = self.nearest_package_json(from_file)
+            && let Some(pkg_type) = package_json.get("type").and_then(serde_json::Value::as_str)
+        {
+            return if pkg_type.eq_ignore_ascii_case("module") {
+                ExportsResolutionMode::Import
+            } else {
+                ExportsResolutionMode::Require
+            };
+        }
 
         ExportsResolutionMode::Both
     }
@@ -1380,6 +1393,27 @@ impl Project {
         }
         let exports_object = exports_value.as_object()?;
 
+        // When no key starts with "./" and no key is exactly ".", the whole
+        // object is treated as a top-level conditions map for the "." export.
+        let has_subpath_entry = exports_object
+            .keys()
+            .any(|key| key == "." || key.starts_with("./"));
+        if !has_subpath_entry {
+            let (type_targets, default_targets) =
+                collect_exports_targets(exports_value, exports_mode);
+            for target_pattern in type_targets.iter().chain(default_targets.iter()) {
+                let target_pattern = target_pattern.replace('\\', "/");
+                let target_pattern = target_pattern.strip_prefix("./").unwrap_or(&target_pattern);
+                let target_pattern =
+                    path_to_string(&strip_js_ts_extension(Path::new(target_pattern)))
+                        .replace('\\', "/");
+                if wildcard_capture_case_insensitive(&target_pattern, &target_relative).is_some() {
+                    return Some(package_specifier.to_string());
+                }
+            }
+            return None;
+        }
+
         for (export_key, export_target) in exports_object {
             let key_pattern = if export_key == "." {
                 ""
@@ -1877,8 +1911,17 @@ fn collect_exports_targets_inner(
             }
         }
         serde_json::Value::Array(items) => {
+            // Per Node's resolution algorithm, only the FIRST array element
+            // that yields a resolvable target should be used. Recurse into
+            // items one at a time and stop once either target list grows,
+            // matching tsserver's exports-map behavior for alternates.
+            let initial_types = types.len();
+            let initial_defaults = defaults.len();
             for item in items {
                 collect_exports_targets_inner(item, is_types_branch, mode, types, defaults);
+                if types.len() > initial_types || defaults.len() > initial_defaults {
+                    break;
+                }
             }
         }
         serde_json::Value::Object(map) => {
