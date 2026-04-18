@@ -1148,7 +1148,8 @@ impl<'a> CheckerState<'a> {
             && let Some(init_node) = self.ctx.arena.get(var_decl.initializer)
             && init_node.kind == syntax_kind_ext::NEW_EXPRESSION
             && let Some(new_expr) = self.ctx.arena.get_call_expr(init_node)
-            && let Some(ctor_key) = property_access_chain(self.ctx.arena, new_expr.expression)
+            && let Some(ctor_key) =
+                property_access_chain_text_in_arena(self.ctx.arena, new_expr.expression)
         {
             candidate_keys.push(format!("{ctor_key}.prototype"));
             if let Some(ctor_node) = self.ctx.arena.get(new_expr.expression)
