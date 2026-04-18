@@ -1343,16 +1343,11 @@ impl BinderState {
                             | symbol_flags::BLOCK_SCOPED_VARIABLE))
                         != 0
                 } else {
-                    // In scripts, class declarations shadow lib value symbols.
-                    // Function declarations should keep merge behavior with existing
-                    // lib FUNCTION symbols so overload compatibility checks can run
-                    // (e.g. JS `function toString(){}` vs lib declarations => TS2394).
-                    //
-                    // We still shadow for functions colliding with non-function lib
-                    // values to preserve legacy behavior for plain value names.
-                    (((flags & symbol_flags::CLASS) != 0)
-                        || ((flags & symbol_flags::FUNCTION) != 0
-                            && (existing_flags & symbol_flags::FUNCTION) == 0))
+                    // In scripts, class and function declarations shadow lib value
+                    // symbols. tsc resolves file-scope declarations before globals,
+                    // so a user `declare function print(s: string): void;` shadows
+                    // the lib's `print(): void` rather than merging into overloads.
+                    ((flags & (symbol_flags::CLASS | symbol_flags::FUNCTION)) != 0)
                         && (existing_flags & symbol_flags::VALUE) != 0
                         && (flags & (symbol_flags::INTERFACE | symbol_flags::MODULE)) == 0
                 }
