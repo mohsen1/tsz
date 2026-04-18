@@ -101,6 +101,22 @@ function setupGlobals(tsDir) {
 function loadHarnessModules(tsDir) {
     const builtDir = path.join(tsDir, "built/local");
     const ts = require(path.join(builtDir, "harness/_namespaces/ts.js"));
+    // Accept fourslash synthetic paths under testType=Server. Without this,
+    // ensureWatchablePath's Debug.assert(canWatchDirectoryOrFilePath(...))
+    // rejects the non-OS-rooted paths used by the test fixtures and Server
+    // mode aborts before the first request. Setting the predicate to true
+    // is a test-harness-only concession.
+    try {
+        if (typeof ts.canWatchDirectoryOrFilePath === "function") {
+            ts.canWatchDirectoryOrFilePath = () => true;
+        }
+    } catch { /* best-effort */ }
+    try {
+        const watchUtils = require(path.join(builtDir, "harness/watchUtils.js"));
+        if (watchUtils && typeof watchUtils.ensureWatchablePath === "function") {
+            watchUtils.ensureWatchablePath = () => {};
+        }
+    } catch { /* best-effort */ }
     // Fourslash metadata parser still allows legacy `@Module: Node` in tests.
     // Mirror tsc behavior by accepting Node/NodeJs as CommonJS aliases.
     try {
@@ -166,20 +182,21 @@ function patchTestState(FourSlash, TszAdapter) {
 
     // --- Patches for SourceFile/Program access ---
     //
-    // Our adapter uses a SessionClient (server protocol) but runs with testType=Native (0).
-    // The fourslash harness has guards like `if (testType !== Server)` before calling
-    // getProgram()/getSourceFile(), but these guards don't trigger for testType=Native.
-    // We cannot use testType=Server because that enables ensureWatchablePath checks
-    // that reject the test file paths. Instead, we patch the TestState methods to
-    // gracefully handle unavailable Program/SourceFile objects.
+    // Our adapter uses a SessionClient (server protocol); testType=Server is
+    // set at dispatch. These overrides still exist for callers that reach
+    // for getProgram()/getSourceFile()/getChecker(): with the real Program
+    // living in tsz-server (another process, Rust), the in-harness
+    // references are not available.
 
-    // checkPostEditInvariants: called after every edit, uses getNonBoundSourceFile()
-    // and getProgram() to verify AST invariants. We skip these checks since we
-    // cannot access SourceFile objects through the server protocol.
-    TestState.prototype.checkPostEditInvariants = function() {
-        // Skip entirely - these invariant checks require direct SourceFile access
-        // which is not available through the server protocol.
-    };
+    // Upstream invariants compare getSourceFile() / getNonBoundSourceFile()
+    // against a reparse of the file's current text. With tsz-server behind
+    // the wire protocol we have neither handle available, and a
+    // getSyntacticDiagnostics round-trip after every edit is too expensive
+    // (multi-edit tests time out). Leave this as a noop; parse-corruption
+    // still surfaces through the batch-final responses tests already issue
+    // (completions, diagnostics). A proper tsz/postEditInvariants server
+    // endpoint is the right follow-up.
+    TestState.prototype.checkPostEditInvariants = function() {};
 
     // getChecker: depends on getProgram() which may return a stub.
     TestState.prototype.getChecker = function() {
@@ -234,35 +251,9 @@ function patchTestState(FourSlash, TszAdapter) {
         return this._program;
     };
 
-    if (typeof TestState.prototype.baselineGoToSourceDefinition === "function") {
-        TestState.prototype.baselineGoToSourceDefinition = function(markerOrRange, rangeText) {
-            // tsz runs through the server protocol, but the harness stays in
-            // Native mode; bypass the testType gate and execute the same
-            // source-definition baseline operation directly.
-            this.baselineEachMarkerOrRange(
-                "goToSourceDefinition",
-                markerOrRange,
-                rangeText,
-                markerOrRange => this.baselineGoToDefs(
-                    "/*GOTO SOURCE DEF*/",
-                    markerOrRange,
-                    () => this.languageService.getSourceDefinitionAndBoundSpan(
-                        this.activeFile.fileName,
-                        this.currentCaretPosition,
-                    ),
-                ),
-            );
-        };
-    }
-
-    if (typeof TestState.prototype.setCompilerOptionsForInferredProjects === "function") {
-        TestState.prototype.setCompilerOptionsForInferredProjects = function(options) {
-            // Like goToSourceDefinition, inferred-project settings are server-
-            // only in harness terms, but our adapter still runs through the
-            // server protocol while reporting Native test type.
-            this.languageService.setCompilerOptionsForInferredProjects(options);
-        };
-    }
+    // baselineGoToSourceDefinition and setCompilerOptionsForInferredProjects
+    // overrides removed — with testType=Server the upstream implementations
+    // run through the gate and delegate to the SessionClient directly.
 
     if (typeof TestState.prototype.verifyCompletionsWorker === "function") {
         const _origVerifyCompletionsWorker = TestState.prototype.verifyCompletionsWorker;
@@ -4338,7 +4329,7 @@ async function main() {
         process.send({ type: "bridge_restart", workerId, reason });
     };
 
-    const testType = 0; // FourSlashTestType.Native
+    const testType = 1; // FourSlashTestType.Server — tsz-server talks over stdio
 
     // Signal ready
     process.send({ type: "ready", workerId });
