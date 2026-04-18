@@ -5,11 +5,11 @@
 //! - `is_subtype_of`
 //! - `are_var_decl_types_compatible` (TS2403)
 
+use crate::query_boundaries::assignability::RelationCacheKey;
 use crate::query_boundaries::assignability::{
     is_redeclaration_identical_with_resolver, is_relation_cacheable, is_subtype_with_resolver,
 };
 use crate::state::CheckerState;
-use tsz_solver::RelationCacheKey;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {

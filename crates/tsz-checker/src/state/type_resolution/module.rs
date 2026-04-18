@@ -297,7 +297,7 @@ impl<'a> CheckerState<'a> {
         _name: &str,
     ) -> Option<TypeId> {
         use crate::module_resolution::module_specifier_candidates;
-        use tsz_solver::operations::property::PropertyAccessResult;
+        use crate::query_boundaries::common::PropertyAccessResult;
 
         // Find the original import alias symbol by name in file_locals.
         // We can't use resolve_identifier because it resolves through

@@ -137,7 +137,7 @@ impl<'a> CheckerState<'a> {
                         index_type,
                     ) {
                         use crate::query_boundaries::common::PropertyAccessResult;
-                        use tsz_solver::operations::property::is_readonly_tuple_fixed_element;
+                        use crate::query_boundaries::common::is_readonly_tuple_fixed_element;
                         let from_idx_sig = if name == "index signature" {
                             true
                         } else if is_readonly_tuple_fixed_element(
@@ -327,7 +327,7 @@ impl<'a> CheckerState<'a> {
                         // `readonly [number, number, ...number[]]`) are named properties
                         // even though resolve_array_property reports from_index_signature.
                         use crate::query_boundaries::common::PropertyAccessResult;
-                        use tsz_solver::operations::property::is_readonly_tuple_fixed_element;
+                        use crate::query_boundaries::common::is_readonly_tuple_fixed_element;
                         let from_idx_sig = if name == "index signature" {
                             true
                         } else if is_readonly_tuple_fixed_element(
@@ -1118,7 +1118,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_readonly_mapped_type(&mut self, type_id: TypeId) -> bool {
-        use tsz_solver::operations::property::is_mapped_type_with_readonly_modifier;
+        use crate::query_boundaries::common::is_mapped_type_with_readonly_modifier;
 
         // First try the direct solver query (handles Mapped, Application, Lazy)
         if is_mapped_type_with_readonly_modifier(self.ctx.types, type_id) {

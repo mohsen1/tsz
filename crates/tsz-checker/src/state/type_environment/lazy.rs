@@ -410,7 +410,7 @@ impl<'a> CheckerState<'a> {
                         // `{}`-shaped anonymous type (e.g. `Record<string, unknown>`
                         // members inside recursive mapped types), causing quadratic
                         // blow-up on patterns like `Definition<T[K]>`.
-                        use tsz_solver::IntrinsicKind;
+                        use crate::query_boundaries::common::IntrinsicKind;
                         let db = self.ctx.types.as_type_database();
                         if db.is_boxed_def_id(def_id, IntrinsicKind::Function) {
                             return type_id;

@@ -102,7 +102,7 @@ impl<'a> CheckerState<'a> {
     /// hardcoded lists. For example, "foo".length will look up the String interface
     /// from lib.d.ts and find the length property there.
     pub(crate) fn register_boxed_types(&mut self) {
-        use tsz_solver::IntrinsicKind;
+        use crate::query_boundaries::common::IntrinsicKind;
 
         // Only register if lib files are loaded
         if !self.ctx.has_lib_loaded() {
@@ -415,7 +415,7 @@ impl<'a> CheckerState<'a> {
     /// identify the Function interface. Only registers Function to minimize
     /// side effects on DefId creation ordering.
     pub(crate) fn register_function_def_ids_early(&mut self) {
-        use tsz_solver::IntrinsicKind;
+        use crate::query_boundaries::common::IntrinsicKind;
 
         if !self.ctx.has_lib_loaded() {
             return;

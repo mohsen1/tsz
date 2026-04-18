@@ -13,9 +13,11 @@ use tsz_solver::{
 // Re-export solver value types used by checker call computation.
 pub(crate) use tsz_solver::ContextualTypeContext;
 pub(crate) use tsz_solver::FunctionShape;
+pub(crate) use tsz_solver::IntrinsicKind;
 pub(crate) use tsz_solver::MappedType;
 pub(crate) use tsz_solver::ObjectFlags;
 pub(crate) use tsz_solver::ParamInfo;
+pub(crate) use tsz_solver::PendingDiagnostic;
 pub(crate) use tsz_solver::PendingDiagnosticBuilder;
 pub(crate) use tsz_solver::SourceLocation;
 pub(crate) use tsz_solver::TypeFormatter;
@@ -641,6 +643,23 @@ pub(crate) fn enum_def_id(
     type_id: TypeId,
 ) -> Option<tsz_solver::def::DefId> {
     tsz_solver::type_queries::get_enum_def_id(db, type_id)
+}
+
+/// Check whether a mapped type has a `readonly` modifier applied.
+pub(crate) fn is_mapped_type_with_readonly_modifier(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::operations::property::is_mapped_type_with_readonly_modifier(db, type_id)
+}
+
+/// Check whether a tuple element at a fixed position is readonly.
+pub(crate) fn is_readonly_tuple_fixed_element(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    prop_name: &str,
+) -> bool {
+    tsz_solver::operations::property::is_readonly_tuple_fixed_element(db, type_id, prop_name)
 }
 
 /// Check if a type is a plain object type (properties only, no index signatures).

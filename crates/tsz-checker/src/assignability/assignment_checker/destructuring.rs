@@ -1013,7 +1013,7 @@ impl<'a> CheckerState<'a> {
     /// this returns the boxed wrapper type (e.g., `number` -> `Number`).
     /// For other types, returns the type as-is.
     fn get_apparent_type_for_index_check(&self, type_id: TypeId) -> TypeId {
-        use tsz_solver::IntrinsicKind;
+        use crate::query_boundaries::common::IntrinsicKind;
         let kind = match type_id {
             TypeId::NUMBER => Some(IntrinsicKind::Number),
             TypeId::STRING => Some(IntrinsicKind::String),
