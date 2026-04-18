@@ -413,3 +413,63 @@ let x: number = config.workspace;
          Got codes: {codes:?}, messages: {messages:?}"
     );
 }
+
+/// Test namespace import (`import * as ns`) with qualified type access
+/// and method argument type checking. This is the basic pattern from the
+/// visibilityOfCrossModuleTypeUsage.ts conformance test.
+#[test]
+fn test_namespace_import_interface_method_param_type() {
+    let lib = r#"
+export interface IServer { id: number; }
+export interface IWorkspace {
+    toAbsolutePath(server: IServer): string;
+}
+"#;
+
+    let consumer = r#"
+import * as server from "./lib";
+declare const ws: server.IWorkspace;
+ws.toAbsolutePath(123);
+"#;
+
+    let diagnostics = compile_two_module_files("lib.ts", lib, "consumer.ts", consumer);
+    let codes: Vec<u32> = diagnostics.iter().map(|(c, _)| *c).collect();
+    let messages: Vec<&str> = diagnostics.iter().map(|(_, m)| m.as_str()).collect();
+
+    // tsc correctly emits TS2345: Argument of type 'number' is not assignable
+    // to parameter of type 'IServer'.
+    assert!(
+        has_error(&diagnostics, 2345),
+        "Namespace import: calling toAbsolutePath(123) should emit TS2345 \
+         because number is not assignable to IServer. Got codes: {codes:?}, messages: {messages:?}"
+    );
+}
+
+/// Test namespace import optional property access.
+/// When accessing an optional property via namespace import, the type should include undefined.
+/// This is a key bug: namespace imports lose optional property types.
+#[test]
+fn test_namespace_import_optional_property_type() {
+    let lib = r#"
+export interface IServer { id: number; }
+export interface IConfig {
+    server?: IServer;
+}
+"#;
+
+    // Use function param to avoid declare const triggering recursion
+    let consumer = r#"
+import * as lib from "./lib";
+function run(config: lib.IConfig) {
+    let x: number = config.server;
+}
+"#;
+
+    let diagnostics = compile_two_module_files("lib.ts", lib, "consumer.ts", consumer);
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Namespace import: config.server (IServer | undefined) assigned to number should emit TS2322. \
+         Got codes: {:?}",
+        diagnostics.iter().map(|(c, _)| *c).collect::<Vec<_>>()
+    );
+}
