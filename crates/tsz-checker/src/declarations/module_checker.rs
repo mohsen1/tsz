@@ -1848,6 +1848,7 @@ impl<'a> CheckerState<'a> {
     /// checks whether the source module's export is type-only.
     fn is_local_symbol_type_only(&self, name: &str) -> bool {
         use tsz_binder::symbol_flags;
+        use tsz_parser::parser::syntax_kind_ext;
 
         const PURE_TYPE: u32 = symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS;
         const VALUE: u32 = symbol_flags::VARIABLE
@@ -1868,7 +1869,20 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
             if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
-                return true;
+                // Raw `interface X {}` / `type X = ...` declarations in a JS
+                // file already produce TS8006 (`'interface' declarations are
+                // not allowed in files with extension '.js'`). Don't double-
+                // report TS18043 against `export { X }` in that case — tsc
+                // emits only TS8006. JSDoc-typedef'd types still hit the
+                // earlier file_has_jsdoc_typedef_named branch.
+                let has_syntactic_type_decl_in_js = self.is_js_file()
+                    && sym.declarations.iter().any(|&decl_idx| {
+                        self.ctx.arena.get(decl_idx).is_some_and(|n| {
+                            n.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                                || n.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                        })
+                    });
+                return !has_syntactic_type_decl_in_js;
             }
             if (sym.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
                 && !self.symbol_has_runtime_value_in_binder(self.ctx.binder, sym_id)
