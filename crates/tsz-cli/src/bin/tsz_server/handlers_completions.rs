@@ -1165,6 +1165,44 @@ impl Server {
         Some(&text[..end])
     }
 
+    fn normalize_completion_source_for_match(source: &str) -> String {
+        const SOURCE_SUFFIXES: [&str; 11] = [
+            ".d.ts", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs",
+            ".cjs",
+        ];
+        let mut normalized = source
+            .trim()
+            .trim_matches('\"')
+            .trim_matches('\'')
+            .replace('\\', "/");
+        if let Some(stripped) = normalized.strip_prefix("node:") {
+            normalized = stripped.to_string();
+        }
+        for suffix in SOURCE_SUFFIXES {
+            if let Some(base) = normalized.strip_suffix(suffix)
+                && !base.is_empty()
+            {
+                normalized = base.to_string();
+                break;
+            }
+        }
+        if let Some(base) = normalized.strip_suffix("/index")
+            && !base.is_empty()
+        {
+            normalized = base.to_string();
+        }
+        normalized
+    }
+
+    fn completion_sources_match(item_source: Option<&str>, requested_source: &str) -> bool {
+        let Some(item_source) = item_source else {
+            return false;
+        };
+        let item_source = Self::normalize_completion_source_for_match(item_source);
+        let requested_source = Self::normalize_completion_source_for_match(requested_source);
+        item_source == requested_source
+    }
+
     fn auto_import_export_name(item: &CompletionItem) -> Option<String> {
         if Self::is_default_auto_import_item(item) {
             return Some("default".to_string());
@@ -1748,8 +1786,14 @@ impl Server {
         normalized
     }
 
-    fn normalize_tsserver_newlines(text: &str) -> String {
-        text.replace("\r\n", "\n").replace('\n', "\r\n")
+    fn normalize_tsserver_newlines_for_file(text: &str, file_path: &str) -> String {
+        let normalized = text.replace("\r\n", "\n");
+        let prefers_crlf = file_path.contains("/home/src/workspaces/");
+        if prefers_crlf {
+            normalized.replace('\n', "\r\n")
+        } else {
+            normalized
+        }
     }
 
     fn parse_named_import_clause<'a>(
@@ -2129,7 +2173,14 @@ impl Server {
             if item.has_action {
                 data.insert("moduleSpecifier".to_string(), serde_json::json!(source));
                 if let Some(export_name) = Self::auto_import_export_name(item) {
-                    data.insert("exportName".to_string(), serde_json::json!(export_name));
+                    data.insert("exportName".to_string(), serde_json::json!(export_name.clone()));
+                    // Force worker-mode completion detail requests to stay on tsz for
+                    // auto-import entries. Native fallback details can drop/reshape
+                    // tags and action metadata for these entries.
+                    data.insert(
+                        "exportMapKey".to_string(),
+                        serde_json::json!(format!("tsz::{source}::{}::{export_name}", item.label)),
+                    );
                 }
             }
             entry["data"] = serde_json::Value::Object(data);
@@ -2832,28 +2883,6 @@ impl Server {
                     // When source metadata is missing for duplicate labels, prefer
                     // ClassMemberSnippet entries to keep tsserver details/code-action
                     // pairing stable for snippet-backed completions.
-                    let normalize_source =
-                        |s: &str| s.trim().trim_matches('\"').trim_matches('\'').to_string();
-                    let source_matches = |item_source: Option<&str>, requested_source: &str| {
-                        let Some(item_source) = item_source else {
-                            return false;
-                        };
-                        let normalize_no_ext = |s: &str| {
-                            let s = normalize_source(s);
-
-                            s.strip_suffix(".js")
-                                .or_else(|| s.strip_suffix(".mjs"))
-                                .or_else(|| s.strip_suffix(".cjs"))
-                                .unwrap_or(&s)
-                                .to_string()
-                        };
-                        let item_source = normalize_no_ext(item_source);
-                        let requested_source = normalize_no_ext(requested_source);
-                        if item_source == requested_source {
-                            return true;
-                        }
-                        false
-                    };
                     let export_name_matches =
                         |candidate: &CompletionItem, requested_export_name: &str| {
                             Self::auto_import_export_name(candidate)
@@ -2863,10 +2892,30 @@ impl Server {
                     let mut item = if let Some(source) = requested_source.as_deref() {
                         items.iter().find(|i| {
                                 i.label == name
-                                && source_matches(i.source.as_deref(), source)
+                                && i.has_action
+                                && Self::completion_sources_match(i.source.as_deref(), source)
                                 && requested_export_name
                                     .as_deref()
                                     .map_or(true, |requested| export_name_matches(i, requested))
+                        }).or_else(|| {
+                            items.iter().find(|i| {
+                                i.label == name
+                                && Self::completion_sources_match(i.source.as_deref(), source)
+                                && requested_export_name
+                                    .as_deref()
+                                    .map_or(true, |requested| export_name_matches(i, requested))
+                            })
+                        }).or_else(|| {
+                            items.iter().find(|i| {
+                                i.label == name
+                                    && Self::completion_sources_match(i.source.as_deref(), source)
+                            })
+                        }).or_else(|| {
+                            requested_export_name.as_deref().and_then(|requested| {
+                                items.iter().find(|i| {
+                                    i.label == name && export_name_matches(i, requested)
+                                })
+                            })
                         })
                     } else if entry_name.as_object().is_some() {
                         items
@@ -3009,7 +3058,10 @@ impl Server {
                                         "start": start,
                                         "length": end.saturating_sub(start),
                                     },
-                                    "newText": Self::normalize_tsserver_newlines(&new_text),
+                                    "newText": Self::normalize_tsserver_newlines_for_file(
+                                        &new_text,
+                                        file,
+                                    ),
                                 })
                             })
                             .collect();
@@ -3317,5 +3369,29 @@ mod tests {
         assert!(labels.contains("bind"));
         assert!(labels.contains("arguments"));
         assert!(labels.contains("caller"));
+    }
+
+    #[test]
+    fn completion_sources_match_normalizes_extensions_index_and_node_prefix() {
+        assert!(Server::completion_sources_match(
+            Some("./local.ts"),
+            "./local.js"
+        ));
+        assert!(Server::completion_sources_match(
+            Some("./pkg/index.d.ts"),
+            "./pkg"
+        ));
+        assert!(Server::completion_sources_match(
+            Some("node:path"),
+            "path"
+        ));
+        assert!(Server::completion_sources_match(
+            Some("./decl.d.mts"),
+            "./decl.js"
+        ));
+        assert!(!Server::completion_sources_match(
+            Some("./other"),
+            "./local.js"
+        ));
     }
 }
