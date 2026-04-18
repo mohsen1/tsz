@@ -456,6 +456,19 @@ function patchSessionClient(SessionClient, ts) {
         const isServerFourslashTest =
             currentTestFile.includes("/fourslash/server/") ||
             currentTestFile.includes("\\fourslash\\server\\");
+        const getSourceText = () => {
+            const snapshot = this.host?.getScriptSnapshot?.(fileName);
+            if (snapshot && typeof snapshot.getText === "function" && typeof snapshot.getLength === "function") {
+                try {
+                    return snapshot.getText(0, snapshot.getLength());
+                } catch {
+                    return undefined;
+                }
+            }
+            const direct = this.host?.readFile?.(fileName);
+            if (typeof direct === "string") return direct;
+            return undefined;
+        };
         const oldPreferences = this.preferences;
         if (preferences) this.configure(preferences);
         const result = _origGetCompletions.call(this, fileName, position, preferences);
@@ -561,23 +574,27 @@ function patchSessionClient(SessionClient, ts) {
             return nativeResult;
         }
 
+        let isDotMemberAccessContext = false;
         if (nativeResult) {
-            const sourceText = this.host?.readFile?.(fileName);
+            const sourceText = getSourceText();
             if (typeof sourceText === "string") {
                 const start = Math.max(0, position - 256);
                 const prefix = sourceText.slice(start, position);
                 const isModuleSpecifierContext =
+                    /(?:^|[^\w$])import\s*["'][^"'`]*$/.test(prefix) ||
                     /(?:import|export)\s+[\s\S]*?\bfrom\s*["'][^"'`]*$/.test(prefix) ||
                     /import\s*\(\s*["'][^"'`]*$/.test(prefix) ||
                     /require\s*\(\s*["'][^"'`]*$/.test(prefix);
                 const isElementAccessMemberContext =
                     /\[\s*\??\.\s*$/.test(prefix) ||
                     /\[\s*\??\s*$/.test(prefix);
+                isDotMemberAccessContext = /\.\s*$/.test(prefix);
 
-                if (isModuleSpecifierContext || isElementAccessMemberContext) {
-                    if (nativeResult.entries && nativeResult.entries.length > 0) {
-                        return nativeResult;
-                    }
+                if (isModuleSpecifierContext && Array.isArray(nativeResult.entries)) {
+                    return nativeResult;
+                }
+                if (isElementAccessMemberContext && nativeResult.entries && nativeResult.entries.length > 0) {
+                    return nativeResult;
                 }
             }
         }
@@ -589,6 +606,42 @@ function patchSessionClient(SessionClient, ts) {
             nativeResult.entries.length > 0 &&
             Array.isArray(result.entries)
         ) {
+            if (isDotMemberAccessContext && result.entries.length > 0) {
+                const keyOf = (entry) =>
+                    `${entry?.name || ""}\u0000${entry?.kind || ""}\u0000${entry?.source || ""}`;
+                const tszByKey = new Map(result.entries.map(entry => [keyOf(entry), entry]));
+                const tszByName = new Map();
+                for (const tszEntry of result.entries) {
+                    const name = tszEntry?.name || "";
+                    if (!name) continue;
+                    const byName = tszByName.get(name);
+                    if (byName) byName.push(tszEntry);
+                    else tszByName.set(name, [tszEntry]);
+                }
+                const needsNativeBracketInsertions = nativeResult.entries.some(entry => {
+                    const nativeText = typeof entry?.insertText === "string" ? entry.insertText : "";
+                    if (!/^\[\s*(?:["'`].*["'`]|[A-Za-z_$][\w$]*)\s*\]$/.test(nativeText)) {
+                        return false;
+                    }
+                    let tszEntry = tszByKey.get(keyOf(entry));
+                    if (!tszEntry) {
+                        const byName = tszByName.get(entry?.name || "");
+                        if (byName && byName.length === 1) {
+                            tszEntry = byName[0];
+                        } else if (byName && byName.length > 1) {
+                            tszEntry = byName.find(candidate =>
+                                (candidate?.kind || "") === (entry?.kind || "") &&
+                                (candidate?.source || "") === (entry?.source || "")
+                            );
+                        }
+                    }
+                    return typeof tszEntry?.insertText !== "string" || tszEntry.insertText.length === 0;
+                });
+                if (needsNativeBracketInsertions) {
+                    return nativeResult;
+                }
+            }
+
             const nativeHasOptionalChainInsertions = nativeResult.entries.some(entry =>
                 typeof entry?.insertText === "string" && entry.insertText.startsWith("?.")
             );
@@ -600,7 +653,7 @@ function patchSessionClient(SessionClient, ts) {
             }
 
             if (nativeResult.isMemberCompletion) {
-                const sourceText = this.host?.readFile?.(fileName);
+                const sourceText = getSourceText();
                 if (typeof sourceText === "string") {
                     const start = Math.max(0, position - 64);
                     const prefix = sourceText.slice(start, position);
