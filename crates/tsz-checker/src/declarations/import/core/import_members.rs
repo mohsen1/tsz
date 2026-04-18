@@ -803,7 +803,11 @@ impl<'a> CheckerState<'a> {
     fn import_local_binding_is_type_only(&self, local_name_idx: NodeIndex) -> bool {
         use tsz_binder::symbol_flags;
 
-        let Some(sym_id) = self.resolve_identifier_symbol(local_name_idx) else {
+        // Use the non-tracking resolver here: this is a pure pre-condition
+        // probe (asking whether the import binding is type-only). Tracking it
+        // as "referenced" would cause noUnusedLocals to silently treat every
+        // import binding as used — even one that no source code ever refers to.
+        let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(local_name_idx) else {
             return false;
         };
         let lib_binders = self.get_lib_binders();
