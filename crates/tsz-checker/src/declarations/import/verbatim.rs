@@ -290,7 +290,8 @@ impl<'a> CheckerState<'a> {
 
         if let Some(all_binders) = &self.ctx.all_binders {
             for binder in all_binders.iter() {
-                for candidate in crate::module_resolution::module_specifier_candidates(module_name) {
+                for candidate in crate::module_resolution::module_specifier_candidates(module_name)
+                {
                     if let Some(exports) = binder.module_exports.get(&candidate)
                         && import_names
                             .iter()

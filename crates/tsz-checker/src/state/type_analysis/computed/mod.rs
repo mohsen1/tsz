@@ -69,7 +69,7 @@ impl<'a> CheckerState<'a> {
                 .any(|decl| default_symbol.declarations.contains(decl))
     }
 
-    fn append_export_equals_import_type_namespace_props(
+    pub(crate) fn append_export_equals_import_type_namespace_props(
         &mut self,
         module_name: &str,
         declaring_file_idx: Option<usize>,
@@ -79,9 +79,49 @@ impl<'a> CheckerState<'a> {
         let Some(export_equals_sym_id) = exports_table.get("export=") else {
             return;
         };
-        let Some(export_equals_symbol) = self.get_symbol_globally(export_equals_sym_id) else {
+        let Some(mut export_equals_symbol) = self
+            .get_symbol_globally(export_equals_sym_id)
+            .or_else(|| self.get_cross_file_symbol(export_equals_sym_id))
+        else {
             return;
         };
+
+        if export_equals_symbol.decl_file_idx == u32::MAX
+            && let Some(target_idx) = self.ctx.resolve_symbol_file_index(export_equals_sym_id)
+            && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
+        {
+            let target_file_name = self
+                .ctx
+                .get_arena_for_file(target_idx as u32)
+                .source_files
+                .first()
+                .map(|sf| sf.file_name.clone());
+            let target_export_equals_sym = target_file_name
+                .as_ref()
+                .and_then(|file_name| {
+                    target_binder
+                        .module_exports
+                        .get(file_name)
+                        .and_then(|table| table.get("export="))
+                })
+                .or_else(|| {
+                    target_binder
+                        .module_exports
+                        .get(module_name)
+                        .and_then(|table| table.get("export="))
+                })
+                .or_else(|| {
+                    target_binder
+                        .module_exports
+                        .values()
+                        .find_map(|table| table.get("export="))
+                });
+            if let Some(target_export_equals_sym) = target_export_equals_sym
+                && let Some(target_symbol) = target_binder.get_symbol(target_export_equals_sym)
+            {
+                export_equals_symbol = target_symbol;
+            }
+        }
 
         let mut nested_exports = tsz_binder::SymbolTable::new();
         self.merge_export_equals_import_type_members(export_equals_symbol, &mut nested_exports);

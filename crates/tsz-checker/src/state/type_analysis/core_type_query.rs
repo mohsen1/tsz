@@ -843,6 +843,12 @@ impl<'a> CheckerState<'a> {
                     is_string_named: false,
                 });
             }
+            self.append_export_equals_import_type_namespace_props(
+                module_name,
+                exports_table_target,
+                &exports_table,
+                &mut props,
+            );
             let namespace_type = self.ctx.types.factory().object(props);
             self.ctx.namespace_module_names.insert(
                 namespace_type,
@@ -876,7 +882,8 @@ impl<'a> CheckerState<'a> {
         let mut current =
             self.build_typeof_import_namespace_type(&module_name, resolution_mode_override)?;
         let mut resolved_segments: Vec<String> = Vec::new();
-        for (segment_idx, segment) in segments {
+        let mut segments_iter = segments.into_iter().peekable();
+        while let Some((segment_idx, segment)) = segments_iter.next() {
             let access = self.resolve_property_access_with_env(current, &segment);
             current = match access {
                 crate::query_boundaries::common::PropertyAccessResult::Success {
@@ -905,6 +912,22 @@ impl<'a> CheckerState<'a> {
                             })
                         });
                     if let Some(mut namespace_name) = namespace_name {
+                        // For `typeof import("./m").bar.missing` on export= modules,
+                        // preserve the nested qualifier path when the first segment
+                        // comes from the export= target surface.
+                        if resolved_segments.is_empty()
+                            && namespace_name.ends_with(".export=")
+                            && let Some((next_idx, next_segment)) = segments_iter.next()
+                        {
+                            let base = namespace_name.trim_end_matches(".export=");
+                            namespace_name = format!("{base}.{segment}.export=");
+                            self.error_namespace_no_export(
+                                &namespace_name,
+                                &next_segment,
+                                next_idx,
+                            );
+                            return Some(TypeId::ERROR);
+                        }
                         if namespace_name.ends_with(".export=") && !resolved_segments.is_empty() {
                             let base = namespace_name.trim_end_matches(".export=");
                             namespace_name =

@@ -2,8 +2,8 @@
 //! matches tsc's `isValidSpreadType()` behavior.
 //!
 //! Key behaviors:
-//! - Primitives, literals, unknown, null, undefined, void are NOT spreadable
-//! - Objects, arrays, functions, any, never, error ARE spreadable
+//! - Primitives, literals, unknown, null, undefined, void, never are NOT spreadable
+//! - Objects, arrays, functions, any, error ARE spreadable
 //! - Unions: definitely-falsy members are removed first, then remaining checked
 //! - Type parameters: resolved to constraint before checking
 
@@ -18,11 +18,13 @@ use crate::types::{PropertyInfo, StringIntrinsicKind, TemplateSpan, TypeParamInf
 // =============================================================================
 
 #[test]
-fn spread_any_never_error_are_valid() {
+fn spread_any_and_error_are_valid_never_is_invalid() {
     let db = TypeInterner::new();
     assert!(is_valid_spread_type(&db, TypeId::ANY));
-    assert!(is_valid_spread_type(&db, TypeId::NEVER));
     assert!(is_valid_spread_type(&db, TypeId::ERROR));
+    // tsc: `removeDefinitelyFalsyTypes(never)` collapses to never, then the
+    // Any|NonPrimitive|Object|InstantiableNonPrimitive flag check fails ⇒ TS2698.
+    assert!(!is_valid_spread_type(&db, TypeId::NEVER));
 }
 
 #[test]

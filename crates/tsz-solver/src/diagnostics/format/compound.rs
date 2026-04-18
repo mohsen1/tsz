@@ -85,6 +85,33 @@ impl<'a> TypeFormatter<'a> {
         format!("{{ {}; }}", display_parts.join("; "))
     }
 
+    fn visible_object_properties<'b>(&self, props: &'b [PropertyInfo]) -> Vec<&'b PropertyInfo> {
+        let default_name = self.interner.intern_string("default");
+        let internal_default_name = self.interner.intern_string("_default");
+        let default_prop = props.iter().find(|prop| prop.name == default_name);
+
+        props
+            .iter()
+            .filter(|prop| {
+                if prop.name != internal_default_name {
+                    return true;
+                }
+                let Some(default_prop) = default_prop else {
+                    return true;
+                };
+
+                // Some module export surfaces retain the local `_default` binding
+                // alongside the real `default` export. tsc hides that duplicate
+                // implementation detail in object displays.
+                prop.type_id != default_prop.type_id
+                    || prop.write_type != default_prop.write_type
+                    || prop.optional != default_prop.optional
+                    || prop.readonly != default_prop.readonly
+                    || prop.is_method != default_prop.is_method
+            })
+            .collect()
+    }
+
     pub(super) fn format_literal(&mut self, lit: &LiteralValue) -> String {
         match lit {
             LiteralValue::String(s) => {
@@ -119,7 +146,7 @@ impl<'a> TypeFormatter<'a> {
         if props.is_empty() {
             return "{}".to_string();
         }
-        let mut display_props: Vec<&PropertyInfo> = props.iter().collect();
+        let mut display_props = self.visible_object_properties(props);
         // Sort properties for display. Use declaration_order as primary key when
         // available, with tsc-compatible tiebreaking: numeric keys in numeric order,
         // then string keys in existing order (stable sort preserves Atom ID order).
@@ -431,7 +458,7 @@ impl<'a> TypeFormatter<'a> {
             ));
         }
         // Sort properties by declaration_order for display (preserves source order)
-        let mut display_props: Vec<&PropertyInfo> = shape.properties.iter().collect();
+        let mut display_props = self.visible_object_properties(shape.properties.as_slice());
         let has_decl_order = display_props.iter().any(|p| p.declaration_order > 0);
         if has_decl_order {
             display_props.sort_by_key(|p| p.declaration_order);
@@ -857,7 +884,12 @@ impl<'a> TypeFormatter<'a> {
                     || formatted.starts_with("new ")
                     || formatted.starts_with("abstract new ")
             }
-            _ => false,
+            // A union member can reach format_union_member as a wrapped form
+            // (Lazy/Application/anonymous-object intersection) whose lookup is
+            // not itself an Intersection. tsc still parenthesizes such members
+            // when the rendered text reads like an intersection — detect that
+            // by a top-level ` & ` in the output and wrap to match.
+            _ => contains_top_level_intersection_separator(&formatted),
         };
         if needs_parens {
             format!("({formatted})")
@@ -1915,4 +1947,31 @@ impl<'a> TypeFormatter<'a> {
         // Other tier 2 types: sort after objects, preserve relative order
         (2, u32::MAX, u32::MAX)
     }
+}
+
+/// Detects whether `s` reads as an intersection at the top level — i.e.
+/// contains a ` & ` separator outside any brackets, parens, or braces.
+/// Used by union-member parenthesization when the lookup-based heuristic
+/// can't see through Lazy/Application wrappers.
+fn contains_top_level_intersection_separator(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let mut depth: i32 = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' | b'[' | b'{' | b'<' => depth += 1,
+            b')' | b']' | b'}' | b'>' => depth -= 1,
+            b'&' if depth == 0
+                && i > 0
+                && bytes[i - 1] == b' '
+                && i + 1 < bytes.len()
+                && bytes[i + 1] == b' ' =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
 }

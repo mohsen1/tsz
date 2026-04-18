@@ -117,7 +117,7 @@ impl<'a> CheckerState<'a> {
             .heritage_name_text(expr_idx)
             .unwrap_or_else(|| "<expression>".to_string());
         if (self.ctx.has_lib_loaded() && self.ctx.symbol_is_from_lib(heritage_sym))
-            || self.ctx.is_known_global_type(&name)
+            || self.is_well_known_lib_type_name(&name)
             || self
                 .get_cross_file_symbol(heritage_sym)
                 .is_some_and(|symbol| (symbol.flags & symbol_flags::VARIABLE) != 0)

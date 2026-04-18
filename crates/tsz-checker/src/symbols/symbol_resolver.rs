@@ -1356,15 +1356,24 @@ impl<'a> CheckerState<'a> {
             TypeSymbolResolution::Type(sym_id) => sym_id,
             _ => return None,
         };
+        // Use get_cross_file_symbol to avoid SymbolId collisions across binders.
+        // When resolving qualified names like `server.IWorkspace`, the SymbolId
+        // belongs to server.ts's binder, not the current file's binder. Without
+        // this, we'd look up the SymbolId in the wrong binder and potentially
+        // get a different symbol with a colliding ID.
         let lib_binders = self.get_lib_binders();
-        let mut symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+        let mut symbol = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))?;
         if (symbol.flags & symbol_flags::ALIAS) != 0 {
             let mut visited_aliases = Vec::new();
             if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited_aliases)
                 && target_sym_id != sym_id
             {
                 sym_id = target_sym_id;
-                symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+                symbol = self
+                    .get_cross_file_symbol(sym_id)
+                    .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))?;
             }
         }
         ((symbol.flags & symbol_flags::TYPE) != 0).then_some(sym_id.0)

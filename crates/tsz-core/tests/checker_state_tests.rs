@@ -22872,7 +22872,7 @@ declare let x: Recurse;
 }
 
 #[test]
-fn test_builtin_types_no_ts2304_errors() {
+fn test_builtin_type_references_only_emit_ts2304_for_missing_dom_globals() {
     // Regression test: Global types like Promise, Array, Map should not cause
     // TS2304 "Cannot find name" errors when lib.d.ts is not loaded.
     use crate::parser::ParserState;
@@ -22944,27 +22944,72 @@ interface MyError extends Error {
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    // Filter for TS2304 errors (Cannot find name)
-    let ts2304_errors: Vec<_> = checker
+    let ts2304_messages: Vec<String> = checker
         .ctx
         .diagnostics
         .iter()
         .filter(|d| d.code == 2304)
+        .map(|d| d.message_text.clone())
         .collect();
 
+    let missing_dom_globals = [
+        "Element",
+        "HTMLElement",
+        "Document",
+        "Window",
+        "Event",
+        "NodeList",
+    ];
+    for name in missing_dom_globals {
+        assert!(
+            ts2304_messages
+                .iter()
+                .any(|message| message.contains(&format!("'{name}'"))),
+            "expected TS2304 for missing DOM global {name}, got: {ts2304_messages:?}"
+        );
+    }
+
+    let builtin_non_dom_types = [
+        "Promise",
+        "PromiseLike",
+        "Map",
+        "Set",
+        "Array",
+        "ReadonlyArray",
+        "Partial",
+        "Required",
+        "Readonly",
+        "Record",
+        "Iterator",
+        "Date",
+        "RegExp",
+        "RegExpExecArray",
+        "PropertyKey",
+        "PropertyDescriptor",
+        "NonNullable",
+        "Extract",
+        "ThisType",
+        "Error",
+    ];
+    for name in builtin_non_dom_types {
+        assert!(
+            !ts2304_messages
+                .iter()
+                .any(|message| message.contains(&format!("'{name}'"))),
+            "did not expect TS2304 for builtin lib type {name}, got: {ts2304_messages:?}"
+        );
+    }
+
     assert!(
-        ts2304_errors.is_empty(),
-        "Should not emit TS2304 errors for builtin types, got: {:?}",
-        ts2304_errors
-            .iter()
-            .map(|d| &d.message_text)
-            .collect::<Vec<_>>()
+        ts2304_messages.len() == 6,
+        "expected TS2304 only for missing DOM globals, got: {ts2304_messages:?}"
     );
 }
 
 #[test]
-fn test_builtin_types_in_type_literal_no_ts2304() {
-    // Ensure builtin generics used inside type literals don't emit TS2304 when lib is absent.
+fn test_builtin_types_in_type_literal_only_emit_ts2304_for_missing_dom_globals() {
+    // Ensure true lib types still resolve in type literals while missing DOM globals
+    // continue to route through plain TS2304.
     use crate::parser::ParserState;
 
     let source = r#"
@@ -23002,20 +23047,37 @@ type Foo = {
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    let ts2304_errors: Vec<_> = checker
+    let ts2304_messages: Vec<String> = checker
         .ctx
         .diagnostics
         .iter()
         .filter(|d| d.code == 2304)
+        .map(|d| d.message_text.clone())
         .collect();
 
     assert!(
-        ts2304_errors.is_empty(),
-        "Unexpected TS2304 for builtin types in type literals, got: {:?}",
-        ts2304_errors
+        ts2304_messages
             .iter()
-            .map(|d| &d.message_text)
-            .collect::<Vec<_>>()
+            .any(|message| message.contains("'NodeList'")),
+        "expected TS2304 for missing NodeList, got: {ts2304_messages:?}"
+    );
+    assert!(
+        ts2304_messages
+            .iter()
+            .any(|message| message.contains("'Document'")),
+        "expected TS2304 for missing Document, got: {ts2304_messages:?}"
+    );
+    for name in ["Promise", "Map", "ReadonlyArray", "Partial"] {
+        assert!(
+            !ts2304_messages
+                .iter()
+                .any(|message| message.contains(&format!("'{name}'"))),
+            "did not expect TS2304 for builtin type literal member {name}, got: {ts2304_messages:?}"
+        );
+    }
+    assert!(
+        ts2304_messages.len() == 2,
+        "expected only missing DOM globals to produce TS2304 in type literals, got: {ts2304_messages:?}"
     );
 }
 

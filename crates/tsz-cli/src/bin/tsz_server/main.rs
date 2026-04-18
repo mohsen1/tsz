@@ -52,7 +52,7 @@ use clap::Parser;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Read as IoRead, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, info};
 
@@ -573,7 +573,7 @@ pub(crate) enum ServerMode {
 impl Server {
     fn new(args: &ServerArgs) -> Result<Self> {
         let lib_dir = Self::find_lib_dir()?;
-        let tests_lib_dir = PathBuf::from("TypeScript/tests/lib");
+        let tests_lib_dir = Self::find_tests_lib_dir(&lib_dir);
         info!("Using lib directory: {}", lib_dir.display());
 
         let server_mode = if args.syntax_only {
@@ -783,47 +783,60 @@ impl Server {
         result
     }
 
-    fn find_lib_dir() -> Result<PathBuf> {
-        let cwd = std::env::current_dir().context("Failed to get CWD")?;
+    fn canonicalize_or_owned(path: &Path) -> PathBuf {
+        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    }
 
-        // Allow override via environment variable
-        if let Ok(dir) = std::env::var("TSZ_LIB_DIR") {
+    fn find_lib_dir() -> Result<PathBuf> {
+        tsz_cli::config::default_lib_dir().with_context(|| {
+            let cwd = std::env::current_dir()
+                .map(|dir| dir.display().to_string())
+                .unwrap_or_else(|_| "<unknown>".to_string());
+            format!("TypeScript lib directory not found for tsz-server (cwd: {cwd})")
+        })
+    }
+
+    fn find_tests_lib_dir(lib_dir: &Path) -> PathBuf {
+        if let Ok(dir) = std::env::var("TSZ_TESTS_LIB_DIR") {
             let path = PathBuf::from(&dir);
             let path = if path.is_absolute() {
                 path
             } else {
-                cwd.join(&path)
+                std::env::current_dir()
+                    .map(|cwd| cwd.join(&path))
+                    .unwrap_or(path)
             };
-            if path.exists() {
-                return Ok(path);
+            if path.is_dir() {
+                return Self::canonicalize_or_owned(&path);
             }
         }
 
-        let lib_path = cwd.join("TypeScript/src/lib");
-        if lib_path.exists() {
-            return Ok(lib_path);
-        }
-
-        let mut current = cwd.clone();
-        for _ in 0..10 {
-            let candidate = current.join("TypeScript/src/lib");
-            if candidate.exists() {
-                return Ok(candidate);
+        let mut roots = Vec::new();
+        if let Ok(cwd) = std::env::current_dir() {
+            let mut current: Option<&Path> = Some(cwd.as_path());
+            while let Some(dir) = current {
+                roots.push(dir.to_path_buf());
+                current = dir.parent();
             }
-            current = match current.parent() {
-                Some(p) => p.to_path_buf(),
-                None => break,
-            };
         }
 
-        anyhow::bail!(
-            "TypeScript lib directory not found. \
-             CWD: {}. \
-             Checked: TypeScript/src/lib (relative to CWD), TSZ_LIB_DIR env var, \
-             and walked up 10 directories looking for TypeScript/src/lib. \
-             Run from project root or set TSZ_LIB_DIR to an absolute path.",
-            cwd.display()
-        )
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut current: Option<&Path> = Some(manifest_dir);
+        while let Some(dir) = current {
+            if !roots.iter().any(|existing| existing == dir) {
+                roots.push(dir.to_path_buf());
+            }
+            current = dir.parent();
+        }
+
+        for root in roots {
+            let candidate = root.join("TypeScript/tests/lib");
+            if candidate.is_dir() {
+                return Self::canonicalize_or_owned(&candidate);
+            }
+        }
+
+        lib_dir.to_path_buf()
     }
 
     // =========================================================================

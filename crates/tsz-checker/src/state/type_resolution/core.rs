@@ -373,7 +373,7 @@ impl<'a> CheckerState<'a> {
         {
             let name = ident.escaped_text.as_str();
             let has_libs = self.ctx.has_lib_loaded();
-            let is_known_global = self.is_known_global_type_name(name);
+            let is_known_global = self.is_well_known_lib_type_name(name);
 
             if has_type_args {
                 let is_builtin_array =
@@ -551,8 +551,7 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     // When has_lib_loaded() is false (noLib is true), the above block is skipped
-                    // and falls through to the is_known_global_type_name check below,
-                    // which emits TS2318 via error_cannot_find_global_type
+                    // and falls through to the well-known-lib-type recovery path below.
                     if is_known_global {
                         return self.handle_missing_global_type_with_args(
                             name,
@@ -1041,7 +1040,7 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
 
-        self.error_cannot_find_global_type(name, type_name_idx);
+        self.report_missing_lib_type_name(name, type_name_idx);
 
         if self.is_promise_like_name(name)
             && let Some(args) = &type_ref.type_arguments
