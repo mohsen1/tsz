@@ -32,6 +32,7 @@ fn make_server() -> Server {
         enable_telemetry: false,
         allow_importing_ts_extensions: false,
         inferred_check_options: CheckOptions::default(),
+        inferred_projectinfo_options: None,
         auto_imports_allowed_for_inferred_projects: true,
         inferred_module_is_none_for_projects: false,
         auto_import_specifier_exclude_regexes: Vec::new(),

@@ -549,6 +549,13 @@ pub(crate) struct Server {
     pub(crate) allow_importing_ts_extensions: bool,
     /// Full inferred compiler options propagated by `compilerOptionsForInferredProjects`.
     pub(crate) inferred_check_options: CheckOptions,
+    /// `projectInfo`-only view of inferred-project `lib`/`target`/`noLib`.
+    /// Stored parallel to `inferred_check_options` so that setting `lib` for
+    /// projectInfo does not trigger lib-loading in every rename/completion
+    /// typecheck (the rename* fourslash tests time out if check.rs sees a
+    /// populated `lib`).
+    pub(crate) inferred_projectinfo_options:
+        Option<self::handlers_structure::InferredProjectInfoOptions>,
     /// Fallback auto-import gate for inferred projects (no nearby tsconfig/jsconfig).
     pub(crate) auto_imports_allowed_for_inferred_projects: bool,
     /// Whether inferred projects should be checked as `module:none`.
@@ -621,6 +628,7 @@ impl Server {
             include_completions_with_class_member_snippets: true,
             allow_importing_ts_extensions: false,
             inferred_check_options: CheckOptions::default(),
+            inferred_projectinfo_options: None,
             auto_imports_allowed_for_inferred_projects: true,
             inferred_module_is_none_for_projects: false,
             _server_mode: server_mode,

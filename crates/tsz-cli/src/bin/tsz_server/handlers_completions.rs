@@ -2187,6 +2187,9 @@ impl Server {
             return None;
         }
         if segments.len() == 1 {
+            if normalized.starts_with('/') {
+                return Some("/".to_string());
+            }
             return None;
         }
         if segments.len() <= 3 {

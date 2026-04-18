@@ -12,6 +12,35 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn extend_duplicate_symbol_ids_with_local_augmentation_decls(
+        &self,
+        symbol_ids: &mut FxHashSet<tsz_binder::SymbolId>,
+    ) {
+        for augmentations in self.ctx.binder.module_augmentations.values() {
+            for augmentation in augmentations {
+                let arena = augmentation.arena.as_deref().unwrap_or(self.ctx.arena);
+                if !std::ptr::eq(arena, self.ctx.arena) {
+                    continue;
+                }
+                if let Some(&sym_id) = self.ctx.binder.node_symbols.get(&augmentation.node.0) {
+                    symbol_ids.insert(sym_id);
+                }
+            }
+        }
+
+        for augmentations in self.ctx.binder.global_augmentations.values() {
+            for augmentation in augmentations {
+                let arena = augmentation.arena.as_deref().unwrap_or(self.ctx.arena);
+                if !std::ptr::eq(arena, self.ctx.arena) {
+                    continue;
+                }
+                if let Some(&sym_id) = self.ctx.binder.node_symbols.get(&augmentation.node.0) {
+                    symbol_ids.insert(sym_id);
+                }
+            }
+        }
+    }
+
     pub(super) fn find_visible_outer_declarations_for_block_function(
         &self,
         decl_idx: NodeIndex,
@@ -465,6 +494,13 @@ impl<'a> CheckerState<'a> {
                             if let Some(flags) =
                                 self.declaration_symbol_flags(decl_arena.as_ref(), decl_idx)
                             {
+                                let flags = self.normalize_export_surface_decl_flags(
+                                    owner_binder,
+                                    decl_arena.as_ref(),
+                                    resolved_sym_id,
+                                    decl_idx,
+                                    flags,
+                                );
                                 let is_exported =
                                     self.is_declaration_exported(decl_arena.as_ref(), decl_idx);
                                 declarations.push((decl_idx, flags, is_exported));
@@ -473,6 +509,13 @@ impl<'a> CheckerState<'a> {
                     } else if seen.insert(decl_idx.0)
                         && let Some(flags) = self.declaration_symbol_flags(owner_arena, decl_idx)
                     {
+                        let flags = self.normalize_export_surface_decl_flags(
+                            owner_binder,
+                            owner_arena,
+                            resolved_sym_id,
+                            decl_idx,
+                            flags,
+                        );
                         let is_exported = self.is_declaration_exported(owner_arena, decl_idx);
                         declarations.push((decl_idx, flags, is_exported));
                     }
@@ -499,6 +542,13 @@ impl<'a> CheckerState<'a> {
                     if let Some(flags) =
                         self.declaration_symbol_flags(decl_arena.as_ref(), decl_idx)
                     {
+                        let flags = self.normalize_export_surface_decl_flags(
+                            binder,
+                            decl_arena.as_ref(),
+                            sym_id,
+                            decl_idx,
+                            flags,
+                        );
                         let is_exported =
                             self.is_declaration_exported(decl_arena.as_ref(), decl_idx);
                         declarations.push((decl_idx, flags, is_exported));
@@ -523,6 +573,8 @@ impl<'a> CheckerState<'a> {
             } else if seen.insert(decl_idx.0)
                 && let Some(flags) = self.declaration_symbol_flags(arena, decl_idx)
             {
+                let flags = self
+                    .normalize_export_surface_decl_flags(binder, arena, sym_id, decl_idx, flags);
                 let is_exported = self.is_declaration_exported(arena, decl_idx);
                 declarations.push((decl_idx, flags, is_exported));
             } else if name == "default"
@@ -605,6 +657,13 @@ impl<'a> CheckerState<'a> {
                     if let Some(flags) =
                         self.declaration_symbol_flags(decl_arena.as_ref(), decl_idx)
                     {
+                        let flags = self.normalize_export_surface_decl_flags(
+                            binder,
+                            decl_arena.as_ref(),
+                            sym_id,
+                            decl_idx,
+                            flags,
+                        );
                         let is_exported = exported_override.unwrap_or_else(|| {
                             self.is_declaration_exported(decl_arena.as_ref(), decl_idx)
                         });
@@ -614,11 +673,46 @@ impl<'a> CheckerState<'a> {
             } else if seen.insert(decl_idx.0)
                 && let Some(flags) = self.declaration_symbol_flags(arena, decl_idx)
             {
+                let flags = self
+                    .normalize_export_surface_decl_flags(binder, arena, sym_id, decl_idx, flags);
                 let is_exported = exported_override
                     .unwrap_or_else(|| self.is_declaration_exported(arena, decl_idx));
                 declarations.push((decl_idx, flags, is_exported));
             }
         }
+    }
+
+    fn normalize_export_surface_decl_flags(
+        &self,
+        binder: &tsz_binder::BinderState,
+        arena: &tsz_parser::parser::node::NodeArena,
+        sym_id: tsz_binder::SymbolId,
+        decl_idx: NodeIndex,
+        flags: u32,
+    ) -> u32 {
+        if (flags & symbol_flags::ALIAS) == 0 {
+            return flags;
+        }
+        let Some(resolved_decl_idx) = self.resolve_duplicate_decl_node(arena, decl_idx) else {
+            return flags;
+        };
+        let Some(node) = arena.get(resolved_decl_idx) else {
+            return flags;
+        };
+        if node.kind != syntax_kind_ext::EXPORT_SPECIFIER {
+            return flags;
+        }
+
+        // Duplicate checking for module-augmentation export surfaces should compare against
+        // the underlying exported declaration kind, not the alias wrapper node.
+        let resolved_sym_id = self
+            .resolve_alias_symbol(sym_id, &mut Vec::new())
+            .unwrap_or(sym_id);
+        self.ctx
+            .binder
+            .get_symbol(resolved_sym_id)
+            .or_else(|| binder.get_symbol(resolved_sym_id))
+            .map_or(flags, |sym| sym.flags)
     }
 
     fn module_augmentation_targets_current_file_export(

@@ -29,6 +29,7 @@ fn make_server() -> Server {
         enable_telemetry: false,
         allow_importing_ts_extensions: false,
         inferred_check_options: CheckOptions::default(),
+        inferred_projectinfo_options: None,
         auto_imports_allowed_for_inferred_projects: true,
         inferred_module_is_none_for_projects: false,
         auto_import_specifier_exclude_regexes: Vec::new(),
@@ -3075,5 +3076,199 @@ fn test_check_options_experimental_decorators_default_false() {
     assert!(
         !options.experimental_decorators,
         "experimentalDecorators should default to false"
+    );
+}
+
+// =============================================================================
+// handle_project_info / compute_project_info tests
+// =============================================================================
+
+#[test]
+fn test_project_info_inferred_project_returns_libs_and_active_file() {
+    // goTo.file("a.ts") on an inferred project (no tsconfig) with @lib: es5
+    // should return [lib files..., a.ts] — only the active file, no siblings.
+    let mut server = make_server_with_real_libs();
+    server.open_files.insert(
+        "/tests/cases/fourslash/server/a.ts".to_string(),
+        "export var test = \"test String\"\n".to_string(),
+    );
+    server.open_files.insert(
+        "/tests/cases/fourslash/server/b.ts".to_string(),
+        "import test from \"./a\"\n".to_string(),
+    );
+    server.inferred_check_options.lib = Some(vec!["es5".to_string()]);
+
+    let (config, files) = server.compute_project_info("/tests/cases/fourslash/server/a.ts");
+    assert_eq!(config, "", "no tsconfig for inferred project");
+    assert_eq!(
+        files.last().map(String::as_str),
+        Some("/tests/cases/fourslash/server/a.ts"),
+        "active file must be last in inferred project list"
+    );
+    let lib_count = files
+        .iter()
+        .filter(|p| p.starts_with("/home/src/tslibs/TS/Lib/lib."))
+        .count();
+    assert!(
+        lib_count >= 1,
+        "expected at least one virtual lib file, got {files:?}"
+    );
+    // b.ts must NOT be in the list because goTo.file("a.ts") is the active file
+    // and a.ts does not import b.ts.
+    assert!(
+        !files.iter().any(|p| p.ends_with("/b.ts")),
+        "b.ts must not appear when active file is a.ts, got {files:?}"
+    );
+}
+
+#[test]
+fn test_project_info_inferred_project_includes_transitive_imports() {
+    // b.ts imports ./a — goTo.file("b.ts") should include a.ts first, then b.ts.
+    let mut server = make_server_with_real_libs();
+    server.open_files.insert(
+        "/tests/cases/fourslash/server/a.ts".to_string(),
+        "export var test = \"test String\"\n".to_string(),
+    );
+    server.open_files.insert(
+        "/tests/cases/fourslash/server/b.ts".to_string(),
+        "import test from \"./a\"\n".to_string(),
+    );
+    server.inferred_check_options.lib = Some(vec!["es5".to_string()]);
+
+    let (_, files) = server.compute_project_info("/tests/cases/fourslash/server/b.ts");
+    let project_files: Vec<&str> = files
+        .iter()
+        .filter(|p| !p.starts_with("/home/src/tslibs/TS/Lib/"))
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        project_files,
+        vec![
+            "/tests/cases/fourslash/server/a.ts",
+            "/tests/cases/fourslash/server/b.ts",
+        ],
+        "expected transitive imports before active file, got {project_files:?}"
+    );
+}
+
+#[test]
+fn test_project_info_configured_project_lists_files_and_config_last() {
+    // tsconfig declares files: [a.ts, b.ts]; output should be
+    // [libs..., a.ts, b.ts, tsconfig.json] and exclude non-existent files.
+    let mut server = make_server_with_real_libs();
+    let tsconfig_path = "/tests/cases/fourslash/server/tsconfig.json".to_string();
+    server.open_files.insert(
+        tsconfig_path.clone(),
+        r#"{ "files": ["a.ts", "b.ts"], "compilerOptions": { "lib": ["es5"] } }"#.to_string(),
+    );
+    server.open_files.insert(
+        "/tests/cases/fourslash/server/a.ts".to_string(),
+        "export var test = \"test String\"\n".to_string(),
+    );
+    server.open_files.insert(
+        "/tests/cases/fourslash/server/b.ts".to_string(),
+        "export var test2 = \"test String\"\n".to_string(),
+    );
+
+    let (config, files) = server.compute_project_info("/tests/cases/fourslash/server/a.ts");
+    assert_eq!(config, tsconfig_path);
+    let non_lib: Vec<&str> = files
+        .iter()
+        .filter(|p| !p.starts_with("/home/src/tslibs/TS/Lib/"))
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        non_lib,
+        vec![
+            "/tests/cases/fourslash/server/a.ts",
+            "/tests/cases/fourslash/server/b.ts",
+            "/tests/cases/fourslash/server/tsconfig.json",
+        ],
+        "expected tsconfig files in declared order with config file last"
+    );
+}
+
+#[test]
+fn test_project_info_configured_project_excludes_non_existent_files() {
+    // tsconfig declares files: [a.ts, c.ts, b.ts]; c.ts is not in open_files
+    // so it must be filtered out, preserving the relative order of the rest.
+    let mut server = make_server_with_real_libs();
+    let tsconfig_path = "/tests/cases/fourslash/server/tsconfig.json".to_string();
+    server.open_files.insert(
+        tsconfig_path.clone(),
+        r#"{ "files": ["a.ts", "c.ts", "b.ts"], "compilerOptions": { "lib": ["es5"] } }"#
+            .to_string(),
+    );
+    server.open_files.insert(
+        "/tests/cases/fourslash/server/a.ts".to_string(),
+        "export var test = \"test String\"\n".to_string(),
+    );
+    server.open_files.insert(
+        "/tests/cases/fourslash/server/b.ts".to_string(),
+        "export var test2 = \"test String\"\n".to_string(),
+    );
+
+    let (_, files) = server.compute_project_info("/tests/cases/fourslash/server/a.ts");
+    let non_lib: Vec<&str> = files
+        .iter()
+        .filter(|p| !p.starts_with("/home/src/tslibs/TS/Lib/"))
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        non_lib,
+        vec![
+            "/tests/cases/fourslash/server/a.ts",
+            "/tests/cases/fourslash/server/b.ts",
+            "/tests/cases/fourslash/server/tsconfig.json",
+        ],
+        "non-existent c.ts must be excluded"
+    );
+}
+
+#[test]
+fn test_project_info_lib_files_use_fourslash_virtual_folder() {
+    let mut server = make_server_with_real_libs();
+    server.open_files.insert(
+        "/tests/cases/fourslash/server/a.ts".to_string(),
+        "export var t = 1;\n".to_string(),
+    );
+    server.inferred_check_options.lib = Some(vec!["es5".to_string()]);
+
+    let (_, files) = server.compute_project_info("/tests/cases/fourslash/server/a.ts");
+    let libs: Vec<&str> = files
+        .iter()
+        .filter(|p| p.starts_with("/home/src/tslibs/TS/Lib/"))
+        .map(String::as_str)
+        .collect();
+    assert!(
+        libs.iter()
+            .any(|p| *p == "/home/src/tslibs/TS/Lib/lib.es5.d.ts"),
+        "expected lib.es5.d.ts under fourslash virtual lib folder, got {libs:?}"
+    );
+    // @lib: es5 pulls in decorators + decorators.legacy via transitive refs.
+    assert!(
+        libs.iter().any(|p| p.ends_with("/lib.decorators.d.ts")),
+        "expected lib.decorators.d.ts to be transitively included, got {libs:?}"
+    );
+}
+
+#[test]
+fn test_project_info_no_lib_suppresses_lib_files() {
+    let mut server = make_server_with_real_libs();
+    server.open_files.insert(
+        "/tests/cases/fourslash/server/a.ts".to_string(),
+        "export var t = 1;\n".to_string(),
+    );
+    server.inferred_check_options.no_lib = true;
+    server.inferred_check_options.lib = Some(vec!["es5".to_string()]);
+
+    let (_, files) = server.compute_project_info("/tests/cases/fourslash/server/a.ts");
+    let lib_count = files
+        .iter()
+        .filter(|p| p.starts_with("/home/src/tslibs/TS/Lib/"))
+        .count();
+    assert_eq!(
+        lib_count, 0,
+        "noLib must suppress all lib files, got {files:?}"
     );
 }
