@@ -101,7 +101,7 @@ impl Server {
                 parts.push(serde_json::json!({"text": "method", "kind": "text"}));
                 parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
                 parts.push(serde_json::json!({"text": " ", "kind": "space"}));
-                let qualified_name = member_parent
+                let qualified_name = Self::function_member_display_parent(item, member_parent, name)
                     .map(|parent| format!("{parent}.{name}"))
                     .unwrap_or_else(|| name.to_string());
                 parts.push(serde_json::json!({"text": qualified_name, "kind": "methodName"}));
@@ -134,7 +134,7 @@ impl Server {
                 } else {
                     format!("\"{name}\"")
                 };
-                let qualified_name = member_parent
+                let qualified_name = Self::function_member_display_parent(item, member_parent, name)
                     .map(|parent| format!("{parent}.{display_name}"))
                     .unwrap_or(display_name);
                 parts.push(serde_json::json!({"text": qualified_name, "kind": "propertyName"}));
@@ -181,7 +181,7 @@ impl Server {
                                 if let Some(ref detail) = item.detail {
                                     match detail.as_str() {
                                         "var" => "var",
-                                        _ => "let",
+                                        _ => "var",
                                     }
                                 } else {
                                     "var"
@@ -190,7 +190,10 @@ impl Server {
                     };
                     parts.push(serde_json::json!({"text": keyword, "kind": "keyword"}));
                     parts.push(serde_json::json!({"text": " ", "kind": "space"}));
-                    parts.push(serde_json::json!({"text": name, "kind": "localName"}));
+                    let display_name = member_parent
+                        .map(|parent| format!("{parent}.{name}"))
+                        .unwrap_or_else(|| name.to_string());
+                    parts.push(serde_json::json!({"text": display_name, "kind": "localName"}));
                 }
                 let has_annotation = Self::append_type_annotation_from_source(
                     &mut parts,
@@ -234,6 +237,26 @@ impl Server {
         }
 
         serde_json::json!(parts)
+    }
+
+    fn function_member_display_parent<'a>(
+        item: &tsz::lsp::completions::CompletionItem,
+        member_parent: Option<&'a str>,
+        name: &str,
+    ) -> Option<&'a str> {
+        if item
+            .kind_modifiers
+            .as_deref()
+            .is_some_and(|mods| mods.split(',').any(|m| m.trim() == "declare"))
+            && matches!(
+                name,
+                "apply" | "call" | "bind" | "toString" | "length" | "arguments" | "caller"
+            )
+        {
+            Some("Function")
+        } else {
+            member_parent
+        }
     }
 
     fn node_text_slice<'a>(
