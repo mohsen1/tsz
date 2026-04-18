@@ -239,16 +239,12 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
-        if self.ctx.is_known_global_type(name) {
-            self.error_cannot_find_global_type(name, idx);
-        } else {
-            // Route through boundary for TS2304/TS2552 with suggestion collection
-            self.report_not_found_at_boundary(
-                name,
-                idx,
-                crate::query_boundaries::name_resolution::NameLookupKind::Value,
-            );
-        }
+        // Route through boundary for TS2304/TS2552 with suggestion collection
+        self.report_not_found_at_boundary(
+            name,
+            idx,
+            crate::query_boundaries::name_resolution::NameLookupKind::Value,
+        );
         TypeId::ERROR
     }
 

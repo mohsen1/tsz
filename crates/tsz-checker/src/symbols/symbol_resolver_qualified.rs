@@ -334,9 +334,14 @@ impl<'a> CheckerState<'a> {
             None => return TypeSymbolResolution::NotFound,
         };
 
-        // Look up the symbol across binders (file + libs)
+        // Look up the symbol across binders (file + libs).
+        // After alias resolution, left_sym may point to a symbol in a different
+        // file's binder. Use get_cross_file_symbol to avoid SymbolId collisions.
         let original_left_sym = left_sym;
-        let Some(left_symbol) = self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders) else {
+        let Some(left_symbol) = self
+            .get_cross_file_symbol(left_sym)
+            .or_else(|| self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders))
+        else {
             return TypeSymbolResolution::NotFound;
         };
         // First try direct exports

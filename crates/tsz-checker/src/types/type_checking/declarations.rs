@@ -283,20 +283,13 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    /// Check if a type name is a known global type.
+    /// Check if a missing type name is a well-known lib-provided type/interface.
     ///
-    /// Known global types include built-in JavaScript/TypeScript types
-    /// like Object, Array, Promise, Map, etc.
-    ///
-    /// ## Parameters
-    /// - `name`: The type name to check
-    ///
-    /// Returns true if the name is a known global type.
-    pub(crate) fn is_known_global_type_name(&self, name: &str) -> bool {
-        if self.ctx.is_known_global_type(name) {
-            return true;
-        }
-
+    /// This is intentionally broader than the set of names that get TS2318/TS2583.
+    /// Callers use it when they want fallback behavior for familiar lib types
+    /// (for example, `PromiseLike<T>` recovery), not when choosing the diagnostic
+    /// family for a missing type reference.
+    pub(crate) fn is_well_known_lib_type_name(&self, name: &str) -> bool {
         matches!(
             name,
             // Core built-in objects
@@ -393,13 +386,8 @@ impl<'a> CheckerState<'a> {
                 | "ReferenceError"
                 | "SyntaxError"
                 | "AggregateError"
-                // Math and JSON
-                | "Math"
-                | "JSON"
-                // Proxy and Reflect
-                | "Proxy"
+                // Proxy types
                 | "ProxyHandler"
-                | "Reflect"
                 // BigInt
                 | "BigInt"
                 | "BigIntConstructor"
@@ -415,21 +403,61 @@ impl<'a> CheckerState<'a> {
                 | "NodeList"
                 | "NodeListOf"
                 | "Console"
-                | "Atomics"
-                // Primitive types (lowercase)
-                | "number"
-                | "string"
-                | "boolean"
-                | "void"
-                | "null"
-                | "undefined"
-                | "never"
-                | "unknown"
-                | "any"
-                | "object"
-                | "bigint"
-                | "symbol"
+                | "PromiseLike"
         )
+    }
+
+    /// Check if a missing type-position name should emit TS2318/TS2583 instead of TS2304.
+    ///
+    /// This is intentionally narrower than `is_well_known_lib_type_name`: many
+    /// lib types such as `Document`, `ArrayLike`, `PromiseLike`, and
+    /// `TypedPropertyDescriptor` still get ordinary TS2304 when referenced
+    /// directly without the relevant libs.
+    pub(crate) fn has_special_missing_lib_type_diagnostic(&self, name: &str) -> bool {
+        matches!(
+            name,
+            // Core global types that tsc treats as missing-global-type diagnostics.
+            "Array"
+                | "Boolean"
+                | "CallableFunction"
+                | "Function"
+                | "IArguments"
+                | "NewableFunction"
+                | "Number"
+                | "Object"
+                | "RegExp"
+                | "String"
+                // ES lib names that tsc upgrades to TS2583 in type position.
+                | "Promise"
+                | "Map"
+                | "Set"
+                | "Symbol"
+                | "WeakMap"
+                | "WeakSet"
+                | "Reflect"
+                | "Iterator"
+                | "AsyncIterator"
+                | "AsyncIterable"
+                | "AsyncIterableIterator"
+                | "SharedArrayBuffer"
+                | "Atomics"
+                | "BigInt"
+                | "BigInt64Array"
+                | "BigUint64Array"
+        )
+    }
+
+    /// Emit the correct missing-type diagnostic for a well-known lib name.
+    ///
+    /// Some missing lib names use TS2318/TS2583, while others still use the
+    /// ordinary type-position "Cannot find name" path.
+    pub(crate) fn report_missing_lib_type_name(&mut self, name: &str, idx: NodeIndex) {
+        if self.has_special_missing_lib_type_diagnostic(name) {
+            self.error_cannot_find_global_type(name, idx);
+            return;
+        }
+
+        let _ = self.resolve_type_name_or_report(name, idx);
     }
 
     /// Check if a type is a constructor type.

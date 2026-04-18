@@ -21,7 +21,8 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
-        if self.is_ambient_module_match(module_name) || self.any_ambient_module_declared(module_name)
+        if self.is_ambient_module_match(module_name)
+            || self.any_ambient_module_declared(module_name)
         {
             self.check_js_type_only_imports_for_ambient_module(import, module_name);
             return;

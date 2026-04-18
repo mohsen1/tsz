@@ -293,8 +293,8 @@ impl<'a> CheckerState<'a> {
             self.error_cannot_find_name_did_you_mean_at(name, "Awaited", type_name_idx);
             return TypeId::ERROR;
         }
-        if self.is_known_global_type_name(name) {
-            self.error_cannot_find_global_type(name, type_name_idx);
+        if self.has_special_missing_lib_type_diagnostic(name) {
+            self.report_missing_lib_type_name(name, type_name_idx);
             return TypeId::ERROR;
         }
         if self.is_unresolved_import_symbol(type_name_idx) {

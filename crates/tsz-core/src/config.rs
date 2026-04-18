@@ -3633,6 +3633,11 @@ fn lib_dir_from_root(root: &Path) -> Option<PathBuf> {
             .join("node_modules")
             .join("typescript")
             .join("lib"),
+        // Bundled lib snapshot committed with tsz for standalone and test environments.
+        root.join("crates")
+            .join("tsz-website")
+            .join("src")
+            .join("lib"),
         root.join("TypeScript").join("src").join("lib"),
         root.join("TypeScript")
             .join("node_modules")

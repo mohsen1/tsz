@@ -342,6 +342,39 @@ impl Server {
             .any(|part| part == "class")
     }
 
+    fn is_type_annotation_identifier_prefix_context(
+        source_text: &str,
+        line_map: &LineMap,
+        position: Position,
+    ) -> bool {
+        let Some(offset) = line_map.position_to_offset(position, source_text) else {
+            return false;
+        };
+        let end = (offset as usize).min(source_text.len());
+        let prefix = Self::strip_trailing_fourslash_marker_text(&source_text[..end]).trim_end();
+        let line_start = prefix.rfind('\n').map_or(0, |idx| idx + 1);
+        let line = &prefix[line_start..];
+        if line.is_empty() {
+            return false;
+        }
+
+        let bytes = line.as_bytes();
+        let mut idx = bytes.len();
+        while idx > 0 {
+            let ch = bytes[idx - 1] as char;
+            if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+                idx -= 1;
+            } else {
+                break;
+            }
+        }
+        if idx == bytes.len() {
+            return false;
+        }
+
+        line[..idx].trim_end().ends_with(':')
+    }
+
     fn prune_deeper_auto_import_duplicates(items: Vec<CompletionItem>) -> Vec<CompletionItem> {
         let mut best_rank_by_label: std::collections::HashMap<String, (usize, usize)> =
             std::collections::HashMap::new();
@@ -1970,7 +2003,9 @@ impl Server {
         let workspace_prefix = Self::path_workspace_prefix(file_name);
         let mut files = FxHashMap::default();
         for path in tracked_paths {
-            let allowed_packages_ref = allowed_packages.as_ref().and_then(std::option::Option::as_ref);
+            let allowed_packages_ref = allowed_packages
+                .as_ref()
+                .and_then(std::option::Option::as_ref);
             if !Self::should_include_completion_project_path(
                 &path,
                 file_name,
@@ -1996,11 +2031,15 @@ impl Server {
         }
         Self::add_project_config_files(&mut files, file_name);
         if include_module_exports {
-            let has_node_modules_file = files.keys().any(|path| Self::path_is_under_node_modules(path));
+            let has_node_modules_file = files
+                .keys()
+                .any(|path| Self::path_is_under_node_modules(path));
             if !has_node_modules_file {
                 self.add_dependency_package_files_for_completion(
                     file_name,
-                    allowed_packages.as_ref().and_then(std::option::Option::as_ref),
+                    allowed_packages
+                        .as_ref()
+                        .and_then(std::option::Option::as_ref),
                     &mut files,
                 );
             }
@@ -2120,11 +2159,23 @@ impl Server {
 
     fn path_workspace_prefix(file_name: &str) -> Option<String> {
         let normalized = file_name.replace('\\', "/");
-        let mut segments = normalized.split('/').filter(|segment| !segment.is_empty());
-        let first = segments.next()?;
-        let second = segments.next()?;
-        let third = segments.next()?;
-        Some(format!("/{first}/{second}/{third}"))
+        let segments: Vec<&str> = normalized
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .collect();
+        if segments.is_empty() {
+            return None;
+        }
+        if segments.len() == 1 {
+            return Some("/".to_string());
+        }
+        if segments.len() <= 3 {
+            return Some(format!("/{}", segments[0]));
+        }
+        Some(format!(
+            "/{}/{}/{}",
+            segments[0], segments[1], segments[2]
+        ))
     }
 
     fn node_modules_path_matches_allowed_packages(
@@ -2260,7 +2311,10 @@ impl Server {
         }
     }
 
-    fn files_already_include_dependency(files: &FxHashMap<String, String>, dependency_name: &str) -> bool {
+    fn files_already_include_dependency(
+        files: &FxHashMap<String, String>,
+        dependency_name: &str,
+    ) -> bool {
         files.keys().any(|path| {
             Self::package_name_from_node_modules_path(path).is_some_and(|package_name| {
                 package_name == dependency_name
@@ -2272,11 +2326,15 @@ impl Server {
 
     fn files_contain_path_prefix(files: &FxHashMap<String, String>, prefix: &str) -> bool {
         let normalized_prefix = prefix.replace('\\', "/");
-        files.keys()
-            .any(|path| path == &normalized_prefix || path.starts_with(&format!("{normalized_prefix}/")))
+        files.keys().any(|path| {
+            path == &normalized_prefix || path.starts_with(&format!("{normalized_prefix}/"))
+        })
     }
 
-    fn files_contain_declaration_under_prefix(files: &FxHashMap<String, String>, prefix: &str) -> bool {
+    fn files_contain_declaration_under_prefix(
+        files: &FxHashMap<String, String>,
+        prefix: &str,
+    ) -> bool {
         let normalized_prefix = prefix.replace('\\', "/");
         files.keys().any(|path| {
             (path == &normalized_prefix || path.starts_with(&format!("{normalized_prefix}/")))
@@ -2312,7 +2370,8 @@ impl Server {
                 }
 
                 let path_str = path.to_string_lossy().replace('\\', "/");
-                if files.contains_key(&path_str) || !Self::is_supported_completion_project_file(&path_str)
+                if files.contains_key(&path_str)
+                    || !Self::is_supported_completion_project_file(&path_str)
                 {
                     continue;
                 }
@@ -2874,8 +2933,11 @@ impl Server {
                 .unwrap_or_default();
             let project_completion_position =
                 Self::project_completion_position(completion_position, &line_map, &source_text);
-            let project_items =
-                self.project_completion_items(&file, project_completion_position, Some(preferences));
+            let project_items = self.project_completion_items(
+                &file,
+                project_completion_position,
+                Some(preferences),
+            );
             let is_member_completion = completion_result
                 .as_ref()
                 .is_some_and(|result| result.is_member_completion);
@@ -3014,7 +3076,13 @@ impl Server {
             let has_class_member_snippet = items
                 .iter()
                 .any(|item| item.source.as_deref() == Some("ClassMemberSnippet/"));
-            let is_new_identifier_location = if (include_class_member_snippets
+            let is_new_identifier_location = if Self::is_type_annotation_identifier_prefix_context(
+                &source_text,
+                &line_map,
+                completion_position,
+            ) {
+                false
+            } else if (include_class_member_snippets
                 && has_class_member_snippet)
                 || Self::is_class_member_declaration_prefix_context(
                     &source_text,
