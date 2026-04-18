@@ -884,7 +884,12 @@ impl<'a> TypeFormatter<'a> {
                     || formatted.starts_with("new ")
                     || formatted.starts_with("abstract new ")
             }
-            _ => false,
+            // A union member can reach format_union_member as a wrapped form
+            // (Lazy/Application/anonymous-object intersection) whose lookup is
+            // not itself an Intersection. tsc still parenthesizes such members
+            // when the rendered text reads like an intersection — detect that
+            // by a top-level ` & ` in the output and wrap to match.
+            _ => contains_top_level_intersection_separator(&formatted),
         };
         if needs_parens {
             format!("({formatted})")
@@ -1942,4 +1947,31 @@ impl<'a> TypeFormatter<'a> {
         // Other tier 2 types: sort after objects, preserve relative order
         (2, u32::MAX, u32::MAX)
     }
+}
+
+/// Detects whether `s` reads as an intersection at the top level — i.e.
+/// contains a ` & ` separator outside any brackets, parens, or braces.
+/// Used by union-member parenthesization when the lookup-based heuristic
+/// can't see through Lazy/Application wrappers.
+fn contains_top_level_intersection_separator(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let mut depth: i32 = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' | b'[' | b'{' | b'<' => depth += 1,
+            b')' | b']' | b'}' | b'>' => depth -= 1,
+            b'&' if depth == 0
+                && i > 0
+                && bytes[i - 1] == b' '
+                && i + 1 < bytes.len()
+                && bytes[i + 1] == b' ' =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
 }
