@@ -22517,6 +22517,43 @@ foo = new Foo();
 }
 
 #[test]
+fn test_check_js_global_tostring_overload_reports_ts2394_with_libs() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_raw_diagnostics_named_with_lib_and_options(
+        "index.js",
+        r#"
+function toString() {
+    this.yadda;
+    this.someValue = "";
+}
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2394 && d.file.contains("dom")),
+        "Expected TS2394 because global `toString` overload from lib.dom.d.ts is incompatible with this implementation. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| d.code == 2394 && d.file == "index.js"),
+        "TS2394 should be anchored to lib.dom.d.ts, not index.js. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_jsdoc_template_function_unused_type_param_emits_ts6133() {
     let diagnostics = compile_and_get_diagnostics_named(
         "a.js",
