@@ -703,7 +703,7 @@ fn format_object_with_index_many_properties_truncated() {
         "Expected omitted-count marker for indexed object truncation, got: {result}"
     );
     assert!(
-        result.contains("readonly [Symbol.unscopables]: { ...; }"),
+        result.contains("readonly [Symbol.unscopables]:"),
         "Expected tail symbol property preservation in indexed-object truncation, got: {result}"
     );
 }

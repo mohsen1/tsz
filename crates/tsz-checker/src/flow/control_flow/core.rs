@@ -1889,10 +1889,20 @@ impl<'a> FlowAnalyzer<'a> {
                 }
             }
             let types = self.simplify_flow_merge_types(types);
-            if types.len() == 1 {
+            let merged = if types.len() == 1 {
                 types[0]
             } else {
                 query::union_types(self.interner, types)
+            };
+            // Preserve pre-switch identity (alias/display metadata) when the
+            // fallthrough merge expands back to the same semantic union.
+            // This keeps diagnostics stable for cases like `switch(true)`
+            // fallthrough where `MyType` should remain `MyType` instead of
+            // widening to a freshly-constructed `A | B | C` union.
+            if self.same_union_member_set(merged, pre_switch_type) {
+                pre_switch_type
+            } else {
+                merged
             }
         } else {
             pre_switch_type
