@@ -1193,7 +1193,10 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    pub(crate) fn object_expr_is_new_constructor_instance(&self, object_expr_idx: NodeIndex) -> bool {
+    pub(crate) fn object_expr_is_new_constructor_instance(
+        &self,
+        object_expr_idx: NodeIndex,
+    ) -> bool {
         let Some(node) = self.ctx.arena.get(object_expr_idx) else {
             return false;
         };
