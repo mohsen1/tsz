@@ -2,6 +2,7 @@
 
 use crate::context::{EnclosingClassInfo, is_js_file_name};
 use crate::query_boundaries::class_type::{callable_shape_for_type, object_shape_for_type};
+use crate::query_boundaries::common::is_template_literal_type;
 use crate::query_boundaries::common::{
     ObjectFlags, TypeSubstitution, instantiate_type, is_plain_object_type,
 };
@@ -13,7 +14,6 @@ use tsz_lowering::TypeLowering;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::visitor::is_template_literal_type;
 use tsz_solver::{
     CallSignature, CallableShape, IndexSignature, ObjectShape, PropertyInfo, TypeId, TypeParamInfo,
     Visibility,

@@ -567,25 +567,28 @@ impl<'a> CheckerState<'a> {
 
     /// Try to resolve the symbol name for a type.
     fn get_type_symbol_name(&mut self, type_id: TypeId) -> Option<String> {
-        use tsz_solver::type_queries;
-
         if tsz_solver::is_array_type(self.ctx.types, type_id) {
             return Some("Array".to_string());
         }
-        if type_id == TypeId::STRING || type_queries::is_string_literal(self.ctx.types, type_id) {
+        if type_id == TypeId::STRING
+            || crate::query_boundaries::common::is_string_literal(self.ctx.types, type_id)
+        {
             return Some("String".to_string());
         }
-        if type_id == TypeId::NUMBER || type_queries::is_number_literal(self.ctx.types, type_id) {
+        if type_id == TypeId::NUMBER
+            || crate::query_boundaries::common::is_number_literal(self.ctx.types, type_id)
+        {
             return Some("Number".to_string());
         }
-        if let Some(base) = type_queries::get_application_base(self.ctx.types, type_id) {
+        if let Some(base) =
+            crate::query_boundaries::common::get_application_base(self.ctx.types, type_id)
+        {
             return self.get_type_symbol_name(base);
         }
 
-        let sym_id = self
-            .ctx
-            .resolve_type_to_symbol_id(type_id)
-            .or_else(|| type_queries::get_type_shape_symbol(self.ctx.types, type_id));
+        let sym_id = self.ctx.resolve_type_to_symbol_id(type_id).or_else(|| {
+            crate::query_boundaries::common::type_shape_symbol(self.ctx.types, type_id)
+        });
         if let Some(sym_id) = sym_id {
             let lib_binders = self.get_lib_binders();
             if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)

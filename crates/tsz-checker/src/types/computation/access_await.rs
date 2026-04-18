@@ -1,10 +1,10 @@
 //! Await expression type computation and Promise helper types.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::common as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
-use tsz_solver::type_queries as query;
 
 const MAX_AWAIT_DEPTH: u32 = 10;
 
