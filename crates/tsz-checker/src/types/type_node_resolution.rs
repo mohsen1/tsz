@@ -1017,6 +1017,45 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
             }
 
+            // Namespace import fallback: `import X = require('./mod')` where the target module
+            // uses ES-style exports (no `export=`). `resolve_import_symbol` returns None in that
+            // case so `resolved_sym_id == left_sym_id`. Look up the member directly in the
+            // imported module's ES exports.
+            if resolved_sym_id == left_sym_id {
+                if let Some(left_sym) = self
+                    .ctx
+                    .binder
+                    .get_symbol_with_libs(left_sym_id, &lib_binders)
+                    && let Some(module_name) = left_sym.import_module.as_ref()
+                {
+                    // Use the current file's index to resolve the import target, since `left_sym`
+                    // is a local alias declared in the current file.
+                    let member = self
+                        .ctx
+                        .resolve_import_target_from_file(self.ctx.current_file_idx, module_name)
+                        .and_then(|target_idx| {
+                            let target_binder = self.ctx.get_binder_for_file(target_idx)?;
+                            let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+                            let file_name = &target_arena.source_files.first()?.file_name;
+                            target_binder
+                                .resolve_import_with_reexports_type_only(file_name, right_name)
+                                .map(|(sym_id, _)| {
+                                    self.ctx.register_symbol_file_target(sym_id, target_idx);
+                                    sym_id
+                                })
+                        })
+                        .or_else(|| {
+                            self.ctx
+                                .binder
+                                .resolve_import_with_reexports_type_only(module_name, right_name)
+                                .map(|(sym_id, _)| sym_id)
+                        });
+                    if let Some(member_sym_id) = member {
+                        return Some(self.ensure_def_id_with_alias(member_sym_id));
+                    }
+                }
+            }
+
             // Also check lib contexts for the member (e.g., global namespace types)
             for lib_ctx in self.ctx.lib_contexts.iter() {
                 if let Some(lib_resolved) = lib_ctx.binder.resolve_import_symbol(left_sym_id)

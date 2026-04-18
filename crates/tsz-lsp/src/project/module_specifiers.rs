@@ -25,6 +25,13 @@ enum RelativeImportStyle {
     Js,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExportsResolutionMode {
+    Import,
+    Require,
+    Both,
+}
+
 impl Project {
     pub(crate) fn resolve_module_specifier(
         &self,
@@ -43,11 +50,19 @@ impl Project {
         target_file: &str,
     ) -> Vec<String> {
         let target_in_node_modules = target_file.replace('\\', "/").contains("/node_modules/");
-        let package_specifier = self.package_specifier_from_node_modules(target_file);
+        let supports_package_exports = self.module_resolution_supports_package_exports(from_file);
+        let exports_mode = self.exports_resolution_mode_for_importer(from_file);
+        let package_specifier = self.package_specifier_from_node_modules_with_mode(
+            target_file,
+            supports_package_exports,
+            exports_mode,
+        );
         let workspace_package_specifier = self.workspace_package_dependency_specifier(
             from_file,
             target_file,
             target_in_node_modules,
+            supports_package_exports,
+            exports_mode,
         );
 
         let Some(relative) = self.relative_module_specifier_from_files(from_file, target_file)
@@ -136,6 +151,8 @@ impl Project {
         from_file: &str,
         target_file: &str,
         target_in_node_modules: bool,
+        supports_package_exports: bool,
+        exports_mode: ExportsResolutionMode,
     ) -> Option<String> {
         if target_in_node_modules {
             return None;
@@ -238,7 +255,8 @@ impl Project {
         let mut seen_targets = FxHashSet::default();
         target_candidates.retain(|candidate| seen_targets.insert(candidate.clone()));
 
-        if let Some(target_package_json) = target_package_json.as_ref()
+        if supports_package_exports
+            && let Some(target_package_json) = target_package_json.as_ref()
             && let Some(exports_value) = target_package_json.get("exports")
         {
             for candidate in &target_candidates {
@@ -247,6 +265,7 @@ impl Project {
                     &dependency_specifier,
                     &target_package_dir,
                     exports_value,
+                    exports_mode,
                 ) {
                     return Some(specifier);
                 }
@@ -690,6 +709,40 @@ impl Project {
         None
     }
 
+    fn module_resolution_supports_package_exports(&self, from_file: &str) -> bool {
+        let Some((_, compiler_options)) = self.nearest_compiler_options_for_file(from_file) else {
+            return true;
+        };
+
+        if let Some(module_resolution) = compiler_options
+            .get("moduleResolution")
+            .and_then(serde_json::Value::as_str)
+        {
+            return module_resolution.eq_ignore_ascii_case("node16")
+                || module_resolution.eq_ignore_ascii_case("nodenext")
+                || module_resolution.eq_ignore_ascii_case("bundler");
+        }
+
+        compiler_options
+            .get("module")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|module| {
+                module.eq_ignore_ascii_case("node16")
+                    || module.eq_ignore_ascii_case("nodenext")
+            })
+    }
+
+    fn exports_resolution_mode_for_importer(&self, from_file: &str) -> ExportsResolutionMode {
+        if from_file.ends_with(".cts") || from_file.ends_with(".cjs") {
+            return ExportsResolutionMode::Require;
+        }
+        if from_file.ends_with(".mts") || from_file.ends_with(".mjs") {
+            return ExportsResolutionMode::Import;
+        }
+
+        ExportsResolutionMode::Both
+    }
+
     pub(crate) fn auto_imports_allowed_for_file(&self, from_file: &str) -> bool {
         let Some((_, compiler_options)) = self.nearest_compiler_options_for_file(from_file) else {
             if let Some(allow) = self.auto_imports_allowed_from_fourslash_directives(from_file) {
@@ -1030,13 +1083,32 @@ impl Project {
         candidates
     }
 
+    #[cfg(test)]
     fn package_specifier_from_node_modules(&self, target_file: &str) -> Option<String> {
+        self.package_specifier_from_node_modules_with_mode(
+            target_file,
+            true,
+            ExportsResolutionMode::Both,
+        )
+    }
+
+    fn package_specifier_from_node_modules_with_mode(
+        &self,
+        target_file: &str,
+        supports_package_exports: bool,
+        exports_mode: ExportsResolutionMode,
+    ) -> Option<String> {
         let normalized = target_file.replace('\\', "/");
         let marker = "/node_modules/";
         let marker_idx = normalized.find(marker)?;
         let node_modules_root = &normalized[..marker_idx + marker.len() - 1];
         if let Some(specifier) =
-            self.package_specifier_from_nearest_package_manifest(&normalized, node_modules_root)
+            self.package_specifier_from_nearest_package_manifest(
+                &normalized,
+                node_modules_root,
+                supports_package_exports,
+                exports_mode,
+            )
         {
             return Some(specifier);
         }
@@ -1057,7 +1129,8 @@ impl Project {
             .or_else(|| std::fs::read_to_string(&package_json_path).ok())
             .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
 
-        if package_json
+        if supports_package_exports
+            && package_json
             .as_ref()
             .and_then(|json| json.get("exports"))
             .is_some()
@@ -1067,6 +1140,7 @@ impl Project {
                 &package_root,
                 package_prefix,
                 &package_json_path,
+                exports_mode,
             );
         }
 
@@ -1090,6 +1164,8 @@ impl Project {
         &self,
         normalized_target: &str,
         node_modules_root: &str,
+        supports_package_exports: bool,
+        exports_mode: ExportsResolutionMode,
     ) -> Option<String> {
         let mut current_dir = Path::new(normalized_target).parent();
         while let Some(dir) = current_dir {
@@ -1116,12 +1192,15 @@ impl Project {
                     .filter(|name| !name.is_empty())
                     .or_else(|| Self::infer_package_name_from_node_modules_dir(&dir_normalized))
             {
-                if let Some(exports_value) = package_json.get("exports") {
+                if supports_package_exports
+                    && let Some(exports_value) = package_json.get("exports")
+                {
                     return self.package_specifier_from_package_exports_value(
                         normalized_target,
                         &package_name,
                         &dir_normalized,
                         exports_value,
+                        exports_mode,
                     );
                 }
 
@@ -1182,6 +1261,7 @@ impl Project {
         package_root: &str,
         package_prefix: &str,
         package_json_path: &str,
+        exports_mode: ExportsResolutionMode,
     ) -> Option<String> {
         let package_json_text = if let Some(file) = self.files.get(package_json_path) {
             Some(file.source_text().to_string())
@@ -1197,6 +1277,7 @@ impl Project {
             package_root,
             &package_dir,
             exports_value,
+            exports_mode,
         )
     }
 
@@ -1206,6 +1287,7 @@ impl Project {
         package_specifier: &str,
         package_dir: &str,
         exports_value: &serde_json::Value,
+        exports_mode: ExportsResolutionMode,
     ) -> Option<String> {
         let package_dir_prefix = format!("{package_dir}/");
         let target_relative = normalized_target.strip_prefix(&package_dir_prefix)?;
@@ -1232,7 +1314,7 @@ impl Project {
                 continue;
             };
 
-            let (type_targets, default_targets) = collect_exports_targets(export_target);
+            let (type_targets, default_targets) = collect_exports_targets(export_target, exports_mode);
             let should_append_js = key_pattern.contains('*')
                 && !has_source_extension(key_pattern)
                 && default_targets
@@ -1669,16 +1751,20 @@ fn collect_import_targets(value: &serde_json::Value) -> Vec<String> {
     }
 }
 
-fn collect_exports_targets(value: &serde_json::Value) -> (Vec<String>, Vec<String>) {
+fn collect_exports_targets(
+    value: &serde_json::Value,
+    mode: ExportsResolutionMode,
+) -> (Vec<String>, Vec<String>) {
     let mut types = Vec::new();
     let mut defaults = Vec::new();
-    collect_exports_targets_inner(value, false, &mut types, &mut defaults);
+    collect_exports_targets_inner(value, false, mode, &mut types, &mut defaults);
     (types, defaults)
 }
 
 fn collect_exports_targets_inner(
     value: &serde_json::Value,
     is_types_branch: bool,
+    mode: ExportsResolutionMode,
     types: &mut Vec<String>,
     defaults: &mut Vec<String>,
 ) {
@@ -1692,14 +1778,27 @@ fn collect_exports_targets_inner(
         }
         serde_json::Value::Array(items) => {
             for item in items {
-                collect_exports_targets_inner(item, is_types_branch, types, defaults);
+                collect_exports_targets_inner(item, is_types_branch, mode, types, defaults);
             }
         }
         serde_json::Value::Object(map) => {
             for (key, item) in map {
+                let key_is_types = key == "types";
+                let include_default_branch = match key.as_str() {
+                    "types" => false,
+                    "import" => mode != ExportsResolutionMode::Require,
+                    "require" => mode != ExportsResolutionMode::Import,
+                    // Preserve fallback behavior for `default`, subpath maps, and
+                    // unknown conditions by treating them as available.
+                    _ => true,
+                };
+                if !key_is_types && !include_default_branch {
+                    continue;
+                }
                 collect_exports_targets_inner(
                     item,
-                    is_types_branch || key == "types",
+                    is_types_branch || key_is_types,
+                    mode,
                     types,
                     defaults,
                 );
@@ -2250,6 +2349,146 @@ mod tests {
                 "/repo/node_modules/.pnpm/@scope+pkg@1.0.0/node_modules/@scope/pkg/sub/path/file.d.ts"
             ),
             Some("@scope/pkg/sub/path/file".to_string())
+        );
+    }
+
+    #[test]
+    fn node10_module_resolution_does_not_use_exports_subpath_aliases() {
+        let mut project = Project::new();
+        project.set_file(
+            "/home/src/workspaces/project/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node10",
+    "lib": ["es5"]
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/package.json".to_string(),
+            r#"{
+  "dependencies": {
+    "dependency": "^1.0.0"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/dependency/package.json".to_string(),
+            r#"{
+  "name": "dependency",
+  "types": "./lib/index.d.ts",
+  "exports": {
+    ".": { "types": "./lib/index.d.ts" },
+    "./lol": { "types": "./lib/lol.d.ts" }
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/dependency/lib/index.d.ts".to_string(),
+            "export declare function fooFromIndex(): void;".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/dependency/lib/lol.d.ts".to_string(),
+            "export declare function fooFromLol(): void;".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/src/foo.ts".to_string(),
+            "fooFrom".to_string(),
+        );
+
+        let root_specs = project.auto_import_module_specifiers_from_files(
+            "/home/src/workspaces/project/src/foo.ts",
+            "/home/src/workspaces/project/node_modules/dependency/lib/index.d.ts",
+        );
+        assert!(
+            root_specs.iter().any(|specifier| specifier == "dependency"),
+            "expected dependency root specifier under node10 moduleResolution, got {root_specs:?}"
+        );
+
+        let subpath_specs = project.auto_import_module_specifiers_from_files(
+            "/home/src/workspaces/project/src/foo.ts",
+            "/home/src/workspaces/project/node_modules/dependency/lib/lol.d.ts",
+        );
+        assert!(
+            !subpath_specs
+                .iter()
+                .any(|specifier| specifier == "dependency/lol"),
+            "expected node10 moduleResolution to avoid exports subpath alias dependency/lol, got {subpath_specs:?}"
+        );
+    }
+
+    #[test]
+    fn exports_import_and_require_conditions_follow_importer_extension() {
+        let mut project = Project::new();
+        project.set_file(
+            "/home/src/workspaces/project/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "module": "nodenext",
+    "lib": ["es5"]
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/package.json".to_string(),
+            r#"{
+  "dependencies": {
+    "dependency": "^1.0.0"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/dependency/package.json".to_string(),
+            r#"{
+  "name": "dependency",
+  "exports": {
+    "./lol": {
+      "import": "./lib/index.js",
+      "require": "./lib/lol.js"
+    }
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/dependency/lib/index.d.ts".to_string(),
+            "export declare function fooFromIndex(): void;".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/dependency/lib/lol.d.ts".to_string(),
+            "export declare function fooFromLol(): void;".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/src/foo.cts".to_string(),
+            "fooFrom".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/src/foo.mts".to_string(),
+            "fooFrom".to_string(),
+        );
+
+        let cts_specs = project.auto_import_module_specifiers_from_files(
+            "/home/src/workspaces/project/src/foo.cts",
+            "/home/src/workspaces/project/node_modules/dependency/lib/lol.d.ts",
+        );
+        assert!(
+            cts_specs.iter().any(|specifier| specifier == "dependency/lol"),
+            "expected .cts importer to follow require branch for dependency/lol, got {cts_specs:?}"
+        );
+
+        let mts_specs = project.auto_import_module_specifiers_from_files(
+            "/home/src/workspaces/project/src/foo.mts",
+            "/home/src/workspaces/project/node_modules/dependency/lib/index.d.ts",
+        );
+        assert!(
+            mts_specs.iter().any(|specifier| specifier == "dependency/lol"),
+            "expected .mts importer to follow import branch for dependency/lol, got {mts_specs:?}"
         );
     }
 
