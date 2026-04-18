@@ -4,6 +4,7 @@
 //! Contains methods for ensuring type alias bodies are registered in the
 //! type environment and for resolving `DefIds` from qualified names.
 
+use crate::symbols_domain::name_text::{entity_name_text_in_arena, expression_name_text_in_arena};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_solver::TypeId;
@@ -13,27 +14,7 @@ use super::type_node::TypeNodeChecker;
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     pub(super) fn entity_name_text(&self, idx: NodeIndex) -> Option<String> {
-        let node = self.ctx.arena.get(idx)?;
-        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
-            return self
-                .ctx
-                .arena
-                .get_identifier(node)
-                .map(|ident| ident.escaped_text.clone());
-        }
-
-        if node.kind == tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME {
-            let qn = self.ctx.arena.get_qualified_name(node)?;
-            let left = self.entity_name_text(qn.left)?;
-            let right = self.entity_name_text(qn.right)?;
-            let mut combined = String::with_capacity(left.len() + 1 + right.len());
-            combined.push_str(&left);
-            combined.push('.');
-            combined.push_str(&right);
-            return Some(combined);
-        }
-
-        None
+        entity_name_text_in_arena(self.ctx.arena, idx)
     }
 
     pub(super) fn resolve_entity_name_text_symbol(
@@ -410,36 +391,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     }
 
     fn expression_name_text_in_arena(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
-        let node = arena.get(idx)?;
-
-        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
-            return arena
-                .get_identifier(node)
-                .map(|ident| ident.escaped_text.clone());
-        }
-
-        if node.kind == tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME {
-            let qn = arena.get_qualified_name(node)?;
-            let left = Self::expression_name_text_in_arena(arena, qn.left)?;
-            let right = Self::expression_name_text_in_arena(arena, qn.right)?;
-            return Some(format!("{left}.{right}"));
-        }
-
-        if node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            let paren = arena.get_parenthesized(node)?;
-            return Self::expression_name_text_in_arena(arena, paren.expression);
-        }
-
-        if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && let Some(access) = arena.get_access_expr(node)
-        {
-            let left = Self::expression_name_text_in_arena(arena, access.expression)?;
-            let right_node = arena.get(access.name_or_argument)?;
-            let right = arena.get_identifier(right_node)?;
-            return Some(format!("{left}.{}", right.escaped_text));
-        }
-
-        None
+        expression_name_text_in_arena(arena, idx)
     }
 
     pub(super) fn symbol_refers_to_unique_symbol_anywhere(

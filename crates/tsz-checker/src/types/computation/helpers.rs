@@ -8,6 +8,7 @@ use crate::query_boundaries::type_computation::core::{
     self as expr_ops, evaluate_contextual_structure_with,
 };
 use crate::state::CheckerState;
+use crate::symbols_domain::name_text::property_access_chain_text_in_arena;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
@@ -1348,26 +1349,6 @@ impl<'a> CheckerState<'a> {
         // properties. Return `any` to match this behavior.
         // Note: class declarations are NOT included here — class static property
         // assignments DO check assignability in tsc.
-        fn property_access_chain(
-            arena: &tsz_parser::parser::node::NodeArena,
-            idx: NodeIndex,
-        ) -> Option<String> {
-            let node = arena.get(idx)?;
-            if node.kind == SyntaxKind::Identifier as u16 {
-                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
-            }
-            if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                return None;
-            }
-            let access = arena.get_access_expr(node)?;
-            let left = property_access_chain(arena, access.expression)?;
-            let right = arena
-                .get_identifier_at(access.name_or_argument)?
-                .escaped_text
-                .clone();
-            Some(format!("{left}.{right}"))
-        }
-
         if let Some(node) = self.ctx.arena.get(idx)
             && node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access) = self.ctx.arena.get_access_expr(node)
@@ -1380,7 +1361,8 @@ impl<'a> CheckerState<'a> {
                 .map(|ident| ident.escaped_text.clone())
         {
             let has_expando_property = {
-                let object_key = property_access_chain(self.ctx.arena, access.expression);
+                let object_key =
+                    property_access_chain_text_in_arena(self.ctx.arena, access.expression);
                 object_key.is_some_and(|object_key| {
                     let has_expando_property = self
                         .collect_expando_properties_for_root(&object_key)

@@ -8,6 +8,7 @@
 //! - JS namespace enum rebind assignments
 
 use crate::state::CheckerState;
+use crate::symbols_domain::name_text::property_access_chain_text_in_arena;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -237,25 +238,6 @@ impl<'a> CheckerState<'a> {
         // the member symbol but binder metadata still records the assignment
         // (`var X = {}; X.Y = function(){}` style). This should behave like a
         // constructor declaration write in TS.
-        fn property_access_chain(
-            arena: &tsz_parser::parser::node::NodeArena,
-            idx: NodeIndex,
-        ) -> Option<String> {
-            let node = arena.get(idx)?;
-            if node.kind == SyntaxKind::Identifier as u16 {
-                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
-            }
-            if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                let access = arena.get_access_expr(node)?;
-                let left = property_access_chain(arena, access.expression)?;
-                let right = arena
-                    .get_identifier_at(access.name_or_argument)?
-                    .escaped_text
-                    .clone();
-                return Some(format!("{left}.{right}"));
-            }
-            None
-        }
         fn root_identifier(
             arena: &tsz_parser::parser::node::NodeArena,
             idx: NodeIndex,
@@ -274,7 +256,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let Some(object_key) = property_access_chain(self.ctx.arena, access.expression) else {
+        let Some(object_key) =
+            property_access_chain_text_in_arena(self.ctx.arena, access.expression)
+        else {
             return false;
         };
         let mut has_expando_property = self
@@ -517,30 +501,9 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::syntax_kind_ext;
-        use tsz_scanner::SyntaxKind;
 
         if !self.is_js_file() || !self.ctx.compiler_options.check_js {
             return false;
-        }
-
-        fn property_access_chain(
-            arena: &tsz_parser::parser::node::NodeArena,
-            idx: NodeIndex,
-        ) -> Option<String> {
-            let node = arena.get(idx)?;
-            if node.kind == SyntaxKind::Identifier as u16 {
-                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
-            }
-            if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                return None;
-            }
-            let access = arena.get_access_expr(node)?;
-            let left = property_access_chain(arena, access.expression)?;
-            let right = arena
-                .get_identifier_at(access.name_or_argument)?
-                .escaped_text
-                .clone();
-            Some(format!("{left}.{right}"))
         }
 
         let target_idx = self.ctx.arena.skip_parenthesized(target_idx);
@@ -614,7 +577,9 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let Some(object_key) = property_access_chain(self.ctx.arena, access.expression) else {
+        let Some(object_key) =
+            property_access_chain_text_in_arena(self.ctx.arena, access.expression)
+        else {
             return false;
         };
 
