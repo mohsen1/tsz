@@ -412,6 +412,19 @@ impl<'a> CheckerState<'a> {
                 }
                 return TypeId::ERROR;
             }
+
+            if !self.is_identifier_in_type_position(idx)
+                && self.alias_resolves_to_uninstantiated_namespace(sym_id)
+            {
+                self.report_wrong_meaning(
+                    name,
+                    idx,
+                    sym_id,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Namespace,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                );
+                return TypeId::ERROR;
+            }
             // Check symbol flags to detect type-only usage.
             // First try the main binder (fast path for local symbols).
             let (flags, value_decl, symbol_declarations, is_umd_export) = {
@@ -591,6 +604,8 @@ impl<'a> CheckerState<'a> {
                         if let Some(symbol) =
                             self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
                             && symbol.import_module.is_some()
+                            && (symbol.import_name.is_none()
+                                || symbol.import_name.as_deref() == Some("*"))
                         {
                             return self.get_type_of_symbol(sym_id);
                         }
