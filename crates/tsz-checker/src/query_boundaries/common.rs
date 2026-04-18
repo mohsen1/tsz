@@ -492,6 +492,12 @@ pub(crate) fn unwrap_readonly_or_noinfer(db: &dyn TypeDatabase, type_id: TypeId)
     tsz_solver::unwrap_readonly_or_noinfer(db, type_id)
 }
 
+/// Apply a `const` assertion to a type, recursively converting mutable literals
+/// to their `readonly` / literal-preserving forms (e.g. `string[]` → `readonly ["a"]`).
+pub(crate) fn apply_const_assertion(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::widening::apply_const_assertion(db, type_id)
+}
+
 /// Widen a literal type to its base primitive (e.g. `"hello"` → `string`).
 pub(crate) fn widen_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::widen_type(db, type_id)
