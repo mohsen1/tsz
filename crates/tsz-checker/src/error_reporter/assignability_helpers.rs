@@ -359,7 +359,7 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> Option<Vec<tsz_common::interner::Atom>> {
-        use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
+        use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
 
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, source) {
             return None;

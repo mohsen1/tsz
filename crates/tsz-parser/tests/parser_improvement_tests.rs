@@ -83,6 +83,100 @@ namespace N {
 }
 
 #[test]
+fn test_typed_parenthesized_expression_followed_by_property_access_prefers_missing_arrow() {
+    let source = "var v = (inspectedElement: any).props;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let dot_pos = source.find('.').expect("property access dot") as u32;
+
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 1005 && diag.start == dot_pos && diag.message == "'=>' expected."
+        }),
+        "Typed parenthesized heads should recover as missing-arrow at property access: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| !(diag.code == 1005 && diag.message == "')' expected.")),
+        "Typed parenthesized heads should not report a missing ')' here: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| !(diag.code == 1005 && diag.message == "',' expected.")),
+        "Typed parenthesized heads should not report a comma recovery at this tail: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_parenthesized_initializer_with_stray_equals_before_block_prefers_semicolon_recovery() {
+    let source = "x = (y = z ==== 'function') {";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == 1005 && diag.message == "';' expected."),
+        "Malformed ==== tails should recover with ';' expected at '{{': {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| !(diag.code == 1005 && diag.message == "'=>' expected.")),
+        "Malformed ==== tails should not recover as missing arrow at '{{': {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_await_using_array_target_assignment_recovers_with_semicolon_expected() {
+    let source = r"
+{
+    await using [a] = null;
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let equals_pos = source.find('=').expect("assignment token") as u32;
+
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 1005 && diag.message == "';' expected." && diag.start == equals_pos
+        }),
+        "Expected TS1005 ';' expected at '=' for await using recovery, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| diag.message != "Expression expected."),
+        "Should not emit TS1109 for this recovery shape: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_in_expression_assignment_recovers_with_semicolon_expected() {
+    let source = "'prop' in v = 10;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let equals_pos = source.find('=').expect("assignment token") as u32;
+
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 1005 && diag.message == "';' expected." && diag.start == equals_pos
+        }),
+        "Expected TS1005 ';' expected at '=' for in-expression assignment recovery, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_missing_arrow_statement_body_consumes_synthetic_close_brace() {
     let source = r"
 namespace N {

@@ -92,12 +92,13 @@
 
 use crate::CheckerContext;
 use crate::context::{CheckerOptions, RequestCacheKey, TypingRequest};
+use crate::query_boundaries::common::QueryDatabase;
 use tsz_binder::BinderState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{QueryDatabase, TypeId, substitute_this_type};
+use tsz_solver::TypeId;
 
 thread_local! {
     /// Shared depth counter for all cross-arena delegation points.
@@ -620,12 +621,20 @@ impl<'a> CheckerState<'a> {
         if let Some(access) = self.ctx.arena.get_access_expr(node) {
             let receiver_type = self.get_type_of_node(access.expression);
             if receiver_type != TypeId::ERROR && receiver_type != TypeId::ANY {
-                return substitute_this_type(self.ctx.types, return_type, receiver_type);
+                return crate::query_boundaries::common::substitute_this_type(
+                    self.ctx.types,
+                    return_type,
+                    receiver_type,
+                );
             }
             if let Some(receiver_sym) = self.resolve_identifier_symbol(access.expression) {
                 let receiver_type = self.get_type_of_symbol(receiver_sym);
                 if receiver_type != TypeId::ERROR && receiver_type != TypeId::ANY {
-                    return substitute_this_type(self.ctx.types, return_type, receiver_type);
+                    return crate::query_boundaries::common::substitute_this_type(
+                        self.ctx.types,
+                        return_type,
+                        receiver_type,
+                    );
                 }
             }
         }

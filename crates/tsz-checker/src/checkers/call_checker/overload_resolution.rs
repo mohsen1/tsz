@@ -3,10 +3,11 @@
 //! Split from the parent `call_checker` module — pure code motion.
 
 use crate::query_boundaries::checkers::call::lazy_def_id_for_type;
+use crate::query_boundaries::common::{ContextualTypeContext, PendingDiagnosticBuilder};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{ContextualTypeContext, PendingDiagnosticBuilder, TypeId};
+use tsz_solver::TypeId;
 
 use super::{CallableContext, OverloadResolution};
 
@@ -31,8 +32,7 @@ impl<'a> CheckerState<'a> {
         contextual_type: Option<TypeId>,
         actual_this_type: Option<TypeId>,
     ) -> Option<OverloadResolution> {
-        use tsz_solver::FunctionShape;
-        use tsz_solver::operations::CallResult;
+        use crate::query_boundaries::common::{CallResult, FunctionShape};
 
         tracing::debug!(
             "resolve_overloaded_call_with_signatures: signatures = {:?}, args = {:?}",

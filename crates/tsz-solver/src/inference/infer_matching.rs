@@ -62,6 +62,24 @@ impl<'a> InferenceContext<'a> {
         target: TypeId,
         priority: InferencePriority,
     ) -> Result<(), InferenceError> {
+        if self.infer_depth >= Self::MAX_INFER_DEPTH {
+            return Ok(());
+        }
+        if !self.infer_visited.insert((source, target)) {
+            return Ok(());
+        }
+        self.infer_depth += 1;
+        let result = self.infer_from_types_inner(source, target, priority);
+        self.infer_depth -= 1;
+        result
+    }
+
+    fn infer_from_types_inner(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        priority: InferencePriority,
+    ) -> Result<(), InferenceError> {
         // Resolve the types to their actual TypeDatas
         let source_key = self.interner.lookup(source);
         let target_key = self.interner.lookup(target);

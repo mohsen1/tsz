@@ -2,7 +2,9 @@
 
 use crate::context::{EnclosingClassInfo, is_js_file_name};
 use crate::query_boundaries::class_type::{callable_shape_for_type, object_shape_for_type};
-use crate::query_boundaries::common::{ObjectFlags, TypeSubstitution, instantiate_type};
+use crate::query_boundaries::common::{
+    ObjectFlags, TypeSubstitution, instantiate_type, is_plain_object_type,
+};
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::SymbolId;
@@ -13,8 +15,8 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::visitor::is_template_literal_type;
 use tsz_solver::{
-    CallSignature, CallableShape, IndexSignature, ObjectShape, PropertyInfo, TypeData, TypeId,
-    TypeParamInfo, Visibility,
+    CallSignature, CallableShape, IndexSignature, ObjectShape, PropertyInfo, TypeId, TypeParamInfo,
+    Visibility,
 };
 
 /// Bookkeeping record for a single type parameter pushed into
@@ -2151,11 +2153,13 @@ impl<'a> CheckerState<'a> {
             ..ObjectShape::default()
         };
 
-        match self.ctx.types.lookup(instance_type) {
-            Some(TypeData::Object(_)) if string_index.is_none() && number_index.is_none() => {
-                factory.object(shape.properties)
-            }
-            _ => factory.object_with_index(shape),
+        if is_plain_object_type(self.ctx.types, instance_type)
+            && string_index.is_none()
+            && number_index.is_none()
+        {
+            factory.object(shape.properties)
+        } else {
+            factory.object_with_index(shape)
         }
     }
 

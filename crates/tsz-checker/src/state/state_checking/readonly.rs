@@ -137,7 +137,7 @@ impl<'a> CheckerState<'a> {
                         index_type,
                     ) {
                         use crate::query_boundaries::common::PropertyAccessResult;
-                        use tsz_solver::operations::property::is_readonly_tuple_fixed_element;
+                        use crate::query_boundaries::common::is_readonly_tuple_fixed_element;
                         let from_idx_sig = if name == "index signature" {
                             true
                         } else if is_readonly_tuple_fixed_element(
@@ -327,7 +327,7 @@ impl<'a> CheckerState<'a> {
                         // `readonly [number, number, ...number[]]`) are named properties
                         // even though resolve_array_property reports from_index_signature.
                         use crate::query_boundaries::common::PropertyAccessResult;
-                        use tsz_solver::operations::property::is_readonly_tuple_fixed_element;
+                        use crate::query_boundaries::common::is_readonly_tuple_fixed_element;
                         let from_idx_sig = if name == "index signature" {
                             true
                         } else if is_readonly_tuple_fixed_element(
@@ -592,7 +592,7 @@ impl<'a> CheckerState<'a> {
     /// - The constraint has no index signature (e.g., `{ a: string, b: number }`)
     fn is_generic_indexed_write(&mut self, object_type: TypeId, index_type: TypeId) -> bool {
         use crate::query_boundaries::common as common_query;
-        use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
+        use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
 
         // Broad primitive keys definitely go through an index-signature-like path.
         if !self.is_broad_index_type(index_type) {
@@ -632,7 +632,7 @@ impl<'a> CheckerState<'a> {
     /// Evaluates the constraint through `TypeEnvironment` first to resolve
     /// Application/Lazy wrappers (e.g., `Record<string, any>` → `{ [key: string]: any }`).
     fn constraint_has_index_signature(&mut self, type_param: TypeId, index_type: TypeId) -> bool {
-        use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
+        use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
 
         let Some(info) =
             crate::query_boundaries::common::type_param_info(self.ctx.types, type_param)
@@ -1118,7 +1118,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_readonly_mapped_type(&mut self, type_id: TypeId) -> bool {
-        use tsz_solver::operations::property::is_mapped_type_with_readonly_modifier;
+        use crate::query_boundaries::common::is_mapped_type_with_readonly_modifier;
 
         // First try the direct solver query (handles Mapped, Application, Lazy)
         if is_mapped_type_with_readonly_modifier(self.ctx.types, type_id) {

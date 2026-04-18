@@ -2,7 +2,7 @@
 
 use crate::context::TypingRequest;
 use crate::query_boundaries::class_type::{callable_shape_for_type, construct_signatures_for_type};
-use crate::query_boundaries::common::instantiate_type;
+use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 use crate::state::{CheckerState, MemberAccessLevel};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
@@ -11,8 +11,8 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::visitor::is_template_literal_type;
 use tsz_solver::{
-    CallSignature, CallableShape, IndexSignature, PropertyInfo, TypeId, TypeParamInfo,
-    TypePredicate, TypeSubstitution, Visibility, types::ParamInfo,
+    CallSignature, CallableShape, IndexSignature, ParamInfo, PropertyInfo, TypeId, TypeParamInfo,
+    TypePredicate, Visibility,
 };
 
 use super::can_skip_base_instantiation;

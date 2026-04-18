@@ -5,11 +5,12 @@
 //! to keep module sizes manageable.
 
 use crate::query_boundaries::common as query_common;
+use crate::query_boundaries::common::ContextualTypeContext;
 use crate::query_boundaries::type_computation::core as expr_ops;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{ContextualTypeContext, TupleElement, TypeId};
+use tsz_solver::{TupleElement, TypeId};
 
 impl<'a> CheckerState<'a> {
     fn promise_like_array_context_shape(&self, type_id: TypeId) -> Option<TypeId> {
@@ -97,7 +98,7 @@ impl<'a> CheckerState<'a> {
             // NOTE: Resolve through Lazy(DefId) first so Record<string,T> becomes an
             // ObjectWithIndex shape that the IndexSignatureResolver can inspect.
             {
-                use tsz_solver::IndexSignatureResolver;
+                use crate::query_boundaries::common::IndexSignatureResolver;
                 let resolved = self.resolve_lazy_type(member);
                 let resolved = self.evaluate_type_with_env(resolved);
                 let resolver = IndexSignatureResolver::new(self.ctx.types);

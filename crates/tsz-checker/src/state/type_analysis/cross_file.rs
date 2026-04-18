@@ -95,7 +95,7 @@ impl<'a> CheckerState<'a> {
         // lives in the user arena), causing property access on the instantiated type to fail.
         // If the type alias declaration exists in the current arena, handle it locally.
         {
-            let sym_found = self.get_symbol_globally(sym_id);
+            let sym_found = self.get_cross_file_symbol(sym_id);
             let has_type_alias = sym_found.is_some_and(|s| s.flags & symbol_flags::TYPE_ALIAS != 0);
             if has_type_alias {
                 let symbol = sym_found.expect("has_type_alias guard ensures sym_found is Some");
@@ -144,7 +144,7 @@ impl<'a> CheckerState<'a> {
         // compute_class_symbol_type to fail to find the class node and return UNKNOWN,
         // triggering false TS18046 errors. Handle the class locally instead.
         {
-            let sym_found = self.get_symbol_globally(sym_id);
+            let sym_found = self.get_cross_file_symbol(sym_id);
             if let Some(symbol) = sym_found
                 && (symbol.flags & symbol_flags::CLASS) != 0
             {
@@ -161,10 +161,33 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // When the user re-declares a lib global function, keep the user's overloads in scope
+        // (delegating to the lib arena would drop them and mis-resolve calls).
+        {
+            let sym_found = self.get_cross_file_symbol(sym_id);
+            if let Some(symbol) = sym_found
+                && (symbol.flags & symbol_flags::FUNCTION) != 0
+                && (symbol.flags
+                    & (symbol_flags::CLASS | symbol_flags::INTERFACE | symbol_flags::ALIAS))
+                    == 0
+            {
+                let has_function_in_current_arena = symbol.declarations.iter().any(|&d| {
+                    self.ctx
+                        .arena
+                        .get(d)
+                        .and_then(|n| self.ctx.arena.get_function(n))
+                        .is_some()
+                });
+                if has_function_in_current_arena {
+                    return None; // Handle locally, don't delegate to lib arena
+                }
+            }
+        }
+
         let is_known_cross_file = self.ctx.has_symbol_file_index(sym_id);
 
         if !is_known_cross_file
-            && let Some(symbol) = self.get_symbol_globally(sym_id)
+            && let Some(symbol) = self.get_cross_file_symbol(sym_id)
             && (symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
         {
             return None;
@@ -187,7 +210,7 @@ impl<'a> CheckerState<'a> {
         // this decision for merged interfaces across user files.
         let mut interface_has_local_decl = false;
         if delegate_arena.is_some_and(|arena| !std::ptr::eq(arena, self.ctx.arena))
-            && let Some(symbol) = self.get_symbol_globally(sym_id)
+            && let Some(symbol) = self.get_cross_file_symbol(sym_id)
             && (symbol.flags & symbol_flags::INTERFACE) != 0
         {
             let has_local_interface = symbol.declarations.iter().any(|&d| {
@@ -203,8 +226,33 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // FUNCTION + cross-arena merge: when a user `declare function f(...)` in the
+        // current arena merges with an existing lib `declare function f(...)` from
+        // the lib arena, both decls live on the same symbol but delegation would
+        // run compute_type_of_symbol in lib-arena context — losing the user's
+        // overload signature. Handle locally so compute_type_of_symbol sees every
+        // in-arena declaration and (if needed) still pulls the lib-arena decls
+        // via `declaration_arenas`.
+        let mut function_has_local_decl = false;
+        if delegate_arena.is_some_and(|arena| !std::ptr::eq(arena, self.ctx.arena))
+            && let Some(symbol) = self.get_cross_file_symbol(sym_id)
+            && (symbol.flags & symbol_flags::FUNCTION) != 0
+        {
+            let has_local_function_decl = symbol.declarations.iter().any(|&d| {
+                self.ctx
+                    .arena
+                    .get(d)
+                    .and_then(|n| self.ctx.arena.get_function(n))
+                    .is_some()
+            });
+            if has_local_function_decl {
+                delegate_arena = None;
+                function_has_local_decl = true;
+            }
+        }
+
         if delegate_arena.is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
-            && let Some(symbol) = self.get_symbol_globally(sym_id)
+            && let Some(symbol) = self.get_cross_file_symbol(sym_id)
         {
             // For INTERFACE symbols whose primary arena is already the current arena,
             // do NOT scan per-declaration arenas for delegation. Interfaces split across
@@ -212,7 +260,12 @@ impl<'a> CheckerState<'a> {
             // ping-pong between arenas until the depth limit, resulting in ERROR.
             // The INTERFACE block in compute_type_of_symbol handles multi-arena merging
             // correctly via resolve_lib_type_by_name.
-            if symbol.flags & symbol_flags::INTERFACE == 0 {
+            // Skip for INTERFACE (merge path handles multi-arena via
+            // resolve_lib_type_by_name) and for FUNCTION symbols that already
+            // have a declaration in the current arena (we want the local
+            // compute_type_of_symbol path to see every overload, including
+            // the lib-arena ones, via declaration_arenas lookup).
+            if symbol.flags & symbol_flags::INTERFACE == 0 && !function_has_local_decl {
                 let mut decl_candidates = symbol.declarations.clone();
                 if symbol.value_declaration.is_some() {
                     decl_candidates.push(symbol.value_declaration);
@@ -247,6 +300,7 @@ impl<'a> CheckerState<'a> {
         // to the other file would lose the local declaration's members and heritage.
         let mut cross_file_idx: Option<usize> = None;
         let needs_cross_file_delegation = !interface_has_local_decl
+            && !function_has_local_decl
             && delegate_arena.is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
             && self
                 .ctx

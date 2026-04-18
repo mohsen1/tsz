@@ -28,7 +28,7 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         depth: u32,
     ) -> Diagnostic {
-        use tsz_solver::SubtypeFailureReason;
+        use crate::query_boundaries::common::SubtypeFailureReason;
 
         let source = self.recover_unknown_array_source_type_for_display(source, idx, depth);
         let (start, length) = self
@@ -718,7 +718,7 @@ impl<'a> CheckerState<'a> {
         // from the Array interface and ARE named properties even though the array also has
         // a numeric index signature.
         {
-            use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
+            use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
             let resolver = IndexSignatureResolver::new(self.ctx.types);
             let target_is_array_or_tuple =
                 tsz_solver::visitor::array_element_type(self.ctx.types, target).is_some()
@@ -765,7 +765,7 @@ impl<'a> CheckerState<'a> {
         // is preferred over specific missing property errors.
         // Skip for array/tuple targets — their numeric index is implicit and missing named
         // properties (like `length`) should still produce TS2741.
-        use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
+        use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
         let resolver = IndexSignatureResolver::new(self.ctx.types);
         // Check both original and evaluated types (needed for generic class instances)
         let source_evaluated = self.evaluate_type_with_env(source);
@@ -1263,7 +1263,7 @@ impl<'a> CheckerState<'a> {
         // target has no explicit named properties (i.e., it's purely an index-signature
         // type like `{ [x: number]: T }`). Named interfaces that happen to have number
         // index signatures (like String, Array) should still get TS2739/TS2740.
-        use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
+        use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
         let resolver = IndexSignatureResolver::new(self.ctx.types);
         // Check both original and evaluated types (needed for generic class instances)
         let source_evaluated = self.evaluate_type_with_env(source);

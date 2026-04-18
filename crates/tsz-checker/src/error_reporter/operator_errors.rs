@@ -293,7 +293,7 @@ impl<'a> CheckerState<'a> {
                 | ">="
         );
 
-        use tsz_solver::BinaryOpEvaluator;
+        use crate::query_boundaries::common::BinaryOpEvaluator;
 
         let evaluator = BinaryOpEvaluator::new(self.ctx.types);
 

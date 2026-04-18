@@ -8,10 +8,11 @@ use super::complex::is_contextually_sensitive;
 use crate::context::TypingRequest;
 use crate::query_boundaries::assignability::contains_type_parameters;
 use crate::query_boundaries::checkers::call as call_checker;
+use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{ContextualTypeContext, TypeId};
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     /// Get the type of a tagged template expression (e.g., tag`hello ${x}`).
