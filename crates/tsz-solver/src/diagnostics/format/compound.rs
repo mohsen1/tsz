@@ -76,16 +76,18 @@ impl<'a> TypeFormatter<'a> {
                 (Err(_), Err(_)) => std::cmp::Ordering::Equal,
             }
         });
-        // tsc does not truncate object properties in error messages — it uses
-        // NoTruncation for diagnostics.  Only truncate when displaying extremely
-        // large objects (>= 10 props) to prevent pathological output.
+        // tsc does not truncate object properties in most diagnostics, but when
+        // we hit pathological object displays we still cap output. Include the
+        // omitted count (`... N more ...`) so fingerprint text aligns better with
+        // tsc's long-type display style.
         if display_props.len() >= 10 {
             let first: Vec<String> = display_props
                 .iter()
                 .take(8)
                 .map(|p| self.format_property(p))
                 .collect();
-            return format!("{{ {}; ...; }}", first.join("; "));
+            let omitted = display_props.len().saturating_sub(8);
+            return format!("{{ {}; ... {omitted} more ...; }}", first.join("; "));
         }
         let formatted: Vec<String> = display_props
             .iter()

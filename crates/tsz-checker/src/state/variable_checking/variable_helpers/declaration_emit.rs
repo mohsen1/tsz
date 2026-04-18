@@ -289,6 +289,111 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    pub(crate) fn first_private_name_from_external_module_reference(
+        &self,
+        inferred_type: TypeId,
+    ) -> Option<(String, String)> {
+        let referenced_types = collect_referenced_types(self.ctx.types, inferred_type);
+
+        for &type_id in &referenced_types {
+            if let Some(def_id) = lazy_def_id(self.ctx.types, type_id)
+                && let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id)
+                && let Some(info) = self.private_external_module_nameability_info(sym_id)
+            {
+                return Some(info);
+            }
+
+            if let Some(shape) = query::object_shape(self.ctx.types, type_id)
+                && let Some(sym_id) = shape.symbol
+                && let Some(info) = self.private_external_module_nameability_info(sym_id)
+            {
+                return Some(info);
+            }
+
+            if let Some(shape) = query::callable_shape(self.ctx.types, type_id)
+                && let Some(sym_id) = shape.symbol
+                && let Some(info) = self.private_external_module_nameability_info(sym_id)
+            {
+                return Some(info);
+            }
+        }
+
+        None
+    }
+
+    fn private_external_module_nameability_info(
+        &self,
+        sym_id: SymbolId,
+    ) -> Option<(String, String)> {
+        use tsz_binder::symbol_flags;
+
+        let resolved_sym_id = self
+            .resolve_alias_symbol(sym_id, &mut Vec::new())
+            .unwrap_or(sym_id);
+        let symbol = self.get_symbol_from_any_binder(resolved_sym_id)?;
+        let referenced_name = symbol.escaped_name.clone();
+
+        if referenced_name.is_empty() || referenced_name.starts_with("__") {
+            return None;
+        }
+
+        let Some(file_idx) = self.symbol_decl_file_idx(resolved_sym_id) else {
+            return None;
+        };
+        if file_idx == u32::MAX || file_idx == self.ctx.current_file_idx as u32 {
+            return None;
+        }
+
+        let target_binder = self.ctx.get_binder_for_file(file_idx as usize)?;
+        if !target_binder.is_external_module() {
+            return None;
+        }
+
+        let target_file_name = self
+            .ctx
+            .get_arena_for_file(file_idx)
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())?;
+        let is_exported_from_target = target_binder
+            .module_exports
+            .get(&target_file_name)
+            .is_some_and(|exports| {
+                exports
+                    .iter()
+                    .any(|(_, &export_sym_id)| export_sym_id == resolved_sym_id)
+            });
+        if is_exported_from_target {
+            return None;
+        }
+
+        let locally_nameable = self
+            .ctx
+            .binder
+            .file_locals
+            .iter()
+            .any(|(_, &local_sym_id)| {
+                let Some(local_symbol) = self.ctx.binder.get_symbol(local_sym_id) else {
+                    return false;
+                };
+                let is_from_current_file = local_symbol.decl_file_idx == u32::MAX
+                    || local_symbol.decl_file_idx == self.ctx.current_file_idx as u32;
+                let is_import = (local_symbol.flags & symbol_flags::ALIAS) != 0;
+                if !is_from_current_file && !is_import {
+                    return false;
+                }
+
+                local_sym_id == resolved_sym_id
+                    || self.ctx.binder.resolve_import_symbol(local_sym_id) == Some(resolved_sym_id)
+            });
+        if locally_nameable {
+            return None;
+        }
+
+        let module_specifier = self.module_specifier_for_file(file_idx)?;
+        Some((referenced_name, module_specifier))
+    }
+
     fn find_non_portable_symbol_reference(&self, sym_id: SymbolId) -> Option<(String, String)> {
         use std::path::{Component, Path};
         use tsz_binder::symbol_flags;

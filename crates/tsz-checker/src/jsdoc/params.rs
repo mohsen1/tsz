@@ -1026,12 +1026,23 @@ impl<'a> CheckerState<'a> {
                     if let Some(comment_start) = jsdoc_comment_start {
                         let display_name =
                             self.imported_namespace_display_module_name(&module_specifier);
+                        let resolved_qualifier = segments
+                            .iter()
+                            .filter_map(|(offset, segment)| {
+                                (*offset < member_offset).then_some(segment.as_str())
+                            })
+                            .collect::<Vec<_>>();
+                        let namespace_qualifier = if resolved_qualifier.is_empty() {
+                            format!("\"{display_name}\"")
+                        } else {
+                            format!("\"{display_name}\".{}", resolved_qualifier.join("."))
+                        };
                         let anchored_member_offset = effective_type_expr
                             .rfind(&format!(".{member_name}"))
                             .map(|offset| offset + 1)
                             .unwrap_or(member_offset);
                         let message = format!(
-                            "Namespace '\"{display_name}\".export=' has no exported member '{member_name}'."
+                            "Namespace '{namespace_qualifier}.export=' has no exported member '{member_name}'."
                         );
                         let source_start = self
                             .ctx

@@ -4501,6 +4501,62 @@ let a = <div/>;
 }
 
 #[test]
+fn jsx_fragment_with_jsx_pragma_requires_jsxfrag_even_when_react_in_scope() {
+    let source = r#"
+/** @jsx React.createElement */
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        [name: string]: any;
+    }
+}
+declare const React: any;
+<></>;
+"#;
+    let diags = jsx_diagnostics_with_mode(source, JsxMode::React);
+    assert!(
+        has_code(&diags, 17017),
+        "Expected TS17017 for missing @jsxFrag pragma, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, 2874),
+        "React is in scope, TS2874 should not fire: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, 2879),
+        "React fragment factory is in scope, TS2879 should not fire: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_fragment_with_custom_jsx_pragma_uses_default_react_fragment_scope() {
+    let source = r#"
+/** @jsx dom */
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        [name: string]: any;
+    }
+}
+declare function dom(...args: any[]): any;
+<></>;
+"#;
+    let diags = jsx_diagnostics_with_mode(source, JsxMode::React);
+    assert!(
+        has_code(&diags, 17017),
+        "Expected TS17017 for missing @jsxFrag pragma, got: {diags:?}"
+    );
+    assert!(
+        has_code(&diags, 2874),
+        "Expected TS2874 when default React fragment factory root is missing, got: {diags:?}"
+    );
+    assert!(
+        has_code(&diags, 2879),
+        "Expected TS2879 when fragment factory root is missing, got: {diags:?}"
+    );
+}
+
+#[test]
 fn jsx_factory_namespace_type_alias_does_not_break_dom_create_element_literal_inference() {
     let source = r#"
 export class X {

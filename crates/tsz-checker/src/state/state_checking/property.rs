@@ -791,14 +791,31 @@ impl<'a> CheckerState<'a> {
             )
             .unwrap_or_default();
 
-        let Some(idx) = matching_indices.first().copied() else {
+        if matching_indices.is_empty() {
             return false;
-        };
-        let narrowed_member_type = member_shapes[idx].0;
-        let narrowed_shape = &member_shapes[idx].1;
+        }
 
-        // Collect excess properties (not in narrowed member) with their AST positions.
-        // tsc reports only the first excess property in source order.
+        // Display the union of *all* members the discriminator narrowed to (tsc
+        // shows e.g. `'StringAttribute | OneToOneAttribute'`, not just the first
+        // matching member). The excess-property existence check still considers
+        // every narrowed member so we don't false-positive on properties that
+        // belong to one of the matches.
+        let narrowed_member_types: Vec<TypeId> = matching_indices
+            .iter()
+            .map(|&i| member_shapes[i].0)
+            .collect();
+        let display_target = if narrowed_member_types.len() == 1 {
+            narrowed_member_types[0]
+        } else {
+            tsz_solver::utils::union_or_single(self.ctx.types, narrowed_member_types.clone())
+        };
+        let narrowed_shapes: Vec<&std::sync::Arc<tsz_solver::ObjectShape>> = matching_indices
+            .iter()
+            .map(|&i| &member_shapes[i].1)
+            .collect();
+
+        // Collect excess properties (not in any narrowed member) with their AST
+        // positions. tsc reports only the first excess property in source order.
         let mut excess_candidates: Vec<(tsz_common::interner::Atom, NodeIndex, u32)> = Vec::new();
         for source_prop in source_props {
             if explicit_property_names.is_some()
@@ -809,10 +826,9 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let exists_in_narrowed = narrowed_shape
-                .properties
+            let exists_in_narrowed = narrowed_shapes
                 .iter()
-                .any(|p| p.name == source_prop.name);
+                .any(|shape| shape.properties.iter().any(|p| p.name == source_prop.name));
 
             if !exists_in_narrowed {
                 let report_idx = self
@@ -834,8 +850,15 @@ impl<'a> CheckerState<'a> {
                 earliest.1,
                 self.ctx.types.resolve_atom(earliest.0).as_ref(),
             );
-            self.error_excess_property_at(&prop_name, narrowed_member_type, earliest.1);
-            self.check_excess_property_initializer_implicit_any(earliest.1, narrowed_member_type);
+            // Use the multi-member union only for the diagnostic message text
+            // (display_target). For implicit-any initializer checking we still
+            // pass the first-matching member to keep contextual typing on the
+            // same path as the single-narrowed case.
+            self.error_excess_property_at(&prop_name, display_target, earliest.1);
+            self.check_excess_property_initializer_implicit_any(
+                earliest.1,
+                narrowed_member_types[0],
+            );
             true
         } else {
             false

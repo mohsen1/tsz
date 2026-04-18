@@ -307,6 +307,16 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if has_default_import
+            && self.import_binding_is_type_only(module_name, "default")
+            && clause.name.is_some()
+            && let default_name_idx = clause.name
+            && let Some(default_name) = self.get_identifier_text_from_idx(default_name_idx)
+            && self.should_report_js_type_only_import_diagnostic(clause.is_type_only, false)
+        {
+            self.emit_js_type_only_import_diagnostic(default_name_idx, &default_name, module_name);
+        }
+
         // Check named imports: import { X, Y } from "module"
         // Note: tsc validates named imports even when TS1192 fires for the default import.
         if has_named_imports {
@@ -633,72 +643,72 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 } else {
-                    // Import exists - check if it should be elided from JavaScript output
-                    // Get the symbol from the exports table
-                    if let Some(sym_id) = exports_table.get(import_name) {
-                        use tsz_binder::symbol_flags;
+                    // Import exists - check if it should be elided from JavaScript output.
+                    // This must account for plain type aliases/interfaces, namespace-like
+                    // imports with no runtime value, and cross-binder type-only chains.
+                    if self.import_binding_is_type_only(module_name, import_name) {
+                        // Mark this specifier node as type-only for elision during emit.
+                        self.ctx.type_only_nodes.insert(*element_idx);
 
-                        // Get the symbol (checking lib binders for cross-file resolution)
-                        let lib_binders: Vec<_> = self
+                        // TS18042: type-only import in JavaScript file.
+                        let specifier_is_type_only = self
                             .ctx
-                            .lib_contexts
-                            .iter()
-                            .map(|lc| std::sync::Arc::clone(&lc.binder))
-                            .collect();
-
-                        if let Some(symbol) =
-                            self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                        {
-                            // Check if the symbol is type-only (has TYPE flags but not VALUE flags)
-                            // This correctly handles:
-                            // - Interfaces and type aliases (elided)
-                            // - Classes (not elided - have both TYPE and VALUE flags)
-                            // - Declaration merging (e.g., interface + value - not elided)
-                            let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
-                            let has_value = (symbol.flags & symbol_flags::VALUE) != 0;
-
-                            if has_type && !has_value {
-                                // Mark this specifier node as type-only for elision during emit
-                                self.ctx.type_only_nodes.insert(*element_idx);
-
-                                // TS18042: Check for type import in JavaScript file
-                                // When importing a type-only symbol in a JS file with checkJs enabled,
-                                // emit an error suggesting to use JSDoc type annotation instead.
-                                // Skip if the specifier itself has the `type` modifier
-                                // (e.g., `import { type A } from "mod"` in a JS file is valid).
-                                let specifier_is_type_only = self
-                                    .ctx
-                                    .arena
-                                    .get(*element_idx)
-                                    .and_then(|n| self.ctx.arena.get_specifier(n))
-                                    .is_some_and(|s| s.is_type_only);
-                                if self.is_js_file()
-                                    && !clause.is_type_only
-                                    && !specifier_is_type_only
-                                {
-                                    use crate::diagnostics::{
-                                        diagnostic_codes, diagnostic_messages, format_message,
-                                    };
-                                    let clean_module =
-                                        module_name.trim_matches('\'').trim_matches('"');
-                                    let quoted_import =
-                                        format!("import(\"{clean_module}\").{import_name}");
-                                    let message = format_message(
-                                        diagnostic_messages::IS_A_TYPE_AND_CANNOT_BE_IMPORTED_IN_JAVASCRIPT_FILES_USE_IN_A_JSDOC_TYPE_ANNOTAT,
-                                        &[import_name, &quoted_import],
-                                    );
-                                    self.error_at_node(
-                                        *element_idx,
-                                        &message,
-                                        diagnostic_codes::IS_A_TYPE_AND_CANNOT_BE_IMPORTED_IN_JAVASCRIPT_FILES_USE_IN_A_JSDOC_TYPE_ANNOTAT,
-                                    );
-                                }
-                            }
+                            .arena
+                            .get(*element_idx)
+                            .and_then(|n| self.ctx.arena.get_specifier(n))
+                            .is_some_and(|s| s.is_type_only);
+                        if self.should_report_js_type_only_import_diagnostic(
+                            clause.is_type_only,
+                            specifier_is_type_only,
+                        ) {
+                            self.emit_js_type_only_import_diagnostic(
+                                *element_idx,
+                                import_name,
+                                module_name,
+                            );
                         }
                     }
                 }
             }
         }
+    }
+
+    fn import_binding_is_type_only(&self, module_name: &str, import_name: &str) -> bool {
+        self.is_import_specifier_type_only(module_name, import_name)
+            || self.is_export_type_only_across_binders(module_name, import_name)
+            || (import_name == "default" && self.is_module_export_equals_type_only(module_name))
+    }
+
+    fn should_report_js_type_only_import_diagnostic(
+        &self,
+        clause_is_type_only: bool,
+        specifier_is_type_only: bool,
+    ) -> bool {
+        self.is_js_file()
+            && self.ctx.should_resolve_jsdoc()
+            && !clause_is_type_only
+            && !specifier_is_type_only
+    }
+
+    fn emit_js_type_only_import_diagnostic(
+        &mut self,
+        report_at: NodeIndex,
+        import_name: &str,
+        module_name: &str,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let clean_module = module_name.trim_matches('\'').trim_matches('"');
+        let quoted_import = format!("import(\"{clean_module}\").{import_name}");
+        let message = format_message(
+            diagnostic_messages::IS_A_TYPE_AND_CANNOT_BE_IMPORTED_IN_JAVASCRIPT_FILES_USE_IN_A_JSDOC_TYPE_ANNOTAT,
+            &[import_name, &quoted_import],
+        );
+        self.error_at_node(
+            report_at,
+            &message,
+            diagnostic_codes::IS_A_TYPE_AND_CANNOT_BE_IMPORTED_IN_JAVASCRIPT_FILES_USE_IN_A_JSDOC_TYPE_ANNOTAT,
+        );
     }
 
     fn module_has_default_binding_fast_path(

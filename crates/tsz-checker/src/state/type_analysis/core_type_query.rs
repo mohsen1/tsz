@@ -783,6 +783,9 @@ impl<'a> CheckerState<'a> {
                     self.ctx
                         .register_symbol_file_target(export_sym_id, owner_file_idx);
                 }
+                if self.should_skip_namespace_export_name(&exports_table, name, export_sym_id) {
+                    continue;
+                }
                 let target_export_is_type_only = target_export_context
                     .as_ref()
                     .and_then(|(target_idx, file_name)| {
@@ -872,12 +875,16 @@ impl<'a> CheckerState<'a> {
 
         let mut current =
             self.build_typeof_import_namespace_type(&module_name, resolution_mode_override)?;
+        let mut resolved_segments: Vec<String> = Vec::new();
         for (segment_idx, segment) in segments {
             let access = self.resolve_property_access_with_env(current, &segment);
             current = match access {
                 crate::query_boundaries::common::PropertyAccessResult::Success {
                     type_id, ..
-                } => self.resolve_type_query_type(type_id),
+                } => {
+                    resolved_segments.push(segment.clone());
+                    self.resolve_type_query_type(type_id)
+                }
                 crate::query_boundaries::common::PropertyAccessResult::PropertyNotFound {
                     ..
                 }
@@ -897,7 +904,12 @@ impl<'a> CheckerState<'a> {
                                 )
                             })
                         });
-                    if let Some(namespace_name) = namespace_name {
+                    if let Some(mut namespace_name) = namespace_name {
+                        if namespace_name.ends_with(".export=") && !resolved_segments.is_empty() {
+                            let base = namespace_name.trim_end_matches(".export=");
+                            namespace_name =
+                                format!("{base}.{}.export=", resolved_segments.join("."));
+                        }
                         self.error_namespace_no_export(&namespace_name, &segment, segment_idx);
                     } else {
                         self.error_property_not_exist_at(&segment, current, segment_idx);

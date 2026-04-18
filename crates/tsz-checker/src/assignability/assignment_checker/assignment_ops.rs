@@ -613,6 +613,23 @@ impl<'a> CheckerState<'a> {
             // false excess-property errors before assignability is even skipped.
             // However, when an explicit JSDoc `@type` provides the assignment target,
             // tsc does contextually type the RHS from that declared type.
+            if self.ctx.is_checking_statements
+                && self.ctx.emit_declarations()
+                && !self.ctx.is_declaration_file()
+                && self.ctx.should_resolve_jsdoc()
+            {
+                let right_type = self.get_type_of_node(right_idx);
+                if let Some((private_name, module_specifier)) =
+                    self.first_private_name_from_external_module_reference(right_type)
+                {
+                    let quoted_module = format!("\"{module_specifier}\"");
+                    self.error_at_node_msg(
+                        left_idx,
+                        crate::diagnostics::diagnostic_codes::DECLARATION_EMIT_FOR_THIS_FILE_REQUIRES_USING_PRIVATE_NAME_FROM_MODULE_AN_EXPLIC,
+                        &[&private_name, &quoted_module],
+                    );
+                }
+            }
             if !has_explicit_jsdoc_left_type {
                 return self.get_type_of_node(right_idx);
             }

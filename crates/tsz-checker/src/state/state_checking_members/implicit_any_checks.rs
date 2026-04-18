@@ -31,11 +31,12 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::diagnostics::diagnostic_codes;
 
-        // In tsc, both TS7019 (rest parameter) and TS7006/TS7051 (regular parameter)
-        // implicit-any diagnostics are emitted as suggestions (not errors) when
-        // noImplicitAny is off. Since we only track errors, gate both behind
-        // noImplicitAny to match tsc's error-level behavior.
-        if !self.ctx.no_implicit_any() || has_contextual_type {
+        // In checked JavaScript files, TS7006/TS7019 diagnostics are enforced even
+        // when `noImplicitAny` is not enabled. In TS files, keep the usual
+        // `noImplicitAny` gate.
+        let implicit_any_diagnostics_enabled =
+            self.ctx.no_implicit_any() || (self.is_js_file() && self.ctx.should_resolve_jsdoc());
+        if !implicit_any_diagnostics_enabled || has_contextual_type {
             return;
         }
         // Skip rest parameters named 'arguments' — tsc emits TS1100 instead of TS7019
