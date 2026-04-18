@@ -513,17 +513,33 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // tsc 6.0 skips scope checking when jsxFactory is explicitly set.
-        // However, we still need to mark the factory symbol as referenced
-        // so that unused-import checking (TS6192) doesn't flag it.
+        // tsc 6.0 skips scope checking when jsxFactory / jsxFragmentFactory is
+        // explicitly set: the option is a name hint rather than a scope
+        // requirement, and other diagnostics (TS17016, TS17017, TS5024) cover
+        // invalid configured names. We still mark the factory symbol referenced
+        // so unused-import checking (TS6192) doesn't flag it.
         let is_fragment = self
             .ctx
             .arena
             .get(node_idx)
             .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::JSX_FRAGMENT);
-        if self.ctx.compiler_options.jsx_factory_from_config && !is_fragment {
+        if !is_fragment && self.ctx.compiler_options.jsx_factory_from_config {
             self.mark_jsx_name_as_referenced(
                 &self.ctx.compiler_options.jsx_factory.clone(),
+                node_idx,
+            );
+            return;
+        }
+        // For fragments, skip TS2874 whenever EITHER jsxFactory OR
+        // jsxFragmentFactory is configured: tsc treats those as a user-driven
+        // factory regime and reports TS17016 / TS17017 / TS5024 instead of
+        // the scope-of-default-factory message.
+        if is_fragment
+            && (self.ctx.compiler_options.jsx_fragment_factory_from_config
+                || self.ctx.compiler_options.jsx_factory_from_config)
+        {
+            self.mark_jsx_name_as_referenced(
+                &self.ctx.compiler_options.jsx_fragment_factory.clone(),
                 node_idx,
             );
             return;

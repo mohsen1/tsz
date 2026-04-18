@@ -650,6 +650,12 @@ impl<'a> CheckerState<'a> {
         let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
             return Vec::new();
         };
+        if self
+            .current_file_default_export_identifier_named(name)
+            .is_none()
+        {
+            return Vec::new();
+        }
         if self.ctx.binder.is_external_module() {
             return Vec::new();
         }
@@ -1186,38 +1192,6 @@ impl<'a> CheckerState<'a> {
             let Some(source_file_node) = arena.source_files.first() else {
                 continue;
             };
-
-            let exports_default_name = source_file_node.statements.nodes.iter().any(|&stmt_idx| {
-                let Some(stmt_node) = arena.get(stmt_idx) else {
-                    return false;
-                };
-                if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
-                    let Some(assign) = arena.get_export_assignment(stmt_node) else {
-                        return false;
-                    };
-                    if assign.is_export_equals {
-                        return false;
-                    }
-                    return arena
-                        .get_identifier_at(assign.expression)
-                        .is_some_and(|ident| ident.escaped_text == name);
-                }
-                if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-                    let Some(export_decl) = arena.get_export_decl(stmt_node) else {
-                        return false;
-                    };
-                    if export_decl.module_specifier.is_some() {
-                        return false;
-                    }
-                    return arena
-                        .get_identifier_at(export_decl.export_clause)
-                        .is_some_and(|ident| ident.escaped_text == name);
-                }
-                false
-            });
-            if !exports_default_name {
-                continue;
-            }
 
             for &stmt_idx in &source_file_node.statements.nodes {
                 let Some(stmt_node) = arena.get(stmt_idx) else {

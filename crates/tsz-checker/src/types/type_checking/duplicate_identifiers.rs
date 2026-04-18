@@ -1175,7 +1175,9 @@ impl<'a> CheckerState<'a> {
                         // sides are of different types.
                         let remote_is_block_scoped =
                             (remote_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0;
-                        let remote_is_ns_alias = (remote_flags & symbol_flags::ALIAS) != 0;
+                        let remote_is_ns_alias = (remote_flags & symbol_flags::ALIAS) != 0
+                            && (remote_flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
+                            && (remote_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0;
                         // `export as namespace X` from another file should only
                         // conflict with local block-scoped global-augmentation
                         // values (`declare global { const/let X }`). It should
@@ -1332,6 +1334,27 @@ impl<'a> CheckerState<'a> {
                             != 0
                     {
                         conflicts.insert(decl_idx);
+                    }
+                }
+            }
+
+            if conflicts.is_empty() {
+                let has_remote_default_import_alias_conflict =
+                    declarations.iter().any(|(_, flags, is_local, _, origin)| {
+                        !*is_local
+                            && *origin == DuplicateDeclarationOrigin::GlobalScopeConflict
+                            && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                            && (flags & symbol_flags::ALIAS) != 0
+                    });
+                if has_remote_default_import_alias_conflict {
+                    for &(decl_idx, decl_flags, is_local, _, _) in &declarations {
+                        if is_local
+                            && (decl_flags
+                                & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+                                != 0
+                        {
+                            conflicts.insert(decl_idx);
+                        }
                     }
                 }
             }
@@ -1937,12 +1960,22 @@ impl<'a> CheckerState<'a> {
 
             // In ES6+, function declarations inside blocks are block-scoped.
             // They don't escape the block, so they don't conflict with
-            // let/const in outer scopes. Skip when ALL conflicting outer
-            // declarations are block-scoped variables.
-            let all_outer_are_block_scoped = conflicting_outer_decls
-                .iter()
-                .all(|(_, flags)| (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0);
-            if all_outer_are_block_scoped {
+            // let/const OR var in outer scopes (the var binds at function
+            // scope, the block function binds at block scope — different
+            // scopes ⇒ no merge ⇒ no TS2300/TS2451). Match tsc:
+            // duplicateIdentifierInCatchBlock.ts only emits errors for the
+            // `var w` ⇄ outer `function w` collision (where the function is
+            // at function scope itself), not for the catch-block-nested
+            // `function v / function x` cases.
+            let all_outer_are_simple_variables =
+                conflicting_outer_decls.iter().all(|(_, flags)| {
+                    (flags
+                        & (symbol_flags::BLOCK_SCOPED_VARIABLE
+                            | symbol_flags::FUNCTION_SCOPED_VARIABLE))
+                        != 0
+                });
+            if all_outer_are_simple_variables && self.ctx.compiler_options.target.supports_es2015()
+            {
                 continue;
             }
 
