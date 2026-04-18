@@ -677,6 +677,12 @@ impl<'a> CheckerState<'a> {
                                     || (flags & symbol_flags::FUNCTION) != 0
                                 {
                                     SPACE_VALUE
+                                } else if (flags & symbol_flags::ALIAS) != 0 {
+                                    // Import-alias declarations (`import Foo = ...`) occupy both
+                                    // type and value space (matching tsc's AliasExcludes = Alias
+                                    // semantics). This ensures TS2395 fires when an unexported
+                                    // alias and an exported type alias share the same name.
+                                    SPACE_VALUE | SPACE_TYPE
                                 } else {
                                     0
                                 };
