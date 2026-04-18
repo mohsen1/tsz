@@ -1129,7 +1129,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         let is_valid_index_type = key_type == TypeId::STRING
                             || key_type == TypeId::NUMBER
                             || key_type == TypeId::SYMBOL
-                            || tsz_solver::visitor::is_template_literal_type(
+                            || crate::query_boundaries::common::is_template_literal_type(
                                 self.ctx.types,
                                 key_type,
                             );

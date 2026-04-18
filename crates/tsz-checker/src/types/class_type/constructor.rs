@@ -1523,8 +1523,11 @@ impl<'a> CheckerState<'a> {
                     // bypassing node_types/symbol_types caches.
                     if let Some(annotation_type_id) =
                         self.resolve_param_type_annotation(base_sym_id)
-                        && tsz_solver::visitor::type_param_info(self.ctx.types, annotation_type_id)
-                            .is_some()
+                        && crate::query_boundaries::common::type_param_info(
+                            self.ctx.types,
+                            annotation_type_id,
+                        )
+                        .is_some()
                     {
                         base_type_param = Some(annotation_type_id);
                     }

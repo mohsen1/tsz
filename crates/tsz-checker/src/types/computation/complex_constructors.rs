@@ -399,7 +399,8 @@ impl<'a> CheckerState<'a> {
         let resolved_key_type = self.resolve_lazy_type(evaluated_key_type);
 
         for candidate in [key_type, evaluated_key_type, resolved_key_type] {
-            if let Some(sym_ref) = tsz_solver::visitor::unique_symbol_ref(self.ctx.types, candidate)
+            if let Some(sym_ref) =
+                crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, candidate)
             {
                 return Some(format!("__unique_{}", sym_ref.0));
             }

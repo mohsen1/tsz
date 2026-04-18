@@ -324,7 +324,7 @@ impl<'a> CheckerState<'a> {
                 // for alpha-renaming during generic function subtype comparison.
                 let skip = !own_tp_names.is_empty()
                     && own_tp_names.iter().any(|&name| {
-                        tsz_solver::visitor::contains_type_parameter_named(
+                        crate::query_boundaries::common::contains_type_parameter_named(
                             self.ctx.types,
                             param.type_id,
                             name,
@@ -362,7 +362,7 @@ impl<'a> CheckerState<'a> {
             // that blocks the alpha-renaming substitution.
             let skip_for_type_params = !own_tp_names.is_empty()
                 && own_tp_names.iter().any(|&name| {
-                    tsz_solver::visitor::contains_type_parameter_named(
+                    crate::query_boundaries::common::contains_type_parameter_named(
                         self.ctx.types,
                         shape.return_type,
                         name,
@@ -821,7 +821,7 @@ impl<'a> CheckerState<'a> {
         // that would lead to false positive diagnostics. These include:
         // - Types with type parameters that might cause recursive constraint issues
         let should_suppress_for_complex_type = |type_id: TypeId| -> bool {
-            if tsz_solver::visitor::is_type_parameter(self.ctx.types, type_id)
+            if crate::query_boundaries::common::is_type_parameter(self.ctx.types, type_id)
                 || is_callable_or_function(type_id)
                 || is_structural_target_that_must_not_be_suppressed(type_id)
             {
@@ -1047,11 +1047,17 @@ impl<'a> CheckerState<'a> {
                     current,
                 ) {
                     for p in &shape.params {
-                        if tsz_solver::visitor::is_type_parameter(self.ctx.types, p.type_id) {
+                        if crate::query_boundaries::common::is_type_parameter(
+                            self.ctx.types,
+                            p.type_id,
+                        ) {
                             params.push(p.type_id);
                         }
                     }
-                    if tsz_solver::visitor::is_type_parameter(self.ctx.types, shape.return_type) {
+                    if crate::query_boundaries::common::is_type_parameter(
+                        self.ctx.types,
+                        shape.return_type,
+                    ) {
                         params.push(shape.return_type);
                         break;
                     }
@@ -1301,7 +1307,7 @@ impl<'a> CheckerState<'a> {
                 // the instance type for class symbols (stored by type-position
                 // resolution paths like resolve_lazy_def_for_type_env), but
                 // TypeQuery needs the value-position type (constructor for classes).
-                if let Some(symbol_ref) = tsz_solver::visitor::type_query_symbol(
+                if let Some(symbol_ref) = crate::query_boundaries::common::type_query_symbol(
                     self.ctx.types.as_type_database(),
                     type_id,
                 ) {
@@ -1682,8 +1688,10 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     target,
                 )
-            && let Some(s_param) = tsz_solver::visitor::type_param_info(self.ctx.types, s_obj)
-            && let Some(t_param) = tsz_solver::visitor::type_param_info(self.ctx.types, t_obj)
+            && let Some(s_param) =
+                crate::query_boundaries::common::type_param_info(self.ctx.types, s_obj)
+            && let Some(t_param) =
+                crate::query_boundaries::common::type_param_info(self.ctx.types, t_obj)
             && s_param.name == t_param.name
             && self.is_assignable_to(s_idx, t_idx)
         {
@@ -1795,7 +1803,8 @@ impl<'a> CheckerState<'a> {
             return keyof_operand == object_type;
         }
 
-        if let Some(param_info) = tsz_solver::visitor::type_param_info(self.ctx.types, index_type)
+        if let Some(param_info) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, index_type)
             && let Some(constraint) = param_info.constraint
             && let Some(keyof_operand) = get_keyof_type(self.ctx.types, constraint)
         {
@@ -1810,7 +1819,8 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         candidate_types: &mut Vec<TypeId>,
     ) {
-        if let Some(param_info) = tsz_solver::visitor::type_param_info(self.ctx.types, object_type)
+        if let Some(param_info) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, object_type)
             && let Some(constraint) = param_info.constraint
         {
             self.collect_deferred_index_access_candidate_types(constraint, candidate_types);
@@ -1839,10 +1849,13 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let shape_id =
-            tsz_solver::visitor::object_shape_id(self.ctx.types, object_type).or_else(|| {
-                tsz_solver::visitor::object_with_index_shape_id(self.ctx.types, object_type)
-            });
+        let shape_id = crate::query_boundaries::common::object_shape_id(
+            self.ctx.types,
+            object_type,
+        )
+        .or_else(|| {
+            crate::query_boundaries::common::object_with_index_shape_id(self.ctx.types, object_type)
+        });
 
         if let Some(shape_id) = shape_id {
             let shape = self.ctx.types.object_shape(shape_id);

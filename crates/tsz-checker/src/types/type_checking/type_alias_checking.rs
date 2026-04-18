@@ -81,7 +81,7 @@ impl<'a> CheckerState<'a> {
             if steps > 64 {
                 break;
             }
-            pending.extend(tsz_solver::visitor::collect_lazy_def_ids(
+            pending.extend(crate::query_boundaries::common::collect_lazy_def_ids(
                 self.ctx.types,
                 body,
             ));
@@ -205,12 +205,12 @@ impl<'a> CheckerState<'a> {
             // Only check when the body is a conditional type — tsc emits TS2589
             // at definition time specifically for recursive conditional types,
             // not indexed access or other patterns.
-            let body_is_conditional = tsz_solver::visitor::is_conditional_type(
+            let body_is_conditional = crate::query_boundaries::common::is_conditional_type(
                 self.ctx.types.as_type_database(),
                 body_type,
             );
             let body_refs = if body_is_conditional {
-                tsz_solver::visitor::collect_lazy_def_ids(self.ctx.types, body_type)
+                crate::query_boundaries::common::collect_lazy_def_ids(self.ctx.types, body_type)
             } else {
                 Vec::new()
             };

@@ -154,9 +154,10 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or_else(|| {
                     // Key is not wrapped in keyof. Check for intersection like
                     // `keyof T & string` - strip intersection members that are keyof.
-                    if let Some(members_id) =
-                        tsz_solver::visitor::intersection_list_id(self.ctx.types, key_source)
-                    {
+                    if let Some(members_id) = crate::query_boundaries::common::intersection_list_id(
+                        self.ctx.types,
+                        key_source,
+                    ) {
                         let members = self.ctx.types.type_list(members_id);
                         // Check if T only appears inside keyof members of the intersection
                         members.iter().any(|&member| {

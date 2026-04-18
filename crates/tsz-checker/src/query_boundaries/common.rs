@@ -1550,3 +1550,104 @@ pub(crate) fn new_binary_op_evaluator(
 ) -> tsz_solver::BinaryOpEvaluator<'_> {
     tsz_solver::BinaryOpEvaluator::new(db)
 }
+
+// ── Visitor aliases (same-name wrappers for inline-call migration) ─────────
+
+pub(crate) fn intersection_list_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::types::TypeListId> {
+    tsz_solver::visitor::intersection_list_id(db, type_id)
+}
+
+pub(crate) fn tuple_list_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::TupleListId> {
+    tsz_solver::visitor::tuple_list_id(db, type_id)
+}
+
+pub(crate) fn unique_symbol_ref(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::types::SymbolRef> {
+    tsz_solver::visitor::unique_symbol_ref(db, type_id)
+}
+
+pub(crate) fn is_object_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::visitor::is_object_like_type(db, type_id)
+}
+
+pub(crate) fn is_enum_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::visitor::is_enum_type(db, type_id)
+}
+
+pub(crate) fn is_lazy_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::visitor::is_lazy_type(db, type_id)
+}
+
+pub(crate) fn is_primitive_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::visitor::is_primitive_type(db, type_id)
+}
+
+pub(crate) fn is_literal_type_through_type_constraints(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::visitor::is_literal_type_through_type_constraints(db, type_id)
+}
+
+pub(crate) fn has_late_bound_members(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::visitor::has_late_bound_members(db, type_id)
+}
+
+pub(crate) fn object_with_index_shape_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::ObjectShapeId> {
+    tsz_solver::visitor::object_with_index_shape_id(db, type_id)
+}
+
+pub(crate) fn contains_type_parameter_named_shallow(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    name: tsz_common::interner::Atom,
+) -> bool {
+    tsz_solver::visitor::contains_type_parameter_named_shallow(db, type_id, name)
+}
+
+pub(crate) fn contains_concrete_application_with_def(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    def_id: tsz_solver::def::DefId,
+) -> bool {
+    tsz_solver::visitor::contains_concrete_application_with_def(db, type_id, def_id)
+}
+
+pub(crate) fn no_infer_inner_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::visitor::no_infer_inner_type(db, type_id)
+}
+
+/// Alias for `readonly_inner_type` — same semantics, consistent naming.
+pub(crate) fn readonly_inner_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::visitor::readonly_inner_type(db, type_id)
+}
+
+/// Alias for `type_query_symbol` — extracts the symbol ref from a `typeof T` type.
+pub(crate) fn type_query_symbol(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::types::SymbolRef> {
+    tsz_solver::visitor::type_query_symbol(db, type_id)
+}
+
+pub(crate) fn walk_referenced_types<F>(db: &dyn TypeDatabase, type_id: TypeId, visitor: F)
+where
+    F: FnMut(TypeId),
+{
+    tsz_solver::visitor::walk_referenced_types(db, type_id, visitor)
+}
+
+pub(crate) fn is_function_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::visitor::is_function_type(db, type_id)
+}

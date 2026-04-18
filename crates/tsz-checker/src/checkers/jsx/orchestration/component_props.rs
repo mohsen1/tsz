@@ -556,8 +556,10 @@ impl<'a> CheckerState<'a> {
 
                 let key_type = self.get_type_from_type_node(param.type_annotation);
                 let key_type = self.evaluate_type_with_env(key_type);
-                if !tsz_solver::visitor::is_template_literal_type(self.ctx.types, key_type)
-                    || !self.is_assignable_to(tag_literal, key_type)
+                if !crate::query_boundaries::common::is_template_literal_type(
+                    self.ctx.types,
+                    key_type,
+                ) || !self.is_assignable_to(tag_literal, key_type)
                 {
                     continue;
                 }
