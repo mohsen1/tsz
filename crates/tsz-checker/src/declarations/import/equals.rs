@@ -1262,14 +1262,19 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        // Check alias chain for transitive type-only
-        if self.alias_resolves_to_type_only(sym_id) {
-            return Some(self.determine_type_only_kind_from_alias(sym_id));
-        }
+        // NOTE: we intentionally do NOT shortcut through `alias_resolves_to_type_only`
+        // here. That helper also returns true for *content-based* type-only (e.g. a
+        // namespace whose members are all type aliases), but TS1380/TS1379 are
+        // *syntactic* errors — they only fire when the chain literally used
+        // `import type` / `export type`. A namespace with only type members is a
+        // separate error (e.g. TS1269 under isolatedModules), not TS1380.
+        //
+        // The walking below only checks `is_type_only` flags on each symbol in the
+        // alias chain, which is the correct syntactic check.
 
         // For import-equals aliases (`import A = ns.Member`), the binder doesn't set
-        // import_module, so alias_resolves_to_type_only can't trace through.
-        // Check the declaration's RHS for type-only references.
+        // import_module, so the per-symbol `is_type_only` check alone can't trace
+        // through. Check the declaration's RHS for type-only references.
         // Also follow through export alias → local symbol chains.
         if symbol.flags & tsz_binder::symbol_flags::ALIAS != 0 {
             // Collect all symbols to check: the current symbol plus anything it aliases to
