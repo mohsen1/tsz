@@ -12,7 +12,8 @@ mod duplicate_identifiers_merge;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_binder::symbol_flags;
-use tsz_parser::parser::NodeIndex; use tsz_solver::TypeId;
+use tsz_parser::parser::NodeIndex;
+use tsz_solver::TypeId;
 
 pub(super) type OuterDeclResult = Option<(tsz_binder::SymbolId, Vec<(NodeIndex, u32)>)>;
 
