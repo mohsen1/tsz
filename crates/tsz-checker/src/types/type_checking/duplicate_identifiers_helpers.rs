@@ -650,7 +650,10 @@ impl<'a> CheckerState<'a> {
         let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
             return Vec::new();
         };
-        if self.current_file_default_export_identifier_named(name).is_none() {
+        if self
+            .current_file_default_export_identifier_named(name)
+            .is_none()
+        {
             return Vec::new();
         }
         if self.ctx.binder.is_external_module() {
