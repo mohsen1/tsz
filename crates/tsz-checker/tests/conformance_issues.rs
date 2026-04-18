@@ -3016,6 +3016,60 @@ exports.x;
 }
 
 #[test]
+fn test_js_late_bound_commonjs_exports_preserve_typeof_import_display_name() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "lateBoundAssignmentDeclarationSupport1.js",
+                r#"
+const _sym = Symbol();
+const _str = "my-fake-sym";
+
+exports[_sym] = "ok";
+exports[_str] = "ok";
+exports.S = _sym;
+"#,
+            ),
+            (
+                "usage.js",
+                r#"
+const x = require("./lateBoundAssignmentDeclarationSupport1.js");
+const y = x["my-fake-sym"];
+const z = x[x.S];
+"#,
+            ),
+        ],
+        "usage.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts7053_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7053)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert!(
+        ts7053_messages.len() >= 2,
+        "Expected TS7053 for late-bound key reads from the required namespace. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts7053_messages.iter().any(|message| {
+            message.contains("typeof import(\"lateBoundAssignmentDeclarationSupport1\")")
+        }),
+        "Expected TS7053 to preserve `typeof import(...)` namespace display. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_js_constructor_void_zero_assignment_does_not_create_member() {
     let diagnostics = compile_and_get_diagnostics_named(
         "a.js",
@@ -23749,6 +23803,10 @@ export { configs };
                 r#"
 import * as pluginImportX from "./pkg/index";
 const cfg = pluginImportX.configs["stage-0"];
+interface Plugin {
+  configs?: Record<string, { parser: string | null }>;
+}
+const p: Plugin = pluginImportX;
 "#,
             ),
         ],
@@ -23766,6 +23824,74 @@ const cfg = pluginImportX.configs["stage-0"];
             .iter()
             .any(|(code, _)| *code == 2339 || *code == 2551),
         "Namespace import should expose `configs` from `export = typeof import(...)`; got: {diagnostics:#?}"
+    );
+
+    let ts2322_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message.as_str())
+        .collect();
+    assert_eq!(
+        ts2322_messages.len(),
+        1,
+        "Expected one assignability mismatch for Plugin assignment. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !ts2322_messages[0].contains("_default"),
+        "Namespace surface should not leak internal `_default` alias. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_typeof_import_nested_export_equals_qualifier_includes_cross_file_path() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "foo2.d.ts",
+                r#"
+export namespace bar {
+    export const existing: number;
+}
+"#,
+            ),
+            (
+                "foo.d.ts",
+                r#"
+declare const x: typeof import("./foo2");
+export = x;
+"#,
+            ),
+            (
+                "main.ts",
+                r#"
+type T = typeof import("./foo").bar.missing;
+"#,
+            ),
+        ],
+        "main.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2020,
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2694_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2694)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2694_messages.len(),
+        1,
+        "Expected one TS2694 for missing nested export. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2694_messages[0]
+            .contains("Namespace '\"foo\".bar.export=' has no exported member 'missing'."),
+        "Expected nested cross-file qualifier path in TS2694. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
