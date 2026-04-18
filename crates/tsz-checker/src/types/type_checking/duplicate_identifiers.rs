@@ -47,7 +47,7 @@ impl<'a> CheckerState<'a> {
         // per file due to HashMap lookups for each symbol's declarations.
         // Optimization: pre-build a set of user-code symbols from node_symbols, then
         // intersect with non-class scope symbols to preserve the Class-scope exclusion.
-        let symbol_ids: FxHashSet<tsz_binder::SymbolId> = if has_libs {
+        let mut symbol_ids: FxHashSet<tsz_binder::SymbolId> = if has_libs {
             let user_syms: FxHashSet<tsz_binder::SymbolId> =
                 self.ctx.binder.node_symbols.values().copied().collect();
             let mut result = FxHashSet::default();
@@ -89,6 +89,11 @@ impl<'a> CheckerState<'a> {
             }
             result
         };
+
+        // Declarations inside `declare module {}` / `declare global {}` blocks are not
+        // guaranteed to appear in top-level scope tables, but they still participate in
+        // duplicate-name checks for the current file.
+        self.extend_duplicate_symbol_ids_with_local_augmentation_decls(&mut symbol_ids);
 
         let mut cross_file_conflicts = Vec::new();
         for &sym_id in &symbol_ids {

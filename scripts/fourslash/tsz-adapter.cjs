@@ -321,11 +321,14 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
                     request.arguments &&
                     request.arguments.options
                 ) {
+                    // Options arrive already serialized. Only normalize `module`
+                    // aliases; don't re-run serializeCompilerOptions (see wrapper
+                    // comment above — it reverse-maps "es5" → null).
                     const normalizedOptions = normalizeCompilerOptions(request.arguments.options);
-                    request.arguments.options = ts.optionMapToObject(
-                        ts.serializeCompilerOptions(normalizedOptions || {})
-                    );
-                    outboundMessage = JSON.stringify(request);
+                    if (normalizedOptions) {
+                        request.arguments.options = normalizedOptions;
+                        outboundMessage = JSON.stringify(request);
+                    }
                 }
             } catch {
                 // Best-effort normalization only; keep original payload on parse failures.
@@ -699,9 +702,14 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
             const originalSetCompilerOptionsForInferredProjects = this._client.setCompilerOptionsForInferredProjects?.bind(this._client);
             if (originalSetCompilerOptionsForInferredProjects) {
                 this._client.setCompilerOptionsForInferredProjects = (rawOptions) => {
+                    // Callers already pass options in serialized (protocol) form.
+                    // Do NOT call ts.serializeCompilerOptions again — its reverse
+                    // map treats the already-serialized values as unknowns and
+                    // emits null (e.g. "es5" → null), which drops the effective
+                    // `lib` from tsz-server's inferred-project state.
                     const normalizedOptions = normalizeCompilerOptions(rawOptions);
                     return originalSetCompilerOptionsForInferredProjects(
-                        ts.optionMapToObject(ts.serializeCompilerOptions(normalizedOptions || {}))
+                        normalizedOptions || {}
                     );
                 };
             }

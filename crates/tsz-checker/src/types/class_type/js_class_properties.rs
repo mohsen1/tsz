@@ -77,7 +77,10 @@ impl CheckerState<'_> {
         template_types
     }
 
-    fn js_class_body_param_type_map(&mut self, body_idx: NodeIndex) -> FxHashMap<String, TypeId> {
+    pub(crate) fn js_class_body_param_type_map(
+        &mut self,
+        body_idx: NodeIndex,
+    ) -> FxHashMap<String, TypeId> {
         let mut param_type_map = FxHashMap::default();
         let Some(parent_idx) = self.ctx.arena.get_extended(body_idx).map(|ext| ext.parent) else {
             return param_type_map;
