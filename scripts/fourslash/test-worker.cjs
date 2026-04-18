@@ -1037,9 +1037,20 @@ function patchSessionClient(SessionClient, ts) {
         } catch {
             // Best-effort: if completion lookup fails, keep detail kind modifiers as-is.
         }
-        const displayText = Array.isArray(result?.displayParts)
-            ? result.displayParts.map(part => String(part?.text || "")).join("")
-            : "";
+        const displayPartsToText = (parts) =>
+            Array.isArray(parts)
+                ? parts.map(part => String(part?.text || "")).join("")
+                : "";
+        const tagsToText = (tags) =>
+            Array.isArray(tags)
+                ? tags.map(tag => {
+                    if (Array.isArray(tag?.text)) {
+                        return tag.text.map(part => String(part?.text || "")).join("");
+                    }
+                    return String(tag?.text || "");
+                }).join("")
+                : "";
+        const displayText = displayPartsToText(result?.displayParts);
         const looksPlaceholderDetails =
             !result ||
             !Array.isArray(result.displayParts) ||
@@ -1063,14 +1074,46 @@ function patchSessionClient(SessionClient, ts) {
                 )
             );
             if (nativeResult) {
-                const nativeDisplayText = Array.isArray(nativeResult?.displayParts)
-                    ? nativeResult.displayParts.map(part => String(part?.text || "")).join("")
-                    : "";
+                const nativeDisplayText = displayPartsToText(nativeResult?.displayParts);
                 const shouldPreferNative =
                     looksPlaceholderDetails ||
                     (!!nativeDisplayText && nativeDisplayText !== displayText);
                 if (shouldPreferNative) {
                     const mergedNativeResult = { ...nativeResult };
+                    const tszDocumentation = Array.isArray(result?.documentation)
+                        ? result.documentation
+                        : undefined;
+                    const tszTags = Array.isArray(result?.tags)
+                        ? result.tags
+                        : undefined;
+                    const nativeDocumentationText = displayPartsToText(nativeResult?.documentation);
+                    const tszDocumentationText = displayPartsToText(tszDocumentation);
+                    const nativeTagsText = tagsToText(nativeResult?.tags);
+                    const tszTagsText = tagsToText(tszTags);
+                    const docsNativeLooksTruncated =
+                        !!nativeDocumentationText &&
+                        !!tszDocumentationText &&
+                        tszDocumentationText.startsWith(nativeDocumentationText) &&
+                        tszDocumentationText.length > nativeDocumentationText.length;
+                    const tagsNativeLookTruncated =
+                        !!nativeTagsText &&
+                        !!tszTagsText &&
+                        tszTagsText.startsWith(nativeTagsText) &&
+                        tszTagsText.length > nativeTagsText.length;
+                    if (
+                        tszDocumentation &&
+                        tszDocumentation.length > 0 &&
+                        (!nativeDocumentationText || docsNativeLooksTruncated)
+                    ) {
+                        mergedNativeResult.documentation = tszDocumentation;
+                    }
+                    if (
+                        tszTags &&
+                        tszTags.length > 0 &&
+                        (!nativeTagsText || tagsNativeLookTruncated)
+                    ) {
+                        mergedNativeResult.tags = tszTags;
+                    }
                     if (completionEntryKindModifiers !== undefined) {
                         mergedNativeResult.kindModifiers = completionEntryKindModifiers;
                     }
