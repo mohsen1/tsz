@@ -635,7 +635,7 @@ impl<'a> CheckerState<'a> {
                 let mut arithmetic_ok = true;
 
                 {
-                    use tsz_solver::BinaryOpEvaluator;
+                    use crate::query_boundaries::common::BinaryOpEvaluator;
                     let evaluator = BinaryOpEvaluator::new(self.ctx.types);
                     let (non_nullish, nullish_cause) = self.split_nullish_type(operand_type);
                     let nullish_can_flow_to_number = non_nullish.is_none_or(|ty| {

@@ -183,7 +183,7 @@ impl<'a> CheckerState<'a> {
     /// Returns `None` if the type is not a primitive or no boxed type is registered.
     fn resolve_primitive_to_boxed_type(&self, type_id: TypeId) -> Option<TypeId> {
         use crate::query_boundaries::common::IntrinsicKind;
-        use tsz_solver::def::resolver::TypeResolver;
+        use crate::query_boundaries::common::TypeResolver;
 
         let kind = if tsz_solver::type_queries::is_string_type(self.ctx.types, type_id)
             || tsz_solver::type_queries::is_string_literal(self.ctx.types, type_id)

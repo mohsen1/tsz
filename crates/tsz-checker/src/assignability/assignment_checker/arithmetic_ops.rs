@@ -17,7 +17,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true if the type is number, bigint, any, or an enum type.
     /// This is used to validate operands for TS2362/TS2363 errors.
     fn is_arithmetic_operand(&self, type_id: TypeId) -> bool {
-        use tsz_solver::BinaryOpEvaluator;
+        use crate::query_boundaries::common::BinaryOpEvaluator;
 
         // Check if this is an enum type (Lazy/DefId to an enum symbol)
         if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)

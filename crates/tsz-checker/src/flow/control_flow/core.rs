@@ -1,3 +1,4 @@
+use crate::query_boundaries::common::QueryDatabase;
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::flow_analysis as query;
 use crate::query_boundaries::flow_analysis::{tuple_elements_for_type, union_members_for_type};
@@ -12,7 +13,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{GuardSense, ParamInfo, QueryDatabase, TupleElement, TypeId, TypePredicate};
+use tsz_solver::{GuardSense, ParamInfo, TupleElement, TypeId, TypePredicate};
 
 type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
 type ReferenceMatchCache = RefCell<FxHashMap<(u32, u32), bool>>;
