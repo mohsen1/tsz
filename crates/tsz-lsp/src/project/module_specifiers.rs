@@ -79,6 +79,22 @@ impl Project {
             if let Some(root_dirs_relative) = root_dirs_relative {
                 candidates.push(root_dirs_relative);
             }
+        } else if pref == Some("relative") || pref == Some("project-relative") {
+            // TypeScript still prefers dependency package specifiers (workspace links /
+            // node_modules) over deep relative traversals, even under explicit
+            // `relative` preference.
+            if let Some(workspace_package_specifier) = workspace_package_specifier.as_ref() {
+                candidates.push(workspace_package_specifier.clone());
+            }
+            if let Some(package_specifier) = package_specifier.as_ref() {
+                candidates.push(package_specifier.clone());
+            }
+            candidates.push(relative);
+            if let Some(root_dirs_relative) = root_dirs_relative {
+                candidates.push(root_dirs_relative);
+            }
+            candidates.extend(path_mappings);
+            candidates.extend(package_imports);
         } else {
             candidates.push(relative);
             if let Some(root_dirs_relative) = root_dirs_relative {
@@ -125,19 +141,93 @@ impl Project {
             return None;
         }
 
-        let (from_package_dir, from_package_json) = self.nearest_package_json(from_file)?;
-        let (target_package_dir, target_package_json) = self.nearest_package_json(target_file)?;
-        let target_package_name = target_package_json
+        let from_package = self.nearest_package_json(from_file);
+        let normalized_target_file = normalize_path(Path::new(target_file))
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        let mut target_package_dir = None;
+        let mut target_package_json = None;
+        let mut dependency_specifier = None;
+
+        if let Some((candidate_target_dir, candidate_target_json)) =
+            self.nearest_package_json(target_file)
+        {
+            target_package_dir = Some(candidate_target_dir);
+            target_package_json = Some(candidate_target_json);
+        }
+
+        if let (
+            Some((from_package_dir, from_package_json)),
+            Some(candidate_target_dir),
+            Some(candidate_target_json),
+        ) = (
+            from_package.as_ref(),
+            target_package_dir.as_ref(),
+            target_package_json.as_ref(),
+        ) && let Some(target_package_name) = candidate_target_json
             .get("name")
             .and_then(serde_json::Value::as_str)
             .map(str::trim)
-            .filter(|name| !name.is_empty())?;
-        let dependency_specifier = Self::dependency_specifier_for_target_package(
-            &from_package_dir,
-            &from_package_json,
-            &target_package_dir,
-            target_package_name,
-        )?;
+            .filter(|name| !name.is_empty())
+            && let Some(specifier) = Self::dependency_specifier_for_target_package(
+                from_package_dir,
+                from_package_json,
+                candidate_target_dir,
+                target_package_name,
+            )
+        {
+            dependency_specifier = Some(specifier);
+        }
+
+        if dependency_specifier.is_none()
+            && let Some((from_package_dir, from_package_json)) = from_package.as_ref()
+            && let Some((specifier, resolved_target_dir)) =
+                Self::dependency_specifier_for_target_path(
+                    from_package_dir,
+                    from_package_json,
+                    &normalized_target_file,
+                )
+        {
+            dependency_specifier = Some(specifier);
+            target_package_dir = Some(resolved_target_dir);
+        }
+
+        if dependency_specifier.is_none()
+            && let Some((_, from_package_json)) = from_package.as_ref()
+            && let Some(candidate_target_dir) = target_package_dir.as_deref()
+        {
+            dependency_specifier = Self::dependency_specifier_for_target_dir_basename(
+                from_package_json,
+                candidate_target_dir,
+            );
+        }
+
+        if dependency_specifier.is_none()
+            && let Some(candidate_target_json) = target_package_json.as_ref()
+            && let Some(target_package_name) = candidate_target_json
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+        {
+            // Fourslash/virtual test hosts do not always include the requesting
+            // file's package.json in the in-memory snapshot. When dependency
+            // metadata is missing, use the target package name as a best-effort
+            // package specifier fallback instead of collapsing to deep relatives.
+            dependency_specifier = Some(target_package_name.to_string());
+        }
+
+        if dependency_specifier.is_none()
+            && let Some((inferred_specifier, inferred_package_dir)) =
+                Self::inferred_workspace_package_specifier_from_path(&normalized_target_file)
+        {
+            dependency_specifier = Some(inferred_specifier);
+            target_package_dir = Some(inferred_package_dir);
+        }
+
+        let dependency_specifier = dependency_specifier?;
+        let target_package_dir = target_package_dir?;
 
         let mut target_candidates = vec![
             normalize_path(Path::new(target_file))
@@ -148,7 +238,9 @@ impl Project {
         let mut seen_targets = FxHashSet::default();
         target_candidates.retain(|candidate| seen_targets.insert(candidate.clone()));
 
-        if let Some(exports_value) = target_package_json.get("exports") {
+        if let Some(target_package_json) = target_package_json.as_ref()
+            && let Some(exports_value) = target_package_json.get("exports")
+        {
             for candidate in &target_candidates {
                 if let Some(specifier) = self.package_specifier_from_package_exports_value(
                     candidate,
@@ -167,19 +259,24 @@ impl Project {
             let target_relative = candidate
                 .strip_prefix(&package_dir_prefix)
                 .unwrap_or_default();
-            let runtime_relative = package_runtime_specifier_from_target_path(target_relative);
+            let target_relative =
+                path_to_string(&strip_js_ts_extension(Path::new(target_relative)))
+                    .replace('\\', "/");
+            let runtime_relative = package_runtime_specifier_from_target_path(&target_relative);
             let runtime_spec = if runtime_relative.is_empty() {
                 dependency_specifier.clone()
             } else {
                 format!("{dependency_specifier}/{runtime_relative}")
             };
 
-            if let Some(specifier) = package_main_module_specifier_for_target(
-                &target_package_json,
-                &dependency_specifier,
-                &runtime_spec,
-                candidate,
-            ) {
+            if let Some(target_package_json) = target_package_json.as_ref()
+                && let Some(specifier) = package_main_module_specifier_for_target(
+                    target_package_json,
+                    &dependency_specifier,
+                    &runtime_spec,
+                    candidate,
+                )
+            {
                 return Some(specifier);
             }
 
@@ -257,6 +354,138 @@ impl Project {
         }
 
         None
+    }
+
+    fn dependency_specifier_for_target_path(
+        from_package_dir: &str,
+        from_package_json: &serde_json::Value,
+        normalized_target_file: &str,
+    ) -> Option<(String, String)> {
+        const DEP_FIELDS: [&str; 4] = [
+            "dependencies",
+            "devDependencies",
+            "peerDependencies",
+            "optionalDependencies",
+        ];
+
+        let mut best: Option<(String, String)> = None;
+
+        for field in DEP_FIELDS {
+            let Some(deps) = from_package_json
+                .get(field)
+                .and_then(serde_json::Value::as_object)
+            else {
+                continue;
+            };
+
+            for (dep_name, dep_version) in deps {
+                let Some(dep_version) = dep_version.as_str() else {
+                    continue;
+                };
+                let Some(resolved_path) =
+                    Self::resolve_dependency_path(from_package_dir, dep_version)
+                else {
+                    continue;
+                };
+
+                let is_match = normalized_target_file == resolved_path
+                    || normalized_target_file
+                        .strip_prefix(&resolved_path)
+                        .is_some_and(|rest| rest.starts_with('/'));
+                if !is_match {
+                    continue;
+                }
+
+                let should_replace = best
+                    .as_ref()
+                    .is_none_or(|(_, best_path)| resolved_path.len() > best_path.len());
+                if should_replace {
+                    best = Some((dep_name.clone(), resolved_path));
+                }
+            }
+        }
+
+        best
+    }
+
+    fn dependency_specifier_for_target_dir_basename(
+        from_package_json: &serde_json::Value,
+        target_package_dir: &str,
+    ) -> Option<String> {
+        const DEP_FIELDS: [&str; 4] = [
+            "dependencies",
+            "devDependencies",
+            "peerDependencies",
+            "optionalDependencies",
+        ];
+
+        let target_basename = Path::new(target_package_dir)
+            .file_name()
+            .and_then(|segment| segment.to_str())
+            .map(str::trim)
+            .filter(|segment| !segment.is_empty())?;
+
+        let mut scoped_match: Option<String> = None;
+
+        for field in DEP_FIELDS {
+            let Some(deps) = from_package_json
+                .get(field)
+                .and_then(serde_json::Value::as_object)
+            else {
+                continue;
+            };
+
+            for dep_name in deps.keys() {
+                if dep_name == target_basename {
+                    return Some(dep_name.clone());
+                }
+
+                if dep_name
+                    .rsplit('/')
+                    .next()
+                    .is_some_and(|tail| tail == target_basename)
+                {
+                    let should_replace = scoped_match
+                        .as_ref()
+                        .is_none_or(|current| dep_name.len() < current.len());
+                    if should_replace {
+                        scoped_match = Some(dep_name.clone());
+                    }
+                }
+            }
+        }
+
+        scoped_match
+    }
+
+    fn inferred_workspace_package_specifier_from_path(
+        normalized_target_file: &str,
+    ) -> Option<(String, String)> {
+        let marker = "/packages/";
+        let marker_idx = normalized_target_file.find(marker)?;
+        let package_root_start = marker_idx + marker.len();
+        let tail = normalized_target_file.get(package_root_start..)?;
+        if tail.is_empty() {
+            return None;
+        }
+
+        let mut segments = tail.split('/').filter(|segment| !segment.is_empty());
+        let first = segments.next()?;
+
+        let (package_specifier, package_root_rel) = if first.starts_with('@') {
+            let second = segments.next()?;
+            (format!("{first}/{second}"), format!("{first}/{second}"))
+        } else {
+            (first.to_string(), first.to_string())
+        };
+
+        let package_root = format!(
+            "{}{}{}",
+            &normalized_target_file[..package_root_start],
+            package_root_rel,
+            ""
+        );
+        Some((package_specifier, package_root))
     }
 
     fn resolve_dependency_path(from_package_dir: &str, specifier: &str) -> Option<String> {
@@ -885,6 +1114,7 @@ impl Project {
                     .filter(|name| !name.is_empty())
                     .map(normalize_node_modules_package_specifier)
                     .filter(|name| !name.is_empty())
+                    .or_else(|| Self::infer_package_name_from_node_modules_dir(&dir_normalized))
             {
                 if let Some(exports_value) = package_json.get("exports") {
                     return self.package_specifier_from_package_exports_value(
@@ -928,6 +1158,22 @@ impl Project {
         }
 
         None
+    }
+
+    fn infer_package_name_from_node_modules_dir(dir_normalized: &str) -> Option<String> {
+        let marker = "/node_modules/";
+        let marker_idx = dir_normalized.rfind(marker)?;
+        let package_path = &dir_normalized[marker_idx + marker.len()..];
+        if package_path.is_empty() {
+            return None;
+        }
+        let (package_root, _suffix) = split_node_modules_package_path(package_path)?;
+        let package_name = normalize_node_modules_package_specifier(&package_root);
+        if package_name.is_empty() {
+            None
+        } else {
+            Some(package_name)
+        }
     }
 
     fn package_specifier_from_package_exports(
@@ -1155,12 +1401,6 @@ fn package_main_module_specifier_for_target(
     runtime_package_spec: &str,
     target_file: &str,
 ) -> Option<String> {
-    // Declaration files frequently model multiple runtime entrypoints; avoid
-    // collapsing them to package root/main aliases.
-    if is_declaration_source_path(target_file) {
-        return None;
-    }
-
     let package_prefix = format!("{package_root}/");
     let runtime_subpath = runtime_package_spec.strip_prefix(&package_prefix)?;
     let runtime_normalized = normalize_package_entry_for_match(runtime_subpath);
@@ -1172,6 +1412,25 @@ fn package_main_module_specifier_for_target(
         .get("type")
         .and_then(serde_json::Value::as_str)
         .is_some_and(|value| value == "module");
+
+    if is_declaration_source_path(target_file) {
+        // For declaration targets, only treat package `types`/`typings` entries
+        // as root aliases. Runtime `main`/`module` declarations should not
+        // collapse arbitrary .d.ts subpaths to the package root.
+        for entry_field in ["types", "typings"] {
+            let Some(entry) = package_json
+                .get(entry_field)
+                .and_then(serde_json::Value::as_str)
+            else {
+                continue;
+            };
+            let entry_normalized = normalize_package_entry_for_match(entry);
+            if !entry_normalized.is_empty() && entry_normalized == runtime_normalized {
+                return Some(package_root.to_string());
+            }
+        }
+        return None;
+    }
 
     for entry_field in ["module", "main"] {
         let Some(entry) = package_json
@@ -1378,8 +1637,8 @@ fn package_import_specifiers_for_target(
             {
                 let prefer_ts_extension = allow_importing_ts_extensions
                     && !matched_via_additional_target
-                    || specifier_pattern.contains('/')
-                    || (package_type_module && resolved_stripped.contains("/src/"));
+                    && (specifier_pattern.contains('/')
+                        || (package_type_module && resolved_stripped.contains("/src/")));
                 if prefer_ts_extension {
                     if let Some(ext) = ts_source_extension(target_file) {
                         specifier.push_str(ext);
@@ -1741,6 +2000,152 @@ mod tests {
     }
 
     #[test]
+    fn project_relative_preference_still_prefers_workspace_dependency_bare_specifier() {
+        let mut project = Project::new();
+        project.set_import_module_specifier_preference(Some("project-relative".to_string()));
+        project.set_file(
+            "/home/src/workspaces/project/package.json".to_string(),
+            r#"{
+  "dependencies": {
+    "mylib": "file:packages/mylib"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/src/index.ts".to_string(),
+            "const value = MyClass".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/mylib/package.json".to_string(),
+            r#"{
+  "name": "mylib",
+  "version": "1.0.0",
+  "main": "index.js",
+  "types": "index"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/mylib/index.ts".to_string(),
+            "export class MyClass {}".to_string(),
+        );
+
+        let specifiers = project.auto_import_module_specifiers_from_files(
+            "/home/src/workspaces/project/src/index.ts",
+            "/home/src/workspaces/project/packages/mylib/index.ts",
+        );
+
+        assert_eq!(
+            specifiers.first().map(String::as_str),
+            Some("mylib"),
+            "expected workspace package bare specifier to win under project-relative preference, got {specifiers:?}"
+        );
+        assert!(
+            !specifiers.iter().any(|specifier| specifier.contains(".ts")),
+            "expected runtime-safe specifiers without .ts extensions, got {specifiers:?}"
+        );
+    }
+
+    #[test]
+    fn workspace_file_dependency_alias_works_without_target_package_manifest_loaded() {
+        let mut project = Project::new();
+        project.set_import_module_specifier_preference(Some("project-relative".to_string()));
+        project.set_file(
+            "/home/src/workspaces/project/package.json".to_string(),
+            r#"{
+  "dependencies": {
+    "mylib": "file:packages/mylib"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/src/index.ts".to_string(),
+            "const value = MyClass".to_string(),
+        );
+        // Intentionally omit /packages/mylib/package.json to mirror server runs
+        // where only a subset of project files is loaded into the in-memory snapshot.
+        project.set_file(
+            "/home/src/workspaces/project/packages/mylib/index.ts".to_string(),
+            "export class MyClass {}".to_string(),
+        );
+
+        let specifiers = project.auto_import_module_specifiers_from_files(
+            "/home/src/workspaces/project/src/index.ts",
+            "/home/src/workspaces/project/packages/mylib/index.ts",
+        );
+
+        assert_eq!(
+            specifiers.first().map(String::as_str),
+            Some("mylib"),
+            "expected file-linked dependency alias to survive without target package.json, got {specifiers:?}"
+        );
+    }
+
+    #[test]
+    fn workspace_file_dependency_alias_works_without_requesting_package_manifest_loaded() {
+        let mut project = Project::new();
+        project.set_import_module_specifier_preference(Some("project-relative".to_string()));
+        // Intentionally omit /project/package.json to mirror adapter snapshots
+        // where only source files and some config files are opened.
+        project.set_file(
+            "/home/src/workspaces/project/src/index.ts".to_string(),
+            "const value = MyClass".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/mylib/package.json".to_string(),
+            r#"{
+  "name": "mylib",
+  "version": "1.0.0",
+  "main": "index.js",
+  "types": "index"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/mylib/index.ts".to_string(),
+            "export class MyClass {}".to_string(),
+        );
+
+        let specifiers = project.auto_import_module_specifiers_from_files(
+            "/home/src/workspaces/project/src/index.ts",
+            "/home/src/workspaces/project/packages/mylib/index.ts",
+        );
+
+        assert_eq!(
+            specifiers.first().map(String::as_str),
+            Some("mylib"),
+            "expected target package name fallback to avoid deep relative import, got {specifiers:?}"
+        );
+    }
+
+    #[test]
+    fn workspace_package_path_fallback_avoids_deep_relative_when_manifests_are_missing() {
+        let mut project = Project::new();
+        project.set_import_module_specifier_preference(Some("project-relative".to_string()));
+        project.set_file(
+            "/home/src/workspaces/project/src/index.ts".to_string(),
+            "const value = MyClass".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/mylib/index.ts".to_string(),
+            "export class MyClass {}".to_string(),
+        );
+
+        let specifiers = project.auto_import_module_specifiers_from_files(
+            "/home/src/workspaces/project/src/index.ts",
+            "/home/src/workspaces/project/packages/mylib/index.ts",
+        );
+
+        assert_eq!(
+            specifiers.first().map(String::as_str),
+            Some("mylib"),
+            "expected /packages path fallback to prefer inferred package specifier, got {specifiers:?}"
+        );
+    }
+
+    #[test]
     fn workspace_dependency_respects_package_exports_visibility() {
         let mut project = Project::new();
         project.set_file(
@@ -2025,6 +2430,24 @@ mod tests {
     }
 
     #[test]
+    fn package_imports_without_allow_ts_extensions_emit_js_specifiers() {
+        let specs = package_import_specifiers_for_target(
+            r##"{
+  "type": "module",
+  "imports": {
+    "#internal/*": "./dist/internal/*"
+  }
+}"##,
+            "/home/src/workspaces/project",
+            "/home/src/workspaces/project/src/internal/foo.ts",
+            false,
+            &["/home/src/workspaces/project/dist/internal/foo".to_string()],
+        );
+
+        assert_eq!(specs, vec!["#internal/foo.js".to_string()]);
+    }
+
+    #[test]
     fn jsconfig_paths_mapping_outranks_relative_for_shortest_preference() {
         let mut project = Project::new();
         project.set_file(
@@ -2265,5 +2688,88 @@ mod tests {
 
         let specifiers = project.auto_import_module_specifiers_from_files("/a.mts", "/mod.ts");
         assert_eq!(specifiers, vec!["./mod".to_string()]);
+    }
+
+    #[test]
+    fn node_modules_types_entry_uses_package_root_for_declaration_target() {
+        let mut project = Project::new();
+        project.set_file(
+            "/home/src/workspaces/project/package.json".to_string(),
+            r#"{
+  "dependencies": {
+    "@angular/forms": "*"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/@angular/forms/package.json".to_string(),
+            r#"{
+  "name": "@angular/forms",
+  "typings": "./forms.d.ts"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/index.ts".to_string(),
+            "PatternValidator".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/@angular/forms/forms.d.ts".to_string(),
+            "export class PatternValidator {}\n".to_string(),
+        );
+
+        let specifiers = project.auto_import_module_specifiers_from_files(
+            "/home/src/workspaces/project/index.ts",
+            "/home/src/workspaces/project/node_modules/@angular/forms/forms.d.ts",
+        );
+
+        assert!(
+            specifiers
+                .first()
+                .is_some_and(|specifier| specifier == "@angular/forms"),
+            "expected @angular/forms to be preferred for typings entrypoint declarations, got {specifiers:?}"
+        );
+    }
+
+    #[test]
+    fn pnpm_store_package_without_name_uses_linked_dependency_alias() {
+        let mut project = Project::new();
+        project.set_file(
+            "/home/src/workspaces/project/package.json".to_string(),
+            r#"{
+  "dependencies": {
+    "mobx": "*"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/index.ts".to_string(),
+            "autorun".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/.pnpm/mobx@6.0.4/node_modules/mobx/package.json"
+                .to_string(),
+            r#"{
+  "types": "dist/mobx.d.ts"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/.pnpm/mobx@6.0.4/node_modules/mobx/dist/mobx.d.ts"
+                .to_string(),
+            "export declare function autorun(): void;\n".to_string(),
+        );
+
+        let specifiers = project.auto_import_module_specifiers_from_files(
+            "/home/src/workspaces/project/index.ts",
+            "/home/src/workspaces/project/node_modules/.pnpm/mobx@6.0.4/node_modules/mobx/dist/mobx.d.ts",
+        );
+
+        assert!(
+            specifiers.iter().any(|specifier| specifier == "mobx"),
+            "expected pnpm store package target to resolve to dependency alias `mobx`, got {specifiers:?}"
+        );
     }
 }
