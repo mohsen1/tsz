@@ -884,7 +884,7 @@ function patchSessionClient(SessionClient, ts) {
     // Same preference forwarding for completion details.
     const _origGetCompletionEntryDetails = proto.getCompletionEntryDetails;
     proto.getCompletionEntryDetails = function(fileName, position, entryName, options, source, preferences, data) {
-        if (preferences?.includeCompletionsWithClassMemberSnippets && source !== "ClassMemberSnippet/") {
+        if (preferences?.includeCompletionsWithClassMemberSnippets) {
             const nativeResult = withNativeFallback(this, ls =>
                 ls.getCompletionEntryDetails(
                     fileName,
