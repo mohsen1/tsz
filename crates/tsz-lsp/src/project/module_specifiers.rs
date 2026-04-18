@@ -123,10 +123,14 @@ impl Project {
             .and_then(serde_json::Value::as_str)
             .unwrap_or(".");
         let base_dir = normalize_path(&config_dir.join(base_url));
-        let target_file = path_to_string(&strip_js_ts_extension(&normalize_path(Path::new(
-            target_file,
-        ))))
+        let normalized_target_file = path_to_string(&strip_js_ts_extension(&normalize_path(
+            Path::new(target_file),
+        )))
         .replace('\\', "/");
+        let mut target_candidates = vec![normalized_target_file];
+        target_candidates.extend(self.project_output_target_alternatives(target_file));
+        let mut seen_targets = FxHashSet::default();
+        target_candidates.retain(|candidate| seen_targets.insert(candidate.clone()));
 
         let mut specifiers = Vec::new();
         for (alias_pattern, mapped_targets) in paths {
@@ -149,8 +153,9 @@ impl Project {
                     path_to_string(&strip_js_ts_extension(Path::new(&mapped_target)))
                         .replace('\\', "/");
 
-                let Some(capture) = wildcard_capture_case_insensitive(&mapped_target, &target_file)
-                else {
+                let Some(capture) = target_candidates.iter().find_map(|candidate| {
+                    wildcard_capture_case_insensitive(&mapped_target, candidate)
+                }) else {
                     continue;
                 };
                 let Some(specifier) = apply_wildcard_capture(alias_pattern, &capture) else {
@@ -469,6 +474,56 @@ impl Project {
         }
 
         Vec::new()
+    }
+
+    fn project_output_target_alternatives(&self, target_file: &str) -> Vec<String> {
+        let Some((config_dir, compiler_options)) =
+            self.nearest_compiler_options_for_file(target_file)
+        else {
+            return Vec::new();
+        };
+
+        let out_dir = compiler_options
+            .get("outDir")
+            .and_then(serde_json::Value::as_str);
+        let declaration_dir = compiler_options
+            .get("declarationDir")
+            .and_then(serde_json::Value::as_str);
+        if out_dir.is_none() && declaration_dir.is_none() {
+            return Vec::new();
+        }
+
+        let root_dir = compiler_options
+            .get("rootDir")
+            .and_then(serde_json::Value::as_str)
+            .map(|root| normalize_path(&config_dir.join(root)))
+            .or_else(|| {
+                compiler_options
+                    .get("composite")
+                    .and_then(serde_json::Value::as_bool)
+                    .filter(|enabled| *enabled)
+                    .map(|_| normalize_path(&config_dir))
+            });
+        let Some(root_dir) = root_dir else {
+            return Vec::new();
+        };
+
+        let target_path = strip_js_ts_extension(&normalize_path(Path::new(target_file)));
+        let Ok(relative) = target_path.strip_prefix(&root_dir) else {
+            return Vec::new();
+        };
+
+        let mut alternatives = Vec::new();
+        if let Some(out_dir) = out_dir {
+            let out_dir = normalize_path(&config_dir.join(out_dir));
+            alternatives.push(path_to_string(&out_dir.join(relative)).replace('\\', "/"));
+        }
+        if let Some(declaration_dir) = declaration_dir {
+            let declaration_dir = normalize_path(&config_dir.join(declaration_dir));
+            alternatives.push(path_to_string(&declaration_dir.join(relative)).replace('\\', "/"));
+        }
+
+        alternatives
     }
 
     fn relative_import_style(&self, from_file: &str) -> RelativeImportStyle {
@@ -1359,6 +1414,106 @@ mod tests {
             project
                 .path_mapping_specifiers_from_files("/src/dirA/thing1A.ts", "/src/dirB/index.ts"),
             vec!["~/dirB".to_string()]
+        );
+    }
+
+    #[test]
+    fn path_mapping_uses_referenced_project_outdir_when_composite_rootdir_is_implicit() {
+        let mut project = Project::new();
+        project.set_import_module_specifier_preference(Some("non-relative".to_string()));
+        project.set_file(
+            "/home/src/workspaces/project/common/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "lib": ["es5"],
+    "module": "commonjs",
+    "outDir": "dist",
+    "composite": true
+  },
+  "include": ["src"]
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/common/src/MyModule.ts".to_string(),
+            "export function square(n: number) { return n * n; }".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/web/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "lib": ["es5"],
+    "module": "esnext",
+    "moduleResolution": "node",
+    "noEmit": true,
+    "paths": {
+      "@common/*": ["../common/dist/src/*"]
+    }
+  },
+  "include": ["src"],
+  "references": [{ "path": "../common" }]
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/web/src/Helper.ts".to_string(),
+            "square(2);".to_string(),
+        );
+
+        let specifiers = project.auto_import_module_specifiers_from_files(
+            "/home/src/workspaces/project/web/src/Helper.ts",
+            "/home/src/workspaces/project/common/src/MyModule.ts",
+        );
+        assert!(
+            specifiers.contains(&"@common/MyModule".to_string()),
+            "expected @common/MyModule to be generated from dist/src path mapping, got {specifiers:?}"
+        );
+    }
+
+    #[test]
+    fn path_mapping_uses_outdir_source_alternatives_for_cross_project_subpaths() {
+        let mut project = Project::new();
+        project.set_file(
+            "/home/src/workspaces/project/packages/app/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "lib": ["es5"],
+    "module": "commonjs",
+    "outDir": "dist",
+    "rootDir": "src",
+    "baseUrl": ".",
+    "paths": {
+      "dep": ["../dep/src/main"],
+      "dep/dist/*": ["../dep/src/*"]
+    }
+  },
+  "references": [{ "path": "../dep" }]
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/app/src/utils.ts".to_string(),
+            "dep2;".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/dep/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": { "lib": ["es5"], "outDir": "dist", "rootDir": "src", "module": "commonjs" }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/dep/src/sub/folder/index.ts".to_string(),
+            "export const dep2 = 0;".to_string(),
+        );
+
+        let specifiers = project.auto_import_module_specifiers_from_files(
+            "/home/src/workspaces/project/packages/app/src/utils.ts",
+            "/home/src/workspaces/project/packages/dep/src/sub/folder/index.ts",
+        );
+        assert!(
+            specifiers.contains(&"dep/dist/sub/folder".to_string()),
+            "expected dep/dist/sub/folder path-mapped specifier, got {specifiers:?}"
         );
     }
 

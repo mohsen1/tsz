@@ -1588,6 +1588,75 @@ mod tests {
     }
 
     #[test]
+    fn auto_import_candidates_include_exports_types_root_and_subpath_entries() {
+        let mut project = Project::new();
+        project.set_file(
+            "/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "lib": ["es5"],
+    "module": "nodenext"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/package.json".to_string(),
+            r#"{
+  "dependencies": {
+    "dependency": "^1.0.0"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/node_modules/dependency/package.json".to_string(),
+            r#"{
+  "type": "module",
+  "name": "dependency",
+  "version": "1.0.0",
+  "exports": {
+    ".": { "types": "./lib/index.d.ts" },
+    "./lol": { "types": "./lib/lol.d.ts" }
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/node_modules/dependency/lib/index.d.ts".to_string(),
+            "export function fooFromIndex(): void;".to_string(),
+        );
+        project.set_file(
+            "/node_modules/dependency/lib/lol.d.ts".to_string(),
+            "export function fooFromLol(): void;".to_string(),
+        );
+        project.set_file("/src/foo.ts".to_string(), "fooFrom".to_string());
+
+        let candidates = project.get_import_candidates_for_prefix("/src/foo.ts", "fooFrom");
+        let specs_for = |name: &str| -> Vec<String> {
+            candidates
+                .iter()
+                .filter(|candidate| candidate.local_name == name)
+                .map(|candidate| candidate.module_specifier.clone())
+                .collect()
+        };
+
+        let index_specs = specs_for("fooFromIndex");
+        assert!(
+            index_specs.iter().any(|specifier| specifier == "dependency"),
+            "expected fooFromIndex auto-import from dependency root export-map types entry, got {index_specs:?}"
+        );
+
+        let lol_specs = specs_for("fooFromLol");
+        assert!(
+            lol_specs
+                .iter()
+                .any(|specifier| specifier == "dependency/lol"),
+            "expected fooFromLol auto-import from dependency/lol export-map types entry, got {lol_specs:?}"
+        );
+    }
+
+    #[test]
     fn ambient_module_auto_import_candidates_respect_specifier_exclude_regexes() {
         let mut project = Project::new();
         project.set_auto_import_specifier_exclude_regexes(vec!["utils".to_string()]);
