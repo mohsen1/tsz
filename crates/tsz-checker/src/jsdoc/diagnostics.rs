@@ -1792,6 +1792,13 @@ impl<'a> CheckerState<'a> {
                     && !expr.contains('<')
                     && !expr.contains('.')
                     && unresolved
+                    // In JS files, `exports`, `module`, `require`, `global`
+                    // are CommonJS built-ins that always resolve at runtime
+                    // even if the checker's type system doesn't create a
+                    // user-land binding for them.  tsc does not flag them
+                    // as "Cannot find name" in JSDoc @type contexts.
+                    && !(self.ctx.is_js_file()
+                        && matches!(expr, "exports" | "module" | "require" | "global"))
                 {
                     self.emit_jsdoc_cannot_find_name(expr, comment.pos, comment.end, &source_text);
                 }
