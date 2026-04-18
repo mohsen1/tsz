@@ -8,9 +8,47 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::types::TypeId;
 use tsz_solver::visitor;
 
-use super::{TypePrinter, needs_property_name_quoting, quote_property_name};
+use super::{TypePrinter, needs_property_name_quoting_with_flag, quote_property_name};
 
 impl<'a> TypePrinter<'a> {
+    pub(crate) fn property_is_hidden_in_declaration_shape(
+        &self,
+        property: &tsz_solver::types::PropertyInfo,
+    ) -> bool {
+        let name = self.resolve_atom(property.name);
+        // `prototype` and private brand markers are emitter-internal structural
+        // details. Properties like `name` and `length` are only omitted by tsc
+        // when they come from ambient function intrinsics, so we must not strip
+        // them solely by raw property text here.
+        name == "prototype" || name.starts_with("__private_brand_")
+    }
+
+    pub(crate) fn declaration_property_name_text(
+        &self,
+        property: &tsz_solver::types::PropertyInfo,
+    ) -> String {
+        if let Some(unique_symbol_name) = self.unique_symbol_property_name_text(property) {
+            return unique_symbol_name;
+        }
+
+        let name = self.resolve_atom(property.name);
+        if needs_property_name_quoting_with_flag(&name, property.is_string_named) {
+            quote_property_name(&name)
+        } else {
+            name
+        }
+    }
+
+    pub(crate) fn unique_symbol_property_name_text(
+        &self,
+        property: &tsz_solver::types::PropertyInfo,
+    ) -> Option<String> {
+        let name = self.resolve_atom(property.name);
+        let symbol_id = name.strip_prefix("__unique_")?.parse::<u32>().ok()?;
+        let qualified_name = self.resolve_symbol_qualified_name(SymbolId(symbol_id))?;
+        Some(format!("[{qualified_name}]"))
+    }
+
     pub(crate) fn synthesized_empty_shape_members(&self, sym_id: SymbolId) -> Option<Vec<String>> {
         let symbol_arena = self.symbol_arena?;
         let node_arena = self.node_arena?;
@@ -169,12 +207,7 @@ impl<'a> TypePrinter<'a> {
             return None;
         }
 
-        let name = self.resolve_atom(property.name);
-        let printed_name = if needs_property_name_quoting(&name) {
-            quote_property_name(&name)
-        } else {
-            name
-        };
+        let printed_name = self.declaration_property_name_text(property);
 
         let mut members = Vec::new();
         if property.type_id != TypeId::UNDEFINED {
@@ -655,20 +688,10 @@ impl<'a> TypePrinter<'a> {
 
         // Simple callable: one call signature, no properties/construct/index sigs
         // → use arrow function syntax: (params) => ReturnType
-        let has_properties = callable.properties.iter().any(|p| {
-            let name = self.resolve_atom(p.name);
-            // Filter out internal properties that don't affect the external type shape:
-            // - prototype: Function.prototype, not part of the external interface
-            // - __private_brand_*: internal private brand markers
-            // - length, name: standard Function.prototype properties
-            // - arguments, caller: legacy Function.prototype properties
-            name != "prototype"
-                && !name.starts_with("__private_brand_")
-                && name != "length"
-                && name != "name"
-                && name != "arguments"
-                && name != "caller"
-        });
+        let has_properties = callable
+            .properties
+            .iter()
+            .any(|property| !self.property_is_hidden_in_declaration_shape(property));
         if callable.call_signatures.len() == 1
             && callable.construct_signatures.is_empty()
             && !has_properties
@@ -731,19 +754,7 @@ impl<'a> TypePrinter<'a> {
 
         // Add properties (filter out internal props tsc strips from .d.ts)
         for prop in &callable.properties {
-            let name = self.resolve_atom(prop.name);
-            // Filter out internal properties that don't affect the external type shape:
-            // - prototype: Function.prototype, not part of the external interface
-            // - __private_brand_*: internal private brand markers
-            // - length, name: standard Function.prototype properties
-            // - arguments, caller: legacy Function.prototype properties
-            if name == "prototype"
-                || name.starts_with("__private_brand_")
-                || name == "length"
-                || name == "name"
-                || name == "arguments"
-                || name == "caller"
-            {
+            if self.property_is_hidden_in_declaration_shape(prop) {
                 continue;
             }
 
@@ -762,15 +773,10 @@ impl<'a> TypePrinter<'a> {
 
             let readonly = if prop.readonly { "readonly " } else { "" };
             let optional = if prop.optional { "?" } else { "" };
-            let quoted_name = if needs_property_name_quoting(&name) {
-                quote_property_name(&name)
-            } else {
-                name
-            };
             parts.push(format!(
                 "{}{}{}: {}",
                 readonly,
-                quoted_name,
+                self.declaration_property_name_text(prop),
                 optional,
                 self.print_type(prop.type_id)
             ));
@@ -968,16 +974,10 @@ impl<'a> TypePrinter<'a> {
             return false;
         };
         let callable = self.interner.callable_shape(callable_id);
-        let has_properties = callable.properties.iter().any(|prop| {
-            let name = self.resolve_atom(prop.name);
-            // Filter out internal properties
-            name != "prototype"
-                && !name.starts_with("__private_brand_")
-                && name != "length"
-                && name != "name"
-                && name != "arguments"
-                && name != "caller"
-        });
+        let has_properties = callable
+            .properties
+            .iter()
+            .any(|property| !self.property_is_hidden_in_declaration_shape(property));
 
         callable.symbol.is_none()
             && !has_properties
@@ -993,16 +993,10 @@ impl<'a> TypePrinter<'a> {
             return self.print_type(type_id);
         };
         let callable = self.interner.callable_shape(callable_id);
-        let has_properties = callable.properties.iter().any(|prop| {
-            let name = self.resolve_atom(prop.name);
-            // Filter out internal properties
-            name != "prototype"
-                && !name.starts_with("__private_brand_")
-                && name != "length"
-                && name != "name"
-                && name != "arguments"
-                && name != "caller"
-        });
+        let has_properties = callable
+            .properties
+            .iter()
+            .any(|property| !self.property_is_hidden_in_declaration_shape(property));
 
         if callable.symbol.is_none()
             && !has_properties
@@ -1781,16 +1775,10 @@ impl<'a> TypePrinter<'a> {
             return false;
         };
         let callable = self.interner.callable_shape(callable_id);
-        let has_properties = callable.properties.iter().any(|p| {
-            let name = self.resolve_atom(p.name);
-            // Filter out internal properties
-            name != "prototype"
-                && !name.starts_with("__private_brand_")
-                && name != "length"
-                && name != "name"
-                && name != "arguments"
-                && name != "caller"
-        });
+        let has_properties = callable
+            .properties
+            .iter()
+            .any(|property| !self.property_is_hidden_in_declaration_shape(property));
         // A callable renders as `new (...) => T` when it has a single construct
         // signature and no call signatures or extra members.
         callable.call_signatures.is_empty()
@@ -1812,10 +1800,10 @@ impl<'a> TypePrinter<'a> {
             let callable = self.interner.callable_shape(callable_id);
             // Only arrow-form callables (single call or single construct sig with
             // no extra members) would produce `extends` in the printed output.
-            let has_properties = callable.properties.iter().any(|p| {
-                let name = self.resolve_atom(p.name);
-                name != "prototype" && !name.starts_with("__private_brand_")
-            });
+            let has_properties = callable
+                .properties
+                .iter()
+                .any(|property| !self.property_is_hidden_in_declaration_shape(property));
             if callable.call_signatures.len() == 1
                 && callable.construct_signatures.is_empty()
                 && !has_properties

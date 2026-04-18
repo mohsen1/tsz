@@ -712,7 +712,8 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": ");
                     self.write(&self.print_type_id(type_id));
                 } else if param.initializer.is_some()
-                    && let Some(type_text) = self.infer_fallback_type_text(param.initializer)
+                    && let Some(type_text) =
+                        self.allowlisted_initializer_type_text(param.initializer)
                 {
                     self.write(": ");
                     self.write(&type_text);

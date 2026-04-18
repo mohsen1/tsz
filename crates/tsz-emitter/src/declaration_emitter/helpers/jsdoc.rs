@@ -106,7 +106,22 @@ impl<'a> DeclarationEmitter<'a> {
         trimmed.split_whitespace().all(|word| {
             matches!(
                 word,
-                "export" | "declare" | "const" | "let" | "var" | "using" | "await"
+                "export"
+                    | "declare"
+                    | "default"
+                    | "const"
+                    | "let"
+                    | "var"
+                    | "using"
+                    | "await"
+                    | "class"
+                    | "function"
+                    | "interface"
+                    | "enum"
+                    | "namespace"
+                    | "module"
+                    | "abstract"
+                    | "async"
             )
         })
     }
@@ -281,6 +296,52 @@ impl<'a> DeclarationEmitter<'a> {
             current_start = comment.pos as usize;
         }
         chain.reverse();
+        chain
+    }
+
+    pub(crate) fn nearest_jsdoc_comment_for_pos_relaxed(&self, pos: u32) -> Option<String> {
+        let text = self.source_file_text.as_deref()?;
+        let bytes = text.as_bytes();
+        let mut actual_start = pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+
+        self.all_comments
+            .iter()
+            .filter(|comment| comment.end as usize <= actual_start)
+            .filter(|comment| is_jsdoc_comment(comment, text))
+            .max_by_key(|comment| comment.end)
+            .map(|comment| get_jsdoc_content(comment, text))
+    }
+
+    pub(crate) fn emittable_jsdoc_comment_chain_for_pos(&self, pos: u32) -> Vec<String> {
+        let Some(text) = self.source_file_text.as_deref() else {
+            return Vec::new();
+        };
+        let bytes = text.as_bytes();
+        let mut actual_start = pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+
+        let mut chain = Vec::new();
+        let mut idx = self.comment_emit_idx;
+        while idx < self.all_comments.len() {
+            let comment = &self.all_comments[idx];
+            if comment.end as usize > actual_start {
+                break;
+            }
+            let raw = &text[comment.pos as usize..comment.end as usize];
+            if raw.starts_with("/**") && raw != "/**/" {
+                chain.push(get_jsdoc_content(comment, text));
+            }
+            idx += 1;
+        }
         chain
     }
 
@@ -565,15 +626,58 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    pub(crate) fn parse_jsdoc_type_text(jsdoc: &str) -> Option<String> {
+        for raw_line in jsdoc.lines() {
+            let line = raw_line.trim_start_matches('*').trim();
+            let Some(rest) = line.strip_prefix("@type") else {
+                continue;
+            };
+            let rest = rest.trim();
+            let (type_expr, _) = Self::parse_jsdoc_braced_type_and_name(rest)?;
+            let text = Self::normalize_jsdoc_type_text(type_expr, false);
+            if Self::jsdoc_type_needs_checker_resolution(&text) {
+                return Self::convert_jsdoc_function_type(&text);
+            }
+            return Some(text);
+        }
+        None
+    }
+
     pub(crate) fn jsdoc_return_type_text_for_node(&self, idx: NodeIndex) -> Option<String> {
         let jsdoc = self.function_like_jsdoc_for_node(idx)?;
         Self::parse_jsdoc_return_type_text(&jsdoc)
+    }
+
+    pub(crate) fn jsdoc_type_text_for_node(&self, idx: NodeIndex) -> Option<String> {
+        let jsdoc = self.function_like_jsdoc_for_node(idx)?;
+        Self::parse_jsdoc_type_text(&jsdoc)
     }
 
     pub(crate) fn jsdoc_template_params_for_node(&self, idx: NodeIndex) -> Vec<String> {
         self.function_like_jsdoc_for_node(idx)
             .map(|jsdoc| Self::parse_jsdoc_template_params(&jsdoc))
             .unwrap_or_default()
+    }
+
+    pub(crate) fn jsdoc_template_params_for_pos(&self, pos: u32) -> Vec<String> {
+        for jsdoc in self.leading_jsdoc_comment_chain_for_pos(pos) {
+            let params = Self::parse_jsdoc_template_params(&jsdoc);
+            if !params.is_empty() {
+                return params;
+            }
+        }
+        Vec::new()
+    }
+
+    pub(crate) fn jsdoc_has_readonly_for_node(&self, idx: NodeIndex) -> bool {
+        self.function_like_jsdoc_for_node(idx)
+            .as_deref()
+            .is_some_and(|jsdoc| {
+                jsdoc.lines().any(|raw_line| {
+                    let line = raw_line.trim_start_matches('*').trim();
+                    line == "@readonly" || line.starts_with("@readonly ")
+                })
+            })
     }
 
     pub(crate) fn emit_jsdoc_template_parameters(&mut self, type_params: &[String]) {

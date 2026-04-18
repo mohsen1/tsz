@@ -9,10 +9,12 @@
 #   scripts/session/verify-all.sh --skip-lsp   # Skip fourslash only
 #
 # Runs in order:
-#   1. cargo nextest run    (compilation + unit tests)
-#   2. conformance.sh run   (conformance vs tsc)
-#   3. emit/run.sh          (JS/declaration emit)
-#   4. fourslash/run.sh     (LSP/language service)
+#   1. cargo fmt --check    (formatting gate)
+#   2. cargo clippy         (lint gate, warnings denied)
+#   3. cargo nextest run    (compilation + unit tests)
+#   4. conformance.sh run   (conformance vs tsc)
+#   5. emit/run.sh          (JS/declaration emit)
+#   6. fourslash/run.sh     (LSP/language service)
 #
 # Exits non-zero if ANY suite fails or conformance regresses.
 #
@@ -105,10 +107,16 @@ echo "=========================================="
 
 cd "$REPO_ROOT"
 
-# --- 1. Unit tests (also compiles — no separate cargo check needed) ---
+# --- 1. Formatting ---
+run_suite "formatting" scripts/safe-run.sh cargo fmt --all --check
+
+# --- 2. Clippy ---
+run_suite "clippy" scripts/safe-run.sh cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+# --- 3. Unit tests (also compiles — no separate cargo check needed) ---
 run_suite "unit tests" scripts/safe-run.sh cargo nextest run
 
-# --- 2. Conformance ---
+# --- 4. Conformance ---
 echo ""
 echo -e "${CYAN}━━━ [conformance] ━━━${RESET}"
 echo -e "${CYAN}→${RESET}  scripts/safe-run.sh ./scripts/conformance/conformance.sh run"
@@ -194,7 +202,7 @@ else
     PASS=$((PASS + 1))
 fi
 
-# --- 3. Emit tests ---
+# --- 5. Emit tests ---
 if ! $QUICK; then
     echo ""
     echo -e "${CYAN}━━━ [emit tests] ━━━${RESET}"
@@ -240,7 +248,7 @@ else
     RESULTS+=("${YELLOW}⊘${RESET}  emit tests (skipped)")
 fi
 
-# --- 4. Fourslash/LSP tests ---
+# --- 6. Fourslash/LSP tests ---
 if ! $QUICK && ! $SKIP_LSP; then
     echo ""
     echo -e "${CYAN}━━━ [fourslash/LSP] ━━━${RESET}"

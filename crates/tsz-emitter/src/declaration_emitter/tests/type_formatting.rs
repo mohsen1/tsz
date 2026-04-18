@@ -51,9 +51,7 @@ const lambdaFoo = (/** left */ left: number, /** right */ right: number): number
     );
 }
 
-// TODO: Fix callable-object type rendering (emits arrow fn instead of object literal).
 #[test]
-#[ignore]
 fn test_js_function_declaration_prefers_returned_callable_object_type() {
     let source = r#"
 function test(fn) {

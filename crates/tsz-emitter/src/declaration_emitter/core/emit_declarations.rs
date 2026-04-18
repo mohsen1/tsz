@@ -126,6 +126,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_deferred_named_export_statements = deferred_named_exports;
         self.js_export_equals_names = self.collect_js_export_equals_names(source_file);
         self.emitted_js_export_equals_names.clear();
+        self.js_shadowed_export_equals_local_aliases.clear();
         let (
             js_commonjs_named_export_names,
             js_commonjs_named_function_exports,
@@ -228,9 +229,32 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Emit CJS export aliases before declarations.
         self.emit_js_cjs_export_aliases();
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some((name_idx, initializer)) =
+                self.js_named_export_equals_class_expression(stmt_idx)
+            {
+                if let Some(name) = self.get_identifier_text(name_idx) {
+                    let _ = self.js_shadowed_export_equals_local_alias(&name);
+                }
+                self.emit_pending_js_export_equals_for_name(name_idx);
+                let _ =
+                    self.emit_js_named_class_expression_declaration(name_idx, initializer, false);
+                self.emit_js_namespace_export_aliases_for_name(name_idx);
+            } else if let Some(initializer) =
+                self.js_anonymous_export_equals_class_expression_initializer(stmt_idx)
+            {
+                self.emit_js_anonymous_export_equals_class_expression_declaration(initializer);
+            } else if let Some(initializer) =
+                self.js_anonymous_export_equals_value_initializer(stmt_idx)
+            {
+                self.emit_js_anonymous_export_equals_value_declaration(initializer);
+            }
+        }
 
         for &stmt_idx in &source_file.statements.nodes {
-            if deferred_js_namespace_objects.contains(&stmt_idx) {
+            if deferred_js_namespace_objects.contains(&stmt_idx)
+                && !self.js_namespace_object_stmt_emits_in_source_order(stmt_idx)
+            {
                 continue;
             }
             if self.js_cjs_export_alias_statements.contains(&stmt_idx) {
@@ -239,10 +263,24 @@ impl<'a> DeclarationEmitter<'a> {
             if self.js_module_exports_object_stmts.contains(&stmt_idx) {
                 continue;
             }
+            if self
+                .js_named_export_equals_class_expression(stmt_idx)
+                .is_some()
+                || self
+                    .js_anonymous_export_equals_class_expression_initializer(stmt_idx)
+                    .is_some()
+                || self
+                    .js_anonymous_export_equals_value_initializer(stmt_idx)
+                    .is_some()
+            {
+                continue;
+            }
             self.emit_statement(stmt_idx);
         }
         for &stmt_idx in &source_file.statements.nodes {
-            if deferred_js_namespace_objects.contains(&stmt_idx) {
+            if deferred_js_namespace_objects.contains(&stmt_idx)
+                && !self.js_namespace_object_stmt_emits_in_source_order(stmt_idx)
+            {
                 self.emit_statement(stmt_idx);
             }
         }
@@ -428,6 +466,8 @@ impl<'a> DeclarationEmitter<'a> {
         // declaration turns out to be invisible (non-exported in namespace, etc.)
         let before_jsdoc_len = self.writer.len();
         let saved_comment_idx = self.comment_emit_idx;
+        self.current_statement_jsdoc_chain =
+            self.emittable_jsdoc_comment_chain_for_pos(stmt_node.pos);
         self.emit_leading_jsdoc_comments(stmt_node.pos);
         let before_len = self.writer.len();
         self.queue_source_mapping(stmt_node);
@@ -557,6 +597,7 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
         }
+        self.current_statement_jsdoc_chain.clear();
     }
 
     pub(in crate::declaration_emitter) fn emit_function_declaration(
@@ -923,8 +964,13 @@ impl<'a> DeclarationEmitter<'a> {
             class.heritage_clauses.as_ref(),
             false,
         );
+        let shadow_alias = self
+            .get_identifier_text(class.name)
+            .and_then(|name| self.js_shadowed_export_equals_local_alias(&name));
 
-        self.emit_pending_js_export_equals_for_name(class.name);
+        if shadow_alias.is_none() {
+            self.emit_pending_js_export_equals_for_name(class.name);
+        }
         self.write_indent();
         if is_exported {
             self.write("export ");
@@ -938,13 +984,46 @@ impl<'a> DeclarationEmitter<'a> {
         self.write("class ");
 
         // Class name
-        self.emit_node(class.name);
+        if let Some(alias) = shadow_alias.as_deref() {
+            self.write(alias);
+        } else {
+            self.emit_node(class.name);
+        }
 
         // Type parameters
-        if let Some(ref type_params) = class.type_parameters
-            && !type_params.nodes.is_empty()
-        {
-            self.emit_type_parameters(type_params);
+        let jsdoc_template_anchor = class
+            .modifiers
+            .as_ref()
+            .and_then(|mods| mods.nodes.first().copied())
+            .and_then(|mod_idx| self.arena.get(mod_idx))
+            .map(|mod_node| mod_node.pos)
+            .unwrap_or(class_node.pos);
+        let mut jsdoc_template_params = self
+            .current_statement_jsdoc_chain
+            .iter()
+            .flat_map(|jsdoc| Self::parse_jsdoc_template_params(jsdoc))
+            .collect::<Vec<_>>();
+        if jsdoc_template_params.is_empty() {
+            jsdoc_template_params = self.jsdoc_template_params_for_pos(jsdoc_template_anchor);
+        }
+        if jsdoc_template_params.is_empty() {
+            jsdoc_template_params = self
+                .nearest_jsdoc_comment_for_pos_relaxed(jsdoc_template_anchor)
+                .map(|jsdoc| Self::parse_jsdoc_template_params(&jsdoc))
+                .unwrap_or_default();
+        }
+        if jsdoc_template_params.is_empty() {
+            jsdoc_template_params = self.jsdoc_template_params_for_node(class_idx);
+        }
+        if jsdoc_template_params.is_empty() {
+            jsdoc_template_params = self.jsdoc_template_params_for_node(class.name);
+        }
+        if self.source_is_js_file && !jsdoc_template_params.is_empty() {
+            self.emit_jsdoc_template_parameters(&jsdoc_template_params);
+        } else if let Some(ref type_params) = class.type_parameters {
+            if !type_params.nodes.is_empty() {
+                self.emit_type_parameters(type_params);
+            }
         }
 
         // Heritage clauses (extends, implements)
@@ -983,7 +1062,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         // Members
-        for &member_idx in &class.members.nodes {
+        for member_idx in self.class_member_emit_order(&class.members) {
             let before_jsdoc_len = self.writer.len();
             let saved_comment_idx = self.comment_emit_idx;
             if let Some(mn) = self.arena.get(member_idx) {
@@ -1006,7 +1085,56 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         self.write("}");
         self.write_line();
-        self.emit_js_namespace_export_aliases_for_name(class.name);
+        if shadow_alias.is_none() {
+            self.emit_js_namespace_export_aliases_for_name(class.name);
+        }
+    }
+
+    pub(in crate::declaration_emitter) fn class_member_emit_order(
+        &self,
+        members: &tsz_parser::parser::NodeList,
+    ) -> Vec<NodeIndex> {
+        if !self.source_is_js_file {
+            return members.nodes.clone();
+        }
+
+        let mut static_members = Vec::new();
+        let mut constructors = Vec::new();
+        let mut instance_members = Vec::new();
+
+        for &member_idx in &members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+
+            if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
+                constructors.push(member_idx);
+                continue;
+            }
+
+            let is_static = if let Some(prop) = self.arena.get_property_decl(member_node) {
+                self.arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
+            } else if let Some(method) = self.arena.get_method_decl(member_node) {
+                self.arena
+                    .has_modifier(&method.modifiers, SyntaxKind::StaticKeyword)
+            } else if let Some(accessor) = self.arena.get_accessor(member_node) {
+                self.arena
+                    .has_modifier(&accessor.modifiers, SyntaxKind::StaticKeyword)
+            } else {
+                false
+            };
+
+            if is_static {
+                static_members.push(member_idx);
+            } else {
+                instance_members.push(member_idx);
+            }
+        }
+
+        static_members.extend(constructors);
+        static_members.extend(instance_members);
+        static_members
     }
     /// Pre-scan class members: when a computed property name appears on both
     /// a method implementation and a get/set accessor, tsc suppresses the
@@ -1161,8 +1289,18 @@ impl<'a> DeclarationEmitter<'a> {
             .arena
             .has_modifier(&prop.modifiers, SyntaxKind::PrivateKeyword);
 
+        let has_explicit_readonly = self
+            .arena
+            .has_modifier(&prop.modifiers, SyntaxKind::ReadonlyKeyword);
+
         // Modifiers
         self.emit_member_modifiers(&prop.modifiers);
+        if !has_explicit_readonly
+            && self.source_is_js_file
+            && self.jsdoc_has_readonly_for_node(prop_idx)
+        {
+            self.write("readonly ");
+        }
 
         // Name
         self.emit_node(prop.name);
@@ -1173,9 +1311,8 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         // Check if readonly for literal initializer form
-        let is_readonly = self
-            .arena
-            .has_modifier(&prop.modifiers, SyntaxKind::ReadonlyKeyword);
+        let is_readonly = has_explicit_readonly
+            || (self.source_is_js_file && self.jsdoc_has_readonly_for_node(prop_idx));
         let const_asserted_enum_member = prop
             .initializer
             .is_some()
@@ -1192,6 +1329,13 @@ impl<'a> DeclarationEmitter<'a> {
         if prop.type_annotation.is_some() && !is_private {
             self.write(": ");
             self.emit_type(prop.type_annotation);
+        } else if !is_private && let Some(type_text) = self.jsdoc_type_text_for_node(prop_idx) {
+            self.write(": ");
+            self.write(&type_text);
+            if prop.question_token && self.strict_null_checks && !type_text.ends_with("| undefined")
+            {
+                self.write(" | undefined");
+            }
         } else if !is_private {
             // For readonly properties with an enum member access initializer (e.g., `readonly type = E.A`),
             // emit the initializer expression directly, matching tsc behavior.
@@ -1334,7 +1478,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(" = ");
                 self.write(&lit_text);
             } else if prop.initializer.is_some()
-                && let Some(type_text) = self.infer_fallback_type_text(prop.initializer)
+                && let Some(type_text) = self.allowlisted_initializer_type_text(prop.initializer)
             {
                 let emitted_any_for_truncation = if let (Some(file_path), Some((pos, length))) =
                     (self.current_file_path.clone(), prop_name_span)

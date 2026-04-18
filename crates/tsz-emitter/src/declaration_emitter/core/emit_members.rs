@@ -130,10 +130,23 @@ impl<'a> DeclarationEmitter<'a> {
             if method.question_token {
                 self.write("(");
             }
-            if let Some(ref type_params) = method.type_parameters
-                && !type_params.nodes.is_empty()
+            let jsdoc_template_params = if method
+                .type_parameters
+                .as_ref()
+                .is_none_or(|type_params| type_params.nodes.is_empty())
             {
-                self.emit_type_parameters(type_params);
+                self.jsdoc_template_params_for_node(method_idx)
+            } else {
+                Vec::new()
+            };
+            if let Some(ref type_params) = method.type_parameters {
+                if !type_params.nodes.is_empty() {
+                    self.emit_type_parameters(type_params);
+                } else if !jsdoc_template_params.is_empty() {
+                    self.emit_jsdoc_template_parameters(&jsdoc_template_params);
+                }
+            } else if !jsdoc_template_params.is_empty() {
+                self.emit_jsdoc_template_parameters(&jsdoc_template_params);
             }
             self.write("(");
             self.emit_parameters_with_body(&method.parameters, method.body);
@@ -152,10 +165,23 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         // Type parameters
-        if let Some(ref type_params) = method.type_parameters
-            && !type_params.nodes.is_empty()
+        let jsdoc_template_params = if method
+            .type_parameters
+            .as_ref()
+            .is_none_or(|type_params| type_params.nodes.is_empty())
         {
-            self.emit_type_parameters(type_params);
+            self.jsdoc_template_params_for_node(method_idx)
+        } else {
+            Vec::new()
+        };
+        if let Some(ref type_params) = method.type_parameters {
+            if !type_params.nodes.is_empty() {
+                self.emit_type_parameters(type_params);
+            } else if !jsdoc_template_params.is_empty() {
+                self.emit_jsdoc_template_parameters(&jsdoc_template_params);
+            }
+        } else if !jsdoc_template_params.is_empty() {
+            self.emit_jsdoc_template_parameters(&jsdoc_template_params);
         }
 
         // Parameters
@@ -555,7 +581,8 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(&self.print_type_id(type_id));
                     } else if !is_private
                         && param.initializer.is_some()
-                        && let Some(type_text) = self.infer_fallback_type_text(param.initializer)
+                        && let Some(type_text) =
+                            self.allowlisted_initializer_type_text(param.initializer)
                     {
                         self.write(": ");
                         self.write(&type_text);
@@ -634,7 +661,10 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(": ");
             self.emit_type(accessor.type_annotation);
         } else if is_getter && !is_private {
-            if let Some(type_text) = self.matching_setter_parameter_type_text(accessor_idx) {
+            if let Some(type_text) = self.jsdoc_return_type_text_for_node(accessor_idx) {
+                self.write(": ");
+                self.write(&type_text);
+            } else if let Some(type_text) = self.matching_setter_parameter_type_text(accessor_idx) {
                 self.write(": ");
                 self.write(&type_text);
             } else if let Some(type_id) =
