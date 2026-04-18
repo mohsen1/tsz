@@ -533,11 +533,20 @@ impl<'a> CheckerState<'a> {
         // For fragments, skip TS2874 whenever EITHER jsxFactory OR
         // jsxFragmentFactory is configured: tsc treats those as a user-driven
         // factory regime and reports TS17016 / TS17017 / TS5024 instead of
-        // the scope-of-default-factory message.
+        // the scope-of-default-factory message. Mark BOTH the factory and the
+        // fragment factory as referenced — fragments compile to
+        // `factory(fragmentFactory, ...)` so both names participate, and
+        // unused-imports checks (TS6133/TS6192) must see them used.
         if is_fragment
             && (self.ctx.compiler_options.jsx_fragment_factory_from_config
                 || self.ctx.compiler_options.jsx_factory_from_config)
         {
+            if self.ctx.compiler_options.jsx_factory_from_config {
+                self.mark_jsx_name_as_referenced(
+                    &self.ctx.compiler_options.jsx_factory.clone(),
+                    node_idx,
+                );
+            }
             self.mark_jsx_name_as_referenced(
                 &self.ctx.compiler_options.jsx_fragment_factory.clone(),
                 node_idx,

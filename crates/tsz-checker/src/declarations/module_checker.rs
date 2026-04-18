@@ -798,6 +798,19 @@ impl<'a> CheckerState<'a> {
         let inside_ambient_module =
             self.is_inside_string_literal_module_declaration(named_exports_idx);
 
+        // Detect `export type { … }` on the enclosing statement. tsc still
+        // reports TS2661/TS2304 for unresolved names inside a type-only
+        // export, but skips TS18043 ("types cannot appear in export
+        // declarations in JavaScript files") since the user already marked
+        // the clause type-only.
+        let enclosing_export_is_type_only = self
+            .ctx
+            .arena
+            .get_extended(named_exports_idx)
+            .and_then(|ext| self.ctx.arena.get(ext.parent))
+            .and_then(|parent_node| self.ctx.arena.get_export_decl(parent_node))
+            .is_some_and(|decl| decl.is_type_only);
+
         let mut seen_export_names: FxHashMap<String, NodeIndex> = FxHashMap::default();
 
         for &specifier_idx in &named_exports.elements.nodes {
@@ -895,6 +908,7 @@ impl<'a> CheckerState<'a> {
             if is_local
                 && self.is_js_file()
                 && self.ctx.should_resolve_jsdoc()
+                && !enclosing_export_is_type_only
                 && self.is_local_symbol_type_only(&name_str)
             {
                 self.error_at_node(
@@ -1615,6 +1629,12 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // tsc skips TS1205/TS1448 re-export checks inside declaration (.d.ts)
+        // files — the rules target emitted JS, not ambient type-only surfaces.
+        if self.ctx.is_declaration_file() {
+            return;
+        }
+
         let Some(clause_node) = self.ctx.arena.get(named_exports_idx) else {
             return;
         };
@@ -1658,16 +1678,22 @@ impl<'a> CheckerState<'a> {
             };
 
             // Check 1: Is the symbol inherently a type? → TS1205
-            // For isolatedModules: skip symbols imported via `import type` — the import
-            // already makes it syntactically clear the symbol is type-only, so re-exporting
-            // without `export type` is OK. Under verbatimModuleSyntax, this is still an error.
+            // For isolatedModules:
+            //   - Skip symbols imported via `import type` — the import already makes
+            //     it syntactically clear the symbol is type-only, so re-exporting
+            //     without `export type` is OK.
+            //   - Skip symbols that reach type-only status via a cross-file chain
+            //     (source uses `export type { X }` but X is itself a value). Those
+            //     belong to TS1448, not TS1205.
+            //   Under verbatimModuleSyntax, both of those still emit TS1205.
             let is_inherent_type = if let Some(ref module_spec) = module_specifier_text {
                 self.is_import_specifier_type_only(module_spec, &source_name)
             } else {
                 let type_only = self.is_local_symbol_type_only(&source_name);
                 if type_only
                     && option_name == "isolatedModules"
-                    && self.is_local_symbol_imported_as_type_only(&source_name)
+                    && (self.is_local_symbol_imported_as_type_only(&source_name)
+                        || self.is_local_symbol_from_type_only_chain(&source_name))
                 {
                     false
                 } else {
@@ -1848,6 +1874,7 @@ impl<'a> CheckerState<'a> {
     /// checks whether the source module's export is type-only.
     fn is_local_symbol_type_only(&self, name: &str) -> bool {
         use tsz_binder::symbol_flags;
+        use tsz_parser::parser::syntax_kind_ext;
 
         const PURE_TYPE: u32 = symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS;
         const VALUE: u32 = symbol_flags::VARIABLE
@@ -1868,7 +1895,20 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
             if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
-                return true;
+                // Raw `interface X {}` / `type X = ...` declarations in a JS
+                // file already produce TS8006 (`'interface' declarations are
+                // not allowed in files with extension '.js'`). Don't double-
+                // report TS18043 against `export { X }` in that case — tsc
+                // emits only TS8006. JSDoc-typedef'd types still hit the
+                // earlier file_has_jsdoc_typedef_named branch.
+                let has_syntactic_type_decl_in_js = self.is_js_file()
+                    && sym.declarations.iter().any(|&decl_idx| {
+                        self.ctx.arena.get(decl_idx).is_some_and(|n| {
+                            n.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                                || n.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                        })
+                    });
+                return !has_syntactic_type_decl_in_js;
             }
             if (sym.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
                 && !self.symbol_has_runtime_value_in_binder(self.ctx.binder, sym_id)
