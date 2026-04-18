@@ -277,9 +277,11 @@ impl<'a> CheckerState<'a> {
         class_data: &tsz_parser::parser::node::ClassData,
         derived_class_name: &str,
         base_class_name: &str,
-        base_member_names: &rustc_hash::FxHashSet<String>,
+        base_instance_member_names: &rustc_hash::FxHashSet<String>,
+        base_static_member_names: &rustc_hash::FxHashSet<String>,
         no_implicit_override: bool,
         base_instance_type: Option<TypeId>,
+        base_static_type: Option<TypeId>,
     ) {
         use crate::query_boundaries::class::build_own_member_summary;
 
@@ -297,6 +299,11 @@ impl<'a> CheckerState<'a> {
             if info.name.starts_with('#') {
                 continue;
             }
+            let member_exists_in_base = if info.is_static {
+                base_static_member_names.contains(&info.name)
+            } else {
+                base_instance_member_names.contains(&info.name)
+            };
 
             if info.has_dynamic_name {
                 if info.has_override {
@@ -313,10 +320,15 @@ impl<'a> CheckerState<'a> {
             }
 
             if info.has_override {
-                if !base_member_names.contains(&info.name) {
+                if !member_exists_in_base {
                     // Member not found in base — check for suggestion
+                    let suggestion_pool = if info.is_static {
+                        base_static_member_names
+                    } else {
+                        base_instance_member_names
+                    };
                     if let Some(suggestion) =
-                        self.find_override_name_suggestion(base_member_names, &info.name)
+                        self.find_override_name_suggestion(suggestion_pool, &info.name)
                     {
                         self.error_at_node(
                             info.name_idx,
@@ -338,7 +350,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             } else if no_implicit_override
-                && base_member_names.contains(&info.name)
+                && member_exists_in_base
                 && !info.has_computed_non_literal_name
             {
                 self.error_at_node(
@@ -362,9 +374,13 @@ impl<'a> CheckerState<'a> {
             // Check property type compatibility with base (TS2416)
             // Only check if the member actually exists in the base type —
             // otherwise there's no override to be incompatible with.
-            if let Some(base_type_id) = base_instance_type
-                && !info.is_static
-                && base_member_names.contains(&info.name)
+            let base_type_for_member = if info.is_static {
+                base_static_type
+            } else {
+                base_instance_type
+            };
+            if let Some(base_type_id) = base_type_for_member
+                && member_exists_in_base
             {
                 let member_type = info.type_id;
                 // Skip if either type is ANY
@@ -387,6 +403,13 @@ impl<'a> CheckerState<'a> {
                                 resolved_base_type,
                                 info.name_idx,
                             )
+                        } else if info.is_static {
+                            should_report_member_type_mismatch_bivariant(
+                                self,
+                                resolved_member_type,
+                                resolved_base_type,
+                                info.name_idx,
+                            )
                         } else {
                             should_report_own_member_type_mismatch(
                                 self,
@@ -397,23 +420,32 @@ impl<'a> CheckerState<'a> {
                         };
 
                         if should_report {
-                            let member_type_str = self.format_type(member_type);
-                            let base_type_str = self.format_type(base_type);
-
-                            let display_name = format_property_name_for_diagnostic(&info.name);
-                            self.error_at_node(
+                            if info.is_static {
+                                self.error_at_node(
+                                    info.name_idx,
+                                    &format!(
+                                        "Class static side 'typeof {derived_class_name}' incorrectly extends base class static side 'typeof {base_class_name}'."
+                                    ),
+                                    diagnostic_codes::CLASS_STATIC_SIDE_INCORRECTLY_EXTENDS_BASE_CLASS_STATIC_SIDE,
+                                );
+                            } else {
+                                let member_type_str = self.format_type(member_type);
+                                let base_type_str = self.format_type(base_type);
+                                let display_name = format_property_name_for_diagnostic(&info.name);
+                                self.error_at_node(
                                     info.name_idx,
                                     &format!(
                                         "Property '{display_name}' in type '{derived_class_name}' is not assignable to the same property in base type '{base_class_name}'."
                                     ),
                                     diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                                 );
-                            self.report_type_not_assignable_detail(
+                                self.report_type_not_assignable_detail(
                                     info.name_idx,
                                     &member_type_str,
                                     &base_type_str,
                                     diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                                 );
+                            }
                         }
                     }
                 }
@@ -1238,7 +1270,15 @@ impl<'a> CheckerState<'a> {
                             })
                         })
                         .unwrap_or_else(|| self.format_type(instance_type));
-                    let base_member_names = self.collect_property_names_from_type(instance_type);
+                    let base_instance_member_names =
+                        self.collect_property_names_from_type(instance_type);
+                    let base_static_type =
+                        self.base_constructor_type_from_expression(h_expr_idx, type_arguments);
+                    let base_static_member_names = if let Some(static_type) = base_static_type {
+                        self.collect_property_names_from_type(static_type)
+                    } else {
+                        rustc_hash::FxHashSet::default()
+                    };
                     self.check_non_public_member_inheritance_conflicts_against_type(
                         class_data,
                         instance_type,
@@ -1250,9 +1290,11 @@ impl<'a> CheckerState<'a> {
                         class_data,
                         &derived_class_name,
                         &type_base_name,
-                        &base_member_names,
+                        &base_instance_member_names,
+                        &base_static_member_names,
                         no_implicit_override,
                         Some(instance_type),
+                        base_static_type,
                     );
                     return;
                 }
@@ -1295,15 +1337,25 @@ impl<'a> CheckerState<'a> {
                             })
                         })
                         .unwrap_or_else(|| self.format_type(instance_type));
-                    let base_member_names = self.collect_property_names_from_type(instance_type);
+                    let base_instance_member_names =
+                        self.collect_property_names_from_type(instance_type);
+                    let base_static_type =
+                        self.base_constructor_type_from_expression(h_expr_idx, type_arguments);
+                    let base_static_member_names = if let Some(static_type) = base_static_type {
+                        self.collect_property_names_from_type(static_type)
+                    } else {
+                        rustc_hash::FxHashSet::default()
+                    };
 
                     self.check_override_members_against_type(
                         class_data,
                         &derived_class_name,
                         &type_base_name,
-                        &base_member_names,
+                        &base_instance_member_names,
+                        &base_static_member_names,
                         no_implicit_override,
                         Some(instance_type),
+                        base_static_type,
                     );
                     return;
                 }
