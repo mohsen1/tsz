@@ -74,7 +74,7 @@ impl<'a> CheckerState<'a> {
 
         // For anonymous function expressions (e.g., `exports.A = function() { this.x = 1; }`),
         // no symbol may exist. Fall back to using the expression node directly as a function.
-        let (func, func_name_str) = if let Some(sym_id) = sym_id {
+        let (func, func_name_str, _func_node_idx) = if let Some(sym_id) = sym_id {
             let symbol = self.ctx.binder.get_symbol(sym_id)?;
             let value_decl = self
                 .checked_js_constructor_value_declaration(
@@ -99,7 +99,7 @@ impl<'a> CheckerState<'a> {
                     .get(func.name)
                     .and_then(|n| self.ctx.arena.get_identifier(n))
                     .map(|ident| ident.escaped_text.clone());
-                (func, func_name)
+                (func, func_name, value_decl)
             } else if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
                 let init_node = self.ctx.arena.get(var_decl.initializer)?;
                 if init_node.kind != tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION {
@@ -119,7 +119,7 @@ impl<'a> CheckerState<'a> {
                             .and_then(|n| self.ctx.arena.get_identifier(n))
                             .map(|ident| ident.escaped_text.clone())
                     });
-                (func, func_name)
+                (func, func_name, var_decl.initializer)
             } else {
                 return None;
             }
@@ -139,7 +139,7 @@ impl<'a> CheckerState<'a> {
                         .and_then(|n| self.ctx.arena.get_identifier(n))
                 })
                 .map(|ident| ident.escaped_text.clone());
-            (func, func_name)
+            (func, func_name, expr_idx)
         } else {
             return None;
         };
@@ -150,46 +150,89 @@ impl<'a> CheckerState<'a> {
         }
         let func_node_idx = self.ctx.arena.get_extended(body_idx).map(|ext| ext.parent);
 
-        // Check if the constructor function has @template type params
+        // Build effective template/parameter data for JS generic constructors.
         let func_shape =
             tsz_solver::type_queries::get_function_shape(self.ctx.types, constructor_type);
-        let is_generic = func_shape
+        let mut effective_type_params: Vec<tsz_solver::TypeParamInfo> = func_shape
             .as_ref()
-            .is_some_and(|s| !s.type_params.is_empty());
+            .map(|shape| shape.type_params.clone())
+            .unwrap_or_default();
+        let mut effective_param_types: Vec<TypeId> = func_shape
+            .as_ref()
+            .map(|shape| shape.params.iter().map(|param| param.type_id).collect())
+            .unwrap_or_default();
+        let mut fallback_param_type_map: Option<FxHashMap<String, TypeId>> = None;
+
+        if effective_type_params.is_empty() || effective_param_types.is_empty() {
+            let fallback = self.js_class_body_param_type_map(body_idx);
+
+            if effective_param_types.is_empty() {
+                effective_param_types = func
+                    .parameters
+                    .nodes
+                    .iter()
+                    .map(|&param_idx| {
+                        self.ctx
+                            .arena
+                            .get(param_idx)
+                            .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                            .and_then(|param| self.ctx.arena.get(param.name))
+                            .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                            .and_then(|ident| fallback.get(&ident.escaped_text).copied())
+                            .unwrap_or(TypeId::ANY)
+                    })
+                    .collect();
+            }
+
+            if effective_type_params.is_empty() {
+                let mut seen = rustc_hash::FxHashSet::default();
+                for &param_type in fallback.values() {
+                    if let Some(tp_info) =
+                        tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, param_type)
+                        && seen.insert(tp_info.name)
+                    {
+                        effective_type_params.push(tp_info);
+                    }
+                }
+            }
+
+            fallback_param_type_map = Some(fallback);
+        }
+
+        let is_generic = !effective_type_params.is_empty();
 
         let mut properties: FxHashMap<tsz_common::interner::Atom, PropertyInfo> =
             FxHashMap::default();
         let mut scope_restore: Vec<(String, Option<TypeId>)> = Vec::new();
 
         if is_generic {
-            // For generic constructor functions, we build the instance type using
-            // the function shape's correctly-resolved parameter types (which were
-            // created during get_type_of_function when @template was in scope).
             // We cannot use collect_js_constructor_this_properties here because
             // get_type_of_node resolves types in the call site context, not the
             // function declaration context.
-            let shape = func_shape
-                .as_ref()
-                .expect("is_generic guard ensures func_shape is Some");
-
-            // Build param name → type map from the function shape
-            let param_type_map: FxHashMap<String, TypeId> = func
-                .parameters
-                .nodes
-                .iter()
-                .zip(shape.params.iter())
-                .filter_map(|(&param_idx, param_info)| {
-                    let param_node = self.ctx.arena.get(param_idx)?;
-                    let param_data = self.ctx.arena.get_parameter(param_node)?;
-                    let name_node = self.ctx.arena.get(param_data.name)?;
-                    let ident = self.ctx.arena.get_identifier(name_node)?;
-                    Some((ident.escaped_text.clone(), param_info.type_id))
-                })
-                .collect();
+            let param_type_map: FxHashMap<String, TypeId> = if let Some(shape) = func_shape.as_ref()
+                && !shape.params.is_empty()
+            {
+                func.parameters
+                    .nodes
+                    .iter()
+                    .zip(shape.params.iter())
+                    .filter_map(|(&param_idx, param_info)| {
+                        let param_node = self.ctx.arena.get(param_idx)?;
+                        let param_data = self.ctx.arena.get_parameter(param_node)?;
+                        let name_node = self.ctx.arena.get(param_data.name)?;
+                        let ident = self.ctx.arena.get_identifier(name_node)?;
+                        Some((ident.escaped_text.clone(), param_info.type_id))
+                    })
+                    .collect()
+            } else {
+                fallback_param_type_map
+                    .clone()
+                    .unwrap_or_else(|| self.js_class_body_param_type_map(body_idx))
+            };
 
             // Push type params into scope for @type resolution
             let factory = self.ctx.types.factory();
-            for tp in &shape.type_params {
+            for tp in &effective_type_params {
                 let name = self.ctx.types.resolve_atom(tp.name);
                 let ty = factory.type_param(*tp);
                 let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
@@ -358,18 +401,15 @@ impl<'a> CheckerState<'a> {
         let factory = self.ctx.types.factory();
         let instance_type = factory.object(props);
 
-        // If the constructor function has @template type params, instantiate the
+        // If the constructor function has template type params, instantiate the
         // instance type by inferring type arguments from the actual call arguments.
-        if let Some(ref shape) = func_shape
-            && !shape.type_params.is_empty()
-            && !arg_types.is_empty()
-        {
-            let mut type_args = Vec::with_capacity(shape.type_params.len());
-            for tp in &shape.type_params {
+        if !effective_type_params.is_empty() && !arg_types.is_empty() {
+            let mut type_args = Vec::with_capacity(effective_type_params.len());
+            for tp in &effective_type_params {
                 let tp_id = self.ctx.types.factory().type_param(*tp);
                 let mut inferred = None;
-                for (i, param) in shape.params.iter().enumerate() {
-                    if param.type_id == tp_id
+                for (i, &param_type) in effective_param_types.iter().enumerate() {
+                    if param_type == tp_id
                         && let Some(&arg_ty) = arg_types.get(i)
                     {
                         // Widen literal types (e.g., 1 → number)
@@ -386,7 +426,7 @@ impl<'a> CheckerState<'a> {
             let instantiated = tsz_solver::instantiate_generic(
                 self.ctx.types,
                 instance_type,
-                &shape.type_params,
+                &effective_type_params,
                 &type_args,
             );
             return Some(instantiated);
