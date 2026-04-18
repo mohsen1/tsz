@@ -29,6 +29,30 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    pub(crate) fn file_has_jsdoc_typedef_namespace_root(
+        &self,
+        file_idx: usize,
+        export_name: &str,
+    ) -> bool {
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        arena.source_files.iter().any(|source_file| {
+            source_file.comments.iter().any(|comment| {
+                let content = source_file
+                    .text
+                    .get(comment.pos as usize..comment.end as usize)
+                    .unwrap_or("");
+                Self::parse_jsdoc_typedefs(content).iter().any(|(name, _)| {
+                    name == export_name
+                        || (name.starts_with(export_name)
+                            && name
+                                .as_bytes()
+                                .get(export_name.len())
+                                .is_some_and(|b| *b == b'.'))
+                })
+            })
+        })
+    }
+
     pub(crate) fn report_namespace_value_access_for_type_only_import_equals_expr(
         &mut self,
         expr_idx: NodeIndex,
