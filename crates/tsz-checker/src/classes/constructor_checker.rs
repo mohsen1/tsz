@@ -138,7 +138,8 @@ impl<'a> CheckerState<'a> {
     /// signatures with different return types (indicating they came from an
     /// intersection of constructor types in a mixin pattern).
     fn compute_mixin_intersected_instance_type(&self, ctor_type: TypeId) -> Option<TypeId> {
-        let shape_id = tsz_solver::visitor::callable_shape_id(self.ctx.types, ctor_type)?;
+        let shape_id =
+            crate::query_boundaries::common::callable_shape_id(self.ctx.types, ctor_type)?;
         let shape = self.ctx.types.callable_shape(shape_id);
         if shape.construct_signatures.len() <= 1 {
             return None;
@@ -161,7 +162,8 @@ impl<'a> CheckerState<'a> {
 
     /// Set all construct signature return types to the given type.
     fn set_all_construct_return_types(&self, ctor_type: TypeId, instance_type: TypeId) -> TypeId {
-        let Some(shape_id) = tsz_solver::visitor::callable_shape_id(self.ctx.types, ctor_type)
+        let Some(shape_id) =
+            crate::query_boundaries::common::callable_shape_id(self.ctx.types, ctor_type)
         else {
             return ctor_type;
         };

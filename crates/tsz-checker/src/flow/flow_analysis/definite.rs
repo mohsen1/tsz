@@ -186,7 +186,7 @@ impl<'a> CheckerState<'a> {
         if let Some(node) = self.ctx.arena.get(idx)
             && (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-            && tsz_solver::visitor::is_literal_type_through_type_constraints(
+            && crate::query_boundaries::common::is_literal_type_through_type_constraints(
                 self.ctx.types,
                 declared_type,
             )

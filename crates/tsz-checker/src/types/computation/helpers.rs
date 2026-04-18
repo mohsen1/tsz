@@ -1553,40 +1553,42 @@ impl<'a> CheckerState<'a> {
                         )
                     }));
 
-            let has_concrete_non_expando_override = if self.is_js_file()
-                && self.ctx.compiler_options.check_js
-            {
-                let preferred_cross_file_override = if let Some(root_ident) =
-                    self.ctx.arena.get(access.expression)
-                    && root_ident.kind == SyntaxKind::Identifier as u16
-                    && let Some(ident) = self.ctx.arena.get_identifier(root_ident)
-                    && let Some(preferred_cross_file_type) =
-                        self.cross_file_global_value_type_by_name(&ident.escaped_text, false)
-                {
-                    preferred_cross_file_type != TypeId::ANY
-                        && preferred_cross_file_type != TypeId::UNKNOWN
-                        && !tsz_solver::visitor::is_function_type(
-                            self.ctx.types,
-                            preferred_cross_file_type,
-                        )
+            let has_concrete_non_expando_override =
+                if self.is_js_file() && self.ctx.compiler_options.check_js {
+                    let preferred_cross_file_override = if let Some(root_ident) =
+                        self.ctx.arena.get(access.expression)
+                        && root_ident.kind == SyntaxKind::Identifier as u16
+                        && let Some(ident) = self.ctx.arena.get_identifier(root_ident)
+                        && let Some(preferred_cross_file_type) =
+                            self.cross_file_global_value_type_by_name(&ident.escaped_text, false)
+                    {
+                        preferred_cross_file_type != TypeId::ANY
+                            && preferred_cross_file_type != TypeId::UNKNOWN
+                            && !crate::query_boundaries::common::is_function_type(
+                                self.ctx.types,
+                                preferred_cross_file_type,
+                            )
+                    } else {
+                        false
+                    };
+
+                    let merged_value_override = if let Some(merged_value_type) =
+                        self.merged_value_type_for_symbol_if_available(obj_sym)
+                    {
+                        merged_value_type != TypeId::ANY
+                            && merged_value_type != TypeId::UNKNOWN
+                            && !crate::query_boundaries::common::is_function_type(
+                                self.ctx.types,
+                                merged_value_type,
+                            )
+                    } else {
+                        false
+                    };
+
+                    preferred_cross_file_override || merged_value_override
                 } else {
                     false
                 };
-
-                let merged_value_override = if let Some(merged_value_type) =
-                    self.merged_value_type_for_symbol_if_available(obj_sym)
-                {
-                    merged_value_type != TypeId::ANY
-                        && merged_value_type != TypeId::UNKNOWN
-                        && !tsz_solver::visitor::is_function_type(self.ctx.types, merged_value_type)
-                } else {
-                    false
-                };
-
-                preferred_cross_file_override || merged_value_override
-            } else {
-                false
-            };
 
             if apply_expando_pattern && !has_concrete_non_expando_override {
                 // Checked-JS function symbols use expando writes regardless of any

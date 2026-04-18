@@ -4174,6 +4174,52 @@ fn test_no_inline_type_queries_in_cleaned_modules() {
     );
 }
 
+/// Zero-tolerance guard: no direct `tsz_solver::visitor::` calls are allowed outside
+/// `query_boundaries/`. All visitor access must go through `query_boundaries::common`.
+#[test]
+fn test_no_inline_visitor_calls_in_checker_modules() {
+    let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&checker_src, &mut files);
+
+    let mut violations = Vec::new();
+
+    for path in &files {
+        let rel = path
+            .strip_prefix(&checker_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        if rel.starts_with("query_boundaries/") || rel.starts_with("tests/") {
+            continue;
+        }
+
+        let src = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") || trimmed.starts_with("///") {
+                continue;
+            }
+            if trimmed.contains("tsz_solver::visitor::") {
+                violations.push(format!("  {}:{} — {}", rel, line_num + 1, trimmed));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "ALL checker code must use query_boundaries wrappers — no direct \
+         tsz_solver::visitor:: calls allowed outside query_boundaries/.\n\
+         Violations found:\n{}",
+        violations.join("\n")
+    );
+}
+
 /// Ratchet guard: direct `tsz_solver::widening::widen_type` (or `operations::widening::`)
 /// calls outside `query_boundaries/`, `tests/`, and `types/utilities/core.rs` must not grow.
 ///

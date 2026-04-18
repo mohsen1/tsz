@@ -154,7 +154,8 @@ impl<'a> CheckerState<'a> {
         };
 
         let is_unique_symbol =
-            tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type).is_some();
+            crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
+                .is_some();
         let is_concrete_numeric = literal_index.is_some();
         if !is_unique_symbol && !is_concrete_numeric {
             return false;

@@ -419,7 +419,7 @@ impl<'a> CheckerState<'a> {
             if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, resolved) {
                 // Check specifically for unsupplied param names
                 for &name in &unsupplied_names {
-                    if tsz_solver::visitor::contains_type_parameter_named(
+                    if crate::query_boundaries::common::contains_type_parameter_named(
                         self.ctx.types.as_type_database(),
                         resolved,
                         name,

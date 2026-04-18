@@ -445,7 +445,7 @@ impl<'a> CheckerState<'a> {
         narrowed_type: TypeId,
     ) -> bool {
         // First check if the narrowed type is an empty object `{}`
-        if !tsz_solver::visitor::is_empty_object_type(self.ctx.types, narrowed_type) {
+        if !crate::query_boundaries::common::is_empty_object_type(self.ctx.types, narrowed_type) {
             return false;
         }
 

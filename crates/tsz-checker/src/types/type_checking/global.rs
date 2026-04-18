@@ -244,9 +244,10 @@ impl<'a> CheckerState<'a> {
                 // Also register the DefId (if it's a Lazy type) so the interner
                 // can identify boxed types by DefId even when TypeEnvironment
                 // is unavailable (e.g., during RefCell borrow conflicts).
-                if let Some(def_id) =
-                    tsz_solver::visitor::lazy_def_id(self.ctx.types.as_type_database(), ty)
-                {
+                if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(
+                    self.ctx.types.as_type_database(),
+                    ty,
+                ) {
                     self.ctx.types.register_boxed_def_id(kind, def_id);
                 }
             }

@@ -396,7 +396,7 @@ impl<'a> CheckerState<'a> {
                 // correct intrinsic semantics (e.g., callable source ⊂ Function).
                 // Without this guard, `number` becomes assignable to the empty
                 // `{}` object, silencing TS2345/TS2769 errors.
-                if let Some(shape_id) = tsz_solver::visitor::object_shape_id(
+                if let Some(shape_id) = crate::query_boundaries::common::object_shape_id(
                     self.ctx.types.as_type_database(),
                     resolved,
                 ) {
@@ -648,8 +648,11 @@ impl<'a> CheckerState<'a> {
         let result = eval_result.result;
         if result != type_id && result != TypeId::ERROR {
             let db = self.ctx.types.as_type_database();
-            if tsz_solver::visitor::contains_concrete_application_with_def(db, result, alias_def_id)
-            {
+            if crate::query_boundaries::common::contains_concrete_application_with_def(
+                db,
+                result,
+                alias_def_id,
+            ) {
                 return true;
             }
         }

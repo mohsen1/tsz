@@ -1600,11 +1600,11 @@ impl<'a> CheckerState<'a> {
             .resolve_identifier_symbol(access.expression)
             .and_then(|sym_id| self.assignment_target_declared_type(sym_id))
             .filter(|declared| {
-                tsz_solver::visitor::is_type_parameter(self.ctx.types, *declared)
-                    || tsz_solver::visitor::is_this_type(self.ctx.types, *declared)
+                crate::query_boundaries::common::is_type_parameter(self.ctx.types, *declared)
+                    || crate::query_boundaries::common::is_this_type(self.ctx.types, *declared)
             })
             .unwrap_or_else(|| self.get_type_of_node(access.expression));
-        if !tsz_solver::visitor::is_type_parameter(self.ctx.types, object_type) {
+        if !crate::query_boundaries::common::is_type_parameter(self.ctx.types, object_type) {
             return None;
         }
 

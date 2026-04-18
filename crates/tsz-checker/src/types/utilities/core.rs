@@ -2118,8 +2118,11 @@ impl<'a> CheckerState<'a> {
         let check_type = if let Some(constraint) =
             crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, object_type)
         {
-            if tsz_solver::visitor::is_type_parameter(self.ctx.types, index_type)
-                || tsz_solver::visitor::contains_type_parameters(self.ctx.types, constraint)
+            if crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type)
+                || crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    constraint,
+                )
             {
                 // Constraint is generic or index is generic — can't determine
                 // indexability until instantiation. Don't report TS7053.

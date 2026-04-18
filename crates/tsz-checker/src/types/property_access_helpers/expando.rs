@@ -843,7 +843,7 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         if !self.is_js_file()
             || !self.ctx.compiler_options.check_js
-            || !tsz_solver::visitor::is_object_like_type(self.ctx.types, object_type)
+            || !crate::query_boundaries::common::is_object_like_type(self.ctx.types, object_type)
         {
             return false;
         }

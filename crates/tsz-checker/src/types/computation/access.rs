@@ -109,7 +109,9 @@ impl<'a> CheckerState<'a> {
                 let key_type = self.get_type_of_node(key_expr_idx);
                 self.ctx.preserve_literal_types = prev;
 
-                if let Some(lit) = tsz_solver::visitor::literal_value(self.ctx.types, key_type) {
+                if let Some(lit) =
+                    crate::query_boundaries::common::literal_value(self.ctx.types, key_type)
+                {
                     return Some(match lit {
                         tsz_solver::LiteralValue::String(s) => self.ctx.types.resolve_atom(s),
                         tsz_solver::LiteralValue::Number(n) => n.0.to_string(),
@@ -119,7 +121,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if let Some(sym_ref) =
-                    tsz_solver::visitor::unique_symbol_ref(self.ctx.types, key_type)
+                    crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, key_type)
                 {
                     return Some(format!("__unique_{}", sym_ref.0));
                 }
@@ -569,9 +571,13 @@ impl<'a> CheckerState<'a> {
         // write target collapses to the constraint's index-signature value type
         // (e.g. `number`) and incorrectly accepts writes that should produce
         // generic TS2322 errors.
-        let is_generic_receiver =
-            tsz_solver::visitor::is_type_parameter(self.ctx.types, pre_resolution_object_type)
-                || tsz_solver::visitor::is_this_type(self.ctx.types, pre_resolution_object_type);
+        let is_generic_receiver = crate::query_boundaries::common::is_type_parameter(
+            self.ctx.types,
+            pre_resolution_object_type,
+        ) || crate::query_boundaries::common::is_this_type(
+            self.ctx.types,
+            pre_resolution_object_type,
+        );
         if skip_flow_narrowing
             && is_generic_receiver
             && self.is_valid_index_for_type_param(index_type, pre_resolution_object_type)
@@ -1130,8 +1136,11 @@ impl<'a> CheckerState<'a> {
         // where `k` is a unique symbol with a setter type different from the getter).
         if result_type.is_none()
             && let Some(sym_ref) =
-                tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type)
-            && !tsz_solver::visitor::is_type_parameter(self.ctx.types, pre_resolution_object_type)
+                crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
+            && !crate::query_boundaries::common::is_type_parameter(
+                self.ctx.types,
+                pre_resolution_object_type,
+            )
         {
             let property_name = format!("__unique_{}", sym_ref.0);
             let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
@@ -1182,7 +1191,10 @@ impl<'a> CheckerState<'a> {
         // positives like TS2722 ("Cannot invoke possibly undefined").
         if result_type.is_none()
             && index_type == TypeId::SYMBOL
-            && tsz_solver::visitor::has_late_bound_members(self.ctx.types, object_type_for_access)
+            && crate::query_boundaries::common::has_late_bound_members(
+                self.ctx.types,
+                object_type_for_access,
+            )
         {
             result_type = Some(TypeId::ANY);
             use_index_signature_check = false;
@@ -1197,7 +1209,7 @@ impl<'a> CheckerState<'a> {
         // needed for generic indexed access (e.g., `handlers[key]` where `handlers` has
         // type `{ [T in keyof M]?: (p: T) => void }` and `key: K extends keyof M`).
         if result_type.is_none()
-            && tsz_solver::visitor::is_type_parameter(self.ctx.types, index_type)
+            && crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type)
         {
             let resolved_pre = self.resolve_lazy_type(pre_resolution_object_type);
             if tsz_solver::mapped_type_id(self.ctx.types, resolved_pre).is_some() {
@@ -1215,8 +1227,10 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut result_type = result_type.unwrap_or_else(|| {
-            if tsz_solver::visitor::is_type_parameter(self.ctx.types, pre_resolution_object_type)
-                && self.is_generic_index_type(index_type)
+            if crate::query_boundaries::common::is_type_parameter(
+                self.ctx.types,
+                pre_resolution_object_type,
+            ) && self.is_generic_index_type(index_type)
             {
                 // When indexing a type parameter T with keys from a different type
                 // parameter (e.g., `keyof U` where `U extends T`), tsc emits TS2536.
@@ -1273,7 +1287,7 @@ impl<'a> CheckerState<'a> {
                 // Exception: when constraint is concrete (e.g., Record<K, number>),
                 // let normal resolution proceed so T[K] resolves to number.
                 if pre_resolution_object_type != object_type_for_access
-                    && tsz_solver::visitor::is_type_parameter(
+                    && crate::query_boundaries::common::is_type_parameter(
                         self.ctx.types,
                         object_type_for_access,
                     )
@@ -1314,8 +1328,11 @@ impl<'a> CheckerState<'a> {
             // (not generic), but when the object is a type parameter, the result type
             // depends on the specific T at instantiation time. Produce a deferred
             // IndexAccess(T, UniqueSymbol) to match tsc behavior (e.g., T[typeof fooProp]).
-            if tsz_solver::visitor::is_type_parameter(self.ctx.types, pre_resolution_object_type)
-                && tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type).is_some()
+            if crate::query_boundaries::common::is_type_parameter(
+                self.ctx.types,
+                pre_resolution_object_type,
+            ) && crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
+                .is_some()
                 && pre_resolution_object_type != object_type_for_access
             {
                 return self
@@ -1431,7 +1448,8 @@ impl<'a> CheckerState<'a> {
         // unique symbols that can't fall through to index signatures.
         if !report_no_index
             && use_index_signature_check
-            && tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type).is_some()
+            && crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
+                .is_some()
             && crate::query_boundaries::common::union_members(
                 self.ctx.types,
                 object_type_for_access,
@@ -1450,7 +1468,8 @@ impl<'a> CheckerState<'a> {
 
         if !report_no_index
             && use_index_signature_check
-            && tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type).is_some()
+            && crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
+                .is_some()
             && let Some(members) = crate::query_boundaries::common::union_members(
                 self.ctx.types,
                 object_type_for_access,
@@ -1490,7 +1509,7 @@ impl<'a> CheckerState<'a> {
                 .namespace_module_names
                 .contains_key(&object_type_for_access);
             let is_js_expando_object_write = self.ctx.is_js_file()
-                && tsz_solver::visitor::is_object_like_type(self.ctx.types, object_type_for_access)
+                && crate::query_boundaries::common::is_object_like_type(self.ctx.types, object_type_for_access)
                 && self.is_direct_expando_element_write_base(access.expression)
                 // JS expando-style element writes only suppress TS7053 when the key is a
                 // simple literal/identifier shape the binder/checker can track. Arbitrary
@@ -1498,8 +1517,10 @@ impl<'a> CheckerState<'a> {
                 && self.expando_element_key_name(access.name_or_argument).is_some();
             let is_expando_write = skip_flow_narrowing
                 && !is_namespace_object
-                && (tsz_solver::visitor::is_function_type(self.ctx.types, object_type_for_access)
-                    || is_js_expando_object_write);
+                && (crate::query_boundaries::common::is_function_type(
+                    self.ctx.types,
+                    object_type_for_access,
+                ) || is_js_expando_object_write);
             // Suppress TS7053 for expando reads with unique symbol keys on function
             // types. When `func[symKey]` where symKey is a const Symbol() variable
             // and `func[symKey] = value` was assigned as an expando property, tsc
@@ -1510,14 +1531,19 @@ impl<'a> CheckerState<'a> {
             // fail due to lib-merge rewriting the binder's symbol arena).
             let is_expando_symbol_read = !skip_flow_narrowing
                 && !is_namespace_object
-                && tsz_solver::visitor::is_function_type(self.ctx.types, object_type_for_access)
-                && tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type).is_some()
+                && crate::query_boundaries::common::is_function_type(
+                    self.ctx.types,
+                    object_type_for_access,
+                )
+                && crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
+                    .is_some()
                 && self.object_has_unique_symbol_expandos(access.expression);
             let is_js_constructor_instance_symbol_read = !skip_flow_narrowing
                 && !is_namespace_object
                 && self.is_js_file()
                 && self.ctx.compiler_options.check_js
-                && tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type).is_some()
+                && crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
+                    .is_some()
                 && self.object_expr_is_new_constructor_instance(access.expression)
                 && self.object_has_unique_symbol_expandos(access.expression);
             if !is_expando_write

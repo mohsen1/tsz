@@ -1172,7 +1172,8 @@ impl<'a> CheckerState<'a> {
                                 | type_query::ArrayLikeKind::Readonly(_)
                         );
                         let no_infer =
-                            tsz_solver::visitor::no_infer_inner_type(db, evaluated).is_some();
+                            crate::query_boundaries::common::no_infer_inner_type(db, evaluated)
+                                .is_some();
                         if array_like || no_infer {
                             type_id = evaluated;
                         }

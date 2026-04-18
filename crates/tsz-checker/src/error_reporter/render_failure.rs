@@ -736,8 +736,10 @@ impl<'a> CheckerState<'a> {
             use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
             let resolver = IndexSignatureResolver::new(self.ctx.types);
             let target_is_array_or_tuple =
-                tsz_solver::visitor::array_element_type(self.ctx.types, target).is_some()
-                    || tsz_solver::visitor::tuple_list_id(self.ctx.types, target).is_some();
+                crate::query_boundaries::common::array_element_type(self.ctx.types, target)
+                    .is_some()
+                    || crate::query_boundaries::common::tuple_list_id(self.ctx.types, target)
+                        .is_some();
             let target_has_index = !target_is_array_or_tuple
                 && (resolver.has_index_signature(target, IndexKind::String)
                     || resolver.has_index_signature(target, IndexKind::Number));
@@ -786,8 +788,8 @@ impl<'a> CheckerState<'a> {
         let source_evaluated = self.evaluate_type_with_env(source);
         let target_evaluated = self.evaluate_type_with_env(target);
         let target_is_array_or_tuple_for_idx =
-            tsz_solver::visitor::array_element_type(self.ctx.types, target).is_some()
-                || tsz_solver::visitor::tuple_list_id(self.ctx.types, target).is_some();
+            crate::query_boundaries::common::array_element_type(self.ctx.types, target).is_some()
+                || crate::query_boundaries::common::tuple_list_id(self.ctx.types, target).is_some();
         let source_has_index = [source, source_evaluated].iter().any(|t| {
             resolver.has_index_signature(*t, IndexKind::String)
                 || resolver.has_index_signature(*t, IndexKind::Number)

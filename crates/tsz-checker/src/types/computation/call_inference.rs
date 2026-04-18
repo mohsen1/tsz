@@ -532,7 +532,7 @@ impl<'a> CheckerState<'a> {
             common::lazy_def_id(self.ctx.types, base)
                 .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
                 .or_else(|| {
-                    tsz_solver::visitor::type_query_symbol(self.ctx.types, base)
+                    crate::query_boundaries::common::type_query_symbol(self.ctx.types, base)
                         .map(|symbol_ref| SymbolId(symbol_ref.0))
                 })
         };

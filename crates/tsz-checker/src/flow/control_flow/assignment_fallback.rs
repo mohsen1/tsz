@@ -339,7 +339,9 @@ impl<'a> FlowAnalyzer<'a> {
         }
         if let Some(computed) = self.arena.get_computed_property(name_node) {
             let key_type = self.fallback_expression_type_from_syntax(computed.expression)?;
-            if let Some(literal) = tsz_solver::visitor::literal_value(self.interner, key_type) {
+            if let Some(literal) =
+                crate::query_boundaries::common::literal_value(self.interner, key_type)
+            {
                 return Some(match literal {
                     tsz_solver::LiteralValue::Number(value) => {
                         self.interner.intern_string(&value.0.to_string())

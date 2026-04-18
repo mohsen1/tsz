@@ -642,7 +642,7 @@ impl<'a> CheckerState<'a> {
 
         // 2. If it's a parent Enum type (widen_enum_member_type returned it
         //    unchanged because it has no parent), keep for display.
-        if tsz_solver::visitor::is_enum_type(self.ctx.types, type_id) {
+        if crate::query_boundaries::common::is_enum_type(self.ctx.types, type_id) {
             return type_id;
         }
 
