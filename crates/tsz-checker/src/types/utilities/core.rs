@@ -270,7 +270,6 @@ impl<'a> CheckerState<'a> {
                 // first. This is how tsc handles JS: @param types are the primary source of
                 // parameter type information, taking precedence over contextual types.
                 let jsdoc_type = if self.is_js_file() {
-                    let pname = self.parameter_name_for_error(param.name);
                     let mut current = param_idx;
                     let mut found = None;
                     // First try @param {Type} name annotations
@@ -282,14 +281,25 @@ impl<'a> CheckerState<'a> {
                             if let Some(comment_start) =
                                 self.get_jsdoc_comment_pos_for_function(current)
                                 && let Some(func_jsdoc) = self.get_jsdoc_for_function(current)
-                                && let Some(t) = self.resolve_jsdoc_param_type_with_pos(
+                            {
+                                let jsdoc_param_names: Vec<String> =
+                                    Self::extract_jsdoc_param_names(&func_jsdoc)
+                                        .into_iter()
+                                        .map(|(name, _)| name)
+                                        .collect();
+                                let pname = self.effective_jsdoc_param_name(
+                                    param.name,
+                                    &jsdoc_param_names,
+                                    i,
+                                );
+                                if let Some(t) = self.resolve_jsdoc_param_type_with_pos(
                                     &func_jsdoc,
                                     &pname,
                                     Some(comment_start),
-                                )
-                            {
-                                found = Some(t);
-                                break;
+                                ) {
+                                    found = Some(t);
+                                    break;
+                                }
                             }
                         } else {
                             break;
