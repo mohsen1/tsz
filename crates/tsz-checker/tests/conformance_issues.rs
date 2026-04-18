@@ -26351,3 +26351,38 @@ if (x.constructor !== A) {
          exclude A from the union, leaving B. Got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_no_false_ts2300_for_cross_module_default_import_alias() {
+    // Reproduces allowImportClausesToMergeWithTypes.ts:
+    // When file b.ts exports a value as default, and file a.ts imports it
+    // with the same name as a local interface, no TS2300 should be emitted.
+    // The import clause merges with the interface (type + value).
+    let b_source = r#"
+export const zzz = 123;
+export default zzz;
+"#;
+    let a_source = r#"
+export default interface zzz {
+    x: string;
+}
+import zzz from "./a";
+const x: zzz = { x: "" };
+export { zzz as default };
+"#;
+    let diagnostics = compile_two_files_get_diagnostics_with_options(
+        b_source,
+        a_source,
+        "./a",
+        CheckerOptions {
+            no_lib: true,
+            ..Default::default()
+        },
+    );
+    let ts2300_count = diagnostics.iter().filter(|(c, _)| *c == 2300).count();
+    assert_eq!(
+        ts2300_count, 0,
+        "External module files should not emit false TS2300 for cross-file \
+         default import aliases. Got: {diagnostics:?}"
+    );
+}
