@@ -443,7 +443,7 @@ impl<'a> CheckerState<'a> {
         // cannot be resolved to a concrete type. Reporting errors on these placeholders
         // produces confusing diagnostics. The actual inference/assignability issue should be
         // reported elsewhere.
-        if tsz_solver::type_queries::is_bare_infer_placeholder_db(self.ctx.types, type_id) {
+        if crate::query_boundaries::common::is_bare_infer_placeholder(self.ctx.types, type_id) {
             return;
         }
 

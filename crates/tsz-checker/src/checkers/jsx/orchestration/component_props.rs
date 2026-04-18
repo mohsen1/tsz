@@ -490,7 +490,8 @@ impl<'a> CheckerState<'a> {
         }
         declarations.extend(symbol.declarations.iter().copied());
 
-        let tag_literal = tsz_solver::type_queries::create_string_literal_type(self.ctx.types, tag);
+        let tag_literal =
+            crate::query_boundaries::common::create_string_literal_type(self.ctx.types, tag);
         let mut candidates = Vec::new();
 
         for mut decl_idx in declarations {

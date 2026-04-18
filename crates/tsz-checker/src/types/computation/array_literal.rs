@@ -14,8 +14,8 @@ use tsz_solver::{TupleElement, TypeId};
 
 impl<'a> CheckerState<'a> {
     fn promise_like_array_context_shape(&self, type_id: TypeId) -> Option<TypeId> {
-        match tsz_solver::type_queries::classify_promise_type(self.ctx.types, type_id) {
-            tsz_solver::type_queries::PromiseTypeKind::Application { args, .. }
+        match crate::query_boundaries::common::classify_promise_type(self.ctx.types, type_id) {
+            crate::query_boundaries::common::PromiseTypeKind::Application { args, .. }
                 if self.type_ref_is_promise_like(type_id) =>
             {
                 args.first().and_then(|&inner| {
@@ -355,7 +355,11 @@ impl<'a> CheckerState<'a> {
             // TypeScript to trigger tuple inference from array literal arguments.
             if elems.iter().all(|e| e.rest) {
                 let has_type_param_rest = elems.iter().any(|e| {
-                    e.rest && tsz_solver::type_queries::is_type_parameter(self.ctx.types, e.type_id)
+                    e.rest
+                        && crate::query_boundaries::common::is_type_parameter(
+                            self.ctx.types,
+                            e.type_id,
+                        )
                 });
                 if has_type_param_rest {
                     Some(elems)
@@ -374,7 +378,7 @@ impl<'a> CheckerState<'a> {
         // Without this, array literals become Array(union) which loses element-level detail.
         let force_tuple_for_mapped = tuple_context.is_none()
             && resolved_contextual_type.is_some_and(|resolved| {
-                tsz_solver::type_queries::is_homomorphic_mapped_type_context(
+                crate::query_boundaries::common::is_homomorphic_mapped_type_context(
                     self.ctx.types,
                     resolved,
                 )
@@ -396,7 +400,7 @@ impl<'a> CheckerState<'a> {
             && !force_tuple_for_mapped
             && tuple_context_from_constraint
             && applicable_contextual_type.is_some_and(|applicable| {
-                tsz_solver::type_queries::union_contains_tuple(self.ctx.types, applicable)
+                crate::query_boundaries::common::union_contains_tuple(self.ctx.types, applicable)
             });
 
         // When the contextual type is an object with numeric-string properties
@@ -412,7 +416,7 @@ impl<'a> CheckerState<'a> {
                 // aren't already handled by get_array_applicable_type.
                 crate::query_boundaries::common::array_applicable_type(self.ctx.types, resolved)
                     .is_none()
-                    && tsz_solver::type_queries::is_tuple_like_type(self.ctx.types, resolved)
+                    && crate::query_boundaries::common::is_tuple_like_type(self.ctx.types, resolved)
             });
 
         // Use the applicable (narrowed) type for contextual typing when available,

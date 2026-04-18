@@ -195,7 +195,9 @@ impl<'a> CheckerState<'a> {
             resolved
         };
 
-        if let Some(inner) = tsz_solver::type_queries::get_readonly_inner(self.ctx.types, type_id) {
+        if let Some(inner) =
+            crate::query_boundaries::common::get_readonly_inner(self.ctx.types, type_id)
+        {
             let normalized = self.normalize_nested_type_for_assignability_inner(inner, visited);
             if normalized != inner {
                 self.ctx.types.readonly_type(normalized)
@@ -203,7 +205,7 @@ impl<'a> CheckerState<'a> {
                 type_id
             }
         } else if let Some(inner) =
-            tsz_solver::type_queries::get_noinfer_inner(self.ctx.types, type_id)
+            crate::query_boundaries::common::get_noinfer_inner(self.ctx.types, type_id)
         {
             let normalized = self.normalize_nested_type_for_assignability_inner(inner, visited);
             if normalized != inner {

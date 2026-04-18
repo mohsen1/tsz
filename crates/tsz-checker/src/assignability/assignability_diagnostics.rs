@@ -626,7 +626,7 @@ impl<'a> CheckerState<'a> {
         let source_literal = self.literal_type_from_initializer(source_idx);
         let source_is_number_like = source == TypeId::NUMBER
             || source_literal.is_some_and(|lit| {
-                tsz_solver::type_queries::extended::is_number_literal(self.ctx.types, lit)
+                crate::query_boundaries::common::is_number_literal(self.ctx.types, lit)
             });
         if !source_is_number_like {
             return None;

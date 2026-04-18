@@ -20,7 +20,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns `Some(brand_name)` if the type has a private brand.
     pub(crate) fn get_private_brand(&self, type_id: TypeId) -> Option<String> {
-        tsz_solver::type_queries::get_private_brand_name(self.ctx.types, type_id)
+        crate::query_boundaries::common::get_private_brand_name(self.ctx.types, type_id)
     }
 
     // =========================================================================
@@ -51,7 +51,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns `Some(private_field_name)` if found, None otherwise.
     pub(crate) fn get_private_field_name_from_brand(&self, type_id: TypeId) -> Option<String> {
-        tsz_solver::type_queries::get_private_field_name(self.ctx.types, type_id)
+        crate::query_boundaries::common::get_private_field_name(self.ctx.types, type_id)
     }
 
     // =========================================================================

@@ -1425,7 +1425,7 @@ impl<'a> CheckerState<'a> {
 
     fn sanitize_contextual_property_type(&self, property_type: TypeId) -> TypeId {
         if property_type == TypeId::ERROR
-            || tsz_solver::type_queries::contains_error_type_db(self.ctx.types, property_type)
+            || crate::query_boundaries::common::contains_error_type(self.ctx.types, property_type)
         {
             return TypeId::UNKNOWN;
         }

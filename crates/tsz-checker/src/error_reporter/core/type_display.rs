@@ -1380,7 +1380,7 @@ impl<'a> CheckerState<'a> {
         // even when the reference contains free type parameters.
         if tsz_solver::is_generic_application(self.ctx.types, ty)
             && let Some(def_id) =
-                tsz_solver::type_queries::get_application_lazy_def_id(self.ctx.types, ty)
+                crate::query_boundaries::common::get_application_lazy_def_id(self.ctx.types, ty)
             && let Some(def) = self.ctx.definition_store.get(def_id)
             && def.kind == tsz_solver::def::DefKind::TypeAlias
             && let Some(body) = def.body
@@ -1412,7 +1412,7 @@ impl<'a> CheckerState<'a> {
 
         if !crate::query_boundaries::common::is_index_access_type(self.ctx.types, ty)
             && !crate::query_boundaries::common::is_keyof_type(self.ctx.types, ty)
-            && !tsz_solver::type_queries::is_conditional_type(self.ctx.types, ty)
+            && !crate::query_boundaries::common::is_conditional_type(self.ctx.types, ty)
             && !tsz_solver::is_generic_application(self.ctx.types, ty)
         {
             return false;

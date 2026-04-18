@@ -303,7 +303,7 @@ impl<'a> CheckerState<'a> {
                     //   suppresses the secondary TS2346 in this case).
                     let should_suppress = callee_type == TypeId::ERROR
                         || callee_type == TypeId::NULL
-                        || tsz_solver::type_queries::get_callable_shape_for_type(
+                        || crate::query_boundaries::common::get_callable_shape_for_type(
                             self.ctx.types,
                             callee_type,
                         )

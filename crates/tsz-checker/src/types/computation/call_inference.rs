@@ -1252,7 +1252,7 @@ impl<'a> CheckerState<'a> {
             // full rest parameter type; re-checking here would incorrectly compare
             // the spread marker against the rest element type (e.g., [...U] vs
             // `string | number | boolean` instead of `(string | number | boolean)[]`).
-            if tsz_solver::type_queries::is_spread_marker_tuple(
+            if crate::query_boundaries::common::is_spread_marker_tuple(
                 self.ctx.types.as_type_database(),
                 cached_actual,
             ) {
@@ -1277,7 +1277,7 @@ impl<'a> CheckerState<'a> {
             // resolve_generic_call. Re-checking here would re-compute the argument
             // type without in_const_assertion, producing a mutable type that fails
             // assignability against the readonly expected type.
-            if tsz_solver::type_queries::type_has_readonly_members(
+            if crate::query_boundaries::common::type_has_readonly_members(
                 self.ctx.types.as_type_database(),
                 expected,
             ) {

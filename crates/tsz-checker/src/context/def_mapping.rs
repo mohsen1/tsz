@@ -658,8 +658,8 @@ impl<'a> CheckerContext<'a> {
         use tsz_solver::type_queries;
 
         // 0. Direct TypeQuery(typeof X) resolves to X's value symbol.
-        if let tsz_solver::type_queries::TypeQueryKind::TypeQuery(sym_ref) =
-            tsz_solver::type_queries::classify_type_query(self.types, type_id)
+        if let crate::query_boundaries::common::TypeQueryKind::TypeQuery(sym_ref) =
+            crate::query_boundaries::common::classify_type_query(self.types, type_id)
         {
             return Some(SymbolId(sym_ref.0));
         }

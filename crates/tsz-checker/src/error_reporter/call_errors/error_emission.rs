@@ -40,10 +40,10 @@ impl<'a> CheckerState<'a> {
         // (`__infer_*`). These arise when generic call inference didn't fully resolve
         // type parameters. tsc would have resolved them or used their constraints;
         // comparing against raw placeholders produces false mismatches.
-        if tsz_solver::type_queries::contains_infer_placeholder_db(
+        if crate::query_boundaries::common::contains_infer_types(
             self.ctx.types.as_type_database(),
             arg_type,
-        ) || tsz_solver::type_queries::contains_infer_placeholder_db(
+        ) || crate::query_boundaries::common::contains_infer_types(
             self.ctx.types.as_type_database(),
             param_type,
         ) {

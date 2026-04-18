@@ -73,7 +73,7 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|(wants_string, wants_number)| {
                         self.is_element_indexable(object_type, wants_string, wants_number)
                     })
-                || tsz_solver::type_queries::numeric_literal_index_valid_for_object(
+                || crate::query_boundaries::common::numeric_literal_index_valid_for_object(
                     self.ctx.types,
                     member,
                     object_type,
@@ -1203,7 +1203,7 @@ impl<'a> CheckerState<'a> {
             }
             // Numeric-literal index keys may stringify differently from our keyof
             // representation; explicitly check if all literals are valid keys.
-            if tsz_solver::type_queries::numeric_literal_index_valid_for_object(
+            if crate::query_boundaries::common::numeric_literal_index_valid_for_object(
                 self.ctx.types,
                 index_type_for_check,
                 object_type_for_check,
@@ -1544,7 +1544,7 @@ impl<'a> CheckerState<'a> {
                 // (which extends extends_type), so if either has the property it's valid.
                 // This handles patterns like Extract<TDef[I], FieldDefinition>["type"]
                 // where FieldDefinition has a "type" property.
-                if let Some(cond_id) = tsz_solver::type_queries::get_conditional_type_id(
+                if let Some(cond_id) = crate::query_boundaries::common::get_conditional_type_id(
                     self.ctx.types,
                     object_type_for_check,
                 ) {
@@ -1830,9 +1830,10 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if let Some(invalid_member) =
-            tsz_solver::type_queries::get_invalid_index_type_member(self.ctx.types, index_type)
-        {
+        if let Some(invalid_member) = crate::query_boundaries::common::get_invalid_index_type_member(
+            self.ctx.types,
+            index_type,
+        ) {
             let index_type_str = self.format_type(invalid_member);
             let message = format_message(
                 diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,

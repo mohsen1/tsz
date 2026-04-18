@@ -620,7 +620,7 @@ impl<'a> CheckerState<'a> {
         // type's symbol, meaning it was declared directly on the target type (not
         // inherited). tsc lists own properties before inherited ones in TS2739/TS2741.
         let target_symbol =
-            tsz_solver::type_queries::get_object_symbol(self.ctx.types, target_type);
+            crate::query_boundaries::common::get_object_symbol(self.ctx.types, target_type);
         let mut property_ranks: FxHashMap<tsz_common::interner::Atom, (u32, usize, bool)> =
             FxHashMap::default();
 

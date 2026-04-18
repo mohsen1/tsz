@@ -1283,3 +1283,221 @@ pub(crate) fn classify_for_augmentation(
 ) -> AugmentationTargetKind {
     tsz_solver::type_queries::classify_for_augmentation(db, type_id)
 }
+
+pub(crate) fn classify_promise_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> tsz_solver::type_queries::PromiseTypeKind {
+    tsz_solver::type_queries::classify_promise_type(db, type_id)
+}
+
+pub(crate) fn classify_type_query(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> tsz_solver::type_queries::TypeQueryKind {
+    tsz_solver::type_queries::classify_type_query(db, type_id)
+}
+
+pub(crate) fn create_string_literal_type(db: &dyn TypeDatabase, value: &str) -> TypeId {
+    tsz_solver::type_queries::create_string_literal_type(db, value)
+}
+
+pub(crate) fn extract_contextual_type_params(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+    tsz_solver::type_queries::extract_contextual_type_params(db, type_id)
+}
+
+pub(crate) fn find_property_in_object_by_str(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    name: &str,
+) -> Option<tsz_solver::types::PropertyInfo> {
+    tsz_solver::type_queries::find_property_in_object_by_str(db, type_id, name)
+}
+
+pub(crate) fn types_are_comparable_for_assertion(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    tsz_solver::type_queries::flow::types_are_comparable_for_assertion(db, source, target)
+}
+
+pub(crate) fn get_application_base(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::get_application_base(db, type_id)
+}
+
+pub(crate) fn get_application_lazy_def_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::def::DefId> {
+    tsz_solver::type_queries::get_application_lazy_def_id(db, type_id)
+}
+
+pub(crate) fn get_base_constraint_of_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::type_queries::get_base_constraint_of_type(db, type_id)
+}
+
+pub(crate) fn get_call_signatures(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<Vec<tsz_solver::CallSignature>> {
+    tsz_solver::type_queries::get_call_signatures(db, type_id)
+}
+
+pub(crate) fn get_callable_shape_for_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<tsz_solver::CallableShape>> {
+    tsz_solver::type_queries::get_callable_shape_for_type(db, type_id)
+}
+
+pub(crate) fn get_construct_signatures(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<Vec<tsz_solver::CallSignature>> {
+    tsz_solver::type_queries::get_construct_signatures(db, type_id)
+}
+
+pub(crate) fn get_fixed_tuple_length(db: &dyn TypeDatabase, type_id: TypeId) -> Option<usize> {
+    tsz_solver::type_queries::get_fixed_tuple_length(db, type_id)
+}
+
+pub(crate) fn get_invalid_index_type_member(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::get_invalid_index_type_member(db, type_id)
+}
+
+pub(crate) fn get_noinfer_inner(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::get_noinfer_inner(db, type_id)
+}
+
+pub(crate) fn get_object_symbol(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_binder::SymbolId> {
+    tsz_solver::type_queries::get_object_symbol(db, type_id)
+}
+
+pub(crate) fn get_private_brand_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option<String> {
+    tsz_solver::type_queries::get_private_brand_name(db, type_id)
+}
+
+pub(crate) fn get_private_field_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option<String> {
+    tsz_solver::type_queries::get_private_field_name(db, type_id)
+}
+
+pub(crate) fn get_readonly_inner(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::get_readonly_inner(db, type_id)
+}
+
+pub(crate) fn get_tuple_element_type_union(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::get_tuple_element_type_union(db, type_id)
+}
+
+pub(crate) fn get_type_query_symbol_ref(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::types::SymbolRef> {
+    tsz_solver::type_queries::get_type_query_symbol_ref(db, type_id)
+}
+
+pub(crate) fn is_array_or_tuple_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_array_or_tuple_type(db, type_id)
+}
+
+pub(crate) fn is_bare_infer_placeholder(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_bare_infer_placeholder_db(db, type_id)
+}
+
+pub(crate) fn is_boolean_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_boolean_type(db, type_id)
+}
+
+pub(crate) fn is_bigint_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_bigint_type(db, type_id)
+}
+
+pub(crate) fn is_homomorphic_mapped_type_context(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_homomorphic_mapped_type_context(db, type_id)
+}
+
+pub(crate) fn is_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_literal_type(db, type_id)
+}
+
+pub(crate) fn is_number_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_number_literal(db, type_id)
+}
+
+pub(crate) fn is_number_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_number_type(db, type_id)
+}
+
+pub(crate) fn is_spread_marker_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_spread_marker_tuple(db, type_id)
+}
+
+pub(crate) fn is_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_symbol_type(db, type_id)
+}
+
+pub(crate) fn is_tuple_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_tuple_like_type(db, type_id)
+}
+
+pub(crate) fn is_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_type_parameter(db, type_id)
+}
+
+pub(crate) fn keyof_object_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::keyof_object_properties(db, type_id)
+}
+
+pub(crate) fn numeric_literal_index_valid_for_object(
+    db: &dyn TypeDatabase,
+    index_type: TypeId,
+    object_type: TypeId,
+) -> bool {
+    tsz_solver::type_queries::numeric_literal_index_valid_for_object(db, index_type, object_type)
+}
+
+pub(crate) fn type_has_readonly_members(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::type_has_readonly_members(db, type_id)
+}
+
+pub(crate) fn union_contains_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::union_contains_tuple(db, type_id)
+}
+
+pub(crate) use tsz_solver::type_queries::ArrayLikeKind;
+pub(crate) use tsz_solver::type_queries::BodyArgPreservation;
+pub(crate) use tsz_solver::type_queries::ConstructorCheckKind;
+pub(crate) use tsz_solver::type_queries::IdentityMappedInfo;
+pub(crate) use tsz_solver::type_queries::IndexKeyKind;
+pub(crate) use tsz_solver::type_queries::LazyTypeKind;
+pub(crate) use tsz_solver::type_queries::MappedSourceKind;
+pub(crate) use tsz_solver::type_queries::PromiseTypeKind;
+pub(crate) use tsz_solver::type_queries::TypeQueryKind;
+pub(crate) use tsz_solver::type_queries::UnionMembersKind;
+
+pub(crate) fn get_construct_return_type_union(
+    db: &dyn TypeDatabase,
+    shape_id: tsz_solver::types::CallableShapeId,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::get_construct_return_type_union(db, shape_id)
+}
+
+pub(crate) fn get_conditional_type_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::types::ConditionalTypeId> {
+    tsz_solver::type_queries::get_conditional_type_id(db, type_id)
+}

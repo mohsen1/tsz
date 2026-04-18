@@ -84,7 +84,7 @@ impl<'a> CheckerState<'a> {
         &self,
         expected: TypeId,
     ) -> Option<Vec<TypeParamInfo>> {
-        tsz_solver::type_queries::extract_contextual_type_params(self.ctx.types, expected)
+        crate::query_boundaries::common::extract_contextual_type_params(self.ctx.types, expected)
     }
 
     pub(crate) fn push_contextual_type_parameter_infos(

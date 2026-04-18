@@ -1067,7 +1067,7 @@ impl<'a> CheckerState<'a> {
             // - Assignability: array/tuple sources can be checked against the tuple base.
             // Track the result so the checker can also suppress false NoCommonProperties failures.
             (_, InterfaceMergeKind::Other)
-                if tsz_solver::type_queries::is_array_or_tuple_type(
+                if crate::query_boundaries::common::is_array_or_tuple_type(
                     self.ctx.types,
                     base_resolved,
                 ) && derived != TypeId::ANY =>
@@ -1114,9 +1114,9 @@ impl<'a> CheckerState<'a> {
     fn merge_with_intersection(
         &mut self,
         derived: TypeId,
-        _derived_kind: tsz_solver::type_queries::InterfaceMergeKind,
+        _derived_kind: crate::query_boundaries::common::InterfaceMergeKind,
         base: TypeId,
-        base_kind: tsz_solver::type_queries::InterfaceMergeKind,
+        base_kind: crate::query_boundaries::common::InterfaceMergeKind,
     ) -> TypeId {
         use crate::query_boundaries::common::intersection_members;
         use crate::query_boundaries::common::{InterfaceMergeKind, classify_for_interface_merge};
