@@ -867,8 +867,12 @@ impl<'a> CheckerState<'a> {
             normalized.to_string(),
             target_file_name.clone(),
         ];
-        lookup_keys.extend(crate::module_resolution::module_specifier_candidates(module_name));
-        lookup_keys.extend(crate::module_resolution::module_specifier_candidates(normalized));
+        lookup_keys.extend(crate::module_resolution::module_specifier_candidates(
+            module_name,
+        ));
+        lookup_keys.extend(crate::module_resolution::module_specifier_candidates(
+            normalized,
+        ));
         if !target_file_name.is_empty() {
             lookup_keys.extend(crate::module_resolution::module_specifier_candidates(
                 &target_file_name,
@@ -1027,9 +1031,9 @@ impl<'a> CheckerState<'a> {
                         k if k == syntax_kind_ext::CLASS_DECLARATION => arena
                             .get_class(node)
                             .and_then(|class| self.get_identifier_text_from_idx(class.name)),
-                        _ => arena
-                            .get_enum(node)
-                            .and_then(|enum_decl| self.get_identifier_text_from_idx(enum_decl.name)),
+                        _ => arena.get_enum(node).and_then(|enum_decl| {
+                            self.get_identifier_text_from_idx(enum_decl.name)
+                        }),
                     } {
                         if name == import_name {
                             has_named_value = true;

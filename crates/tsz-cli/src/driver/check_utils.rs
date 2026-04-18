@@ -1864,9 +1864,7 @@ pub(super) fn apply_ts_directive_suppression(
             if diag_line == directive.suppressed_line {
                 directive_used[idx] = true;
 
-                if preserve_declaration_jsdoc_name_diagnostics
-                    && matches!(diag.code, 2304 | 2552)
-                {
+                if preserve_declaration_jsdoc_name_diagnostics && matches!(diag.code, 2304 | 2552) {
                     let line_start = line_starts
                         .get(diag_line as usize)
                         .copied()

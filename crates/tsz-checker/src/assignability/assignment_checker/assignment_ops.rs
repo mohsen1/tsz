@@ -635,7 +635,11 @@ impl<'a> CheckerState<'a> {
                     let decl_idx = if symbol.value_declaration.is_some() {
                         symbol.value_declaration
                     } else {
-                        symbol.declarations.first().copied().unwrap_or(NodeIndex::NONE)
+                        symbol
+                            .declarations
+                            .first()
+                            .copied()
+                            .unwrap_or(NodeIndex::NONE)
                     };
                     if decl_idx.is_some()
                         && let Some(decl_node) = self.ctx.arena.get(decl_idx)
@@ -648,8 +652,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                if let Some((private_name, module_specifier)) = private_ref
-                {
+                if let Some((private_name, module_specifier)) = private_ref {
                     let quoted_module = format!("\"{module_specifier}\"");
                     let report_node = self
                         .ctx
