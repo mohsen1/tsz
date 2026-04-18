@@ -29,7 +29,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         name: &str,
     ) -> (Option<TypeId>, Vec<TypeParamInfo>) {
-        use crate::query_boundaries::common::{TypeInstantiator, TypeSubstitution};
+        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 
         let factory = self.ctx.types.factory();
         let lib_contexts = &*self.ctx.lib_contexts;
@@ -131,9 +131,7 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                             if !subst.is_empty() {
-                                let mut instantiator =
-                                    TypeInstantiator::new(self.ctx.types, &subst);
-                                let substituted_ty = instantiator.instantiate(ty);
+                                let substituted_ty = instantiate_type(self.ctx.types, ty, &subst);
                                 lib_types.push(substituted_ty);
                             } else {
                                 lib_types.push(ty);
