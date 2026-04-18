@@ -112,20 +112,22 @@ impl<'a> CheckerState<'a> {
             && function_shape_for_type(self.ctx.types, resolved_tag_type).is_none()
         {
             // Check if the type is a primitive/literal/intrinsic that cannot be called.
-            let is_definitely_not_callable =
-                matches!(
-                    resolved_tag_type,
-                    TypeId::STRING
-                        | TypeId::NUMBER
-                        | TypeId::BOOLEAN
-                        | TypeId::VOID
-                        | TypeId::NULL
-                        | TypeId::UNDEFINED
-                        | TypeId::NEVER
-                        | TypeId::SYMBOL
-                        | TypeId::BIGINT
-                        | TypeId::OBJECT
-                ) || tsz_solver::type_queries::is_literal_type(self.ctx.types, resolved_tag_type);
+            let is_definitely_not_callable = matches!(
+                resolved_tag_type,
+                TypeId::STRING
+                    | TypeId::NUMBER
+                    | TypeId::BOOLEAN
+                    | TypeId::VOID
+                    | TypeId::NULL
+                    | TypeId::UNDEFINED
+                    | TypeId::NEVER
+                    | TypeId::SYMBOL
+                    | TypeId::BIGINT
+                    | TypeId::OBJECT
+            ) || crate::query_boundaries::common::is_literal_type(
+                self.ctx.types,
+                resolved_tag_type,
+            );
             if is_definitely_not_callable {
                 self.type_check_template_substitutions_no_context(&tagged, request);
                 self.error_not_callable_at(tag_type, tagged.tag);

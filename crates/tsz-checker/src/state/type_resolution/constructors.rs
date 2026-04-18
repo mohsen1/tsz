@@ -1143,7 +1143,8 @@ impl<'a> CheckerState<'a> {
             // to a different TypeId being checked).
             if let Some(&scope_type_id) = self.ctx.type_parameter_scope.get(name) {
                 let db = self.ctx.types.as_type_database();
-                let base = tsz_solver::type_queries::get_base_constraint_of_type(db, scope_type_id);
+                let base =
+                    crate::query_boundaries::common::get_base_constraint_of_type(db, scope_type_id);
                 if base != scope_type_id && base != TypeId::UNKNOWN {
                     return true;
                 }

@@ -1910,9 +1910,10 @@ impl<'a> CheckerState<'a> {
         // Arity mismatch — report at whole-assignment level, not per-element.
         if let Some(arr) = self.ctx.arena.get_literal_expr(init_node) {
             let source_count = arr.elements.nodes.len();
-            if let Some(target_count) =
-                tsz_solver::type_queries::get_fixed_tuple_length(self.ctx.types, declared_type)
-                && source_count > target_count
+            if let Some(target_count) = crate::query_boundaries::common::get_fixed_tuple_length(
+                self.ctx.types,
+                declared_type,
+            ) && source_count > target_count
             {
                 return false;
             }

@@ -585,12 +585,12 @@ impl<'a> CheckerState<'a> {
             // Check call/construct signatures against JSX.Element/ElementClass.
             for (get_sigs_fn, target, is_call_sig) in [
                 (
-                    tsz_solver::type_queries::get_call_signatures as fn(_, _) -> _,
+                    crate::query_boundaries::common::get_call_signatures as fn(_, _) -> _,
                     jsx_element_type,
                     true,
                 ),
                 (
-                    tsz_solver::type_queries::get_construct_signatures,
+                    crate::query_boundaries::common::get_construct_signatures,
                     jsx_element_class_type,
                     false,
                 ),

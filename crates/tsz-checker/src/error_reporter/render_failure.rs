@@ -569,7 +569,7 @@ impl<'a> CheckerState<'a> {
                     && !source_param_is_generic
                     && !target_param_is_generic
                 {
-                    let source_name = tsz_solver::type_queries::get_callable_shape_for_type(
+                    let source_name = crate::query_boundaries::common::get_callable_shape_for_type(
                         self.ctx.types,
                         source,
                     )
@@ -582,7 +582,7 @@ impl<'a> CheckerState<'a> {
                     .map(|a| self.ctx.types.resolve_atom(a))
                     .unwrap_or_else(|| format!("arg{param_index}"));
 
-                    let target_name = tsz_solver::type_queries::get_callable_shape_for_type(
+                    let target_name = crate::query_boundaries::common::get_callable_shape_for_type(
                         self.ctx.types,
                         target,
                     )

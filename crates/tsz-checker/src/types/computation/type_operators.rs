@@ -180,7 +180,7 @@ impl<'a> CheckerState<'a> {
             TypeResolutionKind::Resolved => {}
         }
 
-        tsz_solver::type_queries::keyof_object_properties(self.ctx.types, operand)
+        crate::query_boundaries::common::keyof_object_properties(self.ctx.types, operand)
             .unwrap_or(TypeId::NEVER)
     }
 

@@ -354,7 +354,7 @@ impl<'a> CheckerState<'a> {
         let element_type =
             crate::query_boundaries::common::array_element_type(self.ctx.types, object_type)
                 .or_else(|| {
-                    tsz_solver::type_queries::get_tuple_element_type_union(
+                    crate::query_boundaries::common::get_tuple_element_type_union(
                         self.ctx.types,
                         object_type,
                     )

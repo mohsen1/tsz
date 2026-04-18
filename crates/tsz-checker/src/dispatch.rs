@@ -821,7 +821,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                         self.checker.evaluate_type_for_assignability(expr_type);
                                     let evaluated_jsdoc =
                                         self.checker.evaluate_type_for_assignability(jsdoc_type);
-                                    have_overlap = tsz_solver::type_queries::flow::types_are_comparable_for_assertion(
+                                    have_overlap = crate::query_boundaries::common::types_are_comparable_for_assertion(
                                         self.checker.ctx.types,
                                         evaluated_expr,
                                         evaluated_jsdoc,
@@ -1350,7 +1350,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                             )
                                             .is_some();
                                         if !both_callable {
-                                            have_overlap = tsz_solver::type_queries::flow::types_are_comparable_for_assertion(
+                                            have_overlap = crate::query_boundaries::common::types_are_comparable_for_assertion(
                                                 self.checker.ctx.types,
                                                 deep_expr,
                                                 deep_asserted,

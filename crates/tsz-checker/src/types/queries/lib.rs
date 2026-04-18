@@ -1764,7 +1764,7 @@ impl<'a> CheckerState<'a> {
                     let expr_type = self.literal_type_from_initializer(span.expression)?;
                     // Stringify the literal type (handles string, number, bigint,
                     // boolean, null, undefined — not just string literals)
-                    let expr_str = tsz_solver::type_queries::stringify_literal_type(
+                    let expr_str = crate::query_boundaries::common::stringify_literal_type(
                         self.ctx.types,
                         expr_type,
                     )?;

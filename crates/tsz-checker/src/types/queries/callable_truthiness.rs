@@ -706,9 +706,10 @@ impl<'a> CheckerState<'a> {
     /// Uses solver query boundaries to check for Promise application types.
     fn is_awaitable_type(&self, ty: TypeId) -> bool {
         // Check for Application with PROMISE_BASE via solver query
-        if let Some(base) =
-            tsz_solver::type_queries::get_application_base(self.ctx.types.as_type_database(), ty)
-            && base == TypeId::PROMISE_BASE
+        if let Some(base) = crate::query_boundaries::common::get_application_base(
+            self.ctx.types.as_type_database(),
+            ty,
+        ) && base == TypeId::PROMISE_BASE
         {
             return true;
         }

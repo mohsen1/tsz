@@ -498,7 +498,7 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|sigs| !sigs.is_empty());
             if !has_call_sigs {
                 let callee_resolved = self.resolve_lazy_type(callee_type_for_call);
-                let has_bind = tsz_solver::type_queries::find_property_in_object_by_str(
+                let has_bind = crate::query_boundaries::common::find_property_in_object_by_str(
                     self.ctx.types,
                     callee_resolved,
                     "bind",

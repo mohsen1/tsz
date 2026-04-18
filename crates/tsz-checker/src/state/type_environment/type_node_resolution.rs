@@ -258,8 +258,11 @@ impl<'a> CheckerState<'a> {
                 if let Some(&cached) = self.ctx.node_types.get(&idx.0)
                     && cached != TypeId::ERROR
                     && self.ctx.type_parameter_scope.is_empty()
-                    && tsz_solver::type_queries::get_type_query_symbol_ref(self.ctx.types, cached)
-                        .is_none()
+                    && crate::query_boundaries::common::get_type_query_symbol_ref(
+                        self.ctx.types,
+                        cached,
+                    )
+                    .is_none()
                 {
                     return cached;
                 }

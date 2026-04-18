@@ -315,7 +315,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 type_id,
             ),
-            tsz_solver::type_queries::LazyTypeKind::Lazy(_)
+            crate::query_boundaries::common::LazyTypeKind::Lazy(_)
         );
         let display_type = if is_lazy {
             type_id
@@ -366,10 +366,11 @@ impl<'a> CheckerState<'a> {
             }
             match classify_for_instance_type(self.ctx.types, current) {
                 InstanceTypeKind::Callable(shape_id) => {
-                    let instance_type = tsz_solver::type_queries::get_construct_return_type_union(
-                        self.ctx.types,
-                        shape_id,
-                    )?;
+                    let instance_type =
+                        crate::query_boundaries::common::get_construct_return_type_union(
+                            self.ctx.types,
+                            shape_id,
+                        )?;
                     let resolved = self.resolve_type_for_property_access(instance_type);
                     // Register TypeId→DefId so the TypeFormatter can display the
                     // interface name (e.g., "String", "Date") instead of structural

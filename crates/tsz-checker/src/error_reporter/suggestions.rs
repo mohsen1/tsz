@@ -190,15 +190,15 @@ impl<'a> CheckerState<'a> {
                 type_id,
             ) {
             IntrinsicKind::String
-        } else if tsz_solver::type_queries::is_number_type(self.ctx.types, type_id)
-            || tsz_solver::type_queries::is_number_literal(self.ctx.types, type_id)
+        } else if crate::query_boundaries::common::is_number_type(self.ctx.types, type_id)
+            || crate::query_boundaries::common::is_number_literal(self.ctx.types, type_id)
         {
             IntrinsicKind::Number
-        } else if tsz_solver::type_queries::is_boolean_type(self.ctx.types, type_id) {
+        } else if crate::query_boundaries::common::is_boolean_type(self.ctx.types, type_id) {
             IntrinsicKind::Boolean
-        } else if tsz_solver::type_queries::is_bigint_type(self.ctx.types, type_id) {
+        } else if crate::query_boundaries::common::is_bigint_type(self.ctx.types, type_id) {
             IntrinsicKind::Bigint
-        } else if tsz_solver::type_queries::is_symbol_type(self.ctx.types, type_id) {
+        } else if crate::query_boundaries::common::is_symbol_type(self.ctx.types, type_id) {
             IntrinsicKind::Symbol
         } else {
             return None;

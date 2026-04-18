@@ -472,7 +472,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
     /// Get the specific type that makes this type invalid as an index type (TS2538).
     fn get_invalid_index_type_member(&self, type_id: TypeId) -> Option<TypeId> {
-        tsz_solver::type_queries::get_invalid_index_type_member(self.ctx.types, type_id)
+        crate::query_boundaries::common::get_invalid_index_type_member(self.ctx.types, type_id)
     }
 
     // =========================================================================
