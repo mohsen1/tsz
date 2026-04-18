@@ -120,6 +120,13 @@ impl<'a> CheckerState<'a> {
         let jsdoc_params = Self::extract_jsdoc_param_names(jsdoc);
         let has_implicit_arguments_candidate =
             actual_params.is_empty() && self.function_uses_implicit_arguments_object(func_idx);
+        // tsc resolves `@param {...T}` rest types to `T[]` only when the
+        // function expression has a name in its declarative context (function
+        // declaration, variable initializer, property assignment). Anonymous
+        // returned function expressions (`return function() {...}`) skip that
+        // resolution, so the JSDoc rest type stays as `T` (not array) and
+        // tsc still emits TS8029. Mirror that here.
+        let function_has_effective_name = self.function_has_effective_name(func_idx);
 
         // Get source text and comment position for error positioning
         let source_info = self
@@ -149,13 +156,16 @@ impl<'a> CheckerState<'a> {
             }
             // tsc's three cases for an unmatched @param tag:
             //   1. function uses `arguments` AND the JSDoc tag is rest (`...T`)
-            //      → no error (rest tag legitimately documents `arguments`).
-            //   2. function uses `arguments` AND the JSDoc tag is NOT rest
-            //      → TS8029 (suggest making the tag a rest type to match).
-            //   3. function does not use `arguments`
-            //      → TS8024 (truly no parameter with that name).
+            //      AND the function has an effective name (so tsc resolves
+            //      the JSDoc rest type to `T[]` and `!isArrayType` is false)
+            //      → no error.
+            //   2. function uses `arguments` AND the JSDoc tag is NOT rest, OR
+            //      it is rest but the function is anonymous (resolution skips
+            //      the array promotion) → TS8029.
+            //   3. function does not use `arguments` → TS8024.
             let jsdoc_tag_is_rest = Self::jsdoc_param_is_rest(jsdoc, param_name);
-            if has_implicit_arguments_candidate && jsdoc_tag_is_rest {
+            if has_implicit_arguments_candidate && jsdoc_tag_is_rest && function_has_effective_name
+            {
                 continue;
             }
             let (message, code) = if has_implicit_arguments_candidate {
@@ -211,6 +221,39 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(func_idx, &message, code);
                 }
             }
+        }
+    }
+
+    /// Whether a function has an effective name in its declarative context.
+    ///
+    /// True when the function declaration carries an identifier name, or
+    /// when the function expression sits in a position that gives it a name
+    /// (variable initializer, property/shorthand assignment, binary `=`
+    /// assignment, parameter default). False for anonymous expressions in
+    /// positions like `return function() {...}` or array literals.
+    fn function_has_effective_name(&self, func_idx: NodeIndex) -> bool {
+        use tsz_parser::syntax_kind_ext;
+        let Some(node) = self.ctx.arena.get(func_idx) else {
+            return false;
+        };
+        if let Some(func) = self.ctx.arena.get_function(node)
+            && func.name.is_some()
+        {
+            return true;
+        }
+        let Some(ext) = self.ctx.arena.get_extended(func_idx) else {
+            return false;
+        };
+        let Some(parent_node) = self.ctx.arena.get(ext.parent) else {
+            return false;
+        };
+        match parent_node.kind {
+            syntax_kind_ext::VARIABLE_DECLARATION
+            | syntax_kind_ext::PROPERTY_ASSIGNMENT
+            | syntax_kind_ext::PARAMETER
+            | syntax_kind_ext::BINARY_EXPRESSION
+            | syntax_kind_ext::PROPERTY_DECLARATION => true,
+            _ => false,
         }
     }
 
