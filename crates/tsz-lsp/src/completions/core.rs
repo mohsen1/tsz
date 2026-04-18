@@ -238,10 +238,20 @@ impl<'a> Completions<'a> {
             .member_completion_target(node_idx, offset)
             .or_else(|| self.marker_comment_member_completion_target(offset));
         if let Some(expr_idx) = member_target {
-            if let Some(items) = self.get_member_completions(expr_idx, type_cache.as_deref_mut())
-                && !items.is_empty()
-            {
-                return Some(items);
+            if let Some(items) = self.get_member_completions(expr_idx, type_cache.as_deref_mut()) {
+                if !items.is_empty() {
+                    return Some(items);
+                }
+                // For explicit member access (`obj.`), an empty member set should not
+                // fall through to globals. Keep `globalThis.` behavior aligned with TS
+                // by allowing its dedicated fallback below.
+                let is_global_this = self
+                    .arena
+                    .get_identifier_text(expr_idx)
+                    .is_some_and(|name| name == "globalThis");
+                if !is_global_this {
+                    return Some(Vec::new());
+                }
             }
             // If member completions returned empty for `this.`, don't fall
             // through to global completions — `this` in a non-class context

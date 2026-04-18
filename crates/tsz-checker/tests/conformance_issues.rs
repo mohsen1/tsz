@@ -26111,3 +26111,76 @@ child1(ParentThing.prototype);
          assignable to the augmented ParentThing parameter type. Got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_constructor_narrowing_derived_class() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class C1 { property1!: number; }
+class C2 extends C1 { property2!: number; }
+
+declare let var1: C2 | string;
+if (var1.constructor === C1) {
+    var1; // should be never (C2.constructor !== C1)
+    var1.property1; // TS2339: does not exist on never
+}
+if (var1.constructor === C2) {
+    var1; // should be C2
+    var1.property1; // OK
+}
+        ",
+    );
+    let ts2339_count = diagnostics.iter().filter(|d| d.0 == 2339).count();
+    assert_eq!(
+        ts2339_count, 1,
+        "Constructor narrowing should produce exactly 1 TS2339 (on 'never' type). \
+         C2 extends C1 but C2.constructor !== C1, so the C1 branch narrows to never. \
+         Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_constructor_narrowing_same_structure_different_classes() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class C7 { property1!: number; }
+class C8 { property1!: number; }
+
+declare let x: C8 | string;
+if (x.constructor === C7) {
+    x; // should be never (C8.constructor !== C7, even with same structure)
+}
+if (x.constructor === C8) {
+    x; // should be C8
+    x.property1; // OK
+}
+        ",
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Constructor narrowing with same-structure classes: \
+         x.constructor === C8 should narrow to C8 and allow property access. \
+         Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_constructor_narrowing_false_branch() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class A { a!: string; }
+class B { b!: number; }
+
+declare let x: A | B;
+if (x.constructor !== A) {
+    x; // should be B (A excluded)
+    x.b; // OK
+}
+        ",
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Constructor narrowing false branch: x.constructor !== A should \
+         exclude A from the union, leaving B. Got: {diagnostics:?}"
+    );
+}

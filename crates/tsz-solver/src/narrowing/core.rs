@@ -205,6 +205,15 @@ pub enum TypeGuard {
         /// The type to narrow array elements to
         element_type: TypeId,
     },
+
+    /// `x.constructor === SomeClass`
+    ///
+    /// Narrows based on constructor identity (exact class match).
+    /// Unlike `instanceof` which includes subclasses, constructor equality
+    /// only matches the exact class whose constructor function is compared.
+    /// For example, `C2 | string` narrowed by `Constructor(C1)` yields `never`
+    /// because C2.constructor !== C1 (even though C2 extends C1).
+    Constructor(TypeId),
 }
 
 #[inline]
@@ -2030,6 +2039,14 @@ impl<'a> NarrowingContext<'a> {
                     // False branch: we don't narrow (arr.every could be false for various reasons)
                     trace!("ArrayElementPredicate false branch, no narrowing");
                     source_type
+                }
+            }
+
+            TypeGuard::Constructor(instance_type) => {
+                if sense {
+                    self.narrow_by_constructor(source_type, *instance_type)
+                } else {
+                    self.narrow_by_constructor_false(source_type, *instance_type)
                 }
             }
         }

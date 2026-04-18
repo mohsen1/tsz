@@ -372,6 +372,13 @@ impl<'a> FlowAnalyzer<'a> {
             return Some((TypeGuard::NullishEquality, target, false));
         }
 
+        // Check for constructor comparison: x.constructor === SomeClass
+        // Must be checked BEFORE discriminant comparison, which could incorrectly
+        // interpret `.constructor` as a discriminant property.
+        if let Some((guard, guard_target)) = self.constructor_comparison(bin) {
+            return Some((guard, guard_target, false));
+        }
+
         // Check for discriminant comparison BEFORE nullish comparison.
         // This is critical for cases like `u.err === undefined` where the target is a
         // property access: discriminant narrowing should narrow the base object `u`,
@@ -890,5 +897,36 @@ impl<'a> FlowAnalyzer<'a> {
         // Skip parentheses and comma expressions in typeof operand
         // This handles cases like: typeof (a, b).prop
         Some(self.skip_parenthesized(unary.operand))
+    }
+
+    /// Detect `x.constructor === SomeClass` or `SomeClass === x.constructor`.
+    ///
+    /// Returns `(TypeGuard::Constructor(instance_type), base_expr)` where
+    /// `base_expr` is the object whose `.constructor` is being checked.
+    fn constructor_comparison(
+        &self,
+        bin: &tsz_parser::parser::node::BinaryExprData,
+    ) -> Option<(TypeGuard, NodeIndex)> {
+        let is_equality = bin.operator_token == SyntaxKind::EqualsEqualsEqualsToken as u16
+            || bin.operator_token == SyntaxKind::EqualsEqualsToken as u16
+            || bin.operator_token == SyntaxKind::ExclamationEqualsEqualsToken as u16
+            || bin.operator_token == SyntaxKind::ExclamationEqualsToken as u16;
+        if !is_equality {
+            return None;
+        }
+
+        // Try left.constructor === right
+        if let Some(base) = self.get_constructor_property_base(bin.left) {
+            if let Some(instance_type) = self.instance_type_from_constructor(bin.right) {
+                return Some((TypeGuard::Constructor(instance_type), base));
+            }
+        }
+        // Try left === right.constructor
+        if let Some(base) = self.get_constructor_property_base(bin.right) {
+            if let Some(instance_type) = self.instance_type_from_constructor(bin.left) {
+                return Some((TypeGuard::Constructor(instance_type), base));
+            }
+        }
+        None
     }
 }

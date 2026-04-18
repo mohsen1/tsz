@@ -171,11 +171,15 @@ impl Server {
         let mut selected_score = (false, 0usize, false);
         for probe_position in probe_positions {
             let candidate = provider.get_completion_result(root, probe_position);
+            let probe_preceded_by_dot =
+                Self::probe_position_preceded_by_dot(source_text, line_map, probe_position);
+            let probe_inside_string =
+                Self::probe_position_inside_string_literal(source_text, line_map, probe_position);
             let score = candidate
                 .as_ref()
                 .map(|result| {
                     (
-                        result.is_member_completion && !result.entries.is_empty(),
+                        result.is_member_completion,
                         result.entries.len(),
                         result.is_new_identifier_location,
                     )
@@ -191,13 +195,13 @@ impl Server {
             let selected_is_member = selected_score.0;
             let candidate_is_member = score.0;
             let should_replace = if candidate_is_member && !selected_is_member {
-                true
+                score.1 > 0
+                    || (selected_score.1 == 0 && probe_preceded_by_dot && !probe_inside_string)
             } else if candidate_is_member && selected_is_member {
                 score.1 > selected_score.1
             } else if has_multiple_probes && !candidate_is_member && !selected_is_member {
                 score.1 > 0
                     && (selected_score.1 == 0
-                        || (selected_score.2 && !score.2)
                         || (score.2 == selected_score.2 && score.1 < selected_score.1))
             } else {
                 false
@@ -209,6 +213,61 @@ impl Server {
             }
         }
         (selected_position, selected_result)
+    }
+
+    fn probe_position_preceded_by_dot(
+        source_text: &str,
+        line_map: &LineMap,
+        position: Position,
+    ) -> bool {
+        let Some(offset) = line_map.position_to_offset(position, source_text) else {
+            return false;
+        };
+        let mut idx = offset as usize;
+        let bytes = source_text.as_bytes();
+        while idx > 0 && bytes[idx - 1].is_ascii_whitespace() {
+            idx -= 1;
+        }
+        idx > 0 && bytes[idx - 1] == b'.'
+    }
+
+    fn probe_position_inside_string_literal(
+        source_text: &str,
+        line_map: &LineMap,
+        position: Position,
+    ) -> bool {
+        let Some(offset) = line_map.position_to_offset(position, source_text) else {
+            return false;
+        };
+        let end = (offset as usize).min(source_text.len());
+        let line_start = source_text[..end].rfind('\n').map_or(0, |idx| idx + 1);
+        let bytes = source_text.as_bytes();
+        let mut idx = line_start;
+        let mut in_single = false;
+        let mut in_double = false;
+        let mut in_backtick = false;
+        let mut escaped = false;
+        while idx < end {
+            let b = bytes[idx];
+            if escaped {
+                escaped = false;
+                idx += 1;
+                continue;
+            }
+            if b == b'\\' && (in_single || in_double || in_backtick) {
+                escaped = true;
+                idx += 1;
+                continue;
+            }
+            match b {
+                b'\'' if !in_double && !in_backtick => in_single = !in_single,
+                b'"' if !in_single && !in_backtick => in_double = !in_double,
+                b'`' if !in_single && !in_double => in_backtick = !in_backtick,
+                _ => {}
+            }
+            idx += 1;
+        }
+        in_single || in_double || in_backtick
     }
 
     fn is_bare_identifier_expression_prefix(
@@ -989,6 +1048,18 @@ impl Server {
         preferences: Option<&serde_json::Value>,
     ) -> Vec<tsz::lsp::completions::CompletionItem> {
         let mut files = self.open_files.clone();
+        for project_files in self.external_project_files.values() {
+            for path in project_files {
+                if files.contains_key(path) {
+                    continue;
+                }
+                if let Some(text) = self.open_files.get(path) {
+                    files.insert(path.clone(), text.clone());
+                } else if let Ok(text) = std::fs::read_to_string(path) {
+                    files.insert(path.clone(), text);
+                }
+            }
+        }
         if !files.contains_key(file_name)
             && let Ok(content) = std::fs::read_to_string(file_name)
         {
@@ -2161,5 +2232,51 @@ mod tests {
             normalized.contains("import { C, type I } from \"./mod.js\";"),
             "expected normalize_mts_auto_import_edit_text to keep existing type-only imports, got: {normalized}"
         );
+    }
+
+    #[test]
+    fn probe_position_preceded_by_dot_ignores_whitespace() {
+        let source_text = "const value = obj.   prop;";
+        let line_map = LineMap::build(source_text);
+        let probe_offset = source_text.find("prop").expect("probe token exists") as u32;
+        let probe_position = line_map.offset_to_position(probe_offset, source_text);
+
+        assert!(Server::probe_position_preceded_by_dot(
+            source_text,
+            &line_map,
+            probe_position
+        ));
+
+        let non_member_text = "const value = obj + prop;";
+        let non_member_map = LineMap::build(non_member_text);
+        let non_member_offset = non_member_text.find("prop").expect("probe token exists") as u32;
+        let non_member_position =
+            non_member_map.offset_to_position(non_member_offset, non_member_text);
+        assert!(!Server::probe_position_preceded_by_dot(
+            non_member_text,
+            &non_member_map,
+            non_member_position
+        ));
+    }
+
+    #[test]
+    fn probe_position_inside_string_literal_only_matches_inside_quotes() {
+        let source_text = "const a = \"ab\";\nconst b = 1;";
+        let line_map = LineMap::build(source_text);
+        let inside_offset = source_text.find("ab").expect("string token exists") as u32 + 1;
+        let inside_position = line_map.offset_to_position(inside_offset, source_text);
+        assert!(Server::probe_position_inside_string_literal(
+            source_text,
+            &line_map,
+            inside_position
+        ));
+
+        let outside_offset = source_text.find("const b").expect("outside token exists") as u32 + 2;
+        let outside_position = line_map.offset_to_position(outside_offset, source_text);
+        assert!(!Server::probe_position_inside_string_literal(
+            source_text,
+            &line_map,
+            outside_position
+        ));
     }
 }

@@ -831,4 +831,108 @@ impl<'a> NarrowingContext<'a> {
         let checker = SubtypeChecker::new(self.db.as_type_database()).with_query_db(self.db);
         checker.are_types_overlapping(resolved_source, resolved_instance)
     }
+
+    /// Narrow by `x.constructor === SomeClass` (true branch).
+    ///
+    /// Unlike instanceof (which includes subclasses), constructor identity
+    /// matches only the exact class. A `C2` instance has `.constructor === C2`,
+    /// NOT `.constructor === C1`, even when `C2 extends C1`.
+    ///
+    /// For unions, filters members to only those whose type identity matches
+    /// the given instance type exactly (nominal, not structural).
+    pub fn narrow_by_constructor(&self, source_type: TypeId, instance_type: TypeId) -> TypeId {
+        let _span = span!(
+            Level::TRACE,
+            "narrow_by_constructor",
+            source = source_type.0,
+            instance = instance_type.0
+        )
+        .entered();
+
+        if source_type == TypeId::ANY || source_type == TypeId::UNKNOWN {
+            return instance_type;
+        }
+
+        let resolved_instance = self.resolve_type(instance_type);
+
+        if let Some(members_list) = union_list_id(self.db, source_type) {
+            let members = self.db.type_list(members_list);
+            let matching: Vec<TypeId> = members
+                .iter()
+                .copied()
+                .filter(|&m| self.types_match_nominally(m, instance_type, resolved_instance))
+                .collect();
+            trace!(matched = matching.len(), total = members.len());
+            return super::union_or_single_preserve(self.db, matching);
+        }
+
+        if self.types_match_nominally(source_type, instance_type, resolved_instance) {
+            source_type
+        } else {
+            TypeId::NEVER
+        }
+    }
+
+    /// Narrow by `x.constructor !== SomeClass` (false branch).
+    ///
+    /// Excludes the exact instance type from the union.
+    pub fn narrow_by_constructor_false(
+        &self,
+        source_type: TypeId,
+        instance_type: TypeId,
+    ) -> TypeId {
+        let _span = span!(
+            Level::TRACE,
+            "narrow_by_constructor_false",
+            source = source_type.0,
+            instance = instance_type.0
+        )
+        .entered();
+
+        if source_type == TypeId::ANY {
+            return source_type;
+        }
+
+        let resolved_instance = self.resolve_type(instance_type);
+
+        if let Some(members_list) = union_list_id(self.db, source_type) {
+            let members = self.db.type_list(members_list);
+            let filtered: Vec<TypeId> = members
+                .iter()
+                .copied()
+                .filter(|&m| !self.types_match_nominally(m, instance_type, resolved_instance))
+                .collect();
+            trace!(kept = filtered.len(), total = members.len());
+            return super::union_or_single_preserve(self.db, filtered);
+        }
+
+        if self.types_match_nominally(source_type, instance_type, resolved_instance) {
+            TypeId::NEVER
+        } else {
+            source_type
+        }
+    }
+
+    /// Check if two types refer to the same nominal declaration.
+    ///
+    /// Compares DefIds (for Lazy references) or resolved TypeIds. Two classes
+    /// with identical structure but different declarations are NOT considered
+    /// matching, which is the correct semantics for `.constructor ===`.
+    fn types_match_nominally(&self, a: TypeId, b: TypeId, resolved_b: TypeId) -> bool {
+        if a == b {
+            return true;
+        }
+        // Compare DefIds directly for lazy references
+        if let (Some(def_a), Some(def_b)) = (lazy_def_id(self.db, a), lazy_def_id(self.db, b)) {
+            return def_a == def_b;
+        }
+        // Compare Application ids (generic instantiations)
+        if let (Some(app_a), Some(app_b)) = (application_id(self.db, a), application_id(self.db, b))
+        {
+            return app_a == app_b;
+        }
+        // Fallback: compare resolved forms
+        let resolved_a = self.resolve_type(a);
+        resolved_a == resolved_b
+    }
 }

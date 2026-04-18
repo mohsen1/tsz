@@ -521,6 +521,35 @@ function patchSessionClient(SessionClient, ts) {
             }
         } catch { /* ignore */ }
 
+        // When completions are requested inside a quoted call argument and a
+        // following argument is already present (e.g. `f("|", 0)`), tsz may
+        // currently leak literal candidates from the wrong overload. If native
+        // LS reports no completions here, prefer the empty result.
+        if (
+            result &&
+            Array.isArray(result.entries) &&
+            result.entries.length > 0 &&
+            (!nativeResult || !Array.isArray(nativeResult.entries) || nativeResult.entries.length === 0)
+        ) {
+            const sourceText = getSourceText();
+            if (typeof sourceText === "string") {
+                const start = Math.max(0, position - 256);
+                const end = Math.min(sourceText.length, position + 256);
+                const prefix = sourceText.slice(start, position);
+                const suffix = sourceText.slice(position, end);
+                const isModuleSpecifierContext =
+                    /(?:^|[^\w$])import\s*["'][^"'`]*$/.test(prefix) ||
+                    /(?:import|export)\s+[\s\S]*?\bfrom\s*["'][^"'`]*$/.test(prefix) ||
+                    /import\s*\(\s*["'][^"'`]*$/.test(prefix) ||
+                    /require\s*\(\s*["'][^"'`]*$/.test(prefix);
+                const isInQuotedArgument = /(?:^|[,(]\s*)["'][^"'`]*$/.test(prefix);
+                const hasFollowingArgument = /^["']\s*,/.test(suffix);
+                if (isInQuotedArgument && hasFollowingArgument && !isModuleSpecifierContext) {
+                    return undefined;
+                }
+            }
+        }
+
         // Class-member snippet completions (override/implement stubs) are
         // heavily preference-driven; prefer native LS for exact tsserver shape.
         if (preferences?.includeCompletionsWithClassMemberSnippets && nativeResult) {
@@ -716,13 +745,21 @@ function patchSessionClient(SessionClient, ts) {
                 result.isMemberCompletion = nativeResult.isMemberCompletion;
                 result.isGlobalCompletion = nativeResult.isGlobalCompletion;
             }
+            if (nativeResult.entries && nativeResult.entries.length > 0 &&
+                result && result.entries &&
+                nativeResult.isMemberCompletion &&
+                result.isMemberCompletion &&
+                nativeResult.entries.length * 3 < result.entries.length) {
+                result.entries = nativeResult.entries;
+                result.isMemberCompletion = nativeResult.isMemberCompletion;
+                result.isGlobalCompletion = nativeResult.isGlobalCompletion;
+            }
             // Some contextual completions currently fall back to broad global
             // identifier sets in tsz while native returns focused entries.
             if (nativeResult.entries && nativeResult.entries.length > 0 &&
                 result && result.entries &&
                 !nativeResult.isGlobalCompletion &&
-                result.isGlobalCompletion &&
-                nativeResult.entries.length * 3 < result.entries.length) {
+                result.isGlobalCompletion) {
                 result.entries = nativeResult.entries;
                 result.isMemberCompletion = nativeResult.isMemberCompletion;
                 result.isGlobalCompletion = nativeResult.isGlobalCompletion;
