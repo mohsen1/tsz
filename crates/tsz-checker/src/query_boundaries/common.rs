@@ -16,6 +16,10 @@ pub(crate) use tsz_solver::FunctionShape;
 pub(crate) use tsz_solver::MappedType;
 pub(crate) use tsz_solver::ObjectFlags;
 pub(crate) use tsz_solver::ParamInfo;
+pub(crate) use tsz_solver::PendingDiagnosticBuilder;
+pub(crate) use tsz_solver::SourceLocation;
+pub(crate) use tsz_solver::TypeFormatter;
+pub(crate) use tsz_solver::TypeInstantiator;
 #[allow(unused_imports)]
 pub(crate) use tsz_solver::TypeInterner;
 

@@ -785,8 +785,8 @@ impl<'a> CheckerContext<'a> {
     /// let formatter = self.create_type_formatter();
     /// let type_str = formatter.format(type_id);  // Shows "List<number>" not "Lazy(1)<number>"
     /// ```
-    pub fn create_type_formatter(&self) -> tsz_solver::TypeFormatter<'_> {
-        use tsz_solver::TypeFormatter;
+    pub fn create_type_formatter(&self) -> crate::query_boundaries::common::TypeFormatter<'_> {
+        use crate::query_boundaries::common::TypeFormatter;
 
         TypeFormatter::with_symbols(self.types, &self.binder.symbols)
             .with_def_store(&self.definition_store)
@@ -799,7 +799,9 @@ impl<'a> CheckerContext<'a> {
     /// Create a type formatter configured for diagnostic error messages.
     /// Skips union optionalization (synthetic `?: undefined` members) that
     /// tsc only uses in hover/quickinfo, not in error messages.
-    pub fn create_diagnostic_type_formatter(&self) -> tsz_solver::TypeFormatter<'_> {
+    pub fn create_diagnostic_type_formatter(
+        &self,
+    ) -> crate::query_boundaries::common::TypeFormatter<'_> {
         self.create_type_formatter()
             .with_diagnostic_mode()
             .with_strict_null_checks(self.compiler_options.strict_null_checks)

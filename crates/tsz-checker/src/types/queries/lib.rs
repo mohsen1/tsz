@@ -29,8 +29,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         name: &str,
     ) -> (Option<TypeId>, Vec<TypeParamInfo>) {
-        use crate::query_boundaries::common::TypeSubstitution;
-        use tsz_solver::TypeInstantiator;
+        use crate::query_boundaries::common::{TypeInstantiator, TypeSubstitution};
 
         let factory = self.ctx.types.factory();
         let lib_contexts = &*self.ctx.lib_contexts;
