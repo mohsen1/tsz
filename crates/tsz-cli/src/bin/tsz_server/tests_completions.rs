@@ -2953,7 +2953,8 @@ fn test_completion_info_class_member_snippet_quotes_constructor_property_name() 
     );
     server.open_files.insert(
         "/index.ts".to_string(),
-        "import { ElementNode } from \"./ElementNode\";\nclass C extends ElementNode {\n  \n}\n".to_string(),
+        "import { ElementNode } from \"./ElementNode\";\nclass C extends ElementNode {\n  \n}\n"
+            .to_string(),
     );
 
     let completion_req = make_request(

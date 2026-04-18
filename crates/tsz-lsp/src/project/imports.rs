@@ -1643,7 +1643,9 @@ mod tests {
 
         let index_specs = specs_for("fooFromIndex");
         assert!(
-            index_specs.iter().any(|specifier| specifier == "dependency"),
+            index_specs
+                .iter()
+                .any(|specifier| specifier == "dependency"),
             "expected fooFromIndex auto-import from dependency root export-map types entry, got {index_specs:?}"
         );
 

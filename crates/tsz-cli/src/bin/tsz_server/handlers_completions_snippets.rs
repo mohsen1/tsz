@@ -1089,10 +1089,7 @@ impl Server {
         None
     }
 
-    fn collect_text_class_member_fallbacks(
-        class_text: &str,
-        out: &mut Vec<CompletionItem>,
-    ) {
+    fn collect_text_class_member_fallbacks(class_text: &str, out: &mut Vec<CompletionItem>) {
         for line in class_text.lines() {
             let trimmed = line.trim();
             let quote = if trimmed.starts_with("[\"") {
@@ -1173,9 +1170,11 @@ impl Server {
                                 let Some(prop) = arena.get_property_decl(member_node) else {
                                     continue;
                                 };
-                                let Some(member_name) =
-                                    Self::member_name_from_name_node(&arena, &source_text, prop.name)
-                                else {
+                                let Some(member_name) = Self::member_name_from_name_node(
+                                    &arena,
+                                    &source_text,
+                                    prop.name,
+                                ) else {
                                     continue;
                                 };
                                 let detail = if prop.type_annotation.is_some() {
@@ -1278,7 +1277,6 @@ impl Server {
                     }
                     continue;
                 }
-
             }
         }
     }
