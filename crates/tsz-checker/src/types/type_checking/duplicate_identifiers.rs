@@ -1338,7 +1338,16 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if conflicts.is_empty() {
+            // The "default-import alias vs local namespace" TS2300 rule is a
+            // JS parity quirk — tsc only emits the namespace/default-import
+            // collision in checked JS files. Under TS, a default import that
+            // aliases a local namespace is allowed. Keeping the check
+            // unrestricted broke several TS-only tests (e.g.
+            // allowImportClausesToMergeWithTypes.ts,
+            // exportAssignmentWithoutAllowSyntheticDefaultImportsError.ts)
+            // that define a local namespace/value-module with the same name
+            // as a remote default import.
+            if conflicts.is_empty() && self.is_js_file() && self.ctx.should_resolve_jsdoc() {
                 let has_remote_default_import_alias_conflict =
                     declarations.iter().any(|(_, flags, is_local, _, origin)| {
                         !*is_local
