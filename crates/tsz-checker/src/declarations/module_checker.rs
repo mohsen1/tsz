@@ -864,6 +864,9 @@ impl<'a> CheckerState<'a> {
             let name_str = self
                 .get_identifier_text_from_idx(name_idx)
                 .unwrap_or_else(|| String::from("unknown"));
+            let has_local_jsdoc_typedef = self.is_js_file()
+                && self.ctx.should_resolve_jsdoc()
+                && self.file_has_jsdoc_typedef_named(self.ctx.current_file_idx, &name_str);
 
             // Check if the symbol is a local declaration or import.
             // file_locals includes merged globals from other files, so we must also
@@ -886,6 +889,7 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|sym| {
                         sym.decl_file_idx == current_file_idx || sym.decl_file_idx == u32::MAX
                     })
+                    || has_local_jsdoc_typedef
             };
 
             if is_local
@@ -1852,6 +1856,10 @@ impl<'a> CheckerState<'a> {
             | symbol_flags::ENUM
             | symbol_flags::ENUM_MEMBER
             | symbol_flags::VALUE_MODULE;
+
+        if self.file_has_jsdoc_typedef_named(self.ctx.current_file_idx, name) {
+            return true;
+        }
 
         if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
             && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
