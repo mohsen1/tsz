@@ -965,7 +965,7 @@ impl<'a> CheckerState<'a> {
         // conservatively accepted. Resolving them here ensures boxed wrapper types like
         // Symbol/Number/String are correctly rejected as computed property name types.
         let resolved_type = self.resolve_lazy_type(expr_type);
-        let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
         if !self.has_parse_errors()
             && (enum_object_ref || !evaluator.is_valid_computed_property_name_type(resolved_type))
         {

@@ -1717,7 +1717,9 @@ impl<'a> CheckerState<'a> {
                     let left_ty = self.literal_type_from_initializer(binary.left);
                     let right_ty = self.literal_type_from_initializer(binary.right);
                     if let (Some(l), Some(r)) = (left_ty, right_ty) {
-                        let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(
+                            self.ctx.types,
+                        );
                         if let crate::query_boundaries::type_computation::core::BinaryOpResult::Success(res) =
                             evaluator.evaluate(l, r, "&&")
                         {
@@ -1729,7 +1731,9 @@ impl<'a> CheckerState<'a> {
                     let left_ty = self.literal_type_from_initializer(binary.left);
                     let right_ty = self.literal_type_from_initializer(binary.right);
                     if let (Some(l), Some(r)) = (left_ty, right_ty) {
-                        let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(
+                            self.ctx.types,
+                        );
                         if let crate::query_boundaries::type_computation::core::BinaryOpResult::Success(res) =
                             evaluator.evaluate(l, r, "||")
                         {

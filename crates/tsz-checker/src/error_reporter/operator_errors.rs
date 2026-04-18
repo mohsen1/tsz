@@ -298,7 +298,7 @@ impl<'a> CheckerState<'a> {
 
         use crate::query_boundaries::common::BinaryOpEvaluator;
 
-        let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
 
         // TS2469: Check if either operand is a symbol type.
         // tsc's behavior for TS2469 varies by operator category:

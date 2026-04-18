@@ -1501,3 +1501,13 @@ pub(crate) fn get_conditional_type_id(
 ) -> Option<tsz_solver::types::ConditionalTypeId> {
     tsz_solver::type_queries::get_conditional_type_id(db, type_id)
 }
+
+/// Factory for `BinaryOpEvaluator` — single construction point through the boundary.
+///
+/// All checker code that needs binary-op evaluation must construct the evaluator
+/// through this function instead of calling `BinaryOpEvaluator::new()` directly.
+pub(crate) fn new_binary_op_evaluator(
+    db: &dyn tsz_solver::QueryDatabase,
+) -> tsz_solver::BinaryOpEvaluator<'_> {
+    tsz_solver::BinaryOpEvaluator::new(db)
+}
