@@ -13,6 +13,7 @@ use tsz_solver::{
 // Re-export solver value types used by checker call computation.
 pub(crate) use tsz_solver::ContextualTypeContext;
 pub(crate) use tsz_solver::FunctionShape;
+pub(crate) use tsz_solver::MappedType;
 pub(crate) use tsz_solver::ObjectFlags;
 pub(crate) use tsz_solver::ParamInfo;
 #[allow(unused_imports)]
@@ -609,6 +610,16 @@ pub(crate) fn find_property_in_object(
 /// not a keyof type.
 pub(crate) fn keyof_inner_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     tsz_solver::keyof_inner_type(db, type_id)
+}
+
+/// Instantiate a type, returning the result and a flag indicating whether the
+/// depth limit was exceeded during instantiation.
+pub(crate) fn instantiate_type_with_depth_status(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    substitution: &TypeSubstitution,
+) -> (TypeId, bool) {
+    tsz_solver::instantiate_type_with_depth_status(db, type_id, substitution)
 }
 
 /// Substitute `this` type references in `type_id` with `this_type`.
