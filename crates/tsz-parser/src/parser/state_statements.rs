@@ -129,10 +129,15 @@ impl ParserState {
         // Collect scanner-level diagnostics (e.g., conflict markers TS1185) into
         // parse diagnostics so they appear in the final diagnostic output.
         for diag in self.scanner.get_scanner_diagnostics() {
+            let mut message = diag.message.to_string();
+            for (idx, arg) in diag.args.iter().enumerate() {
+                let placeholder = format!("{{{idx}}}");
+                message = message.replace(&placeholder, arg);
+            }
             self.parse_diagnostics.push(super::state::ParseDiagnostic {
                 start: self.u32_from_usize(diag.pos),
                 length: self.u32_from_usize(diag.length),
-                message: diag.message.to_string(),
+                message,
                 code: diag.code,
             });
         }
