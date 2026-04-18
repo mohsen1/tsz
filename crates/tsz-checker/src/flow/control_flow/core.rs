@@ -244,8 +244,8 @@ impl<'a> FlowAnalyzer<'a> {
     /// merged type expands back to that same semantic union.
     fn same_union_member_set(&self, left: TypeId, right: TypeId) -> bool {
         fn normalized_union_members(db: &dyn QueryDatabase, ty: TypeId) -> Vec<TypeId> {
-            if let Some(members) = query::union_members(db, ty) {
-                let mut normalized = members.to_vec();
+            if let Some(members) = union_members_for_type(db, ty) {
+                let mut normalized: Vec<TypeId> = members.to_vec();
                 normalized.sort_unstable_by_key(|member| member.0);
                 normalized.dedup();
                 normalized
