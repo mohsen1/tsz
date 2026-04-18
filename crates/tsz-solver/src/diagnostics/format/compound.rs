@@ -1098,8 +1098,9 @@ impl<'a> TypeFormatter<'a> {
 
     pub(super) fn format_tuple(&mut self, elements: &[TupleElement]) -> String {
         // Normalize: a tuple with a single rest element `[...T[]]` displays as `T[]`
-        // to match tsc's display behavior.
-        if elements.len() == 1 && elements[0].rest && elements[0].name.is_none() {
+        // to match tsc's display behavior.  Named rest elements (`[...urls: string[]]`)
+        // are also simplified because the label is irrelevant in type display.
+        if elements.len() == 1 && elements[0].rest {
             let inner = self.format(elements[0].type_id);
             return inner.into_owned();
         }
@@ -1340,9 +1341,14 @@ impl<'a> TypeFormatter<'a> {
         } else {
             template_str.into_owned()
         };
+        let constraint_str = self.format(mapped.constraint);
+        let as_clause = if let Some(name_type) = mapped.name_type {
+            format!(" as {}", self.format(name_type))
+        } else {
+            String::new()
+        };
         format!(
-            "{{ {readonly_prefix}[{param_name} in {}]{optional_suffix}: {template_display}; }}",
-            self.format(mapped.constraint),
+            "{{ {readonly_prefix}[{param_name} in {constraint_str}{as_clause}]{optional_suffix}: {template_display}; }}"
         )
     }
 
