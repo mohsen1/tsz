@@ -12,6 +12,7 @@ use crate::query_boundaries::assignability::{
     rewrite_function_error_slots_to_any,
 };
 use crate::state::CheckerState;
+use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{CallableShape, FunctionShape, TypeId};
@@ -434,6 +435,44 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn declaration_arena_for_symbol(
+        &self,
+        sym_id: SymbolId,
+        decl_idx: NodeIndex,
+    ) -> Option<&tsz_parser::NodeArena> {
+        if let Some(arena) = self.ctx.binder.get_arena_for_declaration(sym_id, decl_idx) {
+            return Some(arena.as_ref());
+        }
+        if self.ctx.arena.get(decl_idx).is_some() {
+            Some(self.ctx.arena)
+        } else {
+            None
+        }
+    }
+
+    fn declaration_is_overload_signature_in_arena(
+        &self,
+        arena: &tsz_parser::NodeArena,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        let Some(decl_node) = arena.get(decl_idx) else {
+            return false;
+        };
+
+        match decl_node.kind {
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => arena
+                .get_function(decl_node)
+                .is_some_and(|f| f.body.is_none()),
+            k if k == syntax_kind_ext::METHOD_DECLARATION => arena
+                .get_method_decl(decl_node)
+                .is_some_and(|m| m.body.is_none()),
+            k if k == syntax_kind_ext::CONSTRUCTOR => arena
+                .get_constructor(decl_node)
+                .is_some_and(|c| c.body.is_none()),
+            _ => false,
+        }
+    }
+
     /// Check overload compatibility: implementation must be assignable to all overload signatures.
     ///
     /// Reports TS2394 when an implementation signature is not compatible with its overload signatures.
@@ -467,28 +506,10 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
 
-            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            let Some(decl_arena) = self.declaration_arena_for_symbol(impl_sym_id, decl_idx) else {
                 return false;
             };
-
-            match decl_node.kind {
-                k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
-                    .ctx
-                    .arena
-                    .get_function(decl_node)
-                    .is_some_and(|f| f.body.is_none()),
-                k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                    .ctx
-                    .arena
-                    .get_method_decl(decl_node)
-                    .is_some_and(|m| m.body.is_none()),
-                k if k == syntax_kind_ext::CONSTRUCTOR => self
-                    .ctx
-                    .arena
-                    .get_constructor(decl_node)
-                    .is_some_and(|c| c.body.is_none()),
-                _ => false,
-            }
+            self.declaration_is_overload_signature_in_arena(decl_arena, decl_idx)
         });
         let jsdoc_overloads = if has_overload_decl {
             Vec::new()
@@ -589,43 +610,32 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
-                continue;
-            };
+            let decl_in_current = {
+                let Some(decl_arena) = self.declaration_arena_for_symbol(impl_sym_id, decl_idx)
+                else {
+                    continue;
+                };
 
-            // 5. Check if this declaration is an overload (has no body)
-            // We must handle Functions, Methods, and Constructors
-            let is_overload = match decl_node.kind {
-                k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
-                    .ctx
-                    .arena
-                    .get_function(decl_node)
-                    .is_some_and(|f| f.body.is_none()),
-                k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                    .ctx
-                    .arena
-                    .get_method_decl(decl_node)
-                    .is_some_and(|m| m.body.is_none()),
-                k if k == syntax_kind_ext::CONSTRUCTOR => self
-                    .ctx
-                    .arena
-                    .get_constructor(decl_node)
-                    .is_some_and(|c| c.body.is_none()),
-                _ => false, // Not a callable declaration we care about
+                // 5. Check if this declaration is an overload (has no body)
+                // We must handle Functions, Methods, and Constructors.
+                if !self.declaration_is_overload_signature_in_arena(decl_arena, decl_idx) {
+                    continue;
+                }
+                std::ptr::eq(decl_arena, self.ctx.arena)
             };
-
-            if !is_overload {
-                continue;
-            }
 
             // 6. Get the overload's type using manual lowering
             // For overloads without return type annotations, use VOID (matching tsc behavior).
-            let overload_return_override = self.get_overload_return_type_override(decl_idx);
-            let mut overload_type = self
-                .constructor_type_for_overload_compatibility(decl_idx)
-                .unwrap_or_else(|| {
-                    lowering.lower_signature_from_declaration(decl_idx, overload_return_override)
-                });
+            let mut overload_type = if decl_in_current {
+                let overload_return_override = self.get_overload_return_type_override(decl_idx);
+                self.constructor_type_for_overload_compatibility(decl_idx)
+                    .unwrap_or_else(|| {
+                        lowering
+                            .lower_signature_from_declaration(decl_idx, overload_return_override)
+                    })
+            } else {
+                self.type_of_declaration_node_for_symbol(impl_sym_id, decl_idx)
+            };
             // ERROR return fallback for overloads.
             // Manual lowering doesn't have access to class/interface type parameters,
             // so references like `Vector<T>` where T is a class type param produce
@@ -636,7 +646,7 @@ impl<'a> CheckerState<'a> {
                 || overload_lowered_ret
                     .is_some_and(|ret| tsz_solver::contains_error_type(self.ctx.types, ret));
             if has_error {
-                let node_type = self.get_type_of_node(decl_idx);
+                let node_type = self.type_of_declaration_node_for_symbol(impl_sym_id, decl_idx);
                 if node_type != tsz_solver::TypeId::ERROR {
                     overload_type = node_type;
                 } else if overload_type == tsz_solver::TypeId::ERROR {
@@ -652,12 +662,59 @@ impl<'a> CheckerState<'a> {
             // This matches tsc's isImplementationCompatibleWithOverload.
             if !self.is_implementation_compatible_with_overload(impl_type, overload_type) {
                 // TSC anchors the error at the function/method name, not the whole declaration.
-                let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                self.error_at_node(
-                    error_node,
-                    diagnostic_messages::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
-                    diagnostic_codes::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
-                );
+                if decl_in_current {
+                    let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                    self.error_at_node(
+                        error_node,
+                        diagnostic_messages::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
+                        diagnostic_codes::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
+                    );
+                } else {
+                    let cross_file_span = self
+                        .declaration_arena_for_symbol(impl_sym_id, decl_idx)
+                        .and_then(|arena| {
+                            let file_name = arena.source_files.first()?.file_name.clone();
+                            let decl_node = arena.get(decl_idx)?;
+                            let name_idx = match decl_node.kind {
+                                k if k == syntax_kind_ext::FUNCTION_DECLARATION => arena
+                                    .get_function(decl_node)
+                                    .and_then(|f| f.name.into_option()),
+                                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                                    arena.get_method_decl(decl_node).map(|m| m.name)
+                                }
+                                _ => None,
+                            };
+                            if let Some(name_idx) = name_idx {
+                                let name_node = arena.get(name_idx)?;
+                                Some((
+                                    file_name,
+                                    name_node.pos,
+                                    name_node.end.saturating_sub(name_node.pos),
+                                ))
+                            } else {
+                                Some((
+                                    file_name,
+                                    decl_node.pos,
+                                    decl_node.end.saturating_sub(decl_node.pos),
+                                ))
+                            }
+                        });
+                    if let Some((file_name, start, length)) = cross_file_span {
+                        self.error_at_position_in_file(
+                            file_name,
+                            start,
+                            length,
+                            diagnostic_messages::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
+                            diagnostic_codes::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
+                        );
+                    } else {
+                        self.error_at_node(
+                            impl_node_idx,
+                            diagnostic_messages::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
+                            diagnostic_codes::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
+                        );
+                    }
+                }
                 // TSC only reports the first incompatible overload per function.
                 break;
             }
