@@ -524,6 +524,22 @@ impl<'a> CheckerState<'a> {
                 pushed_this_type = true;
             }
         }
+        if !pushed_this_type
+            && self.is_js_file()
+            && matches!(
+                _node.kind,
+                syntax_kind_ext::FUNCTION_DECLARATION | syntax_kind_ext::FUNCTION_EXPRESSION
+            )
+            && let Some(this_type) =
+                self.synthesize_js_constructor_instance_type(func_idx, TypeId::ANY, &[])
+        {
+            // In JS/checkJs, plain functions that assign/read `this.prop` behave like
+            // constructor-style object builders. Seed an implicit structural `this`
+            // type so `this` property reads can report TS2339 against known members.
+            self.ctx.this_type_stack.push(this_type);
+            self.ctx.function_owned_this_stack.push(func_idx);
+            pushed_this_type = true;
+        }
 
         let owns_untyped_this_binding = matches!(
             _node.kind,
