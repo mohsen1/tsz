@@ -299,7 +299,11 @@ impl<'a> CheckerState<'a> {
             if let Some(def_id) = lazy_def_id(self.ctx.types, type_id)
                 && let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id)
             {
-                let owner_file_hint = self.ctx.definition_store.get(def_id).and_then(|def| def.file_id);
+                let owner_file_hint = self
+                    .ctx
+                    .definition_store
+                    .get(def_id)
+                    .and_then(|def| def.file_id);
                 if let Some(info) =
                     self.private_external_module_nameability_info(sym_id, owner_file_hint)
                 {
@@ -482,8 +486,10 @@ impl<'a> CheckerState<'a> {
 
             let matches_resolved_symbol = |candidate_sym_id| {
                 candidate_sym_id == resolved_sym_id
-                    || target_binder.resolve_import_symbol(candidate_sym_id) == Some(resolved_sym_id)
-                    || self.ctx.binder.resolve_import_symbol(candidate_sym_id) == Some(resolved_sym_id)
+                    || target_binder.resolve_import_symbol(candidate_sym_id)
+                        == Some(resolved_sym_id)
+                    || self.ctx.binder.resolve_import_symbol(candidate_sym_id)
+                        == Some(resolved_sym_id)
                     || self.resolve_alias_symbol(candidate_sym_id, &mut Vec::new())
                         == Some(resolved_sym_id)
             };
@@ -569,9 +575,7 @@ impl<'a> CheckerState<'a> {
                     && !binder
                         .module_exports
                         .get(&target_file_name)
-                        .is_some_and(|exports| {
-                            exports.iter().any(|(_, &sid)| sid == *candidate_id)
-                        })
+                        .is_some_and(|exports| exports.iter().any(|(_, &sid)| sid == *candidate_id))
             });
             if has_private_candidate {
                 return Some(file_idx as u32);
