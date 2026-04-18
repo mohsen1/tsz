@@ -97,3 +97,39 @@ let a: Foo<string>;
         "Should emit TS2314 for too few type args in type reference, got: {codes:?}"
     );
 }
+
+#[test]
+fn test_new_generic_class_in_static_method_no_false_ts2558() {
+    let codes = get_error_codes(
+        r#"
+class Foo<T> {
+    value!: T;
+    static create(): Foo<number> {
+        return new Foo<number>();
+    }
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&2558),
+        "Should not emit TS2558 for new Foo<number>() inside static method, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_new_generic_class_in_generic_static_method_no_false_ts2558() {
+    let codes = get_error_codes(
+        r#"
+class Foo<T> {
+    value!: T;
+    static create<T>(): Foo<T> {
+        return new Foo<T>();
+    }
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&2558),
+        "Should not emit TS2558 for new Foo<T>() inside generic static method, got: {codes:?}"
+    );
+}
