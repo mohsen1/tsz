@@ -2667,6 +2667,11 @@ function patchSessionClient(SessionClient, ts) {
             const isMoveToRefactorTest =
                 currentTestName.startsWith("movetofile") ||
                 currentTestName.startsWith("movetonewfile");
+            const preferNativeRefactorSuites =
+                currentTestName.startsWith("refactorconverttooptionalchainexpression") ||
+                currentTestName.startsWith("refactorconvertstringortemplateliteral") ||
+                currentTestName.startsWith("refactorconvertparamstodestructuredobject") ||
+                currentTestName.startsWith("refactorkind");
             let result = _origGetApplicableRefactors.call(
                 this,
                 fileName,
@@ -2677,7 +2682,7 @@ function patchSessionClient(SessionClient, ts) {
                 includeInteractiveActions,
             );
             const hasExtractSymbolRefactor = Array.isArray(result) && result.some(isExtractSymbolRefactor);
-            if (!result || result.length === 0 || hasExtractSymbolRefactor || isMoveToRefactorTest) {
+            if (!result || result.length === 0 || hasExtractSymbolRefactor || isMoveToRefactorTest || preferNativeRefactorSuites) {
                 const nativeResult = withNativeFallback(this, ls =>
                     ls.getApplicableRefactors(
                         fileName,
@@ -2690,6 +2695,9 @@ function patchSessionClient(SessionClient, ts) {
                 );
                 const triggerReasonText = String(triggerReason?.kind || triggerReason || "").toLowerCase();
                 const isImplicitTrigger = triggerReasonText === "implicit";
+                if (preferNativeRefactorSuites && Array.isArray(nativeResult) && nativeResult.length > 0) {
+                    return nativeResult;
+                }
                 if (isMoveToRefactorTest && Array.isArray(nativeResult) && nativeResult.length > 0) {
                     return nativeResult;
                 }
@@ -2709,7 +2717,30 @@ function patchSessionClient(SessionClient, ts) {
             const isExtractSymbolRequest = String(refactorName || "").toLowerCase() === "extract symbol";
             const actionNameText = String(actionName || "");
             const isExtractScopeAction = isExtractSymbolRequest && isExtractScopeActionName(actionNameText);
+            const currentTestFile = String(globalThis.__tszCurrentFourslashTestFile || "");
+            const currentTestName = path.basename(currentTestFile, ".ts").toLowerCase();
+            const preferNativeRefactorEditsSuites =
+                currentTestName.startsWith("refactorconverttooptionalchainexpression") ||
+                currentTestName.startsWith("refactorconvertstringortemplateliteral") ||
+                currentTestName.startsWith("refactorconvertparamstodestructuredobject") ||
+                currentTestName.startsWith("refactorkind");
             if (isExtractScopeAction) {
+                const nativePreferred = withNativeFallback(this, ls =>
+                    ls.getEditsForRefactor(
+                        fileName,
+                        formatOptions,
+                        positionOrRange,
+                        refactorName,
+                        actionName,
+                        preferences,
+                        interactiveRefactorArguments,
+                    )
+                );
+                if (nativePreferred && Array.isArray(nativePreferred.edits) && nativePreferred.edits.length > 0) {
+                    return nativePreferred;
+                }
+            }
+            if (preferNativeRefactorEditsSuites) {
                 const nativePreferred = withNativeFallback(this, ls =>
                     ls.getEditsForRefactor(
                         fileName,
