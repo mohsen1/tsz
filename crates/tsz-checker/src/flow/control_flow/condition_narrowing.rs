@@ -843,7 +843,7 @@ impl<'a> FlowAnalyzer<'a> {
 
     /// If `node` is a direct `*.constructor` access, return the object expression
     /// on the left side of the access chain.
-    fn get_constructor_property_base(&self, node: NodeIndex) -> Option<NodeIndex> {
+    pub(super) fn get_constructor_property_base(&self, node: NodeIndex) -> Option<NodeIndex> {
         let node = self.arena.skip_parenthesized_and_assertions(node);
         let node_data = self.arena.get(node)?;
         if node_data.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
