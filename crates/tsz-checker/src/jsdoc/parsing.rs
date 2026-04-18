@@ -605,7 +605,15 @@ impl<'a> CheckerState<'a> {
             .map(|(name, constraint)| JsdocTemplateParamInfo { name, constraint })
             .collect();
         for raw_line in jsdoc.lines() {
-            let line = raw_line.trim_start_matches('*').trim();
+            // Normalize both multiline (`/** ... */`) and single-line (`/** ... */`)
+            // JSDoc block-comment lines into tag content before parsing.
+            let mut line = raw_line.trim();
+            line = line
+                .trim_start_matches("/**")
+                .trim_start_matches("/*")
+                .trim_start_matches('*')
+                .trim();
+            line = line.trim_end_matches("*/").trim();
             if let Some(body_lines) = wrapped_typedef_body.as_mut() {
                 if line.is_empty() {
                     continue;
