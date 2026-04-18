@@ -3195,7 +3195,7 @@ fn test_project_info_configured_project_excludes_non_existent_files() {
     let mut server = make_server_with_real_libs();
     let tsconfig_path = "/tests/cases/fourslash/server/tsconfig.json".to_string();
     server.open_files.insert(
-        tsconfig_path.clone(),
+        tsconfig_path,
         r#"{ "files": ["a.ts", "c.ts", "b.ts"], "compilerOptions": { "lib": ["es5"] } }"#
             .to_string(),
     );
@@ -3241,8 +3241,7 @@ fn test_project_info_lib_files_use_fourslash_virtual_folder() {
         .map(String::as_str)
         .collect();
     assert!(
-        libs.iter()
-            .any(|p| *p == "/home/src/tslibs/TS/Lib/lib.es5.d.ts"),
+        libs.contains(&"/home/src/tslibs/TS/Lib/lib.es5.d.ts"),
         "expected lib.es5.d.ts under fourslash virtual lib folder, got {libs:?}"
     );
     // @lib: es5 pulls in decorators + decorators.legacy via transitive refs.
