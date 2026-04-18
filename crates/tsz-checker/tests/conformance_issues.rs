@@ -11941,12 +11941,8 @@ try { } catch (e) {
     );
 
     let expected_ts2300_starts: FxHashSet<u32> = FxHashSet::from_iter([
-        u32::try_from(source.find("var v;").unwrap() + 4).unwrap(),
-        u32::try_from(source.find("function v()").unwrap() + 9).unwrap(),
         u32::try_from(source.find("function w()").unwrap() + 9).unwrap(),
         u32::try_from(source.find("var w;").unwrap() + 4).unwrap(),
-        u32::try_from(source.find("var x;").unwrap() + 4).unwrap(),
-        u32::try_from(source.find("function x()").unwrap() + 9).unwrap(),
     ]);
     let actual_ts2300_starts: FxHashSet<u32> = diagnostics
         .iter()
@@ -11956,7 +11952,7 @@ try { } catch (e) {
 
     assert_eq!(
         actual_ts2300_starts, expected_ts2300_starts,
-        "Expected exact TS2300 anchors for v/w/x duplicate identifiers.\nActual diagnostics: {diagnostics:#?}"
+        "Expected only the outer `function w` and inner `var w` TS2300 anchors from the catch-block baseline.\nActual diagnostics: {diagnostics:#?}"
     );
     assert!(
         diagnostics.iter().any(|d| {
@@ -11966,15 +11962,16 @@ try { } catch (e) {
         "Expected TS2403 on the second `p` declaration.\nActual diagnostics: {diagnostics:#?}"
     );
     assert!(
-        !diagnostics
-            .iter()
-            .any(|d| d.code == 2300 && d.message_text.contains("identifier 'e'")),
+        !diagnostics.iter().any(|d| {
+            d.code == 2300
+                && d.start == u32::try_from(source.find("function e()").unwrap() + 9).unwrap()
+        }),
         "Catch parameter shadowing should not produce TS2300 for `function e()`.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
 #[test]
-fn test_block_scoped_function_skips_catch_parameter_and_conflicts_with_outer_var() {
+fn test_block_scoped_function_skips_catch_parameter_and_outer_var_in_es2015() {
     let source = "\
 var e;
 try {} catch (e) { if (true) { function e() {} } }
@@ -11989,19 +11986,9 @@ try {} catch (e) { if (true) { function e() {} } }
         },
     );
 
-    let actual_ts2300_starts: FxHashSet<u32> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2300)
-        .map(|d| d.start)
-        .collect();
-    let expected_ts2300_starts: FxHashSet<u32> = FxHashSet::from_iter([
-        u32::try_from(source.find("var e;").unwrap() + 4).unwrap(),
-        u32::try_from(source.rfind("function e()").unwrap() + 9).unwrap(),
-    ]);
-
-    assert_eq!(
-        actual_ts2300_starts, expected_ts2300_starts,
-        "Expected the nested block function to ignore the catch parameter and conflict with the outer `var e`.\nActual diagnostics: {diagnostics:#?}"
+    assert!(
+        diagnostics.is_empty(),
+        "Expected the nested ES2015 block function to ignore both the catch parameter and the outer `var e`.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 

@@ -509,7 +509,8 @@ function run(config: lib.IConfig) {
 }
 
 /// Test CommonJS import equals optional property access.
-/// Same as test_namespace_import_optional_property_type but using `import = require()` syntax.
+/// Same as `test_namespace_import_optional_property_type` but using
+/// `import = require()` syntax.
 /// This is the syntax used by visibilityOfCrossModuleTypeUsage.ts conformance test.
 #[test]
 fn test_import_equals_optional_property_type() {
@@ -539,9 +540,11 @@ function run(config: lib.IConfig) {
 
 /// Test visibilityOfCrossModuleTypeUsage conformance test structure.
 /// This is the exact structure from the failing conformance test:
-/// - server.ts: exports IServer and IWorkspace interfaces
-/// - commands.ts: imports server, exports IConfiguration with server?: server.IServer
-/// - fs.ts: imports commands, passes configuration.server to a function expecting IServer
+/// - `server.ts`: exports `IServer` and `IWorkspace` interfaces
+/// - `commands.ts`: imports server, exports `IConfiguration` with
+///   `server?: server.IServer`
+/// - `fs.ts`: imports commands, passes `configuration.server` to a function
+///   expecting `IServer`
 #[test]
 fn test_visibility_of_cross_module_type_usage() {
     let server = r#"
@@ -731,12 +734,16 @@ function test(cfg: commands.IConfiguration) {
 
 /// Test for exact visibilityOfCrossModuleTypeUsage conformance scenario.
 /// This test exactly mirrors the failing conformance test where:
-/// - server.ts has IServer (empty) and IWorkspace with toAbsolutePath(server: IServer, ...)
-/// - commands.ts has IConfiguration with workspace: server.IWorkspace and server?: server.IServer
-/// - fs.ts passes configuration.server (IServer | undefined) to a function expecting IServer
+/// - `server.ts` has `IServer` (empty) and `IWorkspace` with
+///   `toAbsolutePath(server: IServer, ...)`
+/// - `commands.ts` has `IConfiguration` with `workspace: server.IWorkspace`
+///   and `server?: server.IServer`
+/// - `fs.ts` passes `configuration.server` (`IServer | undefined`) to a
+///   function expecting `IServer`
 ///
-/// Expected: TS2345 because configuration.server is optional (IServer | undefined)
-///           but toAbsolutePath expects IServer (non-optional).
+/// Expected: TS2345 because `configuration.server` is optional
+/// (`IServer | undefined`) but `toAbsolutePath` expects `IServer`
+/// (non-optional).
 #[test]
 fn test_visibility_conformance_exact() {
     let server = r#"
@@ -830,8 +837,9 @@ function run(config: commands.IConfiguration) {
 }
 
 /// 3-file chain where `IWorkspace` has a method signature.
-/// This is the case the cross_file symbol-target merge fixes: without it,
-/// `config.workspace` resolves to the enclosing function type instead of `IWorkspace`.
+/// This is the case the `cross_file` symbol-target merge fixes: without it,
+/// `config.workspace` resolves to the enclosing function type instead of
+/// `IWorkspace`.
 #[test]
 fn test_workspace_method_type_resolution() {
     let server = r#"

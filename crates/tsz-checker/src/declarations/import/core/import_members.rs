@@ -96,7 +96,9 @@ impl<'a> CheckerState<'a> {
                 resolution_mode,
             )
         } else {
-            self.ctx.resolve_import_target(module_name)
+            self.ctx
+                .resolve_import_target_from_file(self.ctx.current_file_idx, module_name)
+                .or_else(|| self.ctx.resolve_import_target(module_name))
         };
 
         // Default-only imports only need to know whether a default-like binding exists.
@@ -106,7 +108,14 @@ impl<'a> CheckerState<'a> {
             || has_non_default_named_imports
             || (!has_default_import && has_named_default_binding);
         let exports_table = if needs_full_exports {
-            self.resolve_effective_module_exports_with_mode(module_name, resolution_mode)
+            if resolution_mode.is_some() {
+                self.resolve_effective_module_exports_with_mode(module_name, resolution_mode)
+            } else {
+                self.resolve_effective_module_exports_from_file(
+                    module_name,
+                    Some(self.ctx.current_file_idx),
+                )
+            }
         } else {
             None
         };
@@ -265,12 +274,11 @@ impl<'a> CheckerState<'a> {
                 if !has_default_binding && !uses_system_namespace_default {
                     self.emit_no_default_export_error(module_name, clause.name, is_source_file);
                 }
-            } else if self
-                .ctx
-                .resolved_modules
-                .as_ref()
-                .is_some_and(|resolved| resolved.contains(module_name))
-                && resolved_target.is_some()
+            } else if self.ctx.resolved_modules.as_ref().is_some_and(|resolved| {
+                crate::module_resolution::module_specifier_candidates(module_name)
+                    .iter()
+                    .any(|candidate| resolved.contains(candidate))
+            }) && resolved_target.is_some()
                 && !uses_system_namespace_default
                 && !has_default_binding
             {
@@ -293,12 +301,11 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 }
-            } else if self
-                .ctx
-                .resolved_modules
-                .as_ref()
-                .is_some_and(|resolved| resolved.contains(module_name))
-                && resolved_target.is_some()
+            } else if self.ctx.resolved_modules.as_ref().is_some_and(|resolved| {
+                crate::module_resolution::module_specifier_candidates(module_name)
+                    .iter()
+                    .any(|candidate| resolved.contains(candidate))
+            }) && resolved_target.is_some()
                 && !uses_system_namespace_default
                 && !has_default_binding
             {
@@ -309,10 +316,11 @@ impl<'a> CheckerState<'a> {
         }
 
         if has_default_import
-            && self.import_binding_is_type_only(module_name, "default")
             && clause.name.is_some()
             && let default_name_idx = clause.name
             && let Some(default_name) = self.get_identifier_text_from_idx(default_name_idx)
+            && (self.local_import_binding_is_type_only(&default_name)
+                || self.import_binding_is_type_only(module_name, "default"))
             && self.should_report_js_type_only_import_diagnostic(clause.is_type_only, false)
         {
             self.emit_js_type_only_import_diagnostic(default_name_idx, &default_name, module_name);
@@ -330,12 +338,11 @@ impl<'a> CheckerState<'a> {
             };
 
             let Some(exports_table) = exports_table else {
-                if self
-                    .ctx
-                    .resolved_modules
-                    .as_ref()
-                    .is_some_and(|resolved| resolved.contains(module_name))
-                    && resolved_target.is_none()
+                if self.ctx.resolved_modules.as_ref().is_some_and(|resolved| {
+                    crate::module_resolution::module_specifier_candidates(module_name)
+                        .iter()
+                        .any(|candidate| resolved.contains(candidate))
+                }) && resolved_target.is_none()
                 {
                     return;
                 }
@@ -647,7 +654,15 @@ impl<'a> CheckerState<'a> {
                     // Import exists - check if it should be elided from JavaScript output.
                     // This must account for plain type aliases/interfaces, namespace-like
                     // imports with no runtime value, and cross-binder type-only chains.
-                    if self.import_binding_is_type_only(module_name, import_name) {
+                    let local_is_type_only = self
+                        .get_identifier_text_from_idx(specifier.name)
+                        .as_deref()
+                        .is_some_and(|local_name| {
+                            self.local_import_binding_is_type_only(local_name)
+                        });
+                    if local_is_type_only
+                        || self.import_binding_is_type_only(module_name, import_name)
+                    {
                         // Mark this specifier node as type-only for elision during emit.
                         self.ctx.type_only_nodes.insert(*element_idx);
 
@@ -744,7 +759,125 @@ impl<'a> CheckerState<'a> {
     fn import_binding_is_type_only(&self, module_name: &str, import_name: &str) -> bool {
         self.is_import_specifier_type_only(module_name, import_name)
             || self.is_export_type_only_across_binders(module_name, import_name)
+            || (import_name == "default" && self.module_default_export_is_type_only(module_name))
             || (import_name == "default" && self.is_module_export_equals_type_only(module_name))
+    }
+
+    fn module_default_export_is_type_only(&self, module_name: &str) -> bool {
+        use tsz_binder::symbol_flags;
+
+        const PURE_TYPE: u32 =
+            symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::TYPE_PARAMETER;
+        const VALUE: u32 = symbol_flags::VARIABLE
+            | symbol_flags::FUNCTION
+            | symbol_flags::CLASS
+            | symbol_flags::ENUM
+            | symbol_flags::ENUM_MEMBER
+            | symbol_flags::VALUE_MODULE;
+
+        let Some(target_idx) = self
+            .ctx
+            .resolve_import_target_from_file(self.ctx.current_file_idx, module_name)
+            .or_else(|| self.ctx.resolve_import_target(module_name))
+        else {
+            return false;
+        };
+
+        let mut visited = rustc_hash::FxHashSet::default();
+        let Some((sym_id, owner_file_idx)) =
+            self.resolve_export_in_file(target_idx, "default", &mut visited)
+        else {
+            return false;
+        };
+        let Some(owner_binder) = self.ctx.get_binder_for_file(owner_file_idx) else {
+            return false;
+        };
+        let Some(sym) = owner_binder
+            .get_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+        else {
+            return false;
+        };
+
+        if sym.is_type_only {
+            return true;
+        }
+        if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
+            return true;
+        }
+        if sym.flags & symbol_flags::ALIAS != 0 && sym.import_module.is_none() {
+            let arena = self.ctx.get_arena_for_file(owner_file_idx as u32);
+            let mut declarations = sym.declarations.clone();
+            if sym.value_declaration.is_some() && !declarations.contains(&sym.value_declaration) {
+                declarations.push(sym.value_declaration);
+            }
+            if declarations.into_iter().any(|decl_idx| {
+                arena.get(decl_idx).is_some_and(|node| {
+                    node.kind == tsz_parser::parser::syntax_kind_ext::INTERFACE_DECLARATION
+                        || node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                })
+            }) {
+                return true;
+            }
+        }
+        if (sym.flags & symbol_flags::ALIAS) != 0 {
+            let mut visited_aliases = Vec::new();
+            if let Some(resolved_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
+                for alias_id in visited_aliases {
+                    if owner_binder
+                        .get_symbol(alias_id)
+                        .or_else(|| self.ctx.binder.get_symbol(alias_id))
+                        .is_some_and(|alias_sym| alias_sym.is_type_only)
+                    {
+                        return true;
+                    }
+                }
+
+                if let Some(resolved_sym) = owner_binder
+                    .get_symbol(resolved_sym_id)
+                    .or_else(|| self.ctx.binder.get_symbol(resolved_sym_id))
+                {
+                    return resolved_sym.is_type_only
+                        || ((resolved_sym.flags & PURE_TYPE) != 0
+                            && (resolved_sym.flags & VALUE) == 0);
+                }
+            }
+        }
+
+        false
+    }
+
+    fn local_import_binding_is_type_only(&self, local_name: &str) -> bool {
+        use tsz_binder::symbol_flags;
+
+        const PURE_TYPE: u32 = symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS;
+        const VALUE: u32 = symbol_flags::VARIABLE
+            | symbol_flags::FUNCTION
+            | symbol_flags::CLASS
+            | symbol_flags::ENUM
+            | symbol_flags::ENUM_MEMBER
+            | symbol_flags::VALUE_MODULE;
+
+        let Some(sym_id) = self.ctx.binder.file_locals.get(local_name) else {
+            return false;
+        };
+        let Some(sym) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        if sym.is_type_only {
+            return true;
+        }
+        if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
+            return true;
+        }
+        if (sym.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
+            && !self.symbol_has_runtime_value_in_binder(self.ctx.binder, sym_id)
+        {
+            return true;
+        }
+
+        (sym.flags & symbol_flags::ALIAS) != 0 && self.alias_resolves_to_type_only(sym_id)
     }
 
     fn should_report_js_type_only_import_diagnostic(
@@ -791,7 +924,9 @@ impl<'a> CheckerState<'a> {
                 resolution_mode,
             )
         } else {
-            self.ctx.resolve_import_target(module_name)
+            self.ctx
+                .resolve_import_target_from_file(self.ctx.current_file_idx, module_name)
+                .or_else(|| self.ctx.resolve_import_target(module_name))
         };
         let Some(target_idx) = resolved_target else {
             return false;

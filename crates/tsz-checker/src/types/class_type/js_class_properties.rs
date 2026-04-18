@@ -9,7 +9,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{PropertyInfo, TypeId, Visibility};
+use tsz_solver::{PropertyInfo, TypeId, TypeParamInfo, Visibility};
 
 impl CheckerState<'_> {
     pub(crate) fn enclosing_jsdoc_class_template_types(
@@ -267,6 +267,12 @@ impl CheckerState<'_> {
                 let expr_stmt = self.ctx.arena.get_expression_statement(stmt_node)?;
                 self.jsdoc_type_annotation_for_node_inference(expr_stmt.expression)
             })
+            .or_else(|| self.jsdoc_simple_template_type_for_node(stmt_idx))
+            .or_else(|| {
+                let stmt_node = self.ctx.arena.get(stmt_idx)?;
+                let expr_stmt = self.ctx.arena.get_expression_statement(stmt_node)?;
+                self.jsdoc_simple_template_type_for_node(expr_stmt.expression)
+            })
     }
 
     /// Force resolve a direct leading JSDoc `@type` annotation, bypassing the
@@ -293,6 +299,75 @@ impl CheckerState<'_> {
         let type_expr = type_expr.trim();
         // Use the authoritative resolution kernel — no fallback chain needed.
         self.resolve_jsdoc_reference(type_expr)
+    }
+
+    fn jsdoc_simple_template_type_for_node(&mut self, idx: NodeIndex) -> Option<TypeId> {
+        let sf = self.source_file_data_for_node(idx)?;
+        if sf.comments.is_empty() || !sf.comments.iter().any(|c| c.is_multi_line) {
+            return None;
+        }
+
+        let source_text: String = sf.text.to_string();
+        let comments = sf.comments.clone();
+        let jsdoc = self.try_leading_jsdoc(
+            &comments,
+            self.effective_jsdoc_pos_for_node(idx, &comments, &source_text)?,
+            &source_text,
+        )?;
+        let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
+        let normalized = type_expr
+            .trim()
+            .trim_end_matches('=')
+            .trim_start_matches("...")
+            .trim();
+        if normalized.is_empty() {
+            return None;
+        }
+
+        if let Some(ty) = self.ctx.type_parameter_scope.get(normalized) {
+            return Some(*ty);
+        }
+
+        let class_template_types = self.enclosing_jsdoc_class_template_types(idx);
+        if let Some(ty) = class_template_types.get(normalized) {
+            return Some(*ty);
+        }
+
+        let mut current = idx;
+        for _ in 0..12 {
+            let Some(parent_idx) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
+            else {
+                break;
+            };
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+            let is_function = matches!(
+                parent_node.kind,
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION
+            );
+            if is_function && let Some(jsdoc) = self.get_jsdoc_for_function(parent_idx) {
+                for (name, is_const) in Self::jsdoc_template_type_params(&jsdoc) {
+                    if name == normalized {
+                        let atom = self.ctx.types.intern_string(&name);
+                        return Some(self.ctx.types.factory().type_param(TypeParamInfo {
+                            name: atom,
+                            constraint: None,
+                            default: None,
+                            is_const,
+                        }));
+                    }
+                }
+            }
+            current = parent_idx;
+        }
+
+        None
     }
 
     /// Scan a body (constructor or method) for `this.prop = value` assignments
@@ -605,7 +680,7 @@ impl CheckerState<'_> {
 
     /// Scan statements for `var/let/const X = this` patterns and return
     /// the set of alias identifier names.
-    fn collect_this_aliases(&self, stmts: &[NodeIndex]) -> Vec<String> {
+    pub(crate) fn collect_this_aliases(&self, stmts: &[NodeIndex]) -> Vec<String> {
         let mut aliases = Vec::new();
         for &stmt_idx in stmts {
             let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
@@ -649,7 +724,7 @@ impl CheckerState<'_> {
         aliases
     }
 
-    fn collect_nested_js_this_assignment_statements(
+    pub(crate) fn collect_nested_js_this_assignment_statements(
         &self,
         stmt_idx: NodeIndex,
         out: &mut Vec<NodeIndex>,
@@ -715,7 +790,7 @@ impl CheckerState<'_> {
     /// from an expression statement. The `this_aliases` parameter contains
     /// names of variables known to alias `this` (e.g., `var self = this`).
     /// Returns `(property_name, rhs_node_index, is_private, report_node_index)` if matched.
-    fn extract_this_property_assignment(
+    pub(crate) fn extract_this_property_assignment(
         &mut self,
         stmt_idx: NodeIndex,
         this_aliases: &[String],
@@ -789,7 +864,7 @@ impl CheckerState<'_> {
         }
     }
 
-    fn extract_jsdoc_this_property_declaration(
+    pub(crate) fn extract_jsdoc_this_property_declaration(
         &mut self,
         stmt_idx: NodeIndex,
         this_aliases: &[String],

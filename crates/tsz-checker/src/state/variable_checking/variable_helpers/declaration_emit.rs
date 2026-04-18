@@ -330,14 +330,36 @@ impl<'a> CheckerState<'a> {
         let resolved_sym_id = self
             .resolve_alias_symbol(sym_id, &mut Vec::new())
             .unwrap_or(sym_id);
-        let symbol = self.get_symbol_from_any_binder(resolved_sym_id)?;
+        let symbol = self
+            .get_symbol_globally(resolved_sym_id)
+            .or_else(|| self.get_cross_file_symbol(resolved_sym_id))
+            .or_else(|| self.get_symbol_from_any_binder(resolved_sym_id))?;
         let referenced_name = symbol.escaped_name.clone();
 
         if referenced_name.is_empty() || referenced_name.starts_with("__") {
             return None;
         }
 
-        let Some(file_idx) = self.symbol_decl_file_idx(resolved_sym_id) else {
+        let Some(file_idx) = self
+            .ctx
+            .resolve_symbol_file_index(resolved_sym_id)
+            .map(|idx| idx as u32)
+            .or_else(|| {
+                self.symbol_decl_file_idx(resolved_sym_id)
+                    .filter(|&idx| idx != u32::MAX)
+            })
+            .or_else(|| {
+                self.ctx.all_binders.as_ref().and_then(|binders| {
+                    binders.iter().enumerate().find_map(|(idx, binder)| {
+                        binder.get_symbol(resolved_sym_id).and_then(|candidate| {
+                            (candidate.escaped_name == referenced_name
+                                && (candidate.flags & tsz_binder::symbol_flags::TYPE) != 0)
+                                .then_some(idx as u32)
+                        })
+                    })
+                })
+            })
+        else {
             return None;
         };
         if file_idx == u32::MAX || file_idx == self.ctx.current_file_idx as u32 {

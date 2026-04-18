@@ -507,7 +507,8 @@ fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32)
             )
             | TypeData::Literal(_)
             | TypeData::TemplateLiteral(_)
-            | TypeData::StringIntrinsic { .. },
+            | TypeData::StringIntrinsic { .. }
+            | TypeData::Enum(_, _),
         ) => false,
         // Union: remove definitely-falsy members, then check remaining.
         // Matches tsc's removeDefinitelyFalsyTypes before checking.
@@ -536,10 +537,6 @@ fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32)
                 .all(|&m| is_valid_spread_type_impl(db, m, depth + 1))
         }
         Some(TypeData::ReadonlyType(inner)) => is_valid_spread_type_impl(db, inner, depth + 1),
-        // Enum types are not spreadable. tsc treats `{ ...e }` where `e: E`
-        // (an enum value) as TS2698 because enum values are number/string
-        // literals at runtime, not object types.
-        Some(TypeData::Enum(_, _)) => false,
         // Everything else is spreadable: object types, arrays, tuples, functions,
         // callables, mapped types, type parameters (unconstrained ones reach here
         // and are valid per tsc's InstantiableNonPrimitive), lazy refs, applications, etc.
