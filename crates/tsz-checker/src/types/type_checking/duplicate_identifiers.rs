@@ -100,7 +100,8 @@ impl<'a> CheckerState<'a> {
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                 continue;
             };
-            let module_augmentation_declarations = self.module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let module_augmentation_declarations = self
+                .module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
             let script_scope_declarations =
                 self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name);
             let global_scope_declarations =

@@ -573,8 +573,8 @@ impl<'a> CheckerState<'a> {
             } else if seen.insert(decl_idx.0)
                 && let Some(flags) = self.declaration_symbol_flags(arena, decl_idx)
             {
-                let flags =
-                    self.normalize_export_surface_decl_flags(binder, arena, sym_id, decl_idx, flags);
+                let flags = self
+                    .normalize_export_surface_decl_flags(binder, arena, sym_id, decl_idx, flags);
                 let is_exported = self.is_declaration_exported(arena, decl_idx);
                 declarations.push((decl_idx, flags, is_exported));
             } else if name == "default"
@@ -673,8 +673,8 @@ impl<'a> CheckerState<'a> {
             } else if seen.insert(decl_idx.0)
                 && let Some(flags) = self.declaration_symbol_flags(arena, decl_idx)
             {
-                let flags =
-                    self.normalize_export_surface_decl_flags(binder, arena, sym_id, decl_idx, flags);
+                let flags = self
+                    .normalize_export_surface_decl_flags(binder, arena, sym_id, decl_idx, flags);
                 let is_exported = exported_override
                     .unwrap_or_else(|| self.is_declaration_exported(arena, decl_idx));
                 declarations.push((decl_idx, flags, is_exported));
@@ -705,7 +705,9 @@ impl<'a> CheckerState<'a> {
 
         // Duplicate checking for module-augmentation export surfaces should compare against
         // the underlying exported declaration kind, not the alias wrapper node.
-        let resolved_sym_id = self.resolve_alias_symbol(sym_id, &mut Vec::new()).unwrap_or(sym_id);
+        let resolved_sym_id = self
+            .resolve_alias_symbol(sym_id, &mut Vec::new())
+            .unwrap_or(sym_id);
         self.ctx
             .binder
             .get_symbol(resolved_sym_id)
