@@ -1699,14 +1699,16 @@ fn package_import_specifiers_for_target(
                 && !target_pattern.contains('*')
                 && specifier_pattern.ends_with('/')
                 && target_pattern.ends_with('/');
-            let direct_capture = wildcard_capture_case_insensitive(&resolved_stripped, &target_normalized)
-                .or_else(|| {
-                    if is_prefix_mapping {
-                        prefix_capture_case_insensitive(&resolved_stripped, &target_normalized)
-                    } else {
-                        None
-                    }
-                });
+            let direct_capture =
+                wildcard_capture_case_insensitive(&resolved_stripped, &target_normalized).or_else(
+                    || {
+                        if is_prefix_mapping {
+                            prefix_capture_case_insensitive(&resolved_stripped, &target_normalized)
+                        } else {
+                            None
+                        }
+                    },
+                );
             let additional_capture = additional_targets.iter().find_map(|candidate| {
                 wildcard_capture_case_insensitive(&resolved_stripped, candidate).or_else(|| {
                     if is_prefix_mapping {
@@ -1723,15 +1725,14 @@ fn package_import_specifiers_for_target(
                 continue;
             };
 
-            let mut specifier = if let Some(specifier) =
-                apply_wildcard_capture(specifier_pattern, &capture)
-            {
-                specifier
-            } else if is_prefix_mapping {
-                format!("{specifier_pattern}{capture}")
-            } else {
-                continue;
-            };
+            let mut specifier =
+                if let Some(specifier) = apply_wildcard_capture(specifier_pattern, &capture) {
+                    specifier
+                } else if is_prefix_mapping {
+                    format!("{specifier_pattern}{capture}")
+                } else {
+                    continue;
+                };
 
             if (specifier_pattern.contains('*') || is_prefix_mapping)
                 && !specifier_pattern.ends_with(".js")
