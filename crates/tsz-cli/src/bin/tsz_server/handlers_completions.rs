@@ -989,6 +989,18 @@ impl Server {
         preferences: Option<&serde_json::Value>,
     ) -> Vec<tsz::lsp::completions::CompletionItem> {
         let mut files = self.open_files.clone();
+        for project_files in self.external_project_files.values() {
+            for path in project_files {
+                if files.contains_key(path) {
+                    continue;
+                }
+                if let Some(text) = self.open_files.get(path) {
+                    files.insert(path.clone(), text.clone());
+                } else if let Ok(text) = std::fs::read_to_string(path) {
+                    files.insert(path.clone(), text);
+                }
+            }
+        }
         if !files.contains_key(file_name)
             && let Ok(content) = std::fs::read_to_string(file_name)
         {
