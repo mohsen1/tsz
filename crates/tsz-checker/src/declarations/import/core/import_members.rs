@@ -21,9 +21,9 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
-        if self.is_ambient_module_match(module_name)
-            || self.any_ambient_module_declared(module_name)
+        if self.is_ambient_module_match(module_name) || self.any_ambient_module_declared(module_name)
         {
+            self.check_js_type_only_imports_for_ambient_module(import, module_name);
             return;
         }
 
@@ -669,6 +669,73 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    fn check_js_type_only_imports_for_ambient_module(
+        &mut self,
+        import: &tsz_parser::parser::node::ImportDeclData,
+        module_name: &str,
+    ) {
+        if !self.is_js_file() || !self.ctx.should_resolve_jsdoc() {
+            return;
+        }
+
+        let Some(clause_node) = self.ctx.arena.get(import.import_clause) else {
+            return;
+        };
+        let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
+            return;
+        };
+        if clause.is_type_only {
+            return;
+        }
+
+        if clause.name.is_some()
+            && let default_name_idx = clause.name
+            && let Some(default_name) = self.get_identifier_text_from_idx(default_name_idx)
+            && self.import_binding_is_type_only(module_name, "default")
+            && self.should_report_js_type_only_import_diagnostic(clause.is_type_only, false)
+        {
+            self.emit_js_type_only_import_diagnostic(default_name_idx, &default_name, module_name);
+        }
+
+        let Some(bindings_node) = self.ctx.arena.get(clause.named_bindings) else {
+            return;
+        };
+        if bindings_node.kind != syntax_kind_ext::NAMED_IMPORTS {
+            return;
+        }
+        let Some(named_imports) = self.ctx.arena.get_named_imports(bindings_node) else {
+            return;
+        };
+
+        for element_idx in &named_imports.elements.nodes {
+            let Some(element_node) = self.ctx.arena.get(*element_idx) else {
+                continue;
+            };
+            let Some(specifier) = self.ctx.arena.get_specifier(element_node) else {
+                continue;
+            };
+
+            let imported_name_idx = if specifier.property_name.is_some() {
+                specifier.property_name
+            } else {
+                specifier.name
+            };
+            let Some(import_name) = self.get_identifier_text_from_idx(imported_name_idx) else {
+                continue;
+            };
+
+            let specifier_is_type_only = specifier.is_type_only;
+            if self.import_binding_is_type_only(module_name, &import_name)
+                && self.should_report_js_type_only_import_diagnostic(
+                    clause.is_type_only,
+                    specifier_is_type_only,
+                )
+            {
+                self.emit_js_type_only_import_diagnostic(*element_idx, &import_name, module_name);
             }
         }
     }
