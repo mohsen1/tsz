@@ -409,7 +409,23 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
 
                 openKnownFile(fileName, content, scriptKindName);
                 openAncestorConfigs(fileName);
-                for (const path of this.getFilenames()) {
+                // `getFilenames()` restricts to root scripts (isRootFile=true),
+                // which skips fixture files under node_modules even though
+                // fourslash registered them. Enumerate scriptInfos directly so
+                // tsz-server sees the full test virtual FS.
+                const trackedScriptFiles = (() => {
+                    if (typeof this.scriptInfos?.forEach === "function") {
+                        const names = [];
+                        this.scriptInfos.forEach((info) => {
+                            if (info && typeof info.fileName === "string") {
+                                names.push(info.fileName);
+                            }
+                        });
+                        return names;
+                    }
+                    return this.getFilenames();
+                })();
+                for (const path of trackedScriptFiles) {
                     if (!shouldTrackForServer(path)) continue;
                     openKnownFile(path, /*fileContent*/ undefined, /*kindName*/ undefined);
                     openAncestorConfigs(path);
