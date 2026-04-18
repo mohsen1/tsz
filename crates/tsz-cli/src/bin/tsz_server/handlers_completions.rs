@@ -427,6 +427,131 @@ impl Server {
         }
     }
 
+    fn maybe_add_merged_class_function_members(
+        mut items: Vec<CompletionItem>,
+        source_text: &str,
+        completion_offset: u32,
+        is_member_completion: bool,
+    ) -> Vec<CompletionItem> {
+        if !is_member_completion {
+            return items;
+        }
+        if !Self::looks_like_merged_class_member_completion_context(source_text, completion_offset) {
+            return items;
+        }
+        if !items.iter().any(|item| item.label == "prototype") {
+            return items;
+        }
+        if items
+            .iter()
+            .any(|item| matches!(item.label.as_str(), "apply" | "call" | "bind"))
+        {
+            return items;
+        }
+
+        let mut existing_labels = FxHashSet::default();
+        for item in &items {
+            existing_labels.insert(item.label.clone());
+        }
+
+        let function_members = [
+            (
+                "apply",
+                CompletionItemKind::Method,
+                Some("declare"),
+                None,
+                true,
+            ),
+            (
+                "call",
+                CompletionItemKind::Method,
+                Some("declare"),
+                None,
+                true,
+            ),
+            (
+                "bind",
+                CompletionItemKind::Method,
+                Some("declare"),
+                None,
+                true,
+            ),
+            (
+                "toString",
+                CompletionItemKind::Method,
+                Some("declare"),
+                None,
+                true,
+            ),
+            (
+                "length",
+                CompletionItemKind::Property,
+                Some("declare"),
+                Some("number"),
+                false,
+            ),
+            (
+                "arguments",
+                CompletionItemKind::Property,
+                Some("declare"),
+                Some("any"),
+                false,
+            ),
+            (
+                "caller",
+                CompletionItemKind::Property,
+                Some("declare"),
+                None,
+                false,
+            ),
+        ];
+
+        for (name, kind, kind_modifiers, detail, is_snippet) in function_members {
+            if !existing_labels.insert(name.to_string()) {
+                continue;
+            }
+            let mut item = CompletionItem::new(name.to_string(), kind);
+            item.sort_text = Some(sort_priority::LOCATION_PRIORITY.to_string());
+            if let Some(kind_modifiers) = kind_modifiers {
+                item.kind_modifiers = Some(kind_modifiers.to_string());
+            }
+            if let Some(detail) = detail {
+                item.detail = Some(detail.to_string());
+            }
+            if is_snippet {
+                item.insert_text = Some(format!("{name}($1)"));
+                item.is_snippet = true;
+            }
+            items.push(item);
+        }
+
+        items
+    }
+
+    fn looks_like_merged_class_member_completion_context(
+        source_text: &str,
+        completion_offset: u32,
+    ) -> bool {
+        let prefix_end = (completion_offset as usize).min(source_text.len());
+        let prefix = Self::strip_trailing_fourslash_marker_text(&source_text[..prefix_end]);
+        let trimmed = prefix.trim_end();
+        let Some(before_dot) = trimmed.strip_suffix('.') else {
+            return false;
+        };
+        let before_dot = before_dot.trim_end();
+        let ident = before_dot
+            .rsplit(|c: char| !(c == '_' || c == '$' || c.is_ascii_alphanumeric()))
+            .next()
+            .unwrap_or_default();
+        if ident.is_empty() {
+            return false;
+        }
+        ident
+            .chars()
+            .next()
+            .is_some_and(|ch| ch == '_' || ch.is_ascii_uppercase())
+    }
+
     fn is_ts_like_file(path: &str) -> bool {
         matches!(
             Path::new(path)
@@ -1627,6 +1752,16 @@ impl Server {
             let items = Self::prune_deeper_auto_import_duplicates(items);
             let mut items =
                 self.maybe_add_verbatim_commonjs_auto_import_items(&file, &source_text, items);
+            if let Some(completion_offset) =
+                line_map.position_to_offset(completion_position, &source_text)
+            {
+                items = Self::maybe_add_merged_class_function_members(
+                    items,
+                    &source_text,
+                    completion_offset,
+                    is_member_completion,
+                );
+            }
             Self::sort_tsserver_completion_items(&mut items);
             let items = Self::prune_deeper_auto_import_duplicates(items);
             let mut items = items;
@@ -1844,6 +1979,16 @@ impl Server {
                 items = Self::normalize_class_member_snippet_items(items);
             }
             items = self.maybe_add_verbatim_commonjs_auto_import_items(file, &source_text, items);
+            if let Some(completion_offset) =
+                line_map.position_to_offset(completion_position, &source_text)
+            {
+                items = Self::maybe_add_merged_class_function_members(
+                    items,
+                    &source_text,
+                    completion_offset,
+                    is_member_completion,
+                );
+            }
             Self::sort_tsserver_completion_items(&mut items);
             let member_parent = completion_result
                 .as_ref()
@@ -1971,6 +2116,9 @@ impl Server {
                         && !is_auto_import_item
                     {
                         detail.insert("documentation".to_string(), documentation);
+                    }
+                    if !is_auto_import_item {
+                        detail.insert("tags".to_string(), serde_json::json!([]));
                     }
                     if let Some(source) = item.and_then(|i| i.source.as_ref()) {
                         let source_display =
@@ -2278,5 +2426,40 @@ mod tests {
             &line_map,
             outside_position
         ));
+    }
+
+    #[test]
+    fn merged_class_member_context_detects_uppercase_receiver_before_dot() {
+        let source_text = "Foo./**/";
+        let offset = source_text.find('/').expect("marker start exists") as u32;
+        assert!(Server::looks_like_merged_class_member_completion_context(
+            source_text, offset
+        ));
+
+        let lower_source = "foo./**/";
+        let lower_offset = lower_source.find('/').expect("marker start exists") as u32;
+        assert!(!Server::looks_like_merged_class_member_completion_context(
+            lower_source,
+            lower_offset
+        ));
+    }
+
+    #[test]
+    fn maybe_add_merged_class_function_members_populates_missing_function_surface() {
+        let items = vec![
+            CompletionItem::new("prototype".to_string(), CompletionItemKind::Property),
+            CompletionItem::new("x".to_string(), CompletionItemKind::Variable),
+        ];
+
+        let merged = Server::maybe_add_merged_class_function_members(items, "Foo.", 4, true);
+        let labels: FxHashSet<&str> = merged.iter().map(|item| item.label.as_str()).collect();
+
+        assert!(labels.contains("prototype"));
+        assert!(labels.contains("x"));
+        assert!(labels.contains("apply"));
+        assert!(labels.contains("call"));
+        assert!(labels.contains("bind"));
+        assert!(labels.contains("arguments"));
+        assert!(labels.contains("caller"));
     }
 }
