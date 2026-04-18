@@ -1346,7 +1346,7 @@ fn test_quickinfo_contextual_object_literal_function_parameter() {
         .expect("quickinfo should return a body at identifier");
     assert_eq!(
         body_at_identifier["displayString"].as_str().unwrap_or(""),
-        "(parameter) i: error"
+        "(parameter) i: number"
     );
 }
 
@@ -1410,7 +1410,7 @@ fn test_quickinfo_contextual_class_property_assignment_function_parameter() {
     let body = resp.body.expect("quickinfo should return a body");
     assert_eq!(
         body["displayString"].as_str().unwrap_or(""),
-        "(parameter) i: error"
+        "(parameter) i: number"
     );
     assert_eq!(body["kind"].as_str().unwrap_or(""), "parameter");
 }
