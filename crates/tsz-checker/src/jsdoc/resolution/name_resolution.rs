@@ -470,9 +470,10 @@ impl<'a> CheckerState<'a> {
                             let t_name = &expr[in_idx + "inkeyof".len()..close_bracket];
                             let k_atom = self.ctx.types.intern_string(k_name);
                             if let Some(&t_id) = self.ctx.type_parameter_scope.get(t_name) {
-                                use tsz_solver::{
-                                    FunctionShape, MappedType, ParamInfo, TypeParamInfo,
+                                use crate::query_boundaries::common::{
+                                    FunctionShape, MappedType, ParamInfo,
                                 };
+                                use tsz_solver::TypeParamInfo;
                                 let keyof_t_id = factory.keyof(t_id);
                                 let k_param = TypeParamInfo {
                                     name: k_atom,

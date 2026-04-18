@@ -355,8 +355,9 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn evaluate_application_type_inner(&mut self, type_id: TypeId) -> TypeId {
-        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
-        use tsz_solver::instantiate_type_with_depth_status;
+        use crate::query_boundaries::common::{
+            TypeSubstitution, instantiate_type, instantiate_type_with_depth_status,
+        };
 
         let Some((base, args)) = query::application_info(self.ctx.types, type_id) else {
             return type_id;
