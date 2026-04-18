@@ -605,6 +605,12 @@ pub(crate) fn find_property_in_object(
     tsz_solver::type_queries::find_property_in_object(db, type_id, name)
 }
 
+/// Extract the inner type of a `keyof T` type, returning `None` if the type is
+/// not a keyof type.
+pub(crate) fn keyof_inner_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::keyof_inner_type(db, type_id)
+}
+
 /// Get the enum `DefId` for an enum type.
 pub(crate) fn enum_def_id(
     db: &dyn TypeDatabase,
