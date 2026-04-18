@@ -1130,6 +1130,22 @@ impl<'a> TypePrinter<'a> {
             if let Some(name) = self.print_named_symbol_reference(sym_id, needs_typeof) {
                 return name;
             }
+            // Some lib-global generic bases (notably Promise/PromiseLike)
+            // may fail visibility heuristics in mixed multi-file contexts.
+            // Preserve their canonical global names instead of degrading to
+            // `any<...>` in declaration emit.
+            if symbol.parent == SymbolId::NONE
+                && self.resolve_symbol_module_path(sym_id).is_none()
+                && matches!(symbol.escaped_name.as_str(), "Promise" | "PromiseLike")
+            {
+                return symbol.escaped_name.clone();
+            }
+        }
+
+        if let Some(name) = self.type_cache.and_then(|cache| cache.def_to_name.get(&def_id))
+            && matches!(name.as_str(), "Promise" | "PromiseLike")
+        {
+            return name.clone();
         }
 
         // Symbol is not visible or we don't have symbol info.
