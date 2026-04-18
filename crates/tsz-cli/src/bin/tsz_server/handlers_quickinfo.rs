@@ -90,6 +90,7 @@ impl Server {
         );
         Some((format!("(local class) {name}"), range))
     }
+
     fn member_name_node_if_matches(
         arena: &tsz::parser::node::NodeArena,
         member_idx: tsz::parser::NodeIndex,
@@ -1102,22 +1103,13 @@ impl Server {
             if let Some(base_offset) = line_map.position_to_offset(position, &source_text) {
                 let len = bytes.len() as u32;
                 let mut parameter_probe_offset = base_offset;
+                let marker_bounds = text::marker_comment_bounds_around(&source_text, base_offset);
 
                 // Fourslash quickinfo markers are commonly comment-based (`/*1*/`).
                 // Probe the identifier immediately after the marker so we don't keep
                 // a weaker hover result (e.g. contextual parameter type falling back to `any`).
-                if base_offset + 1 < len
-                    && bytes[base_offset as usize] == b'/'
-                    && bytes[(base_offset + 1) as usize] == b'*'
-                {
-                    let mut probe = base_offset + 2;
-                    while probe + 1 < len {
-                        if bytes[probe as usize] == b'*' && bytes[(probe + 1) as usize] == b'/' {
-                            probe += 2;
-                            break;
-                        }
-                        probe += 1;
-                    }
+                if let Some((_, marker_end)) = marker_bounds {
+                    let mut probe = marker_end;
                     while probe < len && bytes[probe as usize].is_ascii_whitespace() {
                         probe += 1;
                     }
@@ -1478,24 +1470,27 @@ impl Server {
             display_string = text::normalize_quickinfo_display_string(&display_string);
             let base_offset = line_map
                 .position_to_offset(position, &source_text)
+                .or_else(|| {
+                    info.range
+                        .as_ref()
+                        .and_then(|range| line_map.position_to_offset(range.start, &source_text))
+                })
                 .unwrap_or(0);
-            let source_bytes = source_text.as_bytes();
-            let in_type_annotation_context = {
-                let mut probe = (base_offset as usize).min(source_bytes.len());
-                let mut saw_colon = false;
-                while probe > 0 {
-                    probe -= 1;
-                    match source_bytes[probe] {
-                        b':' => {
-                            saw_colon = true;
-                            break;
-                        }
-                        b'=' | b';' | b'\n' | b'\r' | b'{' | b'(' => break,
-                        _ => {}
-                    }
-                }
-                saw_colon
-            };
+            let in_type_annotation_context =
+                text::is_type_annotation_context(&source_text, base_offset) || {
+                    let idx = (base_offset as usize).min(source_text.len());
+                    let line_start = source_text[..idx].rfind('\n').map_or(0, |i| i + 1);
+                    let line_end = source_text[idx..]
+                        .find('\n')
+                        .map_or(source_text.len(), |rel| idx + rel);
+                    let before = &source_text[line_start..idx];
+                    let after = &source_text[idx..line_end];
+                    let colon_idx = before.rfind(':');
+                    let eq_idx = before.rfind('=');
+                    let colon_after_assignment =
+                        colon_idx.is_some_and(|colon| eq_idx.is_none_or(|eq| colon > eq));
+                    colon_after_assignment && after.contains('=')
+                };
             if in_type_annotation_context
                 && display_string.starts_with("(property) ")
                 && display_string.contains(".#")

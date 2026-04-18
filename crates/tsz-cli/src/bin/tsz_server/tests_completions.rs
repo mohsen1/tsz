@@ -441,6 +441,304 @@ fn test_get_code_fixes_uses_configured_auto_import_specifier_exclude_regexes() {
 }
 
 #[test]
+fn test_get_code_fixes_type_module_main_prefers_subpath_without_index() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/pkg/package.json".to_string(),
+        r#"{
+  "name": "pkg",
+  "version": "1.0.0",
+  "main": "lib",
+  "type": "module"
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/node_modules/pkg/lib/index.js".to_string(),
+        "export function foo() {}".to_string(),
+    );
+    server.open_files.insert(
+        "/package.json".to_string(),
+        r#"{
+  "dependencies": {
+    "pkg": "*"
+  }
+}"#
+        .to_string(),
+    );
+    server
+        .open_files
+        .insert("/index.ts".to_string(), "foo".to_string());
+
+    let fixes_req = make_request(
+        "getCodeFixes",
+        serde_json::json!({
+            "file": "/index.ts",
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 4,
+            "errorCodes": [2304]
+        }),
+    );
+    let fixes_resp = server.handle_tsserver_request(fixes_req);
+    assert!(fixes_resp.success);
+    let fixes = fixes_resp
+        .body
+        .expect("getCodeFixes should return a body")
+        .as_array()
+        .expect("getCodeFixes body should be an array")
+        .clone();
+
+    let mut specifiers = Vec::new();
+    for fix in fixes {
+        if fix.get("fixName").and_then(serde_json::Value::as_str) != Some("import") {
+            continue;
+        }
+        let Some(changes) = fix.get("changes").and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+        for change in changes {
+            let Some(text_changes) = change
+                .get("textChanges")
+                .and_then(serde_json::Value::as_array)
+            else {
+                continue;
+            };
+            for text_change in text_changes {
+                let Some(new_text) = text_change
+                    .get("newText")
+                    .and_then(serde_json::Value::as_str)
+                else {
+                    continue;
+                };
+                if let Some(capture) = new_text
+                    .split("from ")
+                    .nth(1)
+                    .and_then(|rest| rest.split(['"', '\'']).nth(1))
+                {
+                    specifiers.push(capture.to_string());
+                }
+            }
+        }
+    }
+
+    specifiers.sort();
+    specifiers.dedup();
+    assert_eq!(specifiers, vec!["pkg/lib".to_string()]);
+}
+
+#[test]
+fn test_open_external_project_get_code_fixes_type_module_main_prefers_subpath_without_index() {
+    let mut server = make_server();
+
+    let open_external = make_request(
+        "openExternalProject",
+        serde_json::json!({
+            "projectFileName": "/project.csproj",
+            "options": {
+                "allowJs": true
+            },
+            "rootFiles": [
+                {
+                    "fileName": "/node_modules/pkg/package.json",
+                    "content": "{\n  \"name\": \"pkg\",\n  \"version\": \"1.0.0\",\n  \"main\": \"lib\",\n  \"type\": \"module\"\n}\n"
+                },
+                {
+                    "fileName": "/node_modules/pkg/lib/index.js",
+                    "content": "export function foo() {}"
+                },
+                {
+                    "fileName": "/package.json",
+                    "content": "{\n  \"dependencies\": {\n    \"pkg\": \"*\"\n  }\n}\n"
+                },
+                {
+                    "fileName": "/index.ts",
+                    "content": "foo"
+                }
+            ]
+        }),
+    );
+    let open_resp = server.handle_tsserver_request(open_external);
+    assert!(open_resp.success);
+
+    let fixes_req = make_request(
+        "getCodeFixes",
+        serde_json::json!({
+            "file": "/index.ts",
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 4,
+            "errorCodes": [2304],
+            "preferences": { "includeCompletionsForModuleExports": true }
+        }),
+    );
+    let fixes_resp = server.handle_tsserver_request(fixes_req);
+    assert!(fixes_resp.success);
+    let fixes = fixes_resp
+        .body
+        .expect("getCodeFixes should return a body")
+        .as_array()
+        .expect("getCodeFixes body should be an array")
+        .clone();
+
+    let mut specifiers = Vec::new();
+    for fix in fixes {
+        if fix.get("fixName").and_then(serde_json::Value::as_str) != Some("import") {
+            continue;
+        }
+        let Some(changes) = fix.get("changes").and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+        for change in changes {
+            let Some(text_changes) = change
+                .get("textChanges")
+                .and_then(serde_json::Value::as_array)
+            else {
+                continue;
+            };
+            for text_change in text_changes {
+                let Some(new_text) = text_change
+                    .get("newText")
+                    .and_then(serde_json::Value::as_str)
+                else {
+                    continue;
+                };
+                if let Some(capture) = new_text
+                    .split("from ")
+                    .nth(1)
+                    .and_then(|rest| rest.split(['"', '\'']).nth(1))
+                {
+                    specifiers.push(capture.to_string());
+                }
+            }
+        }
+    }
+    specifiers.sort();
+    specifiers.dedup();
+    assert_eq!(specifiers, vec!["pkg/lib".to_string()]);
+
+    let close_external = make_request(
+        "closeExternalProject",
+        serde_json::json!({ "projectFileName": "/project.csproj" }),
+    );
+    let close_resp = server.handle_tsserver_request(close_external);
+    assert!(close_resp.success);
+}
+
+#[test]
+fn test_get_code_fixes_package_json_imports_respect_module_specifier_preference() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/package.json".to_string(),
+        r##"{
+  "imports": {
+    "#*": "./src/*.ts"
+  }
+}"##
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/src/a/b/c/something.ts".to_string(),
+        "export function something(name: string): any {}".to_string(),
+    );
+    server
+        .open_files
+        .insert("/a.ts".to_string(), "something".to_string());
+    server
+        .open_files
+        .insert("/src/a/b/c/d.ts".to_string(), "something".to_string());
+
+    let mut module_specifiers_for = |file: &str, preferences: serde_json::Value| -> Vec<String> {
+        let fixes_req = make_request(
+            "getCodeFixes",
+            serde_json::json!({
+                "file": file,
+                "startLine": 1,
+                "startOffset": 1,
+                "endLine": 1,
+                "endOffset": 10,
+                "errorCodes": [2304],
+                "preferences": preferences
+            }),
+        );
+        let fixes_resp = server.handle_tsserver_request(fixes_req);
+        assert!(fixes_resp.success);
+        let fixes = fixes_resp
+            .body
+            .expect("getCodeFixes should return a body")
+            .as_array()
+            .expect("getCodeFixes body should be an array")
+            .clone();
+
+        let mut specifiers = Vec::new();
+        for fix in fixes {
+            if fix.get("fixName").and_then(serde_json::Value::as_str) != Some("import") {
+                continue;
+            }
+            let Some(changes) = fix.get("changes").and_then(serde_json::Value::as_array) else {
+                continue;
+            };
+            for change in changes {
+                let Some(text_changes) = change
+                    .get("textChanges")
+                    .and_then(serde_json::Value::as_array)
+                else {
+                    continue;
+                };
+                for text_change in text_changes {
+                    let Some(new_text) = text_change
+                        .get("newText")
+                        .and_then(serde_json::Value::as_str)
+                    else {
+                        continue;
+                    };
+                    if let Some(capture) = new_text
+                        .split("from ")
+                        .nth(1)
+                        .and_then(|rest| rest.split(['"', '\'']).nth(1))
+                    {
+                        specifiers.push(capture.to_string());
+                    }
+                }
+            }
+        }
+        specifiers.sort();
+        specifiers.dedup();
+        specifiers
+    };
+
+    assert_eq!(
+        module_specifiers_for(
+            "/a.ts",
+            serde_json::json!({
+                "importModuleSpecifierPreference": "relative"
+            })
+        ),
+        vec!["./src/a/b/c/something".to_string()]
+    );
+    assert_eq!(
+        module_specifiers_for(
+            "/a.ts",
+            serde_json::json!({
+                "importModuleSpecifierPreference": "project-relative"
+            })
+        ),
+        vec!["./src/a/b/c/something".to_string()]
+    );
+    assert_eq!(
+        module_specifiers_for(
+            "/src/a/b/c/d.ts",
+            serde_json::json!({
+                "importModuleSpecifierPreference": "non-relative"
+            })
+        ),
+        vec!["#a/b/c/something".to_string()]
+    );
+}
+
+#[test]
 fn test_get_code_fixes_supports_jsonc_jsconfig_paths_shortest_preference() {
     let mut server = make_server();
     server.open_files.insert(
