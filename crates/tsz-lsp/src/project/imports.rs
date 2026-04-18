@@ -1019,6 +1019,30 @@ impl Project {
             let Some(stmt_node) = arena.get(stmt_idx) else {
                 continue;
             };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION
+                && Self::is_supported_direct_export_declaration_kind(stmt_node.kind)
+                && Self::statement_has_export_modifier(arena, stmt_node)
+            {
+                if !Self::statement_text_contains_name(file.source_text(), stmt_node, export_name) {
+                    continue;
+                }
+                if export_name == "default" && Self::statement_has_default_modifier(arena, stmt_node) {
+                    matches.push(ExportMatch {
+                        kind: ImportCandidateKind::Default,
+                        is_type_only: Self::statement_is_type_only(stmt_node.kind),
+                    });
+                    continue;
+                }
+                if file.declaration_has_name(stmt_idx, export_name) {
+                    matches.push(ExportMatch {
+                        kind: ImportCandidateKind::Named {
+                            export_name: export_name.to_string(),
+                        },
+                        is_type_only: Self::statement_is_type_only(stmt_node.kind),
+                    });
+                }
+                continue;
+            }
             if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
                 let Some(export_assign) = arena.get_export_assignment(stmt_node) else {
                     continue;
@@ -1118,17 +1142,20 @@ impl Project {
                 Some(text) => text,
                 None => continue,
             };
-            let resolved = match self.resolve_module_specifier(file.file_name(), module_specifier) {
-                Some(path) => path,
-                None => continue,
-            };
-
             if export.export_clause.is_none() {
                 if export_name == "default" {
                     continue;
                 }
 
-                if self.file_exports_named(&resolved, export_name, visited) {
+                let has_named_export = if let Some(resolved) =
+                    self.resolve_module_specifier(file.file_name(), module_specifier)
+                {
+                    self.file_exports_named(&resolved, export_name, visited)
+                } else {
+                    self.ambient_module_exports_named(module_specifier, export_name)
+                };
+
+                if has_named_export {
                     matches.push(ExportMatch {
                         kind: ImportCandidateKind::Named {
                             export_name: export_name.to_string(),
@@ -1204,6 +1231,94 @@ impl Project {
         }
 
         matches
+    }
+
+    fn ambient_module_exports_named(&self, module_specifier: &str, export_name: &str) -> bool {
+        self.files.keys().any(|file_name| {
+            self.matching_exports_in_ambient_modules(file_name, export_name)
+                .iter()
+                .any(|(ambient_module, export_match)| {
+                    ambient_module == module_specifier
+                        && matches!(export_match.kind, ImportCandidateKind::Named { .. })
+                })
+        })
+    }
+
+    fn statement_modifiers<'a>(
+        arena: &'a NodeArena,
+        stmt_node: &'a tsz_parser::parser::node::Node,
+    ) -> Option<&'a tsz_parser::parser::base::NodeList> {
+        match stmt_node.kind {
+            syntax_kind_ext::FUNCTION_DECLARATION => {
+                arena.get_function(stmt_node).and_then(|data| data.modifiers.as_ref())
+            }
+            syntax_kind_ext::CLASS_DECLARATION => {
+                arena.get_class(stmt_node).and_then(|data| data.modifiers.as_ref())
+            }
+            syntax_kind_ext::INTERFACE_DECLARATION => arena
+                .get_interface(stmt_node)
+                .and_then(|data| data.modifiers.as_ref()),
+            syntax_kind_ext::TYPE_ALIAS_DECLARATION => arena
+                .get_type_alias(stmt_node)
+                .and_then(|data| data.modifiers.as_ref()),
+            syntax_kind_ext::ENUM_DECLARATION => {
+                arena.get_enum(stmt_node).and_then(|data| data.modifiers.as_ref())
+            }
+            syntax_kind_ext::VARIABLE_STATEMENT => arena
+                .get_variable(stmt_node)
+                .and_then(|data| data.modifiers.as_ref()),
+            syntax_kind_ext::MODULE_DECLARATION => {
+                arena.get_module(stmt_node).and_then(|data| data.modifiers.as_ref())
+            }
+            _ => None,
+        }
+    }
+
+    fn is_supported_direct_export_declaration_kind(kind: u16) -> bool {
+        kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || kind == syntax_kind_ext::CLASS_DECLARATION
+            || kind == syntax_kind_ext::INTERFACE_DECLARATION
+            || kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+            || kind == syntax_kind_ext::ENUM_DECLARATION
+            || kind == syntax_kind_ext::VARIABLE_STATEMENT
+            || kind == syntax_kind_ext::MODULE_DECLARATION
+    }
+
+    fn statement_text_contains_name(
+        source_text: &str,
+        stmt_node: &tsz_parser::parser::node::Node,
+        name: &str,
+    ) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+        let len = source_text.len();
+        let start = (stmt_node.pos as usize).min(len);
+        let end = (stmt_node.end as usize).min(len);
+        if end <= start {
+            return false;
+        }
+        source_text[start..end].contains(name)
+    }
+
+    fn statement_has_export_modifier(
+        arena: &NodeArena,
+        stmt_node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        let modifiers = Self::statement_modifiers(arena, stmt_node);
+        arena.has_modifier_ref(modifiers, SyntaxKind::ExportKeyword)
+    }
+
+    fn statement_has_default_modifier(
+        arena: &NodeArena,
+        stmt_node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        let modifiers = Self::statement_modifiers(arena, stmt_node);
+        arena.has_modifier_ref(modifiers, SyntaxKind::DefaultKeyword)
+    }
+
+    fn statement_is_type_only(kind: u16) -> bool {
+        kind == syntax_kind_ext::INTERFACE_DECLARATION || kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
     }
 
     fn file_has_type_namespace_import(file: &ProjectFile, namespace_name: &str) -> bool {
@@ -1389,6 +1504,30 @@ impl Project {
                     continue;
                 };
                 if module_stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                    if !Self::is_supported_direct_export_declaration_kind(module_stmt_node.kind) {
+                        continue;
+                    }
+                    if !Self::statement_has_export_modifier(arena, module_stmt_node) {
+                        continue;
+                    }
+                    if !Self::statement_text_contains_name(
+                        file.source_text(),
+                        module_stmt_node,
+                        export_name,
+                    ) {
+                        continue;
+                    }
+                    if file.declaration_has_name(module_stmt_idx, export_name) {
+                        matches.push((
+                            module_specifier.to_string(),
+                            ExportMatch {
+                                kind: ImportCandidateKind::Named {
+                                    export_name: export_name.to_string(),
+                                },
+                                is_type_only: Self::statement_is_type_only(module_stmt_node.kind),
+                            },
+                        ));
+                    }
                     continue;
                 }
                 let Some(export) = arena.get_export_decl(module_stmt_node) else {
@@ -2780,6 +2919,196 @@ export = ts;
                 .iter()
                 .any(|specifier| specifier == "react-hook-form/dist/useForm"),
             "expected deep react-hook-form/dist/useForm diagnostics auto-import candidate, got {specs:?}"
+        );
+    }
+
+    #[test]
+    fn auto_import_candidates_include_direct_exported_class_declarations() {
+        let mut project = Project::new();
+        project.set_file(
+            "/home/src/workspaces/project/thing2A.ts".to_string(),
+            "export class Thing2A {}".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/entry.ts".to_string(),
+            "Thing2".to_string(),
+        );
+
+        let specs: Vec<String> = project
+            .get_import_candidates_for_prefix("/home/src/workspaces/project/entry.ts", "Thing2")
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "Thing2A")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+
+        assert!(
+            specs.iter().any(|specifier| specifier == "./thing2A"),
+            "expected direct exported class declaration candidate ./thing2A, got {specs:?}"
+        );
+    }
+
+    #[test]
+    fn auto_import_candidates_include_exported_functions_in_ambient_modules() {
+        let mut project = Project::new();
+        project.set_file(
+            "/home/src/workspaces/project/ambient.d.ts".to_string(),
+            r#"declare module "fs" {
+  export function accessSync(path: string): void;
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/index.ts".to_string(),
+            "access".to_string(),
+        );
+
+        let specs: Vec<String> = project
+            .get_import_candidates_for_prefix("/home/src/workspaces/project/index.ts", "access")
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "accessSync")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+
+        assert!(
+            specs.iter().any(|specifier| specifier == "fs"),
+            "expected ambient module export candidate fs, got {specs:?}"
+        );
+    }
+
+    #[test]
+    fn auto_import_candidates_do_not_infer_workspace_package_name_without_requesting_package() {
+        let mut project = Project::new();
+        project.set_file(
+            "/home/src/workspaces/project/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "module": "nodenext",
+    "lib": ["es5"]
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/utils/package.json".to_string(),
+            r#"{
+  "name": "utils",
+  "version": "1.0.0",
+  "main": "dist/index.js"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/utils/dist/index.d.ts".to_string(),
+            "export const x: number;".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/packages/app/dist/index.d.ts".to_string(),
+            "import {} from \"utils\";\nexport const app: number;".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/script.ts".to_string(),
+            "import {} from \"./packages/app/dist/index.js\";\nx".to_string(),
+        );
+
+        let specs: Vec<String> = project
+            .get_import_candidates_for_prefix("/home/src/workspaces/project/script.ts", "x")
+            .into_iter()
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+
+        assert!(
+            !specs.iter().any(|specifier| specifier == "utils/dist"),
+            "did not expect inferred workspace package specifier utils/dist without requesting package metadata, got {specs:?}"
+        );
+        assert!(
+            specs.iter()
+                .any(|specifier| specifier == "./packages/utils/dist/index.js"),
+            "expected relative candidate ./packages/utils/dist/index.js, got {specs:?}"
+        );
+    }
+
+    #[test]
+    fn auto_import_candidates_include_component_from_react_types_package() {
+        let mut project = Project::new();
+        project.set_file(
+            "/home/src/workspaces/project/tsconfig.json".to_string(),
+            r#"{ "compilerOptions": { "module": "commonjs", "lib": ["es2019"], "types": ["*"] } }"#
+                .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/package.json".to_string(),
+            r#"{ "dependencies": { "antd": "*", "react": "*" } }"#.to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/@types/react/index.d.ts".to_string(),
+            "export declare function Component(): void;".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/antd/index.d.ts".to_string(),
+            "import \"react\";".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/index.ts".to_string(),
+            "Compon".to_string(),
+        );
+
+        let specs: Vec<String> = project
+            .get_import_candidates_for_prefix("/home/src/workspaces/project/index.ts", "Compon")
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "Component")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+
+        assert!(
+            specs.iter().any(|specifier| specifier == "react"),
+            "expected react auto-import candidate for Component, got {specs:?}"
+        );
+    }
+
+    #[test]
+    fn auto_import_candidates_include_ambient_reexport_source_module() {
+        let mut project = Project::new();
+        project.set_file(
+            "/home/src/workspaces/project/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "types": ["*"],
+    "lib": ["es5"]
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/@types/node/index.d.ts".to_string(),
+            r#"declare module "fs" {
+  export function accessSync(path: string): void;
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/@types/fs-extra/index.d.ts".to_string(),
+            r#"export * from "fs";"#.to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/index.ts".to_string(),
+            "access".to_string(),
+        );
+
+        let specs: Vec<String> = project
+            .get_import_candidates_for_prefix("/home/src/workspaces/project/index.ts", "access")
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "accessSync")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+
+        assert!(
+            specs.iter().any(|specifier| specifier == "fs"),
+            "expected fs ambient module candidate, got {specs:?}"
+        );
+        assert!(
+            specs.iter().any(|specifier| specifier == "fs-extra"),
+            "expected fs-extra re-export candidate, got {specs:?}"
         );
     }
 }

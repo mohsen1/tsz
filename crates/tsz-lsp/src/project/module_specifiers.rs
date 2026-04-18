@@ -221,6 +221,7 @@ impl Project {
         }
 
         if dependency_specifier.is_none()
+            && from_package.is_some()
             && let Some(candidate_target_json) = target_package_json.as_ref()
             && let Some(target_package_name) = candidate_target_json
                 .get("name")
@@ -236,6 +237,7 @@ impl Project {
         }
 
         if dependency_specifier.is_none()
+            && from_package.is_some()
             && let Some((inferred_specifier, inferred_package_dir)) =
                 Self::inferred_workspace_package_specifier_from_path(&normalized_target_file)
         {
@@ -1693,10 +1695,26 @@ fn package_import_specifiers_for_target(
             let resolved_stripped =
                 path_to_string(&strip_js_ts_extension(&resolved)).replace('\\', "/");
 
-            let direct_capture =
-                wildcard_capture_case_insensitive(&resolved_stripped, &target_normalized);
+            let is_prefix_mapping = !specifier_pattern.contains('*')
+                && !target_pattern.contains('*')
+                && specifier_pattern.ends_with('/')
+                && target_pattern.ends_with('/');
+            let direct_capture = wildcard_capture_case_insensitive(&resolved_stripped, &target_normalized)
+                .or_else(|| {
+                    if is_prefix_mapping {
+                        prefix_capture_case_insensitive(&resolved_stripped, &target_normalized)
+                    } else {
+                        None
+                    }
+                });
             let additional_capture = additional_targets.iter().find_map(|candidate| {
-                wildcard_capture_case_insensitive(&resolved_stripped, candidate)
+                wildcard_capture_case_insensitive(&resolved_stripped, candidate).or_else(|| {
+                    if is_prefix_mapping {
+                        prefix_capture_case_insensitive(&resolved_stripped, candidate)
+                    } else {
+                        None
+                    }
+                })
             });
             let matched_via_additional_target =
                 direct_capture.is_none() && additional_capture.is_some();
@@ -1705,14 +1723,21 @@ fn package_import_specifiers_for_target(
                 continue;
             };
 
-            let Some(mut specifier) = apply_wildcard_capture(specifier_pattern, &capture) else {
+            let mut specifier = if let Some(specifier) =
+                apply_wildcard_capture(specifier_pattern, &capture)
+            {
+                specifier
+            } else if is_prefix_mapping {
+                format!("{specifier_pattern}{capture}")
+            } else {
                 continue;
             };
 
-            if specifier_pattern.contains('*')
+            if (specifier_pattern.contains('*') || is_prefix_mapping)
                 && !specifier_pattern.ends_with(".js")
                 && !specifier_pattern.ends_with(".ts")
                 && !has_source_extension(&target_pattern)
+                && !has_source_extension(&specifier)
             {
                 let prefer_ts_extension = allow_importing_ts_extensions
                     && !matched_via_additional_target
@@ -1842,6 +1867,40 @@ fn wildcard_capture_case_insensitive(pattern: &str, target: &str) -> Option<Stri
     capture(&pattern, &target)
         .or_else(|| pattern.strip_prefix('/').and_then(|p| capture(p, &target)))
         .or_else(|| target.strip_prefix('/').and_then(|t| capture(&pattern, t)))
+        .or_else(|| {
+            pattern
+                .strip_prefix('/')
+                .zip(target.strip_prefix('/'))
+                .and_then(|(p, t)| capture(p, t))
+        })
+}
+
+fn prefix_capture_case_insensitive(prefix_pattern: &str, target: &str) -> Option<String> {
+    let pattern = prefix_pattern.replace('\\', "/");
+    let target = target.replace('\\', "/");
+    let pattern = pattern.trim_end_matches('/');
+
+    if pattern.is_empty() {
+        return None;
+    }
+
+    fn capture(pattern: &str, target: &str) -> Option<String> {
+        let pattern_lower = pattern.to_ascii_lowercase();
+        let target_lower = target.to_ascii_lowercase();
+        if target_lower == pattern_lower {
+            return Some(String::new());
+        }
+        if !target_lower.starts_with(&pattern_lower) {
+            return None;
+        }
+        let rest = target.get(pattern.len()..)?;
+        let rest = rest.strip_prefix('/')?;
+        Some(rest.to_string())
+    }
+
+    capture(pattern, &target)
+        .or_else(|| pattern.strip_prefix('/').and_then(|p| capture(p, &target)))
+        .or_else(|| target.strip_prefix('/').and_then(|t| capture(pattern, t)))
         .or_else(|| {
             pattern
                 .strip_prefix('/')
@@ -2676,6 +2735,24 @@ mod tests {
   "type": "module",
   "imports": {
     "#internal/*": "./dist/internal/*"
+  }
+}"##,
+            "/home/src/workspaces/project",
+            "/home/src/workspaces/project/src/internal/foo.ts",
+            false,
+            &["/home/src/workspaces/project/dist/internal/foo".to_string()],
+        );
+
+        assert_eq!(specs, vec!["#internal/foo.js".to_string()]);
+    }
+
+    #[test]
+    fn package_imports_with_trailing_slash_mapping_emit_subpath_js_specifiers() {
+        let specs = package_import_specifiers_for_target(
+            r##"{
+  "type": "module",
+  "imports": {
+    "#internal/": "./dist/internal/"
   }
 }"##,
             "/home/src/workspaces/project",
