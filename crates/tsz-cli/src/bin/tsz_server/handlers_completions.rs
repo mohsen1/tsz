@@ -2142,7 +2142,17 @@ impl Server {
         }
 
         workspace_prefix
-            .map(|prefix| path == prefix || path.starts_with(&format!("{prefix}/")))
+            .map(|prefix| {
+                if prefix == "/" {
+                    // Root workspace: include any absolute path that is not under
+                    // node_modules (handled above). Using `format!("{prefix}/")`
+                    // would yield "//", which never matches real paths like
+                    // "/Component.tsx".
+                    path.starts_with('/')
+                } else {
+                    path == prefix || path.starts_with(&format!("{prefix}/"))
+                }
+            })
             .unwrap_or(true)
     }
 
@@ -3896,6 +3906,72 @@ mod tests {
         assert!(!Server::completion_sources_match(
             Some("./other"),
             "./local.js"
+        ));
+    }
+
+    // Regression: when the active file sits at the filesystem root (e.g.
+    // fourslash tests that name files `/main.ts`, `/Component.tsx`), the
+    // computed `workspace_prefix` is "/" — every sibling file under "/"
+    // must still be fed to the auto-import project. Previously the
+    // filter produced the prefix "//" and dropped all sibling source
+    // files (only node_modules survived), so Component.tsx / local.ts
+    // never showed up in completion auto-imports and details requests
+    // for them returned no codeActions.
+    #[test]
+    fn should_include_completion_project_path_root_workspace_includes_sibling_files() {
+        // Root workspace: active file is /main.ts -> workspace_prefix = "/".
+        assert_eq!(
+            Server::path_workspace_prefix("/main.ts").as_deref(),
+            Some("/")
+        );
+
+        // Sibling source files under "/" must be included.
+        assert!(Server::should_include_completion_project_path(
+            "/Component.tsx",
+            "/main.ts",
+            Some("/"),
+            None,
+        ));
+        assert!(Server::should_include_completion_project_path(
+            "/local.ts",
+            "/main.ts",
+            Some("/"),
+            None,
+        ));
+        // Same file passes via the path == current_file early-return.
+        assert!(Server::should_include_completion_project_path(
+            "/main.ts",
+            "/main.ts",
+            Some("/"),
+            None,
+        ));
+        // node_modules paths go through the allowed_packages gate and are
+        // unaffected by the workspace_prefix fix: when no allowlist is
+        // configured, node_modules paths are permitted.
+        assert!(Server::should_include_completion_project_path(
+            "/node_modules/bar/index.d.ts",
+            "/main.ts",
+            Some("/"),
+            None,
+        ));
+    }
+
+    // Non-root workspace prefix behavior (/project/...) is unchanged by the
+    // root-workspace fix: siblings under the workspace are still included,
+    // and files outside it are still excluded.
+    #[test]
+    fn should_include_completion_project_path_non_root_workspace_respects_prefix() {
+        assert!(Server::should_include_completion_project_path(
+            "/project/src/foo.ts",
+            "/project/src/main.ts",
+            Some("/project"),
+            None,
+        ));
+        assert!(!Server::should_include_completion_project_path(
+            "/other/foo.ts",
+            "/project/src/main.ts",
+            Some("/project"),
+            None,
         ));
     }
 }
