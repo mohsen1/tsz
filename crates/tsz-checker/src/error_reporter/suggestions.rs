@@ -182,7 +182,7 @@ impl<'a> CheckerState<'a> {
     /// Map a primitive type to its boxed interface type for property name collection.
     /// Returns `None` if the type is not a primitive or no boxed type is registered.
     fn resolve_primitive_to_boxed_type(&self, type_id: TypeId) -> Option<TypeId> {
-        use tsz_solver::IntrinsicKind;
+        use crate::query_boundaries::common::IntrinsicKind;
         use tsz_solver::def::resolver::TypeResolver;
 
         let kind = if tsz_solver::type_queries::is_string_type(self.ctx.types, type_id)
