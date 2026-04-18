@@ -678,11 +678,22 @@ impl<'a> CheckerState<'a> {
                                 {
                                     SPACE_VALUE
                                 } else if (flags & symbol_flags::ALIAS) != 0 {
-                                    // Import-alias declarations (`import Foo = ...`) occupy both
-                                    // type and value space (matching tsc's AliasExcludes = Alias
-                                    // semantics). This ensures TS2395 fires when an unexported
-                                    // alias and an exported type alias share the same name.
-                                    SPACE_VALUE | SPACE_TYPE
+                                    // Import-equals declarations (`import Foo = X`) occupy both
+                                    // type and value space, so they trigger TS2395 against an
+                                    // exported type/value alias of the same name.
+                                    //
+                                    // Other alias forms (`import * as X`, `import { X }`,
+                                    // `import X from`) collide with local declarations as TS2440
+                                    // (Import declaration conflicts with local declaration of X)
+                                    // — tsc does not double-report TS2395 for them. Skip space
+                                    // contribution for those by limiting to ImportEqualsDeclaration.
+                                    if self.ctx.arena.get(decl_idx).is_some_and(|n| {
+                                        n.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                                    }) {
+                                        SPACE_VALUE | SPACE_TYPE
+                                    } else {
+                                        0
+                                    }
                                 } else {
                                     0
                                 };
