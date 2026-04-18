@@ -47,7 +47,16 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if (sym.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) == 0 {
+        // `export * as Ns from "./mod"` creates an ALIAS-only namespace
+        // symbol (no NAMESPACE_MODULE flag) whose own exports/members are
+        // empty. Follow `import_module` to check the target module's
+        // top-level exports for any runtime value before short-circuiting.
+        let is_namespace_style_alias = (sym.flags & symbol_flags::ALIAS) != 0
+            && sym.import_module.is_some()
+            && sym.import_name.as_deref() == Some("*");
+        if (sym.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) == 0
+            && !is_namespace_style_alias
+        {
             return false;
         }
 
@@ -58,7 +67,7 @@ impl<'a> CheckerState<'a> {
             })
         };
 
-        sym.exports.as_ref().is_some_and(|exports| {
+        if sym.exports.as_ref().is_some_and(|exports| {
             exports
                 .iter()
                 .any(|(_, &member_id)| member_has_runtime_value(member_id))
@@ -66,7 +75,36 @@ impl<'a> CheckerState<'a> {
             members
                 .iter()
                 .any(|(_, &member_id)| member_has_runtime_value(member_id))
-        })
+        }) {
+            return true;
+        }
+
+        // `export * as Ns from "./mod"` creates a namespace symbol whose own
+        // exports/members are empty — the runtime exports live in the target
+        // module. Follow the import_module pointer to check that module's
+        // top-level exports for any runtime value.
+        if let Some(ref module_specifier) = sym.import_module
+            && let Some(target_idx) = self.ctx.resolve_import_target(module_specifier)
+            && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
+        {
+            let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+            let Some(target_file_name) = target_arena
+                .source_files
+                .first()
+                .map(|sf| sf.file_name.clone())
+            else {
+                return false;
+            };
+            if let Some(exports) = target_binder.module_exports.get(&target_file_name) {
+                return exports.iter().any(|(_, &member_id)| {
+                    target_binder
+                        .get_symbol(member_id)
+                        .is_some_and(|member_sym| (member_sym.flags & symbol_flags::VALUE) != 0)
+                });
+            }
+        }
+
+        false
     }
 
     /// Check named import specifiers under `verbatimModuleSyntax`.
