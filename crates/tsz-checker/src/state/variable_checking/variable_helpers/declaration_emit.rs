@@ -346,6 +346,12 @@ impl<'a> CheckerState<'a> {
         if referenced_name.is_empty() || referenced_name.starts_with("__") {
             return None;
         }
+        // Top-level JSDoc typedef aliases in the current checked-JS file are
+        // declaration-emitted (and can be lifted to exported aliases when needed),
+        // so they are nameable and must not trigger TS9006.
+        if self.file_has_jsdoc_typedef_named(self.ctx.current_file_idx, &referenced_name) {
+            return None;
+        }
 
         let Some(file_idx) = owner_file_hint
             .filter(|idx| *idx != u32::MAX)
@@ -460,6 +466,47 @@ impl<'a> CheckerState<'a> {
                 })
         });
         if is_exported_from_target {
+            return None;
+        }
+
+        // `export = C` modules can expose additional type members through the export=
+        // symbol's namespace surface (e.g. `import("./mod").Member`). Those members are
+        // nameable from consumers and must not trigger TS9006 private-name diagnostics.
+        let is_exported_via_export_equals_namespace = export_keys.iter().any(|key| {
+            let Some(exports) = target_binder.module_exports.get(key) else {
+                return false;
+            };
+            let Some(export_equals_sym_id) = exports.get("export=") else {
+                return false;
+            };
+
+            let matches_resolved_symbol = |candidate_sym_id| {
+                candidate_sym_id == resolved_sym_id
+                    || target_binder.resolve_import_symbol(candidate_sym_id) == Some(resolved_sym_id)
+                    || self.ctx.binder.resolve_import_symbol(candidate_sym_id) == Some(resolved_sym_id)
+                    || self.resolve_alias_symbol(candidate_sym_id, &mut Vec::new())
+                        == Some(resolved_sym_id)
+            };
+
+            if matches_resolved_symbol(export_equals_sym_id) {
+                return true;
+            }
+
+            let mut candidate_member_ids = Vec::new();
+            if let Some(export_equals_symbol) = target_binder.get_symbol(export_equals_sym_id) {
+                if let Some(ns_exports) = &export_equals_symbol.exports {
+                    candidate_member_ids.extend(ns_exports.iter().map(|(_, &sym_id)| sym_id));
+                }
+                if let Some(ns_members) = &export_equals_symbol.members {
+                    candidate_member_ids.extend(ns_members.iter().map(|(_, &sym_id)| sym_id));
+                }
+            }
+
+            candidate_member_ids
+                .into_iter()
+                .any(matches_resolved_symbol)
+        });
+        if is_exported_via_export_equals_namespace {
             return None;
         }
 
