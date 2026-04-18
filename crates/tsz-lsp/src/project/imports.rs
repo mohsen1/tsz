@@ -113,8 +113,15 @@ impl Project {
             .cloned()
             .collect();
 
-        let files_to_check =
+        let mut files_to_check =
             self.files_to_check_for_symbol(missing_name, &all_files, &wildcard_reexport_files);
+        if !files_to_check.is_empty()
+            && files_to_check
+                .iter()
+                .all(|file_name| file_name == from_file.file_name())
+        {
+            files_to_check = all_files.clone();
+        }
 
         for file_name in files_to_check {
             if file_name == from_file.file_name() {
@@ -285,11 +292,18 @@ impl Project {
                 continue;
             }
 
-            let files_to_check = if supplemental_symbol_set.contains(&symbol_name) {
+            let mut files_to_check = if supplemental_symbol_set.contains(&symbol_name) {
                 all_files.clone()
             } else {
                 self.files_to_check_for_symbol(&symbol_name, &all_files, &wildcard_reexport_files)
             };
+            if !files_to_check.is_empty()
+                && files_to_check
+                    .iter()
+                    .all(|file_name| file_name == from_file.file_name())
+            {
+                files_to_check = all_files.clone();
+            }
 
             for file_name in files_to_check {
                 if file_name == from_file.file_name() {
@@ -572,8 +586,7 @@ impl Project {
             let package_json_text = self
                 .files
                 .get(&package_json_key)
-                .map(|f| f.source_text().to_string())
-                .or_else(|| std::fs::read_to_string(&package_json_key).ok());
+                .map(|f| f.source_text().to_string());
 
             if let Some(text) = package_json_text {
                 saw_package_json = true;
@@ -1412,19 +1425,24 @@ impl Project {
         let source_file = arena.get_source_file_at(file.root())?;
 
         for &stmt_idx in &source_file.statements.nodes {
-            let stmt_node = arena.get(stmt_idx)?;
+            let Some(stmt_node) = arena.get(stmt_idx) else {
+                continue;
+            };
             if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
                 continue;
             }
-            let export = arena.get_export_decl(stmt_node)?;
+            let Some(export) = arena.get_export_decl(stmt_node) else {
+                continue;
+            };
             if export.module_specifier.is_none() || export.export_clause.is_none() {
                 continue;
             }
-            let clause_node = arena.get(export.export_clause)?;
-            if clause_node.kind != SyntaxKind::Identifier as u16 {
+            let Some(export_text) = arena
+                .get_identifier_text(export.export_clause)
+                .or_else(|| arena.get_literal_text(export.export_clause))
+            else {
                 continue;
-            }
-            let export_text = arena.get_identifier_text(export.export_clause)?;
+            };
             if export_text == "default" {
                 return Some(export.is_type_only);
             }
