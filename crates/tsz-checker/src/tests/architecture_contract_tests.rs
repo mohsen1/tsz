@@ -3808,8 +3808,7 @@ fn test_temporarily_allowed_bypass_list_does_not_grow() {
 
     const CEILING: usize = 0;
     assert_eq!(
-        count,
-        CEILING,
+        count, CEILING,
         "TEMPORARILY_ALLOWED bypass list has grown to {count} items (ceiling: {CEILING}). \
          Do not add new solver import bypasses — create a query_boundaries wrapper instead. \
          If a wrapper was created, remove the old entry and lower CEILING in this test."
