@@ -203,6 +203,31 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // FUNCTION + cross-arena merge: when a user `declare function f(...)` in the
+        // current arena merges with an existing lib `declare function f(...)` from
+        // the lib arena, both decls live on the same symbol but delegation would
+        // run compute_type_of_symbol in lib-arena context — losing the user's
+        // overload signature. Handle locally so compute_type_of_symbol sees every
+        // in-arena declaration and (if needed) still pulls the lib-arena decls
+        // via `declaration_arenas`.
+        let mut function_has_local_decl = false;
+        if delegate_arena.is_some_and(|arena| !std::ptr::eq(arena, self.ctx.arena))
+            && let Some(symbol) = self.get_symbol_globally(sym_id)
+            && (symbol.flags & symbol_flags::FUNCTION) != 0
+        {
+            let has_local_function_decl = symbol.declarations.iter().any(|&d| {
+                self.ctx
+                    .arena
+                    .get(d)
+                    .and_then(|n| self.ctx.arena.get_function(n))
+                    .is_some()
+            });
+            if has_local_function_decl {
+                delegate_arena = None;
+                function_has_local_decl = true;
+            }
+        }
+
         if delegate_arena.is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
             && let Some(symbol) = self.get_symbol_globally(sym_id)
         {
@@ -212,7 +237,12 @@ impl<'a> CheckerState<'a> {
             // ping-pong between arenas until the depth limit, resulting in ERROR.
             // The INTERFACE block in compute_type_of_symbol handles multi-arena merging
             // correctly via resolve_lib_type_by_name.
-            if symbol.flags & symbol_flags::INTERFACE == 0 {
+            // Skip for INTERFACE (merge path handles multi-arena via
+            // resolve_lib_type_by_name) and for FUNCTION symbols that already
+            // have a declaration in the current arena (we want the local
+            // compute_type_of_symbol path to see every overload, including
+            // the lib-arena ones, via declaration_arenas lookup).
+            if symbol.flags & symbol_flags::INTERFACE == 0 && !function_has_local_decl {
                 let mut decl_candidates = symbol.declarations.clone();
                 if symbol.value_declaration.is_some() {
                     decl_candidates.push(symbol.value_declaration);
@@ -247,6 +277,7 @@ impl<'a> CheckerState<'a> {
         // to the other file would lose the local declaration's members and heritage.
         let mut cross_file_idx: Option<usize> = None;
         let needs_cross_file_delegation = !interface_has_local_decl
+            && !function_has_local_decl
             && delegate_arena.is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
             && self
                 .ctx

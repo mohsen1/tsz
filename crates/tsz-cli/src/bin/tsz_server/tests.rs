@@ -3195,7 +3195,7 @@ fn test_project_info_configured_project_excludes_non_existent_files() {
     let mut server = make_server_with_real_libs();
     let tsconfig_path = "/tests/cases/fourslash/server/tsconfig.json".to_string();
     server.open_files.insert(
-        tsconfig_path.clone(),
+        tsconfig_path,
         r#"{ "files": ["a.ts", "c.ts", "b.ts"], "compilerOptions": { "lib": ["es5"] } }"#
             .to_string(),
     );

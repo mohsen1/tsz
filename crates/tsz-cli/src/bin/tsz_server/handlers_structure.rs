@@ -979,7 +979,7 @@ impl Server {
         (lib_names, no_lib, project_files)
     }
 
-    /// For an inferred project (no tsconfig), produce (libs, noLib, [active+transitive_deps]).
+    /// For an inferred project (no tsconfig), produce (libs, noLib, [`active+transitive_deps`]).
     fn inferred_project_info(&self, active_file: &str) -> (Vec<String>, bool, Vec<String>) {
         // Prefer the projectInfo-only view populated by
         // `apply_inferred_project_options` — it carries the raw lib/target/noLib
