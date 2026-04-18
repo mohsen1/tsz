@@ -478,6 +478,15 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // Don't qualify with file basename when the symbol is declared in the
+        // current file — tsc displays bare `'X'`, not `'"file".X'`, when the
+        // namespace and the error site live in the same module.
+        if symbol.decl_file_idx != u32::MAX
+            && symbol.decl_file_idx as usize == self.ctx.current_file_idx
+        {
+            return None;
+        }
+
         let (is_external_module, file_name) = if symbol.decl_file_idx != u32::MAX {
             let file_idx = symbol.decl_file_idx as usize;
             let binder = self.ctx.get_binder_for_file(file_idx)?;
