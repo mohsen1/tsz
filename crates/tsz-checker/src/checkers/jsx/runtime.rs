@@ -82,8 +82,16 @@ pub(crate) fn extract_jsx_frag_pragma(source: &str) -> Option<String> {
             let comment_start = pos + 2;
             if let Some(end_offset) = text[comment_start..].find("*/") {
                 let comment_body = &text[comment_start..comment_start + end_offset];
-                if let Some(jsx_frag_pos) = comment_body.find("@jsxFrag") {
-                    let after = &comment_body[jsx_frag_pos + "@jsxFrag".len()..];
+                // tsc accepts `@jsxFrag`, `@jsxfrag`, and `@jsxFragment` as
+                // synonyms for the fragment-factory pragma.
+                let lowered = comment_body.to_ascii_lowercase();
+                if let Some(jsx_frag_pos) = lowered.find("@jsxfrag") {
+                    let tag_len = if lowered[jsx_frag_pos..].starts_with("@jsxfragment") {
+                        "@jsxfragment".len()
+                    } else {
+                        "@jsxfrag".len()
+                    };
+                    let after = &comment_body[jsx_frag_pos + tag_len..];
                     let factory: String = after
                         .trim_start()
                         .chars()
@@ -444,6 +452,16 @@ impl<'a> CheckerState<'a> {
         if root_ident_owned.is_empty() {
             return;
         }
+        // tsc treats literal-keyword sentinels (`null`, `undefined`, `true`,
+        // `false`) in `@jsxfrag`/`jsxFragmentFactory` as a user-driven opt-out
+        // and does not emit TS2879 for them (other diagnostics already cover
+        // the invalid-identifier case).
+        if matches!(
+            root_ident_owned.as_str(),
+            "null" | "undefined" | "true" | "false"
+        ) {
+            return;
+        }
 
         let lib_binders = self.get_lib_binders();
         let found = self.ctx.binder.resolve_name_with_filter(
@@ -577,6 +595,13 @@ impl<'a> CheckerState<'a> {
         let root_ident = factory.split('.').next().unwrap_or(&factory);
 
         if root_ident.is_empty() {
+            return;
+        }
+        // Literal-keyword sentinels (`null`, `undefined`, `true`, `false`) in
+        // a `@jsxfrag`/`@jsx` pragma are user-driven opt-outs. tsc does not
+        // emit TS2874 for them — other diagnostics (TS17016/TS17017/TS2879)
+        // cover the invalid-identifier case when appropriate.
+        if is_fragment && matches!(root_ident, "null" | "undefined" | "true" | "false") {
             return;
         }
 
