@@ -474,6 +474,32 @@ impl<'a> CheckerState<'a> {
             &mut best_candidate,
         );
 
+        // For JSDoc `@type` in declaration emit, tsc may suggest global namespace-like
+        // names (e.g. `class` -> `CSS`, `int` -> `Intl`) even when TYPE-only search
+        // found no candidate. Run a fallback pass without meaning filtering to mirror it.
+        if best_candidate.is_none() {
+            for (symbol_name, _sym_id) in self.ctx.binder.file_locals.iter() {
+                Self::consider_identifier_suggestion(
+                    name,
+                    symbol_name,
+                    name_len,
+                    maximum_length_difference,
+                    &mut best_distance,
+                    &mut best_candidate,
+                );
+            }
+
+            Self::search_global_candidates(
+                name,
+                name_len,
+                maximum_length_difference,
+                0,
+                &self.ctx.lib_contexts,
+                &mut best_distance,
+                &mut best_candidate,
+            );
+        }
+
         best_candidate
     }
 
