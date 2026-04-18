@@ -1295,15 +1295,14 @@ fn test_tdz_in_binding_default_initializer_has_no_ts2454_companion() {
         .into_iter()
         .filter(|(code, _)| *code != 2318)
         .collect();
-    // Current behavior: only 1 of the 2 TDZ sites (`f = f`) emits TS2448.
-    // tsc emits 2 (for both `e = f` and `f = f`). This is a known limitation.
+    // Both `e = f` and `f = f` are TDZ violations — tsc emits 2 diagnostics.
     assert_eq!(
         count_code(
             &diags,
             diagnostic_codes::BLOCK_SCOPED_VARIABLE_USED_BEFORE_ITS_DECLARATION
         ),
-        1,
-        "Expected at least one destructuring TDZ site to emit TS2448, got: {diags:?}"
+        2,
+        "Expected both TDZ sites (e = f, f = f) to emit TS2448, got: {diags:?}"
     );
     assert_eq!(
         count_code(

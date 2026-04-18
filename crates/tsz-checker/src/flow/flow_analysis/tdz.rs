@@ -408,16 +408,33 @@ impl<'a> CheckerState<'a> {
         if usage_idx == decl_idx {
             return false;
         }
+        // Bail out only when the usage IS the declaration name (first child),
+        // not the initializer.  Self-references in initializers like `f = f`
+        // are TDZ violations and must NOT be suppressed.
         if let Some(usage_ext) = self.ctx.arena.get_extended(usage_idx)
             && usage_ext.parent == decl_idx
-            && matches!(
-                decl_node.kind,
-                syntax_kind_ext::VARIABLE_DECLARATION
-                    | syntax_kind_ext::BINDING_ELEMENT
-                    | syntax_kind_ext::PARAMETER
-            )
         {
-            return false;
+            let is_decl_name = match decl_node.kind {
+                k if k == syntax_kind_ext::VARIABLE_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_variable_declaration(decl_node)
+                    .is_some_and(|vd| vd.name == usage_idx),
+                k if k == syntax_kind_ext::BINDING_ELEMENT => self
+                    .ctx
+                    .arena
+                    .get_binding_element(decl_node)
+                    .is_some_and(|be| be.name == usage_idx),
+                k if k == syntax_kind_ext::PARAMETER => self
+                    .ctx
+                    .arena
+                    .get_parameter(decl_node)
+                    .is_some_and(|p| p.name == usage_idx),
+                _ => false,
+            };
+            if is_decl_name {
+                return false;
+            }
         }
 
         // In multi-file mode, validate the declaration node kind matches the
