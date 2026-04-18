@@ -175,7 +175,26 @@ impl ParserState {
                         | syntax_kind_ext::JSX_FRAGMENT
                 )
             });
-            if left_is_jsx_expression {
+            // Await expressions are not valid assignment targets.
+            // Keep the await expression as the complete left side so statement
+            // recovery can report the missing semicolon at the assignment token
+            // instead of building an assignment expression.
+            let left_is_await_expression = self
+                .arena
+                .get(left)
+                .is_some_and(|node| node.kind == syntax_kind_ext::AWAIT_EXPRESSION);
+            // `in` expressions also cannot be assignment targets without
+            // parenthesized recovery. Preserve the parsed binary expression so
+            // statement-level recovery reports `';' expected` at `=`.
+            let left_is_in_expression = self.arena.get(left).is_some_and(|node| {
+                node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                    && self.arena.get_binary_expr(node).is_some_and(|binary| {
+                        SyntaxKind::try_from_u16(binary.operator_token)
+                            .unwrap_or(SyntaxKind::Unknown)
+                            == SyntaxKind::InKeyword
+                    })
+            });
+            if left_is_jsx_expression || left_is_await_expression || left_is_in_expression {
                 if deferred_failed_async_arrow_colon_recovery
                     && !self.is_token(SyntaxKind::ColonToken)
                 {
@@ -512,10 +531,32 @@ impl ParserState {
         let mut previous_top_level_can_end_parameter_name = false;
         let mut previous_top_level_was_optional_parameter = false;
         let mut saw_top_level_conditional_operator = false;
+        let mut previous_top_level_token = SyntaxKind::Unknown;
         while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
             let token = self.token();
             let at_top_level =
                 depth == 1 && brace_depth == 0 && bracket_depth == 0 && angle_bracket_depth == 0;
+
+            // `(x = y ==== z) { ... }` should not be treated as a missing-arrow
+            // head. Once the initializer enters an equality chain, a second `=`
+            // indicates a malformed expression tail that tsc recovers as a normal
+            // parenthesized expression (later reporting `';' expected` at `{`).
+            if at_top_level
+                && slot_in_initializer_context
+                && token == SyntaxKind::EqualsToken
+                && matches!(
+                    previous_top_level_token,
+                    SyntaxKind::EqualsEqualsToken
+                        | SyntaxKind::EqualsEqualsEqualsToken
+                        | SyntaxKind::ExclamationEqualsToken
+                        | SyntaxKind::ExclamationEqualsEqualsToken
+                )
+            {
+                self.scanner.restore_state(snapshot);
+                self.current_token = current;
+                return false;
+            }
+
             if at_top_level
                 && at_param_start
                 && !saw_parameter_syntax
@@ -646,6 +687,9 @@ impl ParserState {
                 && brace_depth == 0
                 && bracket_depth == 0
                 && saw_optional_parameter_marker;
+            if at_top_level {
+                previous_top_level_token = token;
+            }
             self.next_token();
         }
 
@@ -656,6 +700,7 @@ impl ParserState {
         // Important: check for `:` (return type) BEFORE checking has_line_break.
         // `(params): type =>` is unambiguously an arrow function regardless of
         // line breaks — TS1200 handles line terminator errors separately.
+        let token_after_parameters = self.token();
         let is_arrow = if self.is_token(SyntaxKind::ColonToken) {
             // When we see `:` after `)`, it could be either:
             // 1. A return type annotation for an arrow function: (x): T => body
@@ -729,14 +774,12 @@ impl ParserState {
             // Check for => or { (error recovery: user forgot =>)
             self.is_token(SyntaxKind::EqualsGreaterThanToken)
                 || self.is_token(SyntaxKind::OpenBraceToken)
+                // Typed parameter syntax inside the parens is strong evidence of
+                // an arrow head; when no `=>` follows, tsc keeps the arrow
+                // interpretation and reports a missing arrow at the next token
+                // (property access, call, operators, statement terminators, etc.).
                 || (saw_parameter_syntax
-                    && matches!(
-                        self.token(),
-                        SyntaxKind::SemicolonToken
-                            | SyntaxKind::CommaToken
-                            | SyntaxKind::CloseBraceToken
-                            | SyntaxKind::EndOfFileToken
-                    ))
+                    && !matches!(token_after_parameters, SyntaxKind::ColonToken))
         };
         self.scanner.restore_state(snapshot);
         self.current_token = current;
