@@ -479,7 +479,13 @@ fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32)
     let resolved = get_base_constraint_or_type(db, type_id);
 
     match resolved {
-        TypeId::ANY | TypeId::NEVER | TypeId::ERROR => return true,
+        // `any` and our internal error sentinel are permissive. `never` is
+        // explicitly NOT spreadable in tsc — `removeDefinitelyFalsyTypes`
+        // strips it before the validity flags check, leaving an empty type
+        // that fails the Any|NonPrimitive|Object|InstantiableNonPrimitive
+        // gate (TS2698).
+        TypeId::ANY | TypeId::ERROR => return true,
+        TypeId::NEVER => return false,
         _ => {}
     }
 
