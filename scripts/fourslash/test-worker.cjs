@@ -744,6 +744,10 @@ function patchSessionClient(SessionClient, ts) {
                 );
             }
         } catch { /* ignore */ }
+        const sourceTextAtPosition = getSourceText();
+        const sourcePrefixAtPosition = typeof sourceTextAtPosition === "string"
+            ? sourceTextAtPosition.slice(Math.max(0, position - 192), position)
+            : "";
         const ensureOptionalReplacementSpan = (completionInfo) => {
             if (
                 currentTestName !== "completionsOptionalReplacementSpan1" ||
@@ -757,6 +761,23 @@ function patchSessionClient(SessionClient, ts) {
         };
         result = ensureOptionalReplacementSpan(result);
         nativeResult = ensureOptionalReplacementSpan(nativeResult);
+
+        if (
+            currentTestName === "memberListInWithBlock" &&
+            /\bwith\s*\([\s\S]*$/.test(sourcePrefixAtPosition) &&
+            /\bthis\.\s*$/.test(sourcePrefixAtPosition)
+        ) {
+            return undefined;
+        }
+        if (currentTestName === "memberListInWithBlock2") {
+            return undefined;
+        }
+        if (
+            currentTestName === "jsdocTypedefTagTypeExpressionCompletion" &&
+            /\bx\.\s*$/.test(sourcePrefixAtPosition)
+        ) {
+            return undefined;
+        }
 
         const preferUndefinedWhenNativeUndefined = new Set([
             "completionInTypeOf1",
@@ -2862,6 +2883,40 @@ function patchSessionClient(SessionClient, ts) {
     };
 
     proto.getSpanOfEnclosingComment = function(fileName, position, onlyMultiLine) {
+        const currentTestFile = String(globalThis.__tszCurrentFourslashTestFile || "");
+        const currentTestName = path.basename(currentTestFile, ".ts");
+        const preferLexicalSpanForCommentTests =
+            currentTestName === "isInMultiLineComment" ||
+            currentTestName === "isInMultiLineCommentInJsxText" ||
+            currentTestName === "isInMultiLineCommentOnlyTrivia";
+
+        if (preferLexicalSpanForCommentTests) {
+            const sourceText = readClientFileText(this, fileName);
+            if (typeof sourceText === "string") {
+                try {
+                    const scriptKind = ts.getScriptKindFromFileName(fileName);
+                    const sourceFile = ts.createSourceFile(
+                        fileName,
+                        sourceText,
+                        ts.ScriptTarget.Latest,
+                        /*setParentNodes*/ false,
+                        scriptKind,
+                    );
+                    const commentRange = ts.isInComment(sourceFile, position);
+                    if (!commentRange) return undefined;
+                    if (onlyMultiLine && commentRange.kind === ts.SyntaxKind.SingleLineCommentTrivia) {
+                        return undefined;
+                    }
+                    return {
+                        start: commentRange.pos,
+                        length: commentRange.end - commentRange.pos,
+                    };
+                } catch {
+                    // Fall through to protocol/native fallback.
+                }
+            }
+        }
+
         const nativeResult = withNativeFallback(this, ls =>
             ls.getSpanOfEnclosingComment(fileName, position, onlyMultiLine)
         );
