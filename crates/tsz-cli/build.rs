@@ -60,8 +60,10 @@ fn main() {
         .join("scripts/conformance/typescript-versions.json");
 
     let version = detect_tsc_version_from_local_scripts(&manifest_dir)
-        .or_else(|| detect_tsc_version_from_versions_file(&versions_path))
+        // When local scripts/node_modules isn't installed, prefer the same PATH
+        // `tsc` binary that the CLI parity tests compare against.
         .or_else(detect_tsc_version_from_path)
+        .or_else(|| detect_tsc_version_from_versions_file(&versions_path))
         .unwrap_or_else(|| {
             if versions_path.exists() {
                 let content = std::fs::read_to_string(&versions_path).unwrap();

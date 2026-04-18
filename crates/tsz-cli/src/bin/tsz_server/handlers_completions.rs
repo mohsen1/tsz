@@ -2179,6 +2179,9 @@ impl Server {
 
     fn path_workspace_prefix(file_name: &str) -> Option<String> {
         let normalized = file_name.replace('\\', "/");
+        if normalized.starts_with('/') && normalized.matches('/').count() == 1 {
+            return Some("/".to_string());
+        }
         let segments: Vec<&str> = normalized
             .split('/')
             .filter(|segment| !segment.is_empty())
