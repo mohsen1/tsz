@@ -371,14 +371,16 @@ impl<'a> CheckerState<'a> {
             };
             let declared_component_type =
                 self.get_jsx_identifier_declared_type(tag_name_idx, component_type);
-            let component_type =
-                if !tsz_solver::contains_type_parameters(self.ctx.types, component_type)
-                    && tsz_solver::contains_type_parameters(self.ctx.types, declared_component_type)
-                {
-                    declared_component_type
-                } else {
-                    component_type
-                };
+            let prefer_declared_component_type = matches!(
+                component_type,
+                TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN
+            ) || (!tsz_solver::contains_type_parameters(self.ctx.types, component_type)
+                && tsz_solver::contains_type_parameters(self.ctx.types, declared_component_type));
+            let component_type = if prefer_declared_component_type {
+                declared_component_type
+            } else {
+                component_type
+            };
 
             let component_metadata_type =
                 self.get_jsx_component_metadata_type(tag_name_idx, component_type);
@@ -882,6 +884,10 @@ impl<'a> CheckerState<'a> {
                         .iter()
                         .find_map(|lib_binder| lib_binder.file_locals.get("JSX"))
                 })
+                .or_else(|| {
+                    let lib_binders = self.get_lib_binders();
+                    self.ctx.binder.get_global_type_with_libs("JSX", &lib_binders)
+                })
         } else {
             let lib_binders = self.get_lib_binders();
             self.ctx
@@ -970,6 +976,14 @@ impl<'a> CheckerState<'a> {
                 if !binder.global_augmentations.contains_key(name) {
                     continue;
                 }
+                if let Some(augmentations) = binder.global_augmentations.get(name) {
+                    for augmentation in augmentations {
+                        if let Some(sym_id) = binder.node_symbols.get(&augmentation.node.0) {
+                            self.ctx.register_symbol_file_target(*sym_id, file_idx);
+                            return Some(*sym_id);
+                        }
+                    }
+                }
                 self.ctx.register_symbol_file_target(sym_id, file_idx);
                 return Some(sym_id);
             }
@@ -978,6 +992,14 @@ impl<'a> CheckerState<'a> {
         for (file_idx, binder) in all_binders.iter().enumerate() {
             if !binder.global_augmentations.contains_key(name) {
                 continue;
+            }
+            if let Some(augmentations) = binder.global_augmentations.get(name) {
+                for augmentation in augmentations {
+                    if let Some(sym_id) = binder.node_symbols.get(&augmentation.node.0) {
+                        self.ctx.register_symbol_file_target(*sym_id, file_idx);
+                        return Some(*sym_id);
+                    }
+                }
             }
             if let Some(sym_id) = binder.file_locals.get(name) {
                 self.ctx.register_symbol_file_target(sym_id, file_idx);
