@@ -918,9 +918,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.js_module_exports_assignment_initializer(*stmt_idx) != Some(root_initializer)
             })
             .filter_map(|stmt_idx| {
-                let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                    return None;
-                };
+                let stmt_node = self.arena.get(stmt_idx)?;
                 if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
                     return None;
                 }
@@ -1270,10 +1268,10 @@ impl<'a> DeclarationEmitter<'a> {
                 Some(prop.name)
             } else if let Some(method) = self.arena.get_method_decl(member_node) {
                 Some(method.name)
-            } else if let Some(accessor) = self.arena.get_accessor(member_node) {
-                Some(accessor.name)
             } else {
-                None
+                self.arena
+                    .get_accessor(member_node)
+                    .map(|accessor| accessor.name)
             };
             if let Some(name_idx) = member_name
                 && let Some(name) = self.get_identifier_text(name_idx)
