@@ -363,6 +363,24 @@ impl<'a> CheckerState<'a> {
         name_ident.escaped_text == "prototype"
     }
 
+    fn js_prototype_binding_literal_name(&self, name_idx: NodeIndex) -> Option<String> {
+        use tsz_scanner::SyntaxKind;
+
+        let name_node = self.ctx.arena.get(name_idx)?;
+        match name_node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                self.ctx
+                    .arena
+                    .get_literal(name_node)
+                    .map(|lit| lit.text.clone())
+            }
+            _ => None,
+        }
+    }
+
     /// Scan sibling statements for `FuncName.prototype.X = rhs` patterns.
     /// Returns two sets:
     /// - Prototype method bindings (`method_name` -> `method_type`) to be added as instance properties
@@ -447,11 +465,7 @@ impl<'a> CheckerState<'a> {
                 has_prototype_evidence = true;
                 let current_file_idx = self.ctx.current_file_idx;
                 if arguments.nodes.len() >= 3
-                    && let Some(name) = self.constant_define_property_name_in_file(
-                        current_file_idx,
-                        self.ctx.arena,
-                        arguments.nodes[1],
-                    )
+                    && let Some(name) = self.js_prototype_binding_literal_name(arguments.nodes[1])
                     && let Some(mut prop) = self.define_property_info_from_descriptor(
                         current_file_idx,
                         self.ctx.arena,
@@ -521,15 +535,7 @@ impl<'a> CheckerState<'a> {
                     .get(lhs_access.name_or_argument)
                     .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
             let resolved_property_name = if is_computed_name {
-                let prev = self.ctx.preserve_literal_types;
-                self.ctx.preserve_literal_types = true;
-                let key_type = self.get_type_of_node(lhs_access.name_or_argument);
-                self.ctx.preserve_literal_types = prev;
-                crate::query_boundaries::type_computation::access::literal_property_name(
-                    self.ctx.types,
-                    key_type,
-                )
-                .map(|atom| self.ctx.types.resolve_atom(atom))
+                self.js_prototype_binding_literal_name(lhs_access.name_or_argument)
             } else {
                 self.get_property_name_resolved(lhs_access.name_or_argument)
             };
@@ -673,11 +679,7 @@ impl<'a> CheckerState<'a> {
             }
 
             let current_file_idx = self.ctx.current_file_idx;
-            let Some(name) = self.constant_define_property_name_in_file(
-                current_file_idx,
-                self.ctx.arena,
-                args.nodes[1],
-            ) else {
+            let Some(name) = self.js_prototype_binding_literal_name(args.nodes[1]) else {
                 continue;
             };
             let Some(mut prop) = self.define_property_info_from_descriptor(
