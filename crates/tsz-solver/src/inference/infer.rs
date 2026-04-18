@@ -272,6 +272,15 @@ pub(crate) struct InferenceContext<'a> {
     /// a type annotation rather than a fresh expression. Matches tsc's model where
     /// only types with `RequiresWidening` (from expression context) are widened.
     pub(crate) source_is_type_annotation: bool,
+    /// Depth counter for `infer_from_types` structural recursion.
+    /// Prevents infinite recursion when inferring through self-referential
+    /// interface hierarchies (e.g., `ArrayIterator<T>` which has
+    /// `[Symbol.iterator](): ArrayIterator<T>` returning itself).
+    pub(crate) infer_depth: u32,
+    /// Visited (source, target) pairs during structural inference.
+    /// Prevents re-visiting the same pair, breaking cycles in
+    /// self-referential type hierarchies.
+    pub(crate) infer_visited: FxHashSet<(TypeId, TypeId)>,
 }
 
 impl<'a> InferenceContext<'a> {
@@ -280,6 +289,11 @@ impl<'a> InferenceContext<'a> {
     /// Maximum depth for expanding `TypeApplication` targets during inference.
     /// Prevents infinite recursion for recursive type aliases.
     pub(crate) const MAX_APP_EXPANSION_DEPTH: u32 = 5;
+    /// Maximum depth for `infer_from_types` structural recursion.
+    /// Self-referential interfaces (e.g., `ArrayIterator<T>` with
+    /// `[Symbol.iterator](): ArrayIterator<T>`) can cause unbounded
+    /// recursion during structural property inference.
+    pub(crate) const MAX_INFER_DEPTH: u32 = 20;
 
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         InferenceContext {
@@ -294,6 +308,8 @@ impl<'a> InferenceContext<'a> {
             in_contra_mode: false,
             reverse_mapped_properties: FxHashMap::default(),
             source_is_type_annotation: false,
+            infer_depth: 0,
+            infer_visited: FxHashSet::default(),
         }
     }
 
@@ -313,6 +329,8 @@ impl<'a> InferenceContext<'a> {
             in_contra_mode: false,
             reverse_mapped_properties: FxHashMap::default(),
             source_is_type_annotation: false,
+            infer_depth: 0,
+            infer_visited: FxHashSet::default(),
         }
     }
 
