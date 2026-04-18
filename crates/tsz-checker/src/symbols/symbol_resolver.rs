@@ -1121,10 +1121,36 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(value_only) = value_only_candidate.get() {
-            TypeSymbolResolution::ValueOnly(value_only)
-        } else {
-            TypeSymbolResolution::NotFound
+            return TypeSymbolResolution::ValueOnly(value_only);
         }
+
+        // Last-resort fallback for `import X = require(...)` namespace
+        // anchors in qualified-name type position.
+        //
+        // When this identifier is the left qualifier of a qualified name
+        // (e.g. `server.IServer` where `server` comes from
+        // `import server = require('./server')`), upstream filters can
+        // reject the alias because cross-arena resolution intermittently
+        // loses track of the import-equals target's module flags.  The
+        // binder maps this node's identifier to a stable symbol via
+        // `get_node_symbol`; fall back to that mapping only when the
+        // resolved symbol is an IMPORT_EQUALS_DECLARATION (not a general
+        // namespace import, which has its own value/type distinction that
+        // must not be bypassed).
+        if let Some(sym_id) = self.ctx.binder.get_node_symbol(idx)
+            && let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+            && (symbol.flags & symbol_flags::ALIAS) != 0
+            && symbol.declarations.iter().copied().any(|decl_idx| {
+                self.ctx
+                    .arena
+                    .get(decl_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
+            })
+        {
+            return TypeSymbolResolution::Type(sym_id);
+        }
+
+        TypeSymbolResolution::NotFound
     }
 
     // =========================================================================
