@@ -1885,6 +1885,40 @@ impl<'a> CheckerState<'a> {
         true
     }
 
+    /// Whether `name_idx` is the IDENTIFIER node `intrinsic` directly inside a
+    /// `TypeReference` that forms the entire body of a `TypeAliasDeclaration`.
+    /// In that position tsc treats `intrinsic` as a keyword and reports TS2795
+    /// (or accepts it for the four built-in string mapping aliases) — name
+    /// resolution must not also fire TS2304.
+    pub(crate) fn is_intrinsic_keyword_in_type_alias_body(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+        if ident.escaped_text != "intrinsic" {
+            return false;
+        }
+        let Some(name_ext) = self.ctx.arena.get_extended(name_idx) else {
+            return false;
+        };
+        let type_ref_idx = name_ext.parent;
+        if type_ref_idx.is_none() {
+            return false;
+        }
+        if !self.is_bare_intrinsic_type_ref(type_ref_idx) {
+            return false;
+        }
+        let Some(type_ref_ext) = self.ctx.arena.get_extended(type_ref_idx) else {
+            return false;
+        };
+        let Some(parent_node) = self.ctx.arena.get(type_ref_ext.parent) else {
+            return false;
+        };
+        parent_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+    }
+
     /// Check if a type node subtree contains a circular reference to any type
     /// currently being resolved (i.e., present in `symbol_resolution_set`).
     /// Used to detect TS2577 "Return type annotation circularly references itself".
