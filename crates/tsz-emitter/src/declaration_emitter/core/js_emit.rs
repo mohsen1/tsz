@@ -521,15 +521,11 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         if is_exported {
             self.write("export ");
-            if self.source_is_js_file {
-                self.write("declare let ");
-            } else {
-                if self.should_emit_declare_keyword(true) {
-                    self.write("declare ");
-                }
-                self.write("let ");
-            }
+            self.write(self.js_synthetic_export_value_keyword(initializer));
         } else {
+            if self.should_emit_declare_keyword(false) {
+                self.write("declare ");
+            }
             self.write("var ");
         }
         self.emit_node(name_idx);
@@ -799,7 +795,11 @@ impl<'a> DeclarationEmitter<'a> {
                     } else if let Some(type_text) =
                         self.js_namespace_value_member_type_text(prop.initializer)
                     {
-                        self.emit_js_named_export_value_member(prop.name, &type_text, true);
+                        self.emit_js_named_export_value_member(
+                            prop.name,
+                            &type_text,
+                            self.js_synthetic_export_value_keyword(prop.initializer),
+                        );
                     } else {
                         self.emit_js_synthetic_value_declaration(prop.name, prop.initializer, true);
                     }
@@ -853,7 +853,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
 
             let type_text = self.print_type_id(prop.type_id);
-            self.emit_js_named_export_value_text(&prop_name, &type_text, false);
+            self.emit_js_named_export_value_text(&prop_name, &type_text, "var ");
         }
     }
 
@@ -884,11 +884,19 @@ impl<'a> DeclarationEmitter<'a> {
             } else if root_is_object_literal
                 && let Some(type_text) = self.js_namespace_value_member_type_text(initializer)
             {
-                self.emit_js_named_export_value_member(name_idx, &type_text, false);
+                self.emit_js_named_export_value_member(
+                    name_idx,
+                    &type_text,
+                    self.js_synthetic_export_value_keyword(initializer),
+                );
             } else if !root_is_object_literal
                 && let Some(type_text) = self.js_synthetic_export_value_type_text(initializer)
             {
-                self.emit_js_named_export_value_member(name_idx, &type_text, false);
+                self.emit_js_named_export_value_member(
+                    name_idx,
+                    &type_text,
+                    self.js_synthetic_export_value_keyword(initializer),
+                );
             } else {
                 self.emit_js_synthetic_value_declaration(name_idx, initializer, true);
             }
@@ -999,26 +1007,23 @@ impl<'a> DeclarationEmitter<'a> {
         &mut self,
         name_idx: NodeIndex,
         type_text: &str,
-        with_declare: bool,
+        keyword: &'static str,
     ) {
         let Some(name) = self.get_identifier_text(name_idx) else {
             return;
         };
-        self.emit_js_named_export_value_text(&name, type_text, with_declare);
+        self.emit_js_named_export_value_text(&name, type_text, keyword);
     }
 
     pub(in crate::declaration_emitter) fn emit_js_named_export_value_text(
         &mut self,
         name: &str,
         type_text: &str,
-        with_declare: bool,
+        keyword: &'static str,
     ) {
         self.write_indent();
         self.write("export ");
-        if with_declare {
-            self.write("declare ");
-        }
-        self.write("let ");
+        self.write(keyword);
         self.write(name);
         self.write(": ");
         self.write(type_text);
@@ -1198,7 +1203,12 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     "any".to_string()
                 };
-                self.emit_js_named_export_value_member(prop.name, &type_text, false);
+                let keyword = if prop.initializer.is_some() {
+                    self.js_synthetic_export_value_keyword(prop.initializer)
+                } else {
+                    "var "
+                };
+                self.emit_js_named_export_value_member(prop.name, &type_text, keyword);
                 emitted_any = true;
             }
         }
