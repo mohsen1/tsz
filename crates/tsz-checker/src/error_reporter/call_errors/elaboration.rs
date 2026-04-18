@@ -875,7 +875,12 @@ impl<'a> CheckerState<'a> {
 
         let diagnostics_before_epc = self.ctx.diagnostics.len();
         self.check_object_literal_excess_properties(source_type, effective_param_type, arg_idx);
-        let had_excess_property = self.ctx.diagnostics[diagnostics_before_epc..]
+        // `check_object_literal_excess_properties` can trigger a contextual-type
+        // refresh that retains/drops earlier implicit-any diagnostics (see
+        // object_literal_support.rs). Clamp to the current length so an
+        // unrelated shrink doesn't panic the slice.
+        let scan_start = diagnostics_before_epc.min(self.ctx.diagnostics.len());
+        let had_excess_property = self.ctx.diagnostics[scan_start..]
             .iter()
             .any(|diag| {
                 matches!(

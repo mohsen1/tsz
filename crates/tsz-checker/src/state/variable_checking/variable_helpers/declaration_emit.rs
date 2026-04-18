@@ -389,17 +389,20 @@ impl<'a> CheckerState<'a> {
         export_keys.dedup();
 
         let is_exported_from_target = export_keys.iter().any(|key| {
-            target_binder.module_exports.get(key).is_some_and(|exports| {
-                exports.iter().any(|(_, &export_sym_id)| {
-                    export_sym_id == resolved_sym_id
-                        || target_binder.resolve_import_symbol(export_sym_id)
-                            == Some(resolved_sym_id)
-                        || self.ctx.binder.resolve_import_symbol(export_sym_id)
-                            == Some(resolved_sym_id)
-                        || self.resolve_alias_symbol(export_sym_id, &mut Vec::new())
-                            == Some(resolved_sym_id)
+            target_binder
+                .module_exports
+                .get(key)
+                .is_some_and(|exports| {
+                    exports.iter().any(|(_, &export_sym_id)| {
+                        export_sym_id == resolved_sym_id
+                            || target_binder.resolve_import_symbol(export_sym_id)
+                                == Some(resolved_sym_id)
+                            || self.ctx.binder.resolve_import_symbol(export_sym_id)
+                                == Some(resolved_sym_id)
+                            || self.resolve_alias_symbol(export_sym_id, &mut Vec::new())
+                                == Some(resolved_sym_id)
+                    })
                 })
-            })
         });
         if is_exported_from_target {
             return None;
