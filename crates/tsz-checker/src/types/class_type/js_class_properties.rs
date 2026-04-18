@@ -872,13 +872,17 @@ impl CheckerState<'_> {
         stmt_idx: NodeIndex,
         this_aliases: &[String],
     ) -> Option<(String, bool, NodeIndex)> {
-        self.js_statement_declared_type(stmt_idx)?;
-
         let stmt_node = self.ctx.arena.get(stmt_idx)?;
         if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
             return None;
         }
         let expr_stmt = self.ctx.arena.get_expression_statement(stmt_node)?;
+        if self.js_statement_declared_type(stmt_idx).is_none()
+            && !self.js_statement_has_direct_jsdoc_type_annotation(stmt_idx)
+            && !self.js_statement_has_direct_jsdoc_type_annotation(expr_stmt.expression)
+        {
+            return None;
+        }
         let expr_node = self.ctx.arena.get(expr_stmt.expression)?;
         let is_element_access = expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
         if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION && !is_element_access {
@@ -925,6 +929,24 @@ impl CheckerState<'_> {
         }
         let ident = self.ctx.arena.get_identifier(name_node)?;
         Some((ident.escaped_text.clone(), false, access.name_or_argument))
+    }
+
+    fn js_statement_has_direct_jsdoc_type_annotation(&self, idx: NodeIndex) -> bool {
+        let Some(sf) = self.source_file_data_for_node(idx) else {
+            return false;
+        };
+        if sf.comments.is_empty() || !sf.comments.iter().any(|c| c.is_multi_line) {
+            return false;
+        }
+        let source_text: String = sf.text.to_string();
+        let comments = sf.comments.clone();
+        let Some(pos) = self.effective_jsdoc_pos_for_node(idx, &comments, &source_text) else {
+            return false;
+        };
+        let Some(jsdoc) = self.try_leading_jsdoc(&comments, pos, &source_text) else {
+            return false;
+        };
+        Self::extract_jsdoc_type_expression(&jsdoc).is_some()
     }
 
     /// Build a quick partial type from a class's declared members without

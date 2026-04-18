@@ -1400,6 +1400,7 @@ pub(super) fn collect_diagnostics(
                     &file.file_name,
                     source.text.as_ref(),
                     &mut file_diagnostics,
+                    options.emit_declarations && options.check_js && is_js,
                 );
             }
 
@@ -1968,6 +1969,7 @@ pub(super) fn check_file_for_parallel<'a>(
             &file.file_name,
             source.text.as_ref(),
             &mut file_diagnostics,
+            compiler_options.emit_declarations && check_js && is_js,
         );
     }
 

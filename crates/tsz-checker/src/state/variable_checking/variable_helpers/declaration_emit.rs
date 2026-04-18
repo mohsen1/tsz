@@ -298,23 +298,33 @@ impl<'a> CheckerState<'a> {
         for &type_id in &referenced_types {
             if let Some(def_id) = lazy_def_id(self.ctx.types, type_id)
                 && let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id)
-                && let Some(info) = self.private_external_module_nameability_info(sym_id)
             {
-                return Some(info);
+                let owner_file_hint = self
+                    .ctx
+                    .definition_store
+                    .get(def_id)
+                    .and_then(|def| def.file_id);
+                if let Some(info) =
+                    self.private_external_module_nameability_info(sym_id, owner_file_hint)
+                {
+                    return Some(info);
+                }
             }
 
             if let Some(shape) = query::object_shape(self.ctx.types, type_id)
                 && let Some(sym_id) = shape.symbol
-                && let Some(info) = self.private_external_module_nameability_info(sym_id)
             {
-                return Some(info);
+                if let Some(info) = self.private_external_module_nameability_info(sym_id, None) {
+                    return Some(info);
+                }
             }
 
             if let Some(shape) = query::callable_shape(self.ctx.types, type_id)
                 && let Some(sym_id) = shape.symbol
-                && let Some(info) = self.private_external_module_nameability_info(sym_id)
             {
-                return Some(info);
+                if let Some(info) = self.private_external_module_nameability_info(sym_id, None) {
+                    return Some(info);
+                }
             }
         }
 
@@ -324,6 +334,7 @@ impl<'a> CheckerState<'a> {
     fn private_external_module_nameability_info(
         &mut self,
         sym_id: SymbolId,
+        owner_file_hint: Option<u32>,
     ) -> Option<(String, String)> {
         use tsz_binder::symbol_flags;
 
@@ -339,11 +350,20 @@ impl<'a> CheckerState<'a> {
         if referenced_name.is_empty() || referenced_name.starts_with("__") {
             return None;
         }
+        // Top-level JSDoc typedef aliases in the current checked-JS file are
+        // declaration-emitted (and can be lifted to exported aliases when needed),
+        // so they are nameable and must not trigger TS9006.
+        if self.file_has_jsdoc_typedef_named(self.ctx.current_file_idx, &referenced_name) {
+            return None;
+        }
 
-        let Some(file_idx) = self
-            .ctx
-            .resolve_symbol_file_index(resolved_sym_id)
-            .map(|idx| idx as u32)
+        let Some(file_idx) = owner_file_hint
+            .filter(|idx| *idx != u32::MAX)
+            .or_else(|| {
+                self.ctx
+                    .resolve_symbol_file_index(resolved_sym_id)
+                    .map(|idx| idx as u32)
+            })
             .or_else(|| {
                 self.symbol_decl_file_idx(resolved_sym_id)
                     .filter(|&idx| idx != u32::MAX)
@@ -359,14 +379,34 @@ impl<'a> CheckerState<'a> {
                     })
                 })
             })
+            .or_else(|| self.find_external_private_symbol_owner_file(&referenced_name))
         else {
             return None;
         };
-        if file_idx == u32::MAX || file_idx == self.ctx.current_file_idx as u32 {
+        if file_idx == self.ctx.current_file_idx as u32 {
             return None;
         }
 
         let target_binder = self.ctx.get_binder_for_file(file_idx as usize)?;
+        let target_sym_id = if target_binder
+            .get_symbol(resolved_sym_id)
+            .is_some_and(|sym| sym.escaped_name == referenced_name)
+        {
+            resolved_sym_id
+        } else if let Some(sym_id) = target_binder.file_locals.get(&referenced_name) {
+            sym_id
+        } else {
+            target_binder
+                .get_symbols()
+                .find_all_by_name(&referenced_name)
+                .iter()
+                .find_map(|candidate_id| {
+                    target_binder
+                        .get_symbol(*candidate_id)
+                        .is_some_and(|sym| sym.escaped_name == referenced_name)
+                        .then_some(*candidate_id)
+                })?
+        };
         if !target_binder.is_external_module() {
             return None;
         }
@@ -416,7 +456,10 @@ impl<'a> CheckerState<'a> {
                 .get(key)
                 .is_some_and(|exports| {
                     exports.iter().any(|(_, &export_sym_id)| {
-                        export_sym_id == resolved_sym_id
+                        export_sym_id == target_sym_id
+                            || export_sym_id == resolved_sym_id
+                            || target_binder.resolve_import_symbol(export_sym_id)
+                                == Some(target_sym_id)
                             || target_binder.resolve_import_symbol(export_sym_id)
                                 == Some(resolved_sym_id)
                             || self.ctx.binder.resolve_import_symbol(export_sym_id)
@@ -427,6 +470,49 @@ impl<'a> CheckerState<'a> {
                 })
         });
         if is_exported_from_target {
+            return None;
+        }
+
+        // `export = C` modules can expose additional type members through the export=
+        // symbol's namespace surface (e.g. `import("./mod").Member`). Those members are
+        // nameable from consumers and must not trigger TS9006 private-name diagnostics.
+        let is_exported_via_export_equals_namespace = export_keys.iter().any(|key| {
+            let Some(exports) = target_binder.module_exports.get(key) else {
+                return false;
+            };
+            let Some(export_equals_sym_id) = exports.get("export=") else {
+                return false;
+            };
+
+            let matches_resolved_symbol = |candidate_sym_id| {
+                candidate_sym_id == resolved_sym_id
+                    || target_binder.resolve_import_symbol(candidate_sym_id)
+                        == Some(resolved_sym_id)
+                    || self.ctx.binder.resolve_import_symbol(candidate_sym_id)
+                        == Some(resolved_sym_id)
+                    || self.resolve_alias_symbol(candidate_sym_id, &mut Vec::new())
+                        == Some(resolved_sym_id)
+            };
+
+            if matches_resolved_symbol(export_equals_sym_id) {
+                return true;
+            }
+
+            let mut candidate_member_ids = Vec::new();
+            if let Some(export_equals_symbol) = target_binder.get_symbol(export_equals_sym_id) {
+                if let Some(ns_exports) = &export_equals_symbol.exports {
+                    candidate_member_ids.extend(ns_exports.iter().map(|(_, &sym_id)| sym_id));
+                }
+                if let Some(ns_members) = &export_equals_symbol.members {
+                    candidate_member_ids.extend(ns_members.iter().map(|(_, &sym_id)| sym_id));
+                }
+            }
+
+            candidate_member_ids
+                .into_iter()
+                .any(matches_resolved_symbol)
+        });
+        if is_exported_via_export_equals_namespace {
             return None;
         }
 
@@ -455,8 +541,8 @@ impl<'a> CheckerState<'a> {
                     return false;
                 }
 
-                local_sym_id == resolved_sym_id
-                    || self.ctx.binder.resolve_import_symbol(local_sym_id) == Some(resolved_sym_id)
+                local_sym_id == target_sym_id
+                    || self.ctx.binder.resolve_import_symbol(local_sym_id) == Some(target_sym_id)
             });
         if locally_nameable {
             return None;
@@ -464,6 +550,39 @@ impl<'a> CheckerState<'a> {
 
         let module_specifier = self.module_specifier_for_file(file_idx)?;
         Some((referenced_name, module_specifier))
+    }
+
+    fn find_external_private_symbol_owner_file(&self, symbol_name: &str) -> Option<u32> {
+        let all_binders = self.ctx.all_binders.as_ref()?;
+        for (file_idx, binder) in all_binders.iter().enumerate() {
+            if file_idx == self.ctx.current_file_idx || !binder.is_external_module() {
+                continue;
+            }
+
+            let target_file_name = self
+                .ctx
+                .get_arena_for_file(file_idx as u32)
+                .source_files
+                .first()
+                .map(|sf| sf.file_name.clone())
+                .unwrap_or_default();
+
+            let candidates = binder.get_symbols().find_all_by_name(symbol_name);
+            let has_private_candidate = candidates.iter().any(|candidate_id| {
+                binder
+                    .get_symbol(*candidate_id)
+                    .is_some_and(|sym| sym.escaped_name == symbol_name)
+                    && !binder
+                        .module_exports
+                        .get(&target_file_name)
+                        .is_some_and(|exports| exports.iter().any(|(_, &sid)| sid == *candidate_id))
+            });
+            if has_private_candidate {
+                return Some(file_idx as u32);
+            }
+        }
+
+        None
     }
 
     fn find_non_portable_symbol_reference(&self, sym_id: SymbolId) -> Option<(String, String)> {

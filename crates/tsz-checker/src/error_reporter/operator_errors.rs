@@ -53,12 +53,25 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // For the `+` operator, tsc returns `any` early when either operand is `any`
-        // without performing null checks. For other operators (arithmetic, bitwise,
-        // relational), tsc still calls checkNonNullExpression per-operand, so
-        // null/undefined should be flagged with TS18050 even when the other side is `any`.
+        // For `+`, tsc generally bails out on nullish checks when one side is `any`.
+        // But in chained arithmetic like `a + b + c`, the left side can become `any`
+        // after reporting on `b`, and tsc still reports on `c`.
         if (left_type == TypeId::ANY || right_type == TypeId::ANY) && op == "+" {
-            return false;
+            let left_any_from_nested_binary = left_type == TypeId::ANY
+                && self
+                    .ctx
+                    .arena
+                    .get(left_idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::BINARY_EXPRESSION);
+            let right_any_from_nested_binary = right_type == TypeId::ANY
+                && self
+                    .ctx
+                    .arena
+                    .get(right_idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::BINARY_EXPRESSION);
+            if !left_any_from_nested_binary && !right_any_from_nested_binary {
+                return false;
+            }
         }
 
         // Without strictNullChecks, null/undefined are in every type's domain (assignable

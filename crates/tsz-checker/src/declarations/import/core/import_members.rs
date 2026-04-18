@@ -320,6 +320,7 @@ impl<'a> CheckerState<'a> {
             && let default_name_idx = clause.name
             && let Some(default_name) = self.get_identifier_text_from_idx(default_name_idx)
             && (self.local_import_binding_is_type_only(&default_name)
+                || self.import_local_binding_is_type_only(default_name_idx)
                 || self.import_binding_is_type_only(module_name, "default"))
             && self.should_report_js_type_only_import_diagnostic(clause.is_type_only, false)
         {
@@ -374,34 +375,8 @@ impl<'a> CheckerState<'a> {
                     };
 
                     let import_name = &identifier.escaped_text;
-                    let local_name = self.get_identifier_text_from_idx(specifier.name);
 
                     if import_name == "default" {
-                        continue;
-                    }
-
-                    if self.import_binding_is_type_only(module_name, import_name)
-                        || local_name
-                            .as_deref()
-                            .is_some_and(|name| self.local_import_binding_is_type_only(name))
-                    {
-                        self.ctx.type_only_nodes.insert(*element_idx);
-                        let specifier_is_type_only = self
-                            .ctx
-                            .arena
-                            .get(*element_idx)
-                            .and_then(|n| self.ctx.arena.get_specifier(n))
-                            .is_some_and(|s| s.is_type_only);
-                        if self.should_report_js_type_only_import_diagnostic(
-                            clause.is_type_only,
-                            specifier_is_type_only,
-                        ) {
-                            self.emit_js_type_only_import_diagnostic(
-                                *element_idx,
-                                import_name,
-                                module_name,
-                            );
-                        }
                         continue;
                     }
 
@@ -720,6 +695,14 @@ impl<'a> CheckerState<'a> {
         import: &tsz_parser::parser::node::ImportDeclData,
         module_name: &str,
     ) {
+        self.check_js_type_only_imports_after_import_validation(import, module_name);
+    }
+
+    pub(crate) fn check_js_type_only_imports_after_import_validation(
+        &mut self,
+        import: &tsz_parser::parser::node::ImportDeclData,
+        module_name: &str,
+    ) {
         if !self.is_js_file() || !self.ctx.should_resolve_jsdoc() {
             return;
         }
@@ -737,7 +720,8 @@ impl<'a> CheckerState<'a> {
         if clause.name.is_some()
             && let default_name_idx = clause.name
             && let Some(default_name) = self.get_identifier_text_from_idx(default_name_idx)
-            && self.import_binding_is_type_only(module_name, "default")
+            && (self.import_binding_is_type_only(module_name, "default")
+                || self.import_local_binding_is_type_only(default_name_idx))
             && self.should_report_js_type_only_import_diagnostic(clause.is_type_only, false)
         {
             self.emit_js_type_only_import_diagnostic(default_name_idx, &default_name, module_name);
@@ -771,7 +755,8 @@ impl<'a> CheckerState<'a> {
             };
 
             let specifier_is_type_only = specifier.is_type_only;
-            if self.import_binding_is_type_only(module_name, &import_name)
+            if (self.import_binding_is_type_only(module_name, &import_name)
+                || self.import_local_binding_is_type_only(specifier.name))
                 && self.should_report_js_type_only_import_diagnostic(
                     clause.is_type_only,
                     specifier_is_type_only,
@@ -781,44 +766,347 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
-
     fn import_binding_is_type_only(&self, module_name: &str, import_name: &str) -> bool {
-        self.is_import_specifier_type_only(module_name, import_name)
+        if self.is_import_specifier_type_only(module_name, import_name)
             || self.is_export_type_only_across_binders(module_name, import_name)
             || (import_name == "default" && self.module_default_export_is_type_only(module_name))
             || (import_name == "default" && self.is_module_export_equals_type_only(module_name))
-            || self.module_has_jsdoc_namespace_named(module_name, import_name)
-    }
+            || self.resolved_import_symbol_is_type_only(module_name, import_name)
+        {
+            return true;
+        }
 
-    fn module_has_jsdoc_namespace_named(&self, module_name: &str, export_name: &str) -> bool {
-        let Some(target_idx) = self
-            .ctx
-            .resolve_import_target_from_file(self.ctx.current_file_idx, module_name)
-            .or_else(|| self.ctx.resolve_import_target(module_name))
+        let normalized = module_name.trim_matches('"').trim_matches('\'');
+        let Some(target_idx) = self.ctx.resolve_import_target(normalized) else {
+            return false;
+        };
+
+        if self.file_has_jsdoc_typedef_namespace_root(target_idx, import_name)
+            || self.declaration_file_direct_export_is_type_only(target_idx, import_name)
+        {
+            return true;
+        }
+
+        let mut visited = rustc_hash::FxHashSet::default();
+        let Some((sym_id, owner_idx)) =
+            self.resolve_export_in_file(target_idx, import_name, &mut visited)
         else {
             return false;
         };
-        let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
-        target_arena.source_files.iter().any(|source_file| {
-            source_file.comments.iter().any(|comment| {
-                let content = source_file
-                    .text
-                    .get(comment.pos as usize..comment.end as usize)
-                    .unwrap_or("");
-                content.lines().any(|line| {
-                    let line = line.trim();
-                    let line = line.trim_start_matches('*').trim();
-                    if let Some(rest) = line.strip_prefix("@namespace") {
-                        rest.trim()
-                            .split(|c: char| c.is_whitespace() || c == '{' || c == '}')
-                            .find(|segment| !segment.is_empty())
-                            .is_some_and(|name| name == export_name)
-                    } else {
-                        false
+        let Some(owner_binder) = self.ctx.get_binder_for_file(owner_idx) else {
+            return false;
+        };
+
+        self.import_member_binder_symbol_is_type_only(owner_binder, sym_id)
+    }
+
+    fn import_local_binding_is_type_only(&self, local_name_idx: NodeIndex) -> bool {
+        use tsz_binder::symbol_flags;
+
+        let Some(sym_id) = self.resolve_identifier_symbol(local_name_idx) else {
+            return false;
+        };
+        let lib_binders = self.get_lib_binders();
+        let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+            return false;
+        };
+
+        if symbol.is_type_only {
+            return true;
+        }
+
+        if (symbol.flags & symbol_flags::ALIAS) != 0 {
+            let mut visited = Vec::new();
+            if let Some(resolved) = self.resolve_alias_symbol(sym_id, &mut visited) {
+                return self.symbol_member_is_type_only(resolved, None);
+            }
+        }
+
+        let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
+        let has_value = (symbol.flags & symbol_flags::VALUE) != 0;
+        has_type && !has_value
+    }
+
+    fn resolved_import_symbol_is_type_only(&self, module_name: &str, import_name: &str) -> bool {
+        use tsz_binder::symbol_flags;
+
+        const PURE_TYPE: u32 = symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS;
+        const VALUE: u32 = symbol_flags::VARIABLE
+            | symbol_flags::FUNCTION
+            | symbol_flags::CLASS
+            | symbol_flags::ENUM
+            | symbol_flags::ENUM_MEMBER
+            | symbol_flags::VALUE_MODULE;
+
+        let normalized = module_name.trim_matches('"').trim_matches('\'');
+        let Some(target_idx) = self.ctx.resolve_import_target(normalized) else {
+            return false;
+        };
+        let Some(target_binder) = self.ctx.get_binder_for_file(target_idx) else {
+            return false;
+        };
+
+        if self.file_has_jsdoc_typedef_namespace_root(target_idx, import_name) {
+            return true;
+        }
+        if self.declaration_file_direct_export_is_type_only(target_idx, import_name) {
+            return true;
+        }
+
+        let target_file_name = self
+            .ctx
+            .get_arena_for_file(target_idx as u32)
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())
+            .unwrap_or_default();
+
+        let mut resolved = None;
+        let mut lookup_keys = vec![
+            module_name.to_string(),
+            normalized.to_string(),
+            target_file_name.clone(),
+        ];
+        lookup_keys.extend(crate::module_resolution::module_specifier_candidates(
+            module_name,
+        ));
+        lookup_keys.extend(crate::module_resolution::module_specifier_candidates(
+            normalized,
+        ));
+        if !target_file_name.is_empty() {
+            lookup_keys.extend(crate::module_resolution::module_specifier_candidates(
+                &target_file_name,
+            ));
+        }
+
+        for key in lookup_keys {
+            if key.is_empty() {
+                continue;
+            }
+            if let Some(result) =
+                target_binder.resolve_import_with_reexports_type_only(&key, import_name)
+            {
+                resolved = Some(result);
+                break;
+            }
+        }
+        let (sym_id, path_is_type_only) = if let Some(result) = resolved {
+            result
+        } else {
+            let mut visited = rustc_hash::FxHashSet::default();
+            let Some((resolved_sym_id, owner_idx)) =
+                self.resolve_export_in_file(target_idx, import_name, &mut visited)
+            else {
+                return false;
+            };
+            let Some(owner_binder) = self.ctx.get_binder_for_file(owner_idx) else {
+                return false;
+            };
+            return self.import_member_binder_symbol_is_type_only(owner_binder, resolved_sym_id);
+        };
+        if path_is_type_only {
+            return true;
+        }
+
+        let lib_binders = self.get_lib_binders();
+        let Some(symbol) = target_binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+            return false;
+        };
+        let flags = symbol.flags;
+
+        symbol.is_type_only
+            || ((flags & PURE_TYPE) != 0 && (flags & VALUE) == 0)
+            || ((flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
+                && !self.symbol_has_runtime_value_in_binder(target_binder, sym_id))
+            || self.declaration_file_direct_export_is_type_only(target_idx, import_name)
+    }
+
+    fn declaration_file_direct_export_is_type_only(
+        &self,
+        target_idx: usize,
+        import_name: &str,
+    ) -> bool {
+        use tsz_binder::symbol_flags;
+
+        let arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+        if !source_file.is_declaration_file {
+            return false;
+        }
+        let target_binder = self.ctx.get_binder_for_file(target_idx);
+
+        let mut has_named_type = false;
+        let mut has_named_value = false;
+        let mut has_default_type = false;
+        let mut has_default_value = false;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(node) = arena.get(stmt_idx) else {
+                continue;
+            };
+
+            if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                let Some(export_decl) = arena.get_export_decl(node) else {
+                    continue;
+                };
+                let Some(clause_node) = arena.get(export_decl.export_clause) else {
+                    continue;
+                };
+
+                if export_decl.is_default_export {
+                    match clause_node.kind {
+                        k if k == syntax_kind_ext::INTERFACE_DECLARATION
+                            || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION =>
+                        {
+                            has_default_type = true;
+                        }
+                        k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                            || k == syntax_kind_ext::CLASS_DECLARATION
+                            || k == syntax_kind_ext::ENUM_DECLARATION
+                            || k == syntax_kind_ext::VARIABLE_STATEMENT =>
+                        {
+                            has_default_value = true;
+                        }
+                        k if k == SyntaxKind::Identifier as u16 => {
+                            if let Some(ident) = arena.get_identifier(clause_node)
+                                && let Some(binder) = target_binder
+                                && let Some(sym_id) = binder.file_locals.get(&ident.escaped_text)
+                                && let Some(sym) = binder.get_symbol(sym_id)
+                            {
+                                let has_type = (sym.flags & symbol_flags::TYPE) != 0;
+                                let has_value = (sym.flags & symbol_flags::VALUE) != 0;
+                                has_default_type |= has_type && !has_value;
+                                has_default_value |= has_value;
+                            }
+                        }
+                        _ => {}
                     }
-                })
-            })
-        })
+                }
+
+                continue;
+            }
+
+            let modifiers = self.get_declaration_modifiers(node);
+            let is_export = arena.has_modifier_ref(modifiers, SyntaxKind::ExportKeyword);
+            let is_default = arena.has_modifier_ref(modifiers, SyntaxKind::DefaultKeyword);
+            if !is_export && !is_default {
+                continue;
+            }
+
+            match node.kind {
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                    if let Some(iface) = arena.get_interface(node)
+                        && let Some(name) = self.get_identifier_text_from_idx(iface.name)
+                    {
+                        if name == import_name {
+                            has_named_type = true;
+                        }
+                        if is_default {
+                            has_default_type = true;
+                        }
+                    }
+                }
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                    if let Some(ty_alias) = arena.get_type_alias(node)
+                        && let Some(name) = self.get_identifier_text_from_idx(ty_alias.name)
+                    {
+                        if name == import_name {
+                            has_named_type = true;
+                        }
+                        if is_default {
+                            has_default_type = true;
+                        }
+                    }
+                }
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::ENUM_DECLARATION =>
+                {
+                    if let Some(name) = match node.kind {
+                        k if k == syntax_kind_ext::FUNCTION_DECLARATION => arena
+                            .get_function(node)
+                            .and_then(|func| self.get_identifier_text_from_idx(func.name)),
+                        k if k == syntax_kind_ext::CLASS_DECLARATION => arena
+                            .get_class(node)
+                            .and_then(|class| self.get_identifier_text_from_idx(class.name)),
+                        _ => arena.get_enum(node).and_then(|enum_decl| {
+                            self.get_identifier_text_from_idx(enum_decl.name)
+                        }),
+                    } {
+                        if name == import_name {
+                            has_named_value = true;
+                        }
+                    }
+                    if is_default {
+                        has_default_value = true;
+                    }
+                }
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                    if let Some(var_stmt) = arena.get_variable(node) {
+                        for &decl_list_idx in &var_stmt.declarations.nodes {
+                            let Some(decl_list_node) = arena.get(decl_list_idx) else {
+                                continue;
+                            };
+                            let Some(decl_list) = arena.get_variable(decl_list_node) else {
+                                continue;
+                            };
+                            for &decl_idx in &decl_list.declarations.nodes {
+                                let Some(decl_node) = arena.get(decl_idx) else {
+                                    continue;
+                                };
+                                let Some(var_decl) = arena.get_variable_declaration(decl_node)
+                                else {
+                                    continue;
+                                };
+                                if let Some(name) = self.get_identifier_text_from_idx(var_decl.name)
+                                    && name == import_name
+                                {
+                                    has_named_value = true;
+                                }
+                            }
+                        }
+                    }
+                    if is_default {
+                        has_default_value = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if import_name == "default" {
+            return has_default_type && !has_default_value;
+        }
+
+        has_named_type && !has_named_value
+    }
+
+    fn import_member_binder_symbol_is_type_only(
+        &self,
+        binder: &tsz_binder::BinderState,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        use tsz_binder::symbol_flags;
+
+        const PURE_TYPE: u32 = symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS;
+        const VALUE: u32 = symbol_flags::VARIABLE
+            | symbol_flags::FUNCTION
+            | symbol_flags::CLASS
+            | symbol_flags::ENUM
+            | symbol_flags::ENUM_MEMBER
+            | symbol_flags::VALUE_MODULE;
+
+        let Some(sym) = binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let flags = sym.flags;
+
+        sym.is_type_only
+            || ((flags & PURE_TYPE) != 0 && (flags & VALUE) == 0)
+            || ((flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
+                && !self.symbol_has_runtime_value_in_binder(binder, sym_id))
     }
 
     fn module_default_export_is_type_only(&self, module_name: &str) -> bool {
@@ -963,6 +1251,14 @@ impl<'a> CheckerState<'a> {
             diagnostic_messages::IS_A_TYPE_AND_CANNOT_BE_IMPORTED_IN_JAVASCRIPT_FILES_USE_IN_A_JSDOC_TYPE_ANNOTAT,
             &[import_name, &quoted_import],
         );
+        let start = self.ctx.arena.get(report_at).map_or(0, |n| n.pos);
+        if self.ctx.diagnostics.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::IS_A_TYPE_AND_CANNOT_BE_IMPORTED_IN_JAVASCRIPT_FILES_USE_IN_A_JSDOC_TYPE_ANNOTAT
+                && diag.start == start
+        }) {
+            return;
+        }
         self.error_at_node(
             report_at,
             &message,

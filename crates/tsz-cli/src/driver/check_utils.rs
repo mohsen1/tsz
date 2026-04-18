@@ -1843,6 +1843,7 @@ pub(super) fn apply_ts_directive_suppression(
     file_name: &str,
     source_text: &str,
     diagnostics: &mut Vec<Diagnostic>,
+    preserve_declaration_jsdoc_name_diagnostics: bool,
 ) {
     let directives = find_ts_directives(source_text);
     if directives.is_empty() {
@@ -1862,6 +1863,27 @@ pub(super) fn apply_ts_directive_suppression(
         for (idx, directive) in directives.iter().enumerate() {
             if diag_line == directive.suppressed_line {
                 directive_used[idx] = true;
+
+                if preserve_declaration_jsdoc_name_diagnostics && matches!(diag.code, 2304 | 2552) {
+                    let line_start = line_starts
+                        .get(diag_line as usize)
+                        .copied()
+                        .unwrap_or_default() as usize;
+                    let line_end = line_starts
+                        .get(diag_line as usize + 1)
+                        .copied()
+                        .unwrap_or(source_text.len() as u32)
+                        as usize;
+                    let line_end = line_end.min(source_text.len());
+                    let line_start = line_start.min(line_end);
+                    let line_text = &source_text[line_start..line_end];
+                    if line_text.contains("@type {") {
+                        // Preserve declaration-emit JSDoc name diagnostics even when a
+                        // preceding directive suppresses source-file checking diagnostics.
+                        return true;
+                    }
+                }
+
                 return false;
             }
         }

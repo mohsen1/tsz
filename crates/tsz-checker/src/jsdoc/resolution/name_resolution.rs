@@ -70,6 +70,7 @@ impl<'a> CheckerState<'a> {
         let factory = self.ctx.types.factory();
         match type_expr {
             "Array" | "array" => Some(factory.array(TypeId::ANY)),
+            "Function" | "function" => self.resolve_jsdoc_global_implicit_any_type("Function"),
             "Object" => {
                 if self.ctx.no_implicit_any() {
                     // When noImplicitAny is true, fall through to normal symbol resolution
@@ -81,7 +82,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             "object" => Some(TypeId::OBJECT),
-            "Promise" => self.resolve_jsdoc_global_implicit_any_type("Promise"),
+            "Promise" | "promise" => self.resolve_jsdoc_global_implicit_any_type("Promise"),
             _ => None,
         }
     }
