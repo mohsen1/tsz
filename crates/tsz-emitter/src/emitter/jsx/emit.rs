@@ -557,27 +557,27 @@ impl<'a> Printer<'a> {
         }
 
         // Namespaced tag name (e.g. `<svg:path>`) -> emit as quoted string `"svg:path"`
-        if node.kind == syntax_kind_ext::JSX_NAMESPACED_NAME {
-            if let Some(ns) = self.arena.get_jsx_namespaced_name(node) {
-                let ns_text = self
-                    .arena
-                    .get(ns.namespace)
-                    .and_then(|n| self.arena.get_identifier(n))
-                    .map(|i| self.arena.resolve_identifier_text(i))
-                    .unwrap_or("");
-                let name_text = self
-                    .arena
-                    .get(ns.name)
-                    .and_then(|n| self.arena.get_identifier(n))
-                    .map(|i| self.arena.resolve_identifier_text(i))
-                    .unwrap_or("");
-                self.write("\"");
-                self.write(ns_text);
-                self.write(":");
-                self.write(name_text);
-                self.write("\"");
-                return;
-            }
+        if node.kind == syntax_kind_ext::JSX_NAMESPACED_NAME
+            && let Some(ns) = self.arena.get_jsx_namespaced_name(node)
+        {
+            let ns_text = self
+                .arena
+                .get(ns.namespace)
+                .and_then(|n| self.arena.get_identifier(n))
+                .map(|i| self.arena.resolve_identifier_text(i))
+                .unwrap_or("");
+            let name_text = self
+                .arena
+                .get(ns.name)
+                .and_then(|n| self.arena.get_identifier(n))
+                .map(|i| self.arena.resolve_identifier_text(i))
+                .unwrap_or("");
+            self.write("\"");
+            self.write(ns_text);
+            self.write(":");
+            self.write(name_text);
+            self.write("\"");
+            return;
         }
 
         // Property access (e.g. Foo.Bar) or other expression -- emit as-is

@@ -3,6 +3,17 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
+/// Prototype-derived members collected from sibling statements surrounding a
+/// constructor function. `method_bindings` are `FuncName.prototype.X = ...`
+/// assignments; `this_props` are `this.X = ...` assignments inside prototype
+/// method bodies; `has_evidence` is `true` when any prototype pattern was
+/// observed (used to decide whether to synthesize a JS class type).
+pub(crate) struct PrototypeMembers {
+    pub method_bindings: Vec<(tsz_common::interner::Atom, tsz_solver::PropertyInfo)>,
+    pub this_props: Vec<(tsz_common::interner::Atom, tsz_solver::PropertyInfo)>,
+    pub has_evidence: bool,
+}
+
 impl<'a> CheckerState<'a> {
     fn shallow_object_literal_method_type(&mut self, method_idx: NodeIndex) -> TypeId {
         use tsz_solver::{CallSignature, CallableShape, ParamInfo};
@@ -356,17 +367,12 @@ impl<'a> CheckerState<'a> {
     /// Returns two sets:
     /// - Prototype method bindings (`method_name` -> `method_type`) to be added as instance properties
     /// - `this.prop` assignments from inside prototype method bodies (typed as T | undefined)
-    #[allow(clippy::type_complexity)]
     pub(crate) fn collect_prototype_members_and_this_properties(
         &mut self,
         func_decl_idx: NodeIndex,
         func_name: &str,
         parent_sym: tsz_binder::SymbolId,
-    ) -> (
-        Vec<(tsz_common::interner::Atom, tsz_solver::PropertyInfo)>,
-        Vec<(tsz_common::interner::Atom, tsz_solver::PropertyInfo)>,
-        bool,
-    ) {
+    ) -> PrototypeMembers {
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
 
@@ -381,7 +387,13 @@ impl<'a> CheckerState<'a> {
             .map_or(NodeIndex::NONE, |e| e.parent);
         let mut parent_node = match self.ctx.arena.get(parent_idx) {
             Some(node) => node,
-            None => return (method_bindings, this_props, has_prototype_evidence),
+            None => {
+                return PrototypeMembers {
+                    method_bindings,
+                    this_props,
+                    has_evidence: has_prototype_evidence,
+                };
+            }
         };
 
         if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
@@ -403,7 +415,11 @@ impl<'a> CheckerState<'a> {
         } else if let Some(source) = self.ctx.arena.get_source_file(parent_node) {
             source.statements.nodes.clone()
         } else {
-            return (method_bindings, this_props, has_prototype_evidence);
+            return PrototypeMembers {
+                method_bindings,
+                this_props,
+                has_evidence: has_prototype_evidence,
+            };
         };
 
         for &stmt_idx in &siblings {
@@ -578,7 +594,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        (method_bindings, this_props, has_prototype_evidence)
+        PrototypeMembers {
+            method_bindings,
+            this_props,
+            has_evidence: has_prototype_evidence,
+        }
     }
 
     pub(crate) fn collect_define_property_bindings_on_function_prototype(

@@ -1282,6 +1282,14 @@ impl<'a> CheckerState<'a> {
                                             == diagnostic_codes::THIS_KIND_OF_EXPRESSION_IS_ALWAYS_TRUTHY
                                         || diag.code
                                             == diagnostic_codes::THIS_KIND_OF_EXPRESSION_IS_ALWAYS_FALSY
+                                        // TS7006/TS7019 (parameter implicitly has 'any' type) is
+                                        // a semantic fact about the parameter when the contextual
+                                        // callable signature has fewer parameters than the callback.
+                                        // Preserve these since re-typing won't change the fact.
+                                        || diag.code
+                                            == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+                                        || diag.code
+                                            == diagnostic_codes::REST_PARAMETER_IMPLICITLY_HAS_AN_ANY_TYPE
                                 });
                                 self.ctx.rebuild_emitted_diagnostics_from_current();
                                 self.compute_single_call_argument_type(

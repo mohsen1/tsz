@@ -434,13 +434,13 @@ impl<'a> AsyncES5Transformer<'a> {
         let Some(node) = self.arena.get(idx) else {
             return String::new();
         };
-        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            if let Some(qn) = self.arena.get_qualified_name(node) {
-                let left = self.qualified_name_to_expression(qn.left);
-                let right =
-                    crate::transforms::emit_utils::identifier_text_or_empty(self.arena, qn.right);
-                return format!("{left}.{right}");
-            }
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME
+            && let Some(qn) = self.arena.get_qualified_name(node)
+        {
+            let left = self.qualified_name_to_expression(qn.left);
+            let right =
+                crate::transforms::emit_utils::identifier_text_or_empty(self.arena, qn.right);
+            return format!("{left}.{right}");
         }
         crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
     }
@@ -809,61 +809,61 @@ impl<'a> AsyncES5Transformer<'a> {
         {
             return None;
         }
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(bin) = self.arena.get_binary_expr(node) {
-                if let Some(found) = self.find_suspension_expression(bin.left) {
-                    return Some(found);
-                }
-                return self.find_suspension_expression(bin.right);
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(bin) = self.arena.get_binary_expr(node)
+        {
+            if let Some(found) = self.find_suspension_expression(bin.left) {
+                return Some(found);
             }
+            return self.find_suspension_expression(bin.right);
         }
-        if node.kind == syntax_kind_ext::CALL_EXPRESSION {
-            if let Some(call) = self.arena.get_call_expr(node) {
-                if let Some(found) = self.find_suspension_expression(call.expression) {
-                    return Some(found);
-                }
-                if let Some(args) = &call.arguments {
-                    for &arg_idx in &args.nodes {
-                        if let Some(found) = self.find_suspension_expression(arg_idx) {
-                            return Some(found);
-                        }
+        if node.kind == syntax_kind_ext::CALL_EXPRESSION
+            && let Some(call) = self.arena.get_call_expr(node)
+        {
+            if let Some(found) = self.find_suspension_expression(call.expression) {
+                return Some(found);
+            }
+            if let Some(args) = &call.arguments {
+                for &arg_idx in &args.nodes {
+                    if let Some(found) = self.find_suspension_expression(arg_idx) {
+                        return Some(found);
                     }
                 }
             }
         }
-        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            if let Some(access) = self.arena.get_access_expr(node) {
-                return self.find_suspension_expression(access.expression);
-            }
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(node)
+        {
+            return self.find_suspension_expression(access.expression);
         }
-        if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-            if let Some(access) = self.arena.get_access_expr(node) {
-                if let Some(found) = self.find_suspension_expression(access.expression) {
-                    return Some(found);
-                }
-                return self.find_suspension_expression(access.name_or_argument);
+        if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(node)
+        {
+            if let Some(found) = self.find_suspension_expression(access.expression) {
+                return Some(found);
             }
+            return self.find_suspension_expression(access.name_or_argument);
         }
-        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            if let Some(paren) = self.arena.get_parenthesized(node) {
-                return self.find_suspension_expression(paren.expression);
-            }
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.arena.get_parenthesized(node)
+        {
+            return self.find_suspension_expression(paren.expression);
         }
-        if node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION {
-            if let Some(cond) = self.arena.get_conditional_expr(node) {
-                if let Some(found) = self.find_suspension_expression(cond.condition) {
-                    return Some(found);
-                }
-                if let Some(found) = self.find_suspension_expression(cond.when_true) {
-                    return Some(found);
-                }
-                return self.find_suspension_expression(cond.when_false);
+        if node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+            && let Some(cond) = self.arena.get_conditional_expr(node)
+        {
+            if let Some(found) = self.find_suspension_expression(cond.condition) {
+                return Some(found);
             }
+            if let Some(found) = self.find_suspension_expression(cond.when_true) {
+                return Some(found);
+            }
+            return self.find_suspension_expression(cond.when_false);
         }
-        if node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
-            if let Some(unary) = self.arena.get_unary_expr(node) {
-                return self.find_suspension_expression(unary.operand);
-            }
+        if node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            && let Some(unary) = self.arena.get_unary_expr(node)
+        {
+            return self.find_suspension_expression(unary.operand);
         }
         None
     }

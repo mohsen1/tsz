@@ -163,10 +163,10 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
         // Direct node-to-symbol lookup
-        if let Some(&sym_id) = binder.node_symbols.get(&decl_idx.0) {
-            if used.contains_key(&sym_id) {
-                return true;
-            }
+        if let Some(&sym_id) = binder.node_symbols.get(&decl_idx.0)
+            && used.contains_key(&sym_id)
+        {
+            return true;
         }
         // The binder maps declaration NAME nodes (not the declaration
         // node itself) into node_symbols.  For class / function /
@@ -174,20 +174,19 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(decl_node) = self.arena.get(decl_idx) else {
             return false;
         };
-        if let Some(name_ni) = self.get_declaration_name_idx(decl_node) {
-            if let Some(&sym_id) = binder.node_symbols.get(&name_ni.0) {
-                if used.contains_key(&sym_id) {
-                    return true;
-                }
-            }
+        if let Some(name_ni) = self.get_declaration_name_idx(decl_node)
+            && let Some(&sym_id) = binder.node_symbols.get(&name_ni.0)
+            && used.contains_key(&sym_id)
+        {
+            return true;
         }
         // For import-equals declarations extract the name from the
         // import clause since the declaration node is not an identifier.
         let import_clause_idx = if let Some(import_eq) = self.arena.get_import_decl(decl_node) {
-            if let Some(&clause_sym) = binder.node_symbols.get(&import_eq.import_clause.0) {
-                if used.contains_key(&clause_sym) {
-                    return true;
-                }
+            if let Some(&clause_sym) = binder.node_symbols.get(&import_eq.import_clause.0)
+                && used.contains_key(&clause_sym)
+            {
+                return true;
             }
             Some(import_eq.import_clause)
         } else {
@@ -274,10 +273,10 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(sym_id) = binder.file_locals.get(&name_ident.escaped_text) {
             return used.contains_key(&sym_id);
         }
-        if let Some(root_scope) = binder.scopes.first() {
-            if let Some(scope_sym_id) = root_scope.table.get(&name_ident.escaped_text) {
-                return used.contains_key(&scope_sym_id);
-            }
+        if let Some(root_scope) = binder.scopes.first()
+            && let Some(scope_sym_id) = root_scope.table.get(&name_ident.escaped_text)
+        {
+            return used.contains_key(&scope_sym_id);
         }
         false
     }

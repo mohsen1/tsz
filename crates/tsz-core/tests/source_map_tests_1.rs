@@ -17033,7 +17033,6 @@ fn test_sourcemap_for_loop_and_if_else() {
 
 /// Compare tsz source map output against tsc's baseline for switch statements.
 #[test]
-#[allow(clippy::absurd_extreme_comparisons)]
 fn test_sourcemap_parity_switch() {
     let source = "var x = 10;\n\
                    switch (x) {\n\
@@ -17116,7 +17115,7 @@ fn test_sourcemap_parity_switch() {
         msg.push_str(&format!("\nOutput:\n{output}"));
         panic!("{msg}");
     }
-    if num_missing < EXPECTED_MISSING {
+    if num_missing.cmp(&EXPECTED_MISSING) == std::cmp::Ordering::Less {
         panic!(
             "IMPROVEMENT: only {num_missing} tsc mappings missing (was {EXPECTED_MISSING}). \
              Update EXPECTED_MISSING to {num_missing}."
@@ -17126,7 +17125,6 @@ fn test_sourcemap_parity_switch() {
 
 /// Compare tsz source map output against tsc's baseline for while loops.
 #[test]
-#[allow(clippy::absurd_extreme_comparisons)]
 fn test_sourcemap_parity_while() {
     let source = "var a = 10;\n\
                    while (a == 10) {\n\
@@ -17197,7 +17195,7 @@ fn test_sourcemap_parity_while() {
         msg.push_str(&format!("\nOutput:\n{output}"));
         panic!("{msg}");
     }
-    if num_missing < EXPECTED_MISSING {
+    if num_missing.cmp(&EXPECTED_MISSING) == std::cmp::Ordering::Less {
         panic!(
             "IMPROVEMENT: only {num_missing} tsc mappings missing (was {EXPECTED_MISSING}). \
              Update EXPECTED_MISSING to {num_missing}."
@@ -17207,7 +17205,6 @@ fn test_sourcemap_parity_while() {
 
 /// Compare tsz source map output against tsc's baseline for do-while loops.
 #[test]
-#[allow(clippy::absurd_extreme_comparisons)]
 fn test_sourcemap_parity_do_while() {
     let source = "var i = 0;\n\
                    do\n\
@@ -17282,7 +17279,7 @@ fn test_sourcemap_parity_do_while() {
         msg.push_str(&format!("\nOutput:\n{output}"));
         panic!("{msg}");
     }
-    if num_missing < EXPECTED_MISSING {
+    if num_missing.cmp(&EXPECTED_MISSING) == std::cmp::Ordering::Less {
         panic!(
             "IMPROVEMENT: only {num_missing} tsc mappings missing (was {EXPECTED_MISSING}). \
              Update EXPECTED_MISSING to {num_missing}."
@@ -17292,7 +17289,6 @@ fn test_sourcemap_parity_do_while() {
 
 /// Compare tsz source map output against tsc's baseline for if/else.
 #[test]
-#[allow(clippy::absurd_extreme_comparisons)]
 fn test_sourcemap_parity_if_else() {
     // Source from sourceMapValidationIfElse.ts
     let source = "var i = 10;\n\
@@ -17375,7 +17371,7 @@ fn test_sourcemap_parity_if_else() {
         }
         panic!("{msg}");
     }
-    if num_missing < EXPECTED_MISSING {
+    if num_missing.cmp(&EXPECTED_MISSING) == std::cmp::Ordering::Less {
         panic!(
             "IMPROVEMENT: only {num_missing} tsc mappings missing (was {EXPECTED_MISSING}). \
              Update EXPECTED_MISSING to {num_missing}."
@@ -17471,7 +17467,7 @@ fn test_sourcemap_parity_try_catch_finally() {
         }
         panic!("{msg}");
     }
-    if num_missing < EXPECTED_MISSING {
+    if num_missing.cmp(&EXPECTED_MISSING) == std::cmp::Ordering::Less {
         panic!(
             "IMPROVEMENT: only {num_missing} tsc mappings missing (was {EXPECTED_MISSING}). \
              Update EXPECTED_MISSING to {num_missing}."
@@ -17561,7 +17557,7 @@ fn test_sourcemap_parity_computed_property_names_es6() {
         msg.push_str(&format!("\nOutput:\n{output}"));
         panic!("{msg}");
     }
-    if num_missing < EXPECTED_MISSING {
+    if num_missing.cmp(&EXPECTED_MISSING) == std::cmp::Ordering::Less {
         panic!(
             "IMPROVEMENT: only {num_missing} tsc mappings missing (was {EXPECTED_MISSING}). \
              Update EXPECTED_MISSING to {num_missing}."
@@ -17650,7 +17646,7 @@ fn test_sourcemap_parity_for_in() {
         }
         panic!("{msg}");
     }
-    if num_missing < EXPECTED_MISSING {
+    if num_missing.cmp(&EXPECTED_MISSING) == std::cmp::Ordering::Less {
         panic!(
             "IMPROVEMENT: only {num_missing} tsc mappings missing (was {EXPECTED_MISSING}). \
              Update EXPECTED_MISSING to {num_missing}."
@@ -17738,7 +17734,7 @@ fn test_sourcemap_parity_functions() {
         }
         panic!("{msg}");
     }
-    if num_missing < EXPECTED_MISSING {
+    if num_missing.cmp(&EXPECTED_MISSING) == std::cmp::Ordering::Less {
         panic!(
             "IMPROVEMENT: only {num_missing} tsc mappings missing (was {EXPECTED_MISSING}). \
              Update EXPECTED_MISSING to {num_missing}."
@@ -17814,7 +17810,7 @@ fn test_sourcemap_parity_statements() {
         }
         panic!("{msg}");
     }
-    if num_missing < EXPECTED_MISSING {
+    if num_missing.cmp(&EXPECTED_MISSING) == std::cmp::Ordering::Less {
         panic!(
             "IMPROVEMENT: only {num_missing} tsc mappings missing (was {EXPECTED_MISSING}). \
              Update EXPECTED_MISSING to {num_missing}."
@@ -17893,7 +17889,7 @@ fn test_sourcemap_parity_lambda_multiline() {
         msg.push_str(&format!("\nOutput:\n{output}"));
         panic!("{msg}");
     }
-    if num_missing < EXPECTED_MISSING {
+    if num_missing.cmp(&EXPECTED_MISSING) == std::cmp::Ordering::Less {
         panic!(
             "IMPROVEMENT: only {num_missing} tsc mappings missing (was {EXPECTED_MISSING}). \
              Update EXPECTED_MISSING to {num_missing}."
@@ -17982,7 +17978,7 @@ fn test_sourcemap_parity_class_extends() {
         msg.push_str(&format!("\nOutput:\n{output}"));
         panic!("{msg}");
     }
-    if num_missing < EXPECTED_MISSING {
+    if num_missing.cmp(&EXPECTED_MISSING) == std::cmp::Ordering::Less {
         panic!(
             "IMPROVEMENT: only {num_missing} tsc mappings missing (was {EXPECTED_MISSING}). \
              Update EXPECTED_MISSING to {num_missing}."
@@ -18077,7 +18073,7 @@ fn test_sourcemap_parity_enums() {
         msg.push_str(&format!("\nOutput:\n{output}"));
         panic!("{msg}");
     }
-    if num_missing < EXPECTED_MISSING {
+    if num_missing.cmp(&EXPECTED_MISSING) == std::cmp::Ordering::Less {
         panic!(
             "IMPROVEMENT: only {num_missing} tsc mappings missing (was {EXPECTED_MISSING}). \
              Update EXPECTED_MISSING to {num_missing}."
@@ -18187,7 +18183,7 @@ fn test_sourcemap_parity_for() {
         msg.push_str(&format!("\nOutput:\n{output}"));
         panic!("{msg}");
     }
-    if num_missing < EXPECTED_MISSING {
+    if num_missing.cmp(&EXPECTED_MISSING) == std::cmp::Ordering::Less {
         panic!(
             "IMPROVEMENT: only {num_missing} tsc mappings missing (was {EXPECTED_MISSING}). \
              Update EXPECTED_MISSING to {num_missing}."
@@ -18197,7 +18193,6 @@ fn test_sourcemap_parity_for() {
 
 /// Compare tsz source map output against tsc's baseline for return/throw/break/continue.
 #[test]
-#[allow(clippy::absurd_extreme_comparisons)]
 fn test_sourcemap_parity_return_throw_break_continue() {
     let source = "function foo(x) {\n\
                    \x20\x20\x20\x20if (x > 0) {\n\
@@ -18282,7 +18277,7 @@ fn test_sourcemap_parity_return_throw_break_continue() {
         msg.push_str(&format!("\nOutput:\n{output}"));
         panic!("{msg}");
     }
-    if num_missing < EXPECTED_MISSING {
+    if num_missing.cmp(&EXPECTED_MISSING) == std::cmp::Ordering::Less {
         panic!(
             "IMPROVEMENT: only {num_missing} tsc mappings missing (was {EXPECTED_MISSING}). \
              Update EXPECTED_MISSING to {num_missing}."
@@ -18391,7 +18386,7 @@ fn test_sourcemap_parity_object_array_literals() {
         msg.push_str(&format!("\nOutput:\n{output}"));
         panic!("{msg}");
     }
-    if num_missing < EXPECTED_MISSING {
+    if num_missing.cmp(&EXPECTED_MISSING) == std::cmp::Ordering::Less {
         panic!(
             "IMPROVEMENT: only {num_missing} tsc mappings missing (was {EXPECTED_MISSING}). \
              Update EXPECTED_MISSING to {num_missing}."
@@ -18401,7 +18396,6 @@ fn test_sourcemap_parity_object_array_literals() {
 
 /// Compare tsz source map output against tsc's baseline for variable declarations/assignments.
 #[test]
-#[allow(clippy::absurd_extreme_comparisons)]
 fn test_sourcemap_parity_variables() {
     let source = "var x = 10;\n\
                    var y = 20, z = 30;\n\
@@ -18475,7 +18469,7 @@ fn test_sourcemap_parity_variables() {
         msg.push_str(&format!("\nOutput:\n{output}"));
         panic!("{msg}");
     }
-    if num_missing < EXPECTED_MISSING {
+    if num_missing.cmp(&EXPECTED_MISSING) == std::cmp::Ordering::Less {
         panic!(
             "IMPROVEMENT: only {num_missing} tsc mappings missing (was {EXPECTED_MISSING}). \
              Update EXPECTED_MISSING to {num_missing}."

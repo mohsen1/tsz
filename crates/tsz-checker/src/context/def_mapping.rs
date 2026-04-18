@@ -439,7 +439,7 @@ impl<'a> CheckerContext<'a> {
 
     /// Register a class `extends` relationship in **both** type environments.
     ///
-    /// This is required so the FlowAnalyzer's `NarrowingContext` (which uses
+    /// This is required so the `FlowAnalyzer`'s `NarrowingContext` (which uses
     /// `type_environment`) can resolve nominal instanceof relationships just as
     /// the evaluator (`type_env`) can.  Without this, `is_class_ancestor` always
     /// returns `false` for user-defined class hierarchies during narrowing, causing
@@ -519,7 +519,7 @@ impl<'a> CheckerContext<'a> {
     /// 2. **Shared store** (`DefinitionStore`): O(1) `DashMap` lookup via
     ///    `get_symbol_id`. On hit, populates the local cache for future fast-path.
     ///
-    /// This fallback ensures that DefIds created in child checker contexts
+    /// This fallback ensures that `DefIds` created in child checker contexts
     /// (e.g., cross-file delegation) are visible to the parent without
     /// explicit merge-back of the `def_to_symbol` map.
     pub fn def_to_symbol_id(&self, def_id: DefId) -> Option<SymbolId> {
@@ -546,7 +546,7 @@ impl<'a> CheckerContext<'a> {
     /// Look up the `SymbolId` for a `DefId`, with fallback to the shared
     /// `DefinitionStore` for cross-context `DefIds`.
     ///
-    /// **Deprecated**: `def_to_symbol_id()` now includes the DefinitionStore
+    /// **Deprecated**: `def_to_symbol_id()` now includes the `DefinitionStore`
     /// fallback directly. This method is retained for backward compatibility
     /// but delegates to `def_to_symbol_id()`.
     pub fn def_to_symbol_id_with_fallback(&self, def_id: DefId) -> Option<SymbolId> {

@@ -55,11 +55,11 @@ impl<'a> CheckerState<'a> {
         // in the local binder hits a different symbol (cross-binder SymbolId
         // collision). This causes false TS2454 for UMD globals and other
         // cross-file bindings.
-        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id) {
-            if file_idx != self.ctx.current_file_idx {
-                trace!("Cross-file symbol, skipping flow analysis");
-                return declared_type;
-            }
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+            && file_idx != self.ctx.current_file_idx
+        {
+            trace!("Cross-file symbol, skipping flow analysis");
+            return declared_type;
         }
 
         // Const object/array literal bindings have a stable type shape and do not
@@ -356,12 +356,11 @@ impl<'a> CheckerState<'a> {
                     return false;
                 }
                 syntax_kind_ext::BINARY_EXPRESSION => {
-                    if let Some(data) = self.ctx.arena.get_binary_expr(parent_node) {
-                        if data.operator_token >= SyntaxKind::EqualsToken as u16
-                            && data.operator_token <= SyntaxKind::CaretEqualsToken as u16
-                        {
-                            return current == data.left;
-                        }
+                    if let Some(data) = self.ctx.arena.get_binary_expr(parent_node)
+                        && data.operator_token >= SyntaxKind::EqualsToken as u16
+                        && data.operator_token <= SyntaxKind::CaretEqualsToken as u16
+                    {
+                        return current == data.left;
                     }
                     return false;
                 }

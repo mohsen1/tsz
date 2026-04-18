@@ -457,7 +457,7 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     /// Set the `TypeEnvironment` for resolving Lazy types during narrowing.
-    pub fn with_type_environment(
+    pub const fn with_type_environment(
         mut self,
         type_env: &'a RefCell<tsz_solver::TypeEnvironment>,
     ) -> Self {
@@ -2057,15 +2057,14 @@ impl<'a> FlowAnalyzer<'a> {
             // Check if the inner call's argument matches our reference
             if let Some((_guard, guard_target, _is_optional)) =
                 self.extract_type_guard(unary.operand)
+                && self.is_matching_reference(guard_target, reference)
             {
-                if self.is_matching_reference(guard_target, reference) {
-                    // Apply the guard with NEGATIVE sense (because of the !)
-                    return self.apply_type_predicate_narrowing(
-                        pre_type,
-                        &resolved_predicate,
-                        false, // false = negative sense
-                    );
-                }
+                // Apply the guard with NEGATIVE sense (because of the !)
+                return self.apply_type_predicate_narrowing(
+                    pre_type,
+                    &resolved_predicate,
+                    false, // false = negative sense
+                );
             }
         }
 
@@ -2128,21 +2127,20 @@ impl<'a> FlowAnalyzer<'a> {
                 // Extract the type guard from the inner call and apply with negative sense.
                 if let Some((guard, guard_target, _is_optional)) =
                     self.extract_type_guard(unary.operand)
+                    && self.is_matching_reference(guard_target, reference)
                 {
-                    if self.is_matching_reference(guard_target, reference) {
-                        let env_borrow;
-                        let narrowing = if let Some(env) = &self.type_environment {
-                            env_borrow = env.borrow();
-                            self.make_narrowing_context().with_resolver(&*env_borrow)
-                        } else {
-                            self.make_narrowing_context()
-                        };
-                        // Apply the guard with NEGATIVE sense (because of the !)
-                        let narrowed =
-                            narrowing.narrow_type(narrowed_pre_type, &guard, GuardSense::Negative);
-                        if narrowed != narrowed_pre_type {
-                            return narrowed;
-                        }
+                    let env_borrow;
+                    let narrowing = if let Some(env) = &self.type_environment {
+                        env_borrow = env.borrow();
+                        self.make_narrowing_context().with_resolver(&*env_borrow)
+                    } else {
+                        self.make_narrowing_context()
+                    };
+                    // Apply the guard with NEGATIVE sense (because of the !)
+                    let narrowed =
+                        narrowing.narrow_type(narrowed_pre_type, &guard, GuardSense::Negative);
+                    if narrowed != narrowed_pre_type {
+                        return narrowed;
                     }
                 }
             }

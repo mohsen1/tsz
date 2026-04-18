@@ -60,11 +60,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         // Periodically probe remaining stack and trip the breaker if low.
         // This prevents unbounded stack growth from stacker::maybe_grow
         // which would eventually hit the OS stack limit and crash.
-        if crate::checkers_domain::should_probe_stack() {
-            if stacker::remaining_stack().unwrap_or(0) < 1024 * 1024 {
-                crate::checkers_domain::trip_stack_overflow();
-                return TypeId::ERROR;
-            }
+        if crate::checkers_domain::should_probe_stack()
+            && stacker::remaining_stack().unwrap_or(0) < 1024 * 1024
+        {
+            crate::checkers_domain::trip_stack_overflow();
+            return TypeId::ERROR;
         }
         // Dynamically grow the stack when depth becomes significant.
         stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
@@ -581,42 +581,37 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 // trailing comma or constraint is reserved syntax (ambiguous
                 // with JSX). `<T>() =>` must become `<T,>() =>` or
                 // `<T extends X>() =>`.
-                if self.checker.is_mts_or_cts_file() {
-                    if let Some(func) = self.checker.ctx.arena.get_function(node) {
-                        if let Some(ref tp_list) = func.type_parameters {
-                            if tp_list.nodes.len() == 1 && !tp_list.has_trailing_comma {
-                                // Check if the single type parameter has no constraint
-                                let tp_idx = tp_list.nodes[0];
-                                let has_constraint = self
-                                    .checker
-                                    .ctx
-                                    .arena
-                                    .get(tp_idx)
-                                    .and_then(|tp_node| {
-                                        self.checker.ctx.arena.get_type_parameter(tp_node)
-                                    })
-                                    .is_some_and(|tp| {
-                                        self.checker.ctx.arena.get(tp.constraint).is_some()
-                                    });
-                                if !has_constraint {
-                                    // Error span covers the type parameter node
-                                    let (start, len) = self
-                                        .checker
-                                        .ctx
-                                        .arena
-                                        .get(tp_idx)
-                                        .map(|n| (n.pos, n.end.saturating_sub(n.pos)))
-                                        .unwrap_or((node.pos, 1));
-                                    self.checker.ctx.error(
+                if self.checker.is_mts_or_cts_file()
+                    && let Some(func) = self.checker.ctx.arena.get_function(node)
+                    && let Some(ref tp_list) = func.type_parameters
+                    && tp_list.nodes.len() == 1
+                    && !tp_list.has_trailing_comma
+                {
+                    // Check if the single type parameter has no constraint
+                    let tp_idx = tp_list.nodes[0];
+                    let has_constraint = self
+                        .checker
+                        .ctx
+                        .arena
+                        .get(tp_idx)
+                        .and_then(|tp_node| self.checker.ctx.arena.get_type_parameter(tp_node))
+                        .is_some_and(|tp| self.checker.ctx.arena.get(tp.constraint).is_some());
+                    if !has_constraint {
+                        // Error span covers the type parameter node
+                        let (start, len) = self
+                            .checker
+                            .ctx
+                            .arena
+                            .get(tp_idx)
+                            .map(|n| (n.pos, n.end.saturating_sub(n.pos)))
+                            .unwrap_or((node.pos, 1));
+                        self.checker.ctx.error(
                                         start,
                                         len,
                                         tsz_common::diagnostics::diagnostic_messages::THIS_SYNTAX_IS_RESERVED_IN_FILES_WITH_THE_MTS_OR_CTS_EXTENSION_ADD_A_TRAILING_CO
                                             .to_string(),
                                         tsz_common::diagnostics::diagnostic_codes::THIS_SYNTAX_IS_RESERVED_IN_FILES_WITH_THE_MTS_OR_CTS_EXTENSION_ADD_A_TRAILING_CO,
                                     );
-                                }
-                            }
-                        }
                     }
                 }
                 self.checker.get_type_of_function_with_request(idx, request)
@@ -882,47 +877,45 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 if k == syntax_kind_ext::TYPE_ASSERTION
                     && self.checker.ctx.compiler_options.erasable_syntax_only
                     && !self.checker.ctx.has_parse_errors
+                    && let Some(assertion) = self.checker.ctx.arena.get_type_assertion(node)
                 {
-                    if let Some(assertion) = self.checker.ctx.arena.get_type_assertion(node) {
-                        // Error span covers just the <Type> part, from node start to expression start
-                        let start = node.pos;
-                        let end = if let Some(expr_node) =
-                            self.checker.ctx.arena.get(assertion.expression)
-                        {
+                    // Error span covers just the <Type> part, from node start to expression start
+                    let start = node.pos;
+                    let end =
+                        if let Some(expr_node) = self.checker.ctx.arena.get(assertion.expression) {
                             expr_node.pos
                         } else {
                             node.end
                         };
-                        self.checker.ctx.error(
+                    self.checker.ctx.error(
                             start,
                             end - start,
                             tsz_common::diagnostics::diagnostic_messages::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED
                                 .to_string(),
                             tsz_common::diagnostics::diagnostic_codes::THIS_SYNTAX_IS_NOT_ALLOWED_WHEN_ERASABLESYNTAXONLY_IS_ENABLED,
                         );
-                    }
                 }
 
                 // TS7059: Angle-bracket type assertions are reserved in .mts/.cts files.
                 // These files are parsed in a JSX-like mode where <Type> is ambiguous.
-                if k == syntax_kind_ext::TYPE_ASSERTION && self.checker.is_mts_or_cts_file() {
-                    if let Some(assertion) = self.checker.ctx.arena.get_type_assertion(node) {
-                        let start = node.pos;
-                        let end = if let Some(expr_node) =
-                            self.checker.ctx.arena.get(assertion.expression)
-                        {
+                if k == syntax_kind_ext::TYPE_ASSERTION
+                    && self.checker.is_mts_or_cts_file()
+                    && let Some(assertion) = self.checker.ctx.arena.get_type_assertion(node)
+                {
+                    let start = node.pos;
+                    let end =
+                        if let Some(expr_node) = self.checker.ctx.arena.get(assertion.expression) {
                             expr_node.pos
                         } else {
                             node.end
                         };
-                        self.checker.ctx.error(
+                    self.checker.ctx.error(
                             start,
                             end - start,
                             tsz_common::diagnostics::diagnostic_messages::THIS_SYNTAX_IS_RESERVED_IN_FILES_WITH_THE_MTS_OR_CTS_EXTENSION_USE_AN_AS_EXPRESS
                                 .to_string(),
                             tsz_common::diagnostics::diagnostic_codes::THIS_SYNTAX_IS_RESERVED_IN_FILES_WITH_THE_MTS_OR_CTS_EXTENSION_USE_AN_AS_EXPRESS,
                         );
-                    }
                 }
 
                 if let Some(assertion) = self.checker.ctx.arena.get_type_assertion(node) {

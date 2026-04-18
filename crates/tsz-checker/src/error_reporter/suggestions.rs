@@ -347,14 +347,14 @@ impl<'a> CheckerState<'a> {
     /// Check if a candidate suggestion originates from a lib file.
     ///
     /// Returns true if the symbol was merged from a lib file into the user
-    /// binder's scope tables, or if it exists in any lib binder's file_locals.
+    /// binder's scope tables, or if it exists in any lib binder's `file_locals`.
     /// User-defined symbols that shadow lib symbols are NOT considered lib-origin.
     fn is_lib_origin_symbol(&self, candidate: &str) -> bool {
         // Check 1: candidate is in user binder's file_locals and tracked as lib symbol
-        if let Some(sym_id) = self.ctx.binder.file_locals.get(candidate) {
-            if self.ctx.binder.lib_symbol_ids.contains(&sym_id) {
-                return true;
-            }
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(candidate)
+            && self.ctx.binder.lib_symbol_ids.contains(&sym_id)
+        {
+            return true;
         }
 
         // Check 2: candidate exists in a lib binder but not defined by the user
@@ -367,10 +367,10 @@ impl<'a> CheckerState<'a> {
         if exists_in_lib {
             // But if the user's own file defines this name (not from lib merge),
             // don't suppress it.
-            if let Some(sym_id) = self.ctx.binder.file_locals.get(candidate) {
-                if !self.ctx.binder.lib_symbol_ids.contains(&sym_id) {
-                    return false; // User-defined, keep it
-                }
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(candidate)
+                && !self.ctx.binder.lib_symbol_ids.contains(&sym_id)
+            {
+                return false; // User-defined, keep it
             }
             return true;
         }

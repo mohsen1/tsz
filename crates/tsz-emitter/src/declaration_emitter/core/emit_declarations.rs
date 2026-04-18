@@ -141,15 +141,15 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_cjs_export_aliases = cjs_aliases;
         self.js_cjs_export_alias_statements = cjs_alias_stmts;
         // Mark CJS alias local names as used so they survive usage analysis pruning.
-        if let Some(ref binder) = self.binder {
-            if let Some(ref mut used) = self.used_symbols {
-                for (_export_name, local_name) in &self.js_cjs_export_aliases {
-                    if let Some(sym_id) = binder.file_locals.get(local_name) {
-                        used.entry(sym_id).or_insert(
-                            crate::declaration_emitter::usage_analyzer::UsageKind::VALUE
-                                | crate::declaration_emitter::usage_analyzer::UsageKind::TYPE,
-                        );
-                    }
+        if let Some(binder) = self.binder
+            && let Some(ref mut used) = self.used_symbols
+        {
+            for (_export_name, local_name) in &self.js_cjs_export_aliases {
+                if let Some(sym_id) = binder.file_locals.get(local_name) {
+                    used.entry(sym_id).or_insert(
+                        crate::declaration_emitter::usage_analyzer::UsageKind::VALUE
+                            | crate::declaration_emitter::usage_analyzer::UsageKind::TYPE,
+                    );
                 }
             }
         }

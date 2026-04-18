@@ -759,16 +759,15 @@ impl<'a> CheckerState<'a> {
         // object type is an unresolved conditional type.
         if let Some(indexed_info) =
             crate::query_boundaries::common::get_indexed_access_type(self.ctx.types, type_id)
-        {
-            if crate::query_boundaries::common::contains_conditional_type(
+            && (crate::query_boundaries::common::contains_conditional_type(
                 self.ctx.types,
                 indexed_info.object_type,
             ) || crate::query_boundaries::common::contains_type_parameters(
                 self.ctx.types,
                 indexed_info.object_type,
-            ) {
-                return;
-            }
+            ))
+        {
+            return;
         }
 
         // Suppress TS2339 for types that are the result of inference-based conditional
@@ -1020,14 +1019,13 @@ impl<'a> CheckerState<'a> {
         if let Some(parent) = self.ctx.arena.get_extended(idx)
             && let Some(parent_node) = self.ctx.arena.get(parent.parent)
             && parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
         {
-            if let Some(access) = self.ctx.arena.get_access_expr(parent_node) {
-                if self.is_unresolved_import_symbol(access.expression) {
-                    return;
-                }
-                if self.is_property_access_on_unresolved_import(parent.parent) {
-                    return;
-                }
+            if self.is_unresolved_import_symbol(access.expression) {
+                return;
+            }
+            if self.is_property_access_on_unresolved_import(parent.parent) {
+                return;
             }
         }
 
@@ -1411,33 +1409,26 @@ impl<'a> CheckerState<'a> {
             && !has_any_index_signature
             && !prefer_write_method
             && self.is_object_literal_backed_element_access_receiver(expr_idx)
-        {
-            if let Some(union_members) =
+            && let Some(union_members) =
                 tsz_solver::type_queries::get_union_members(self.ctx.types, index_type)
-            {
-                // Find the first string literal member that doesn't exist as a property
-                for member in union_members {
-                    if let Some(atom) =
-                        tsz_solver::type_queries::get_string_literal_value(self.ctx.types, member)
-                    {
-                        let prop_name = self.ctx.types.resolve_atom_ref(atom);
-                        let prop_name_str: &str = &prop_name;
+        {
+            // Find the first string literal member that doesn't exist as a property
+            for member in union_members {
+                if let Some(atom) =
+                    tsz_solver::type_queries::get_string_literal_value(self.ctx.types, member)
+                {
+                    let prop_name = self.ctx.types.resolve_atom_ref(atom);
+                    let prop_name_str: &str = &prop_name;
 
-                        // Check if this property exists on the object type
-                        let prop_exists = self
-                            .resolve_property_access_with_env(object_type, prop_name_str)
-                            .is_success();
+                    // Check if this property exists on the object type
+                    let prop_exists = self
+                        .resolve_property_access_with_env(object_type, prop_name_str)
+                        .is_success();
 
-                        if !prop_exists {
-                            // Property doesn't exist - emit TS2339
-                            emit_ts2339_for_missing_prop(
-                                prop_name_str,
-                                object_type,
-                                expr_idx,
-                                self,
-                            );
-                            return;
-                        }
+                    if !prop_exists {
+                        // Property doesn't exist - emit TS2339
+                        emit_ts2339_for_missing_prop(prop_name_str, object_type, expr_idx, self);
+                        return;
                     }
                 }
             }
@@ -1623,10 +1614,9 @@ impl<'a> CheckerState<'a> {
         let receiver = self.access_receiver_for_diagnostic_node(expr_idx)?;
         if self.is_named_method_suggestion_receiver(receiver)
             && let Some(receiver_text) = self.named_method_suggestion_receiver_text(receiver)
+            && !receiver_text.is_empty()
         {
-            if !receiver_text.is_empty() {
-                return Some(format!("{receiver_text}.{method_name}"));
-            }
+            return Some(format!("{receiver_text}.{method_name}"));
         }
 
         Some(method_name.to_string())

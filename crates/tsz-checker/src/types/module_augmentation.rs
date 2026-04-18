@@ -282,16 +282,15 @@ impl<'a> CheckerState<'a> {
         {
             // Use global module augmentations index when available for O(1) key iteration,
             // falling back to O(N) binder scan otherwise.
-            #[allow(clippy::type_complexity)]
-            let aug_entries: Vec<(String, Vec<(usize, ModuleAugmentation)>)> =
+            type IndexedAug = (usize, ModuleAugmentation);
+            let aug_entries: Vec<(String, Vec<IndexedAug>)> =
                 if let Some(aug_index) = self.ctx.global_module_augmentations_index.as_ref() {
                     aug_index
                         .iter()
                         .map(|(k, v)| (k.clone(), v.clone()))
                         .collect()
                 } else if let Some(all_binders) = self.ctx.all_binders.as_ref() {
-                    let mut entries: FxHashMap<String, Vec<(usize, ModuleAugmentation)>> =
-                        FxHashMap::default();
+                    let mut entries: FxHashMap<String, Vec<IndexedAug>> = FxHashMap::default();
                     for (file_idx, binder) in all_binders.iter().enumerate() {
                         for (aug_key, augs) in binder.module_augmentations.iter() {
                             entries
@@ -941,30 +940,47 @@ impl<'a> CheckerState<'a> {
             AugmentationTargetKind::Callable(shape_id) => {
                 let base_shape = self.ctx.types.callable_shape(shape_id);
                 let prototype_name = self.ctx.types.intern_string("prototype");
-                let mut merged_properties =
-                    self.merge_properties(&augmentation_members, &base_shape.properties);
-                if !base_shape.construct_signatures.is_empty()
-                    && let Some(prototype_prop) = merged_properties
+                if !base_shape.construct_signatures.is_empty() {
+                    // Class constructor: augmentation members belong on the
+                    // prototype (instance type), not as static properties of
+                    // the constructor itself.
+                    let mut properties = base_shape.properties.clone();
+                    if let Some(prototype_prop) = properties
                         .iter_mut()
                         .find(|prop| prop.name == prototype_name)
-                {
-                    let augmented_prototype = self.apply_module_augmentations(
-                        module_spec,
-                        interface_name,
-                        prototype_prop.type_id,
-                    );
-                    prototype_prop.type_id = augmented_prototype;
-                    prototype_prop.write_type = augmented_prototype;
+                    {
+                        let augmented_prototype = self.apply_module_augmentations(
+                            module_spec,
+                            interface_name,
+                            prototype_prop.type_id,
+                        );
+                        prototype_prop.type_id = augmented_prototype;
+                        prototype_prop.write_type = augmented_prototype;
+                    }
+                    factory.callable(CallableShape {
+                        call_signatures: base_shape.call_signatures.clone(),
+                        construct_signatures: base_shape.construct_signatures.clone(),
+                        properties,
+                        string_index: base_shape.string_index,
+                        number_index: base_shape.number_index,
+                        symbol: None,
+                        is_abstract: false,
+                    })
+                } else {
+                    // Non-constructor callable (namespace, function): merge
+                    // augmentation members as direct properties.
+                    let merged_properties =
+                        self.merge_properties(&augmentation_members, &base_shape.properties);
+                    factory.callable(CallableShape {
+                        call_signatures: base_shape.call_signatures.clone(),
+                        construct_signatures: base_shape.construct_signatures.clone(),
+                        properties: merged_properties,
+                        string_index: base_shape.string_index,
+                        number_index: base_shape.number_index,
+                        symbol: None,
+                        is_abstract: false,
+                    })
                 }
-                factory.callable(CallableShape {
-                    call_signatures: base_shape.call_signatures.clone(),
-                    construct_signatures: base_shape.construct_signatures.clone(),
-                    properties: merged_properties,
-                    string_index: base_shape.string_index,
-                    number_index: base_shape.number_index,
-                    symbol: None,
-                    is_abstract: false,
-                })
             }
             AugmentationTargetKind::Other => {
                 // For types that still can't be decomposed after evaluation (e.g.

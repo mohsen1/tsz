@@ -2171,7 +2171,6 @@ mod tests {
         );
     }
 
-    #[allow(clippy::field_reassign_with_default)]
     #[test]
     fn in_program_tslib_index_helpers_satisfy_legacy_decorator_requirements() {
         let program = merged_program(&[
@@ -2184,12 +2183,15 @@ mod tests {
                 "export declare function __decorate(decorators: Function[], target: any, key?: string | symbol, desc?: any): any;\n",
             ),
         ]);
-        let mut options = ResolvedCompilerOptions {
+        let options = ResolvedCompilerOptions {
             import_helpers: true,
+            checker: tsz_common::checker_options::CheckerOptions {
+                target: tsz_common::ScriptTarget::ES2015,
+                experimental_decorators: true,
+                ..Default::default()
+            },
             ..ResolvedCompilerOptions::default()
         };
-        options.checker.target = tsz_common::ScriptTarget::ES2015;
-        options.checker.experimental_decorators = true;
 
         let diagnostics = detect_missing_tslib_helper_diagnostics(
             &program,
@@ -2206,7 +2208,6 @@ mod tests {
         );
     }
 
-    #[allow(clippy::field_reassign_with_default)]
     #[test]
     fn no_types_and_symbols_still_honors_project_local_tslib() {
         let temp_dir = tempfile::TempDir::new().unwrap();
@@ -2222,13 +2223,16 @@ mod tests {
             "/app/a.ts",
             "declare var dec: any, __decorate: any;\n@dec export class A {}\n",
         )]);
-        let mut options = ResolvedCompilerOptions {
+        let options = ResolvedCompilerOptions {
             import_helpers: true,
+            checker: tsz_common::checker_options::CheckerOptions {
+                target: tsz_common::ScriptTarget::ES2015,
+                experimental_decorators: true,
+                no_types_and_symbols: true,
+                ..Default::default()
+            },
             ..ResolvedCompilerOptions::default()
         };
-        options.checker.target = tsz_common::ScriptTarget::ES2015;
-        options.checker.experimental_decorators = true;
-        options.checker.no_types_and_symbols = true;
 
         let diagnostics = detect_missing_tslib_helper_diagnostics(
             &program,

@@ -1273,10 +1273,10 @@ impl<'a> CheckerState<'a> {
             let prev_const_assertion = self.ctx.in_const_assertion;
             if !self.ctx.in_const_assertion {
                 let mut should_enable_const = false;
-                if let Some(et) = expected_type {
-                    if Self::type_references_const_type_param(self.ctx.types, et) {
-                        should_enable_const = true;
-                    }
+                if let Some(et) = expected_type
+                    && Self::type_references_const_type_param(self.ctx.types, et)
+                {
+                    should_enable_const = true;
                 }
                 // When the expected type doesn't directly reference a const type
                 // param (e.g., it's an already-instantiated type from Round 2 of
@@ -1286,24 +1286,20 @@ impl<'a> CheckerState<'a> {
                 // merely contains one (e.g., `obj: [T, T]`). For container types
                 // like tuples, const assertion flows through contextual typing of
                 // each element, not globally at the argument level.
-                if !should_enable_const {
-                    if let Some(callable_type) = callable_ctx.callable_type {
-                        let ctx = tsz_solver::ContextualTypeContext::with_expected(
+                if !should_enable_const && let Some(callable_type) = callable_ctx.callable_type {
+                    let ctx = tsz_solver::ContextualTypeContext::with_expected(
+                        self.ctx.types,
+                        callable_type,
+                    );
+                    if let Some(param_type) =
+                        ctx.get_parameter_type_for_call(effective_index, expanded_count)
+                        && crate::query_boundaries::common::type_param_info(
                             self.ctx.types,
-                            callable_type,
-                        );
-                        if let Some(param_type) =
-                            ctx.get_parameter_type_for_call(effective_index, expanded_count)
-                        {
-                            if crate::query_boundaries::common::type_param_info(
-                                self.ctx.types,
-                                param_type,
-                            )
-                            .is_some_and(|info| info.is_const)
-                            {
-                                should_enable_const = true;
-                            }
-                        }
+                            param_type,
+                        )
+                        .is_some_and(|info| info.is_const)
+                    {
+                        should_enable_const = true;
                     }
                 }
                 if should_enable_const {

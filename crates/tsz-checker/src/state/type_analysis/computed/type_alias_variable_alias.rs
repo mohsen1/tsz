@@ -1,4 +1,4 @@
-//! Continuation of compute_type_of_symbol: type alias, class property, variable,
+//! Continuation of `compute_type_of_symbol`: type alias, class property, variable,
 //! and alias symbol resolution.
 
 use crate::query_boundaries::common::{array_element_type, is_generic_type};
@@ -798,11 +798,11 @@ impl<'a> CheckerState<'a> {
                                 self.widen_type_for_display(export_equals_type)
                             });
                         // Handle `export { X as "module.exports" }` as export-equals.
-                        if export_equals_type.is_none() {
-                            if let Some(module_exports_sym) = exports_table.get("module.exports") {
-                                let me_type = self.get_type_of_symbol(module_exports_sym);
-                                export_equals_type = Some(self.widen_type_for_display(me_type));
-                            }
+                        if export_equals_type.is_none()
+                            && let Some(module_exports_sym) = exports_table.get("module.exports")
+                        {
+                            let me_type = self.get_type_of_symbol(module_exports_sym);
+                            export_equals_type = Some(self.widen_type_for_display(me_type));
                         }
                         let surface = exports_table_target
                             .map(|target_idx| self.resolve_js_export_surface(target_idx))
@@ -1145,11 +1145,11 @@ impl<'a> CheckerState<'a> {
                         // TypeScript allows `export { X as "module.exports" }` in ESM.
                         // This acts like `export = X` for CJS interop: the namespace
                         // import gets construct/call signatures from X.
-                        if export_equals_type.is_none() {
-                            if let Some(module_exports_sym) = exports_table.get("module.exports") {
-                                let me_type = self.get_type_of_symbol(module_exports_sym);
-                                export_equals_type = Some(self.widen_type_for_display(me_type));
-                            }
+                        if export_equals_type.is_none()
+                            && let Some(module_exports_sym) = exports_table.get("module.exports")
+                        {
+                            let me_type = self.get_type_of_symbol(module_exports_sym);
+                            export_equals_type = Some(self.widen_type_for_display(me_type));
                         }
                         let surface = exports_table_target
                             .map(|target_idx| self.resolve_js_export_surface(target_idx))
@@ -1427,21 +1427,18 @@ impl<'a> CheckerState<'a> {
                         Some(self.ctx.current_file_idx),
                     )
                     && surface.has_commonjs_exports
+                    && let Some(direct_export_type) = surface.direct_export_type
+                    && direct_export_type != TypeId::ANY
+                    && direct_export_type != TypeId::UNKNOWN
+                    && direct_export_type != TypeId::ERROR
                 {
-                    if let Some(direct_export_type) = surface.direct_export_type
-                        && direct_export_type != TypeId::ANY
-                        && direct_export_type != TypeId::UNKNOWN
-                        && direct_export_type != TypeId::ERROR
-                    {
-                        let direct_export_type =
-                            crate::query_boundaries::common::widen_literal_type(
-                                self.ctx.types,
-                                direct_export_type,
-                            );
-                        let direct_export_type = self
-                            .widen_fresh_object_literal_properties_for_display(direct_export_type);
-                        return (direct_export_type, Vec::new());
-                    }
+                    let direct_export_type = crate::query_boundaries::common::widen_literal_type(
+                        self.ctx.types,
+                        direct_export_type,
+                    );
+                    let direct_export_type =
+                        self.widen_fresh_object_literal_properties_for_display(direct_export_type);
+                    return (direct_export_type, Vec::new());
                 }
 
                 // In node16/nodenext, when an ESM file default-imports a CJS module,

@@ -208,63 +208,7 @@ impl InheritanceGraph {
         // Cycle detection set for this traversal
         let mut path = FxHashSet::default();
 
-        self.compute_closure_recursive(symbol_id, &mut nodes, &mut path, max_len);
-    }
-
-    #[allow(clippy::only_used_in_recursion)]
-    fn compute_closure_recursive(
-        &self,
-        current: SymbolId,
-        nodes: &mut FxHashMap<SymbolId, ClassNode>,
-        path: &mut FxHashSet<SymbolId>,
-        bitset_len: usize,
-    ) {
-        if path.contains(&current) {
-            // Cycle detected, stop recursion here.
-            // In a real compiler, we might emit a diagnostic here,
-            // but the solver just wants to avoid infinite loops.
-            return;
-        }
-
-        // If already computed, we are good
-        if let Some(node) = nodes.get(&current)
-            && node.ancestors_bitset.is_some()
-        {
-            return;
-        }
-
-        path.insert(current);
-
-        // Clone parents to avoid borrowing issues during recursion
-        let parents = if let Some(node) = nodes.get(&current) {
-            node.parents.clone()
-        } else {
-            Vec::new()
-        };
-
-        let mut my_bits = FixedBitSet::with_capacity(bitset_len);
-
-        for parent in parents {
-            // Ensure parent is computed
-            self.compute_closure_recursive(parent, nodes, path, bitset_len);
-
-            // Add parent itself
-            my_bits.insert(parent.0 as usize);
-
-            // Add parent's ancestors
-            if let Some(parent_node) = nodes.get(&parent)
-                && let Some(parent_bits) = &parent_node.ancestors_bitset
-            {
-                my_bits.union_with(parent_bits);
-            }
-        }
-
-        // Save result
-        if let Some(node) = nodes.get_mut(&current) {
-            node.ancestors_bitset = Some(my_bits);
-        }
-
-        path.remove(&current);
+        compute_closure_recursive(symbol_id, &mut nodes, &mut path, max_len);
     }
 
     /// Lazily computes the MRO for a node.
@@ -323,6 +267,51 @@ impl InheritanceGraph {
     pub fn is_empty(&self) -> bool {
         self.nodes.borrow().is_empty()
     }
+}
+
+fn compute_closure_recursive(
+    current: SymbolId,
+    nodes: &mut FxHashMap<SymbolId, ClassNode>,
+    path: &mut FxHashSet<SymbolId>,
+    bitset_len: usize,
+) {
+    if path.contains(&current) {
+        // Cycle detected, stop recursion here.
+        return;
+    }
+
+    if let Some(node) = nodes.get(&current)
+        && node.ancestors_bitset.is_some()
+    {
+        return;
+    }
+
+    path.insert(current);
+
+    // Clone parents to avoid borrowing issues during recursion
+    let parents = if let Some(node) = nodes.get(&current) {
+        node.parents.clone()
+    } else {
+        Vec::new()
+    };
+
+    let mut my_bits = FixedBitSet::with_capacity(bitset_len);
+
+    for parent in parents {
+        compute_closure_recursive(parent, nodes, path, bitset_len);
+        my_bits.insert(parent.0 as usize);
+        if let Some(parent_node) = nodes.get(&parent)
+            && let Some(parent_bits) = &parent_node.ancestors_bitset
+        {
+            my_bits.union_with(parent_bits);
+        }
+    }
+
+    if let Some(node) = nodes.get_mut(&current) {
+        node.ancestors_bitset = Some(my_bits);
+    }
+
+    path.remove(&current);
 }
 
 #[cfg(test)]

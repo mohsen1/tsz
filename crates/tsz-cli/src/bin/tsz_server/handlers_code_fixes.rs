@@ -2098,9 +2098,8 @@ impl Server {
                 || trimmed.starts_with(&format!("export const enum {enum_name}"));
             if enum_header_match {
                 start_idx = Some(idx);
-                #[allow(clippy::needless_range_loop)]
-                for j in idx + 1..lines.len() {
-                    if lines[j].trim() == "}" {
+                for (j, line) in lines.iter().enumerate().skip(idx + 1) {
+                    if line.trim() == "}" {
                         end_idx = Some(j);
                         break;
                     }
@@ -2178,9 +2177,8 @@ impl Server {
         let mut last_member_idx: Option<usize> = None;
         let mut use_trailing_comma = false;
 
-        #[allow(clippy::needless_range_loop)]
-        for idx in start_idx + 1..end_idx {
-            let trimmed = lines[idx].trim().trim_end_matches(',');
+        for (idx, line) in lines.iter().enumerate().take(end_idx).skip(start_idx + 1) {
+            let trimmed = line.trim().trim_end_matches(',');
             if trimmed.is_empty() {
                 continue;
             }
@@ -2197,7 +2195,7 @@ impl Server {
                 .get(&(enum_name.clone(), name.to_string()))
                 .copied()
                 .unwrap_or(false);
-            use_trailing_comma = lines[idx].trim_end().ends_with(',');
+            use_trailing_comma = line.trim_end().ends_with(',');
             last_member_idx = Some(idx);
         }
         if already_exists {
@@ -2288,9 +2286,8 @@ impl Server {
                 || t.starts_with(&format!("export const enum {enum_name}"))
             {
                 enum_start = Some(i);
-                #[allow(clippy::needless_range_loop)]
-                for j in i + 1..lines.len() {
-                    if lines[j].trim() == "}" {
+                for (j, line) in lines.iter().enumerate().skip(i + 1) {
+                    if line.trim() == "}" {
                         enum_end = Some(j);
                         break;
                     }

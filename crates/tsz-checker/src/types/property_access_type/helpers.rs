@@ -580,7 +580,7 @@ impl<'a> CheckerState<'a> {
             .then_some(init_type)
     }
 
-    /// Resolve the base constraint of an IndexAccess type for display purposes.
+    /// Resolve the base constraint of an `IndexAccess` type for display purposes.
     ///
     /// For `T[K]` where `T extends C` and `K extends D`, resolves through the
     /// constraint chain to produce the concrete type (e.g., `C[D]` evaluated).
@@ -620,7 +620,7 @@ impl<'a> CheckerState<'a> {
     /// class, etc.) has an export modifier.
     ///
     /// Returns `true` if:
-    /// - The symbol has no TYPE flags (pure value symbol - trust is_exported)
+    /// - The symbol has no TYPE flags (pure value symbol - trust `is_exported`)
     /// - The symbol has at least one value declaration with export modifier
     pub(crate) fn symbol_has_exported_value_declaration(
         &self,
@@ -694,8 +694,8 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a declaration node has an export modifier using a specific arena.
-    /// Also checks if the declaration is wrapped in an EXPORT_DECLARATION node,
-    /// since `export namespace B` creates an EXPORT_DECLARATION wrapping MODULE_DECLARATION.
+    /// Also checks if the declaration is wrapped in an `EXPORT_DECLARATION` node,
+    /// since `export namespace B` creates an `EXPORT_DECLARATION` wrapping `MODULE_DECLARATION`.
     fn check_value_decl_has_export_in_arena(
         &self,
         arena: &tsz_parser::parser::node::NodeArena,
@@ -726,14 +726,13 @@ impl<'a> CheckerState<'a> {
                     break;
                 };
                 // Check if parent is a module with `declare` modifier
-                if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                    if let Some(m) = arena.get_module(parent_node) {
-                        if m.modifiers.as_ref().is_some_and(|mods| {
-                            arena.has_modifier_ref(Some(mods), SyntaxKind::DeclareKeyword)
-                        }) {
-                            return true;
-                        }
-                    }
+                if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                    && let Some(m) = arena.get_module(parent_node)
+                    && m.modifiers.as_ref().is_some_and(|mods| {
+                        arena.has_modifier_ref(Some(mods), SyntaxKind::DeclareKeyword)
+                    })
+                {
+                    return true;
                 }
                 current = ext.parent;
             }

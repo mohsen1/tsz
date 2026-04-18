@@ -118,10 +118,11 @@ fn imported_types_package_target(module_name: &str) -> Option<String> {
     if package.is_empty() {
         return None;
     }
-    if let Some((scope, name)) = package.split_once("__") {
-        if !scope.is_empty() && !name.is_empty() {
-            return Some(format!("@{scope}/{name}"));
-        }
+    if let Some((scope, name)) = package.split_once("__")
+        && !scope.is_empty()
+        && !name.is_empty()
+    {
+        return Some(format!("@{scope}/{name}"));
     }
     Some(package.to_string())
 }
@@ -1023,7 +1024,7 @@ impl<'a> CheckerState<'a> {
                         if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
                             self.ctx
                                 .modules_with_ts2307_emitted
-                                .insert(module_key.clone());
+                                .insert(module_key);
                             self.error_at_position(spec_start, spec_length, &msg, code);
                         }
                     }
@@ -1401,9 +1402,7 @@ impl<'a> CheckerState<'a> {
                     crate::import::core::ModuleNotFoundSite::Import,
                 );
                 if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-                    self.ctx
-                        .modules_with_ts2307_emitted
-                        .insert(module_key.clone());
+                    self.ctx.modules_with_ts2307_emitted.insert(module_key);
                     self.error_at_position(spec_start, spec_length, &msg, code);
                 }
             }

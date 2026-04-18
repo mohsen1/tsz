@@ -779,12 +779,13 @@ impl<'a> CheckerState<'a> {
             // exists as an instance member. Accessing instance members on the
             // constructor type (e.g., `Base.instanceProp = 2`) should produce
             // TS2339, not be silently accepted as an expando.
-            if prototype_root_expr.is_none() && (symbol_flags & symbol_flags::CLASS) != 0 {
-                if let Some(prop_name) = prop_name.as_deref() {
-                    let obj_key = symbol_escaped_name.as_str();
-                    if self.class_has_instance_member(obj_key, prop_name) {
-                        return false;
-                    }
+            if prototype_root_expr.is_none()
+                && (symbol_flags & symbol_flags::CLASS) != 0
+                && let Some(prop_name) = prop_name.as_deref()
+            {
+                let obj_key = symbol_escaped_name.as_str();
+                if self.class_has_instance_member(obj_key, prop_name) {
+                    return false;
                 }
             }
             return true;

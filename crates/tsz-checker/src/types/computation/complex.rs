@@ -514,14 +514,14 @@ impl<'a> CheckerState<'a> {
         // Fallback: if the constructor type is still Lazy after resolve_lazy_type,
         // try resolving by name from lib contexts. This handles lib interfaces like
         // ProxyConstructor whose DefId has no symbol mapping when first accessed.
-        if let Some(def_id) = tsz_solver::visitor::lazy_def_id(self.ctx.types, constructor_type) {
-            if let Some(def_info) = self.ctx.definition_store.get(def_id) {
-                let name = self.ctx.types.resolve_atom(def_info.name);
-                if !name.is_empty() {
-                    if let Some(resolved) = self.resolve_lib_type_by_name(&name) {
-                        constructor_type = resolved;
-                    }
-                }
+        if let Some(def_id) = tsz_solver::visitor::lazy_def_id(self.ctx.types, constructor_type)
+            && let Some(def_info) = self.ctx.definition_store.get(def_id)
+        {
+            let name = self.ctx.types.resolve_atom(def_info.name);
+            if !name.is_empty()
+                && let Some(resolved) = self.resolve_lib_type_by_name(&name)
+            {
+                constructor_type = resolved;
             }
         }
 
@@ -1115,12 +1115,13 @@ impl<'a> CheckerState<'a> {
                 // DefinitionStore and resolve the lib type.
                 if let Some(def) = self.ctx.definition_store.get(def_id) {
                     let name = self.ctx.types.resolve_atom_ref(def.name);
-                    if let Some(lib_type) = self.resolve_lib_type_by_name(&name) {
-                        if lib_type != TypeId::ERROR && lib_type != TypeId::ANY {
-                            // Register the mapping so future lookups succeed
-                            self.ctx.register_def_in_envs(def_id, lib_type);
-                            constructor_type = lib_type;
-                        }
+                    if let Some(lib_type) = self.resolve_lib_type_by_name(&name)
+                        && lib_type != TypeId::ERROR
+                        && lib_type != TypeId::ANY
+                    {
+                        // Register the mapping so future lookups succeed
+                        self.ctx.register_def_in_envs(def_id, lib_type);
+                        constructor_type = lib_type;
                     }
                 }
             }
@@ -1298,12 +1299,11 @@ impl<'a> CheckerState<'a> {
                 // matching tsc behavior. Without this, `instance_type_from_constructor_type`
                 // returns the raw instance type whose formatter fallback shows param names
                 // (e.g. `S18<B, A, C>`).
-                if self.is_circular_class_new(new_expr.expression) {
-                    if let Some(fixed) =
+                if self.is_circular_class_new(new_expr.expression)
+                    && let Some(fixed) =
                         self.class_instance_type_for_circular_new(new_expr.expression)
-                    {
-                        return fixed;
-                    }
+                {
+                    return fixed;
                 }
                 // Recover with the constructor instance type so downstream checks
                 // (e.g. property access TS2339) still run after arity diagnostics.

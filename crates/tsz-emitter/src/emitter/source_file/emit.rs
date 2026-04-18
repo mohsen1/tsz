@@ -826,12 +826,15 @@ impl<'a> Printer<'a> {
 
             // Collect and emit exports initialization
             // Function exports get direct assignment (hoisted), others get void 0
-            let (func_exports, mut other_exports, default_func_exports) =
-                module_commonjs::collect_export_names_categorized(
-                    self.arena,
-                    &source.statements.nodes,
-                    self.ctx.options.preserve_const_enums,
-                );
+            let module_commonjs::CategorizedExports {
+                function_exports: func_exports,
+                mut other_exports,
+                default_function_exports: default_func_exports,
+            } = module_commonjs::collect_export_names_categorized(
+                self.arena,
+                &source.statements.nodes,
+                self.ctx.options.preserve_const_enums,
+            );
 
             if has_top_level_using
                 && source.statements.nodes.iter().any(|&stmt_idx| {

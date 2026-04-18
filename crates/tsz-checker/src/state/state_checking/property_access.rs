@@ -337,9 +337,9 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    /// Pre-resolve a mapped type's constraint through the checker's TypeEnvironment.
+    /// Pre-resolve a mapped type's constraint through the checker's `TypeEnvironment`.
     ///
-    /// The solver's QueryCache has a noop TypeResolver that can't evaluate
+    /// The solver's `QueryCache` has a noop `TypeResolver` that can't evaluate
     /// Application constraints (e.g., `Exclude<keyof Foo, "c">` inside `Omit`).
     /// This causes `is_key_in_mapped_constraint` to return true for ALL properties,
     /// allowing access to properties that should have been excluded.

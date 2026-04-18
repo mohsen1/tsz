@@ -455,13 +455,13 @@ impl<'a> CheckerState<'a> {
             if let Ok(child_env) = checker.ctx.type_env.try_borrow() {
                 let child_defs = child_env.snapshot_def_types();
                 drop(child_env);
-                if !child_defs.is_empty() {
-                    if let Ok(mut parent_env) = self.ctx.type_env.try_borrow_mut() {
-                        for (def_id_raw, type_id) in child_defs {
-                            let def_id = tsz_solver::def::DefId(def_id_raw);
-                            if parent_env.get_def(def_id).is_none() {
-                                parent_env.insert_def(def_id, type_id);
-                            }
+                if !child_defs.is_empty()
+                    && let Ok(mut parent_env) = self.ctx.type_env.try_borrow_mut()
+                {
+                    for (def_id_raw, type_id) in child_defs {
+                        let def_id = tsz_solver::def::DefId(def_id_raw);
+                        if parent_env.get_def(def_id).is_none() {
+                            parent_env.insert_def(def_id, type_id);
                         }
                     }
                 }

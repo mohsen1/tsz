@@ -20,7 +20,7 @@ use tsz_solver::type_queries::{LiteralTypeKind, classify_literal_type, get_enum_
 
 /// Check if a numeric literal text represents zero in any notation.
 /// Handles decimal (0.0, .0, 0e0), hex (0x0), binary (0b0), octal (0o0),
-/// and numeric separators (0_0).
+/// and numeric separators (`0_0`).
 fn is_numeric_literal_zero(text: &str) -> bool {
     // Strip numeric separators
     let stripped: String;

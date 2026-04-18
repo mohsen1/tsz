@@ -899,18 +899,18 @@ impl<'a> CheckerState<'a> {
             let line = raw_line.trim_start_matches('*').trim();
             if let Some(rest) = line.strip_prefix("@typedef") {
                 let rest = rest.trim();
-                if rest.starts_with('{') {
-                    if let Some((expr, after)) = Self::parse_jsdoc_curly_type_expr(rest) {
-                        let after = after.trim();
-                        if after.is_empty()
-                            || !after.chars().next().is_some_and(|c| {
-                                c.is_alphanumeric() || c == '_' || c == '$' || c == '.'
-                            })
-                        {
-                            let expr = expr.trim();
-                            if !expr.is_empty() {
-                                return Some(expr.to_string());
-                            }
+                if rest.starts_with('{')
+                    && let Some((expr, after)) = Self::parse_jsdoc_curly_type_expr(rest)
+                {
+                    let after = after.trim();
+                    if after.is_empty()
+                        || !after.chars().next().is_some_and(|c| {
+                            c.is_alphanumeric() || c == '_' || c == '$' || c == '.'
+                        })
+                    {
+                        let expr = expr.trim();
+                        if !expr.is_empty() {
+                            return Some(expr.to_string());
                         }
                     }
                 }

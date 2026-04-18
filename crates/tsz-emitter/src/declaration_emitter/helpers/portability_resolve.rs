@@ -617,12 +617,11 @@ impl<'a> DeclarationEmitter<'a> {
         let source_text = std::fs::read_to_string(source_path).ok()?;
         if let Some(import_module) =
             self.namespace_import_module_from_text(&source_text, &left_name)
+            && !import_module.starts_with('.')
+            && !import_module.starts_with('/')
         {
-            if !import_module.starts_with('.') && !import_module.starts_with('/') {
-                let from_path =
-                    self.transitive_dependency_from_import(source_path, &import_module)?;
-                return Some((from_path, type_name));
-            }
+            let from_path = self.transitive_dependency_from_import(source_path, &import_module)?;
+            return Some((from_path, type_name));
         }
 
         self.reference_types_namespace_member_reference_from_text(
@@ -926,19 +925,19 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some((specifier, rest)) = after_prefix.split_once("\")") {
                 if !specifier.starts_with('.') && !specifier.starts_with('/') {
                     let mut parts = specifier.split('/');
-                    if let Some(first) = parts.next() {
-                        if !first.is_empty() {
-                            let has_subpath = if first.starts_with('@') {
-                                let _scope_pkg = parts.next();
-                                parts.next().is_some()
-                            } else {
-                                parts.next().is_some()
-                            };
-                            if has_subpath
-                                && !self.is_bare_specifier_subpath_publicly_accessible(specifier)
-                            {
-                                return true;
-                            }
+                    if let Some(first) = parts.next()
+                        && !first.is_empty()
+                    {
+                        let has_subpath = if first.starts_with('@') {
+                            let _scope_pkg = parts.next();
+                            parts.next().is_some()
+                        } else {
+                            parts.next().is_some()
+                        };
+                        if has_subpath
+                            && !self.is_bare_specifier_subpath_publicly_accessible(specifier)
+                        {
+                            return true;
                         }
                     }
                 }
@@ -2084,10 +2083,10 @@ impl<'a> DeclarationEmitter<'a> {
         // Last resort: use the symbol's decl_file_idx which was set during
         // the multi-file merge phase.  This covers interface/type symbols from
         // foreign files that lack both symbol_arenas and declaration_arenas entries.
-        if symbol.decl_file_idx != u32::MAX {
-            if let Some(path) = self.file_idx_to_path.get(&symbol.decl_file_idx) {
-                return Some(path.clone());
-            }
+        if symbol.decl_file_idx != u32::MAX
+            && let Some(path) = self.file_idx_to_path.get(&symbol.decl_file_idx)
+        {
+            return Some(path.clone());
         }
 
         None

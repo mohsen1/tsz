@@ -682,7 +682,7 @@ impl<'a> CheckerState<'a> {
                                     let clean_module =
                                         module_name.trim_matches('\'').trim_matches('"');
                                     let quoted_import =
-                                        format!("import(\"{}\").{}", clean_module, import_name);
+                                        format!("import(\"{clean_module}\").{import_name}");
                                     let message = format_message(
                                         diagnostic_messages::IS_A_TYPE_AND_CANNOT_BE_IMPORTED_IN_JAVASCRIPT_FILES_USE_IN_A_JSDOC_TYPE_ANNOTAT,
                                         &[import_name, &quoted_import],

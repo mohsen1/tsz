@@ -245,10 +245,11 @@ if ! $QUICK && ! $SKIP_LSP; then
     echo ""
     echo -e "${CYAN}━━━ [fourslash/LSP] ━━━${RESET}"
     FOURSLASH_JSON="$(mktemp "${TMPDIR:-/tmp}/tsz-fourslash-verify.XXXXXX").json"
-    echo -e "${CYAN}→${RESET}  scripts/safe-run.sh ./scripts/fourslash/run-fourslash.sh --max=50 --workers=8 --json-out=$FOURSLASH_JSON"
+    FOURSLASH_VERIFY_MAX=50
+    echo -e "${CYAN}→${RESET}  scripts/safe-run.sh ./scripts/fourslash/run-fourslash.sh --max=$FOURSLASH_VERIFY_MAX --workers=8 --json-out=$FOURSLASH_JSON"
     echo ""
 
-    scripts/safe-run.sh ./scripts/fourslash/run-fourslash.sh --max=50 --workers=8 --json-out="$FOURSLASH_JSON" || true
+    scripts/safe-run.sh ./scripts/fourslash/run-fourslash.sh --max="$FOURSLASH_VERIFY_MAX" --workers=8 --json-out="$FOURSLASH_JSON" || true
 
     if [[ ! -f "$FOURSLASH_JSON" ]]; then
         echo -e "${RED}✗${RESET}  fourslash/LSP — FAILED: no JSON summary written"
@@ -262,14 +263,20 @@ with open('$FOURSLASH_JSON') as f:
     print(data.get('summary', {}).get('passed', data.get('passed', 0)))
 " 2>/dev/null || echo "0")
 
-        if [[ "$FOURSLASH_PASS" -lt "$FOURSLASH_BASELINE_PASS" ]]; then
-            FOURSLASH_REGRESSION=$((FOURSLASH_BASELINE_PASS - FOURSLASH_PASS))
-            echo -e "${RED}✗${RESET}  fourslash/LSP — REGRESSION: lost $FOURSLASH_REGRESSION tests ($FOURSLASH_PASS vs $FOURSLASH_BASELINE_PASS baseline)"
+        FOURSLASH_EXPECTED_BASELINE="$FOURSLASH_BASELINE_PASS"
+        if [[ "$FOURSLASH_VERIFY_MAX" -gt 0 ]] && [[ "$FOURSLASH_BASELINE_PASS" -gt "$FOURSLASH_VERIFY_MAX" ]]; then
+            # When running a capped smoke subset, compare against the capped baseline.
+            FOURSLASH_EXPECTED_BASELINE="$FOURSLASH_VERIFY_MAX"
+        fi
+
+        if [[ "$FOURSLASH_PASS" -lt "$FOURSLASH_EXPECTED_BASELINE" ]]; then
+            FOURSLASH_REGRESSION=$((FOURSLASH_EXPECTED_BASELINE - FOURSLASH_PASS))
+            echo -e "${RED}✗${RESET}  fourslash/LSP — REGRESSION: lost $FOURSLASH_REGRESSION tests ($FOURSLASH_PASS vs $FOURSLASH_EXPECTED_BASELINE expected)"
             RESULTS+=("${RED}✗${RESET}  fourslash/LSP (REGRESSION: -$FOURSLASH_REGRESSION)")
             FAIL=$((FAIL + 1))
-        elif [[ "$FOURSLASH_PASS" -gt "$FOURSLASH_BASELINE_PASS" ]]; then
-            FOURSLASH_IMPROVEMENT=$((FOURSLASH_PASS - FOURSLASH_BASELINE_PASS))
-            echo -e "${GREEN}✓${RESET}  fourslash/LSP — IMPROVED: +$FOURSLASH_IMPROVEMENT tests ($FOURSLASH_PASS vs $FOURSLASH_BASELINE_PASS baseline)"
+        elif [[ "$FOURSLASH_PASS" -gt "$FOURSLASH_EXPECTED_BASELINE" ]]; then
+            FOURSLASH_IMPROVEMENT=$((FOURSLASH_PASS - FOURSLASH_EXPECTED_BASELINE))
+            echo -e "${GREEN}✓${RESET}  fourslash/LSP — IMPROVED: +$FOURSLASH_IMPROVEMENT tests ($FOURSLASH_PASS vs $FOURSLASH_EXPECTED_BASELINE expected)"
             RESULTS+=("${GREEN}✓${RESET}  fourslash/LSP (+$FOURSLASH_IMPROVEMENT)")
             PASS=$((PASS + 1))
         else

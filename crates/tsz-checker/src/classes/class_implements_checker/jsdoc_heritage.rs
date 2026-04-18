@@ -864,12 +864,10 @@ impl<'a> CheckerState<'a> {
                 // Also check ExpressionWithTypeArguments
                 if let Some(type_node) = self.ctx.arena.get(type_idx)
                     && let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node)
+                    && let Some(name) = self.heritage_name_text(expr_type_args.expression)
+                    && name == implements_name
                 {
-                    if let Some(name) = self.heritage_name_text(expr_type_args.expression)
-                        && name == implements_name
-                    {
-                        return true;
-                    }
+                    return true;
                 }
             }
         }

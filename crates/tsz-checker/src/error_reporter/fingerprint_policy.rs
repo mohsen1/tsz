@@ -890,7 +890,7 @@ impl<'a> CheckerState<'a> {
         idx
     }
 
-    /// Find the VariableStatement parent of a VariableDeclaration.
+    /// Find the `VariableStatement` parent of a `VariableDeclaration`.
     fn find_variable_statement_parent(&self, vd_idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = Some(vd_idx);
         while let Some(idx) = current {
@@ -899,10 +899,10 @@ impl<'a> CheckerState<'a> {
             if parent.is_none() {
                 return None;
             }
-            if let Some(parent_node) = self.ctx.arena.get(parent) {
-                if parent_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-                    return Some(parent);
-                }
+            if let Some(parent_node) = self.ctx.arena.get(parent)
+                && parent_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+            {
+                return Some(parent);
             }
             current = Some(parent);
         }
@@ -935,19 +935,19 @@ impl<'a> CheckerState<'a> {
         // For `var` (not let/const) with property access initializers where the
         // initializer type is callable, tsc points at the property access.
         // For `let`/`const` or non-callable initializers, point at the variable name.
-        if !is_let_or_const && vd.initializer.is_some() {
-            if let Some(init_node) = self.ctx.arena.get(vd.initializer) {
-                if init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                    // Check if the initializer type is callable (function-like).
-                    // tsc points at the initializer for callable types but at the
-                    // variable name for non-callable types.
-                    // Use the cached type directly to avoid &mut self requirement.
-                    if let Some(&init_type) = self.ctx.node_types.get(&vd.initializer.0) {
-                        if self.is_callable_type(init_type) {
-                            return vd.initializer;
-                        }
-                    }
-                }
+        if !is_let_or_const
+            && vd.initializer.is_some()
+            && let Some(init_node) = self.ctx.arena.get(vd.initializer)
+            && init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        {
+            // Check if the initializer type is callable (function-like).
+            // tsc points at the initializer for callable types but at the
+            // variable name for non-callable types.
+            // Use the cached type directly to avoid &mut self requirement.
+            if let Some(&init_type) = self.ctx.node_types.get(&vd.initializer.0)
+                && self.is_callable_type(init_type)
+            {
+                return vd.initializer;
             }
         }
         if vd.name.is_some() {

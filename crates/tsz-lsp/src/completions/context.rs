@@ -217,23 +217,19 @@ impl<'a> Completions<'a> {
                 }
                 return true;
             }
-            // After `?` — only true in parameter lists (optional param), not ternary
+            // After `?` — only true in parameter lists (optional param), not ternary.
+            // Ternary operator `cond ? |` is an expression position, not new identifier.
             Some(b'?') if !self.is_in_type_context(node_idx) => {
-                // Ternary operator `cond ? |` is an expression position, not new identifier
-                // TypeScript returns false for ternary context
                 return true;
             }
             // After `[` - only in specific contexts (array literal, binding pattern)
-            // NOT in element access expressions
+            // NOT in element access expressions.
             Some(b'[') if !self.is_element_access_context(trimmed_without_marker) => {
-                // Check if this is a computed property access (obj[|]) - should be false
-                // vs array literal [|] or binding pattern - should be true
                 return true;
             }
-            // After `<` - only for type parameter lists, NOT for JSX or comparison
-            // Type parameter: `<T, |` or `func<|`
+            // After `<` - only for type parameter lists, NOT for JSX or comparison.
+            // Type parameter: `<T, |` or `func<|`.
             Some(b'<') if self.is_type_parameter_context(trimmed_without_marker) => {
-                // Check if this looks like a type parameter list
                 return true;
             }
             _ => {}

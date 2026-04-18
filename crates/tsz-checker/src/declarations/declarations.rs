@@ -1019,15 +1019,15 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                             .arena
                                             .is_const_variable_declaration(sym.value_declaration)
                                 });
-                        if !is_const_var_ref {
-                            if let Some(init_node) = self.ctx.arena.get(member_data.initializer) {
-                                self.ctx.error(
+                        if !is_const_var_ref
+                            && let Some(init_node) = self.ctx.arena.get(member_data.initializer)
+                        {
+                            self.ctx.error(
                                     init_node.pos,
                                     init_node.end - init_node.pos,
                                     diagnostic_messages::CONST_ENUM_MEMBER_INITIALIZERS_MUST_BE_CONSTANT_EXPRESSIONS.to_string(),
                                     diagnostic_codes::CONST_ENUM_MEMBER_INITIALIZERS_MUST_BE_CONSTANT_EXPRESSIONS,
                                 );
-                            }
                         }
                     }
                     Some(v) if f64::is_nan(v) => {

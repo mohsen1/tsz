@@ -466,10 +466,9 @@ impl<'a> CheckerState<'a> {
         if let Some(callable) = tsz_solver::type_queries::get_callable_shape(
             self.ctx.types.as_type_database(),
             param_type,
-        ) {
-            if !callable.properties.is_empty() {
-                return false;
-            }
+        ) && !callable.properties.is_empty()
+        {
+            return false;
         }
 
         // For generator function callbacks, the callable return type is
@@ -1274,8 +1273,8 @@ impl<'a> CheckerState<'a> {
                         // emits the leaf-level property errors, not the parent
                         // "Type X is not assignable to Type Y" with "Types of
                         // property are incompatible" related info.
-                        if let Some(body_node) = self.ctx.arena.get(body_idx) {
-                            if self.has_diagnostic_code_within_span(
+                        if let Some(body_node) = self.ctx.arena.get(body_idx)
+                            && self.has_diagnostic_code_within_span(
                                 body_node.pos,
                                 body_node.end,
                                 tsz_common::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
@@ -1283,7 +1282,6 @@ impl<'a> CheckerState<'a> {
                                 elaborated = true;
                                 continue;
                             }
-                        }
                         // Try deeper elaboration into the body expression
                         // (e.g., object literal properties) before falling back
                         // to the parent-level error.

@@ -258,6 +258,23 @@ impl<'a> CheckerState<'a> {
             let mut result = self.type_reference_symbol_type(sym_id);
             if let Some(module_specifier) = self.resolve_named_import_module_for_local_name(name) {
                 result = self.apply_module_augmentations(&module_specifier, name, result);
+                // In type-reference position, a class name means the instance
+                // type, not the constructor. If augmentation produced a Callable
+                // with construct signatures (constructor type), extract the
+                // prototype's type (instance type) so the reference resolves
+                // correctly.
+                if let Some(shape) =
+                    crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, result)
+                {
+                    if !shape.construct_signatures.is_empty() {
+                        let prototype_name = self.ctx.types.intern_string("prototype");
+                        if let Some(proto_prop) =
+                            shape.properties.iter().find(|p| p.name == prototype_name)
+                        {
+                            result = proto_prop.type_id;
+                        }
+                    }
+                }
             }
             return Some(result);
         }
@@ -1004,20 +1021,19 @@ impl<'a> CheckerState<'a> {
         module_specifier: &str,
         resolution_mode: Option<crate::context::ResolutionModeOverride>,
     ) -> Option<tsz_binder::SymbolTable> {
-        if let Some(mode) = resolution_mode {
-            if let Some(target_idx) = self.ctx.resolve_import_target_from_file_with_mode(
+        if let Some(mode) = resolution_mode
+            && let Some(target_idx) = self.ctx.resolve_import_target_from_file_with_mode(
                 self.ctx.current_file_idx,
                 module_specifier,
                 Some(mode),
-            ) {
-                if let Some(exports) = self.resolve_cross_file_namespace_exports_for_file(
-                    target_idx,
-                    Some(module_specifier),
-                ) {
-                    return Some(exports);
-                }
-                return Some(tsz_binder::SymbolTable::new());
+            )
+        {
+            if let Some(exports) = self
+                .resolve_cross_file_namespace_exports_for_file(target_idx, Some(module_specifier))
+            {
+                return Some(exports);
             }
+            return Some(tsz_binder::SymbolTable::new());
         }
         self.resolve_effective_module_exports(module_specifier)
     }

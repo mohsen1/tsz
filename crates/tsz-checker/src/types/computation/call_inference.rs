@@ -17,8 +17,8 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{FunctionShape, TypeId};
 
 /// Detect spread marker tuples `[...T]` created by the checker for generic
-/// TypeParameter spreads. A spread marker is a 1-element tuple where the single
-/// element is a rest element whose inner type is a TypeParameter.
+/// `TypeParameter` spreads. A spread marker is a 1-element tuple where the single
+/// element is a rest element whose inner type is a `TypeParameter`.
 fn is_spread_marker_tuple(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
     if let Some(elems) = common::tuple_elements(db, type_id) {
         elems.len() == 1 && elems[0].rest && is_type_parameter_type(db, elems[0].type_id)
@@ -1292,22 +1292,20 @@ impl<'a> CheckerState<'a> {
             let spread_inner = common::tuple_elements(self.ctx.types, cached_actual)
                 .filter(|elems| elems.len() == 1 && elems[0].rest)
                 .map(|elems| elems[0].type_id);
-            if let Some(inner_type) = spread_inner {
-                if let Some(param) = instantiated_params.get(index).or_else(|| {
+            if let Some(inner_type) = spread_inner
+                && let Some(param) = instantiated_params.get(index).or_else(|| {
                     let last = instantiated_params.last()?;
                     last.rest.then_some(last)
-                }) {
-                    if param.rest {
-                        let rest_array_type = self.evaluate_type_with_env(param.type_id);
-                        let is_assignable =
-                            self.is_assignable_to_with_env(inner_type, rest_array_type);
-                        if is_assignable {
-                            continue;
-                        }
-                        // If not directly assignable, fall through to normal check
-                        expected = rest_array_type;
-                    }
+                })
+                && param.rest
+            {
+                let rest_array_type = self.evaluate_type_with_env(param.type_id);
+                let is_assignable = self.is_assignable_to_with_env(inner_type, rest_array_type);
+                if is_assignable {
+                    continue;
                 }
+                // If not directly assignable, fall through to normal check
+                expected = rest_array_type;
             }
 
             let arg_idx = args.get(index).copied();
@@ -1989,12 +1987,30 @@ impl<'a> CheckerState<'a> {
                 // start rather than inside the body, so we also check for
                 // assignability errors anywhere in the function arg when the
                 // context is concrete.
+                // Check if the expected type or its constraint is concrete.
+                // For generic calls like `g6<T extends () => any>(x: T)`, the expected
+                // type is `T` (has type params), but the constraint `() => any` is
+                // concrete. The contextual callable comes from the constraint, so
+                // TS7006 is definitive if the constraint is concrete.
                 let has_concrete_expected_type = !expected_is_unresolved
                     && expected_type.is_some_and(|et| {
-                        et != TypeId::UNKNOWN
-                            && et != TypeId::ERROR
-                            && et != TypeId::ANY
-                            && !common::contains_type_parameters(self.ctx.types, et)
+                        if et == TypeId::UNKNOWN || et == TypeId::ERROR || et == TypeId::ANY {
+                            return false;
+                        }
+                        if !common::contains_type_parameters(self.ctx.types, et) {
+                            return true;
+                        }
+                        // Expected type has type params — check if it's a single type
+                        // parameter with a concrete constraint (the contextual callable
+                        // source for callback args).
+                        let constraint = common::type_parameter_constraint(self.ctx.types, et);
+                        constraint.is_some_and(|c| {
+                            c != TypeId::UNKNOWN
+                                && c != TypeId::ERROR
+                                && c != TypeId::ANY
+                                && !common::contains_type_parameters(self.ctx.types, c)
+                                && !common::contains_infer_types(self.ctx.types, c)
+                        })
                     });
                 let is_concrete_callback_assignability = is_function_arg_diag
                     && is_assignability
@@ -2034,11 +2050,19 @@ impl<'a> CheckerState<'a> {
                 // TS18048, direct callback-body assignability like nested JSX
                 // TS2322, and assignability errors from callbacks with concrete
                 // contextual types.
+                // When the contextual type is concrete (no type parameters, no
+                // infer types), TS7006 (parameter implicitly has 'any' type) is
+                // definitive — if the contextual callable signature has fewer
+                // parameters than the callback, there's no later refinement that
+                // will provide a type for the excess parameters. Preserve these.
+                let is_concrete_callback_implicit_any = is_provisional_implicit_any
+                    && has_concrete_expected_type;
                 if is_function_arg_diag
                     && !is_nullish_callback_body_diag
                     && !is_direct_callback_body_assignability
                     && !is_concrete_expression_body_callback_assignability
                     && !is_concrete_callback_body_property_error
+                    && !is_concrete_callback_implicit_any
                 {
                     return false;
                 }
@@ -2078,6 +2102,7 @@ impl<'a> CheckerState<'a> {
                     || (implicit_any_in_object_literal
                         && !implicit_any_in_object_literal_method)
                     || is_nullish_callback_body_diag
+                    || is_concrete_callback_implicit_any
                     || !(is_object_literal_diag || is_function_arg_implicit_any_diag);
                 // --- Phase 3: exact-message dedup for kept diagnostics ---
                 if keep {

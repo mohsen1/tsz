@@ -1603,21 +1603,21 @@ impl<'a> LoweringPass<'a> {
             return;
         };
 
-        if self.ctx.target_es5 {
-            if let Some(ref args) = new_expr.arguments {
-                let has_spread = args
-                    .nodes
-                    .iter()
-                    .any(|&arg_idx| emit_utils::is_spread_element(self.arena, arg_idx));
-                if has_spread {
-                    self.transforms
-                        .insert(idx, TransformDirective::ES5NewSpread { new_expr: idx });
-                    // New expressions always need __spreadArray because we
-                    // prepend void 0 to the args array for bind().
-                    self.transforms.helpers_mut().spread_array = true;
-                    if self.ctx.options.downlevel_iteration {
-                        self.transforms.helpers_mut().read = true;
-                    }
+        if self.ctx.target_es5
+            && let Some(ref args) = new_expr.arguments
+        {
+            let has_spread = args
+                .nodes
+                .iter()
+                .any(|&arg_idx| emit_utils::is_spread_element(self.arena, arg_idx));
+            if has_spread {
+                self.transforms
+                    .insert(idx, TransformDirective::ES5NewSpread { new_expr: idx });
+                // New expressions always need __spreadArray because we
+                // prepend void 0 to the args array for bind().
+                self.transforms.helpers_mut().spread_array = true;
+                if self.ctx.options.downlevel_iteration {
+                    self.transforms.helpers_mut().read = true;
                 }
             }
         }

@@ -342,6 +342,7 @@ impl<'a> TypeFormatter<'a> {
         //
         // Restricted to composite shapes to avoid false positives where a primitive
         // or literal type coincidentally matches an alias body (e.g. `type U = 1`).
+        // Nested-if reads more cleanly than a long &&-chained let-chain here.
         #[allow(clippy::collapsible_if)]
         if matches!(
             &key,
