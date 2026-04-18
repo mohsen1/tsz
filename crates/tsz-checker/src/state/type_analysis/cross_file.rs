@@ -161,6 +161,29 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // When the user re-declares a lib global function, keep the user's overloads in scope
+        // (delegating to the lib arena would drop them and mis-resolve calls).
+        {
+            let sym_found = self.get_symbol_globally(sym_id);
+            if let Some(symbol) = sym_found
+                && (symbol.flags & symbol_flags::FUNCTION) != 0
+                && (symbol.flags
+                    & (symbol_flags::CLASS | symbol_flags::INTERFACE | symbol_flags::ALIAS))
+                    == 0
+            {
+                let has_function_in_current_arena = symbol.declarations.iter().any(|&d| {
+                    self.ctx
+                        .arena
+                        .get(d)
+                        .and_then(|n| self.ctx.arena.get_function(n))
+                        .is_some()
+                });
+                if has_function_in_current_arena {
+                    return None; // Handle locally, don't delegate to lib arena
+                }
+            }
+        }
+
         let is_known_cross_file = self.ctx.has_symbol_file_index(sym_id);
 
         if !is_known_cross_file
