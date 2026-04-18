@@ -841,7 +841,22 @@ impl<'a> CheckerState<'a> {
         }
 
         let ctor_type = self.base_constructor_type_from_expression(expr_idx, type_arguments)?;
-        let resolved = self.instance_type_from_constructor_type(ctor_type);
+        let mut resolved = self.instance_type_from_constructor_type(ctor_type);
+        if self.ctx.is_js_file()
+            && let Some(synthesized) =
+                self.synthesize_js_constructor_instance_type(expr_idx, ctor_type, &[])
+        {
+            resolved = match resolved {
+                Some(existing) if existing != synthesized => Some(
+                    self.ctx
+                        .types
+                        .factory()
+                        .intersection(vec![existing, synthesized]),
+                ),
+                Some(existing) => Some(existing),
+                None => Some(synthesized),
+            };
+        }
         if should_cache {
             self.ctx
                 .base_instance_expr_cache
