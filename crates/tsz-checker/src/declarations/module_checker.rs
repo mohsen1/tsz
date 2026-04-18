@@ -1615,6 +1615,12 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // tsc skips TS1205/TS1448 re-export checks inside declaration (.d.ts)
+        // files — the rules target emitted JS, not ambient type-only surfaces.
+        if self.ctx.is_declaration_file() {
+            return;
+        }
+
         let Some(clause_node) = self.ctx.arena.get(named_exports_idx) else {
             return;
         };
@@ -1658,16 +1664,22 @@ impl<'a> CheckerState<'a> {
             };
 
             // Check 1: Is the symbol inherently a type? → TS1205
-            // For isolatedModules: skip symbols imported via `import type` — the import
-            // already makes it syntactically clear the symbol is type-only, so re-exporting
-            // without `export type` is OK. Under verbatimModuleSyntax, this is still an error.
+            // For isolatedModules:
+            //   - Skip symbols imported via `import type` — the import already makes
+            //     it syntactically clear the symbol is type-only, so re-exporting
+            //     without `export type` is OK.
+            //   - Skip symbols that reach type-only status via a cross-file chain
+            //     (source uses `export type { X }` but X is itself a value). Those
+            //     belong to TS1448, not TS1205.
+            //   Under verbatimModuleSyntax, both of those still emit TS1205.
             let is_inherent_type = if let Some(ref module_spec) = module_specifier_text {
                 self.is_import_specifier_type_only(module_spec, &source_name)
             } else {
                 let type_only = self.is_local_symbol_type_only(&source_name);
                 if type_only
                     && option_name == "isolatedModules"
-                    && self.is_local_symbol_imported_as_type_only(&source_name)
+                    && (self.is_local_symbol_imported_as_type_only(&source_name)
+                        || self.is_local_symbol_from_type_only_chain(&source_name))
                 {
                     false
                 } else {
