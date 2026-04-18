@@ -1383,10 +1383,26 @@ mod tests {
 
     #[test]
     fn conformance_mixin_private_and_protected_does_not_emit_extra_super_ts2445() {
-        let diagnostics = check_diagnostics(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../TypeScript/tests/cases/compiler/mixinPrivateAndProtected.ts"
-        )));
+        let diagnostics = check_diagnostics(
+            r#"
+            type Constructor<T> = new (...args: any[]) => T;
+
+            class Person {
+                protected myProtectedFunction() {}
+            }
+
+            function PersonMixin<T extends Constructor<Person>>(Base: T) {
+                return class extends Base {
+                    myProtectedFunction() {
+                        super.myProtectedFunction();
+                    }
+                };
+            }
+
+            const MixedPerson = PersonMixin(class extends Person {});
+            new MixedPerson().myProtectedFunction();
+        "#,
+        );
 
         assert_eq!(
             diagnostics.iter().filter(|&&code| code == 2445).count(),
