@@ -38,7 +38,9 @@ prepare_wasm() {
   cp "$ROOT/LICENSE.txt" "$ROOT/crates/tsz-wasm/LICENSE.txt"
   (
     cd "$ROOT"
-    wasm-pack build crates/tsz-wasm --target web --out-dir ../../pkg/web
+    # Keep local preview aligned with production: wasm-opt currently breaks
+    # the browser-facing build during wasm-bindgen externref table init.
+    wasm-pack build crates/tsz-wasm --target web --out-dir ../../pkg/web --no-opt
   )
 }
 
