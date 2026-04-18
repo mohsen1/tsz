@@ -1793,6 +1793,13 @@ impl<'a> CheckerState<'a> {
                     && !expr.contains('.')
                     && unresolved
                 {
+                    // In a JS file, `@type {exports}` references the ambient
+                    // CommonJS `exports` object. tsc resolves it without diagnostic;
+                    // tsz's JSDoc resolver doesn't model this special name, so
+                    // suppress TS2304 for the literal `exports` identifier here.
+                    if expr == "exports" && self.is_js_file() {
+                        continue;
+                    }
                     self.emit_jsdoc_cannot_find_name(expr, comment.pos, comment.end, &source_text);
                 }
             }
