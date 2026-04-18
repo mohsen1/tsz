@@ -99,12 +99,21 @@ impl<'a> CheckerState<'a> {
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                 continue;
             };
-            let module_augmentation_declarations = self.module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
-            let script_scope_declarations = self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name);
-            let global_scope_declarations = self.global_scope_conflict_declarations_for_current_file(&symbol.escaped_name);
-            let jsx_runtime_conflict_declarations = self.jsx_runtime_conflict_declarations_for_current_file(&symbol.escaped_name);
-            let default_import_alias_conflicts = self.default_import_alias_conflict_declarations_for_current_file(&symbol.escaped_name);
-            let module_block_scoped_conflicts = self.module_file_block_scoped_conflict_declarations_for_current_file(&symbol.escaped_name, symbol.flags);
+            let module_augmentation_declarations = self
+                .module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let script_scope_declarations =
+                self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name);
+            let global_scope_declarations =
+                self.global_scope_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let jsx_runtime_conflict_declarations =
+                self.jsx_runtime_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let default_import_alias_conflicts = self
+                .default_import_alias_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let module_block_scoped_conflicts = self
+                .module_file_block_scoped_conflict_declarations_for_current_file(
+                    &symbol.escaped_name,
+                    symbol.flags,
+                );
 
             // Check if single NodeIndex has multiple arenas (cross-file duplicate with
             // same NodeIndex due to identical file structure). In this case, declarations
@@ -239,12 +248,21 @@ impl<'a> CheckerState<'a> {
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                 continue;
             };
-            let module_augmentation_declarations = self.module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
-            let script_scope_declarations = self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name);
-            let global_scope_declarations = self.global_scope_conflict_declarations_for_current_file(&symbol.escaped_name);
-            let jsx_runtime_conflict_declarations = self.jsx_runtime_conflict_declarations_for_current_file(&symbol.escaped_name);
-            let default_import_alias_conflicts = self.default_import_alias_conflict_declarations_for_current_file(&symbol.escaped_name);
-            let module_block_scoped_conflicts = self.module_file_block_scoped_conflict_declarations_for_current_file(&symbol.escaped_name, symbol.flags);
+            let module_augmentation_declarations = self
+                .module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let script_scope_declarations =
+                self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name);
+            let global_scope_declarations =
+                self.global_scope_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let jsx_runtime_conflict_declarations =
+                self.jsx_runtime_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let default_import_alias_conflicts = self
+                .default_import_alias_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let module_block_scoped_conflicts = self
+                .module_file_block_scoped_conflict_declarations_for_current_file(
+                    &symbol.escaped_name,
+                    symbol.flags,
+                );
 
             if emit_ts6200
                 && cross_file_conflicts

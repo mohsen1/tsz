@@ -1709,20 +1709,20 @@ impl<'a> CheckerState<'a> {
                 if let Some((module_specifier, _segments)) =
                     Self::parse_jsdoc_typeof_import_query(expr)
                 {
-                    let has_ambient_module = self
-                        .ctx
-                        .binder
-                        .declared_modules
-                        .contains(&module_specifier)
-                        || self
-                            .ctx
-                            .binder
-                            .shorthand_ambient_modules
-                            .contains(&module_specifier);
+                    let has_ambient_module =
+                        self.ctx.binder.declared_modules.contains(&module_specifier)
+                            || self
+                                .ctx
+                                .binder
+                                .shorthand_ambient_modules
+                                .contains(&module_specifier);
                     let rooted_specifier = module_specifier.starts_with('/');
                     let resolves = self
                         .ctx
-                        .resolve_import_target_from_file(self.ctx.current_file_idx, &module_specifier)
+                        .resolve_import_target_from_file(
+                            self.ctx.current_file_idx,
+                            &module_specifier,
+                        )
                         .is_some()
                         || self.ctx.resolve_import_target(&module_specifier).is_some();
                     let should_emit_module_not_found = if rooted_specifier {
@@ -1747,7 +1747,10 @@ impl<'a> CheckerState<'a> {
                                     (module_specifier.len() as u32).saturating_add(2),
                                 )
                             } else {
-                                (comment.pos, (module_specifier.len() as u32).saturating_add(2))
+                                (
+                                    comment.pos,
+                                    (module_specifier.len() as u32).saturating_add(2),
+                                )
                             };
                         let (message, code) = self.module_not_found_diagnostic_for_site(
                             &module_specifier,
@@ -1758,9 +1761,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                if unresolved
-                    && let Some(dot_idx) = expr.find('.')
-                {
+                if unresolved && let Some(dot_idx) = expr.find('.') {
                     let root_name = expr[..dot_idx].trim();
                     if !root_name.is_empty()
                         && Self::is_simple_type_name(root_name)
