@@ -1484,7 +1484,8 @@ impl Project {
             probe_offsets.push((start_offset - 1) as usize);
         }
         if end_offset as usize > start_offset as usize {
-            probe_offsets.push(((start_offset as usize + end_offset as usize) / 2).saturating_sub(1));
+            probe_offsets
+                .push(((start_offset as usize + end_offset as usize) / 2).saturating_sub(1));
         }
 
         for probe in probe_offsets {
@@ -1525,7 +1526,9 @@ impl Project {
             return None;
         }
 
-        source_text.get(start..end).map(std::string::ToString::to_string)
+        source_text
+            .get(start..end)
+            .map(std::string::ToString::to_string)
     }
 
     fn is_ascii_identifier_start(byte: u8) -> bool {
@@ -2664,7 +2667,10 @@ export = ts;
         }];
 
         let specs: Vec<String> = project
-            .get_import_candidates_for_diagnostics("/home/src/workspaces/project/a/index.ts", &diagnostics)
+            .get_import_candidates_for_diagnostics(
+                "/home/src/workspaces/project/a/index.ts",
+                &diagnostics,
+            )
             .into_iter()
             .filter(|candidate| candidate.local_name == "Shape")
             .map(|candidate| candidate.module_specifier)
@@ -2721,7 +2727,10 @@ export = ts;
         }];
 
         let specs: Vec<String> = project
-            .get_import_candidates_for_diagnostics("/home/src/workspaces/project/index.ts", &diagnostics)
+            .get_import_candidates_for_diagnostics(
+                "/home/src/workspaces/project/index.ts",
+                &diagnostics,
+            )
             .into_iter()
             .filter(|candidate| candidate.local_name == "useForm")
             .map(|candidate| candidate.module_specifier)
@@ -2732,7 +2741,9 @@ export = ts;
             "expected bare react-hook-form diagnostics auto-import candidate, got {specs:?}"
         );
         assert!(
-            specs.iter().any(|specifier| specifier == "react-hook-form/dist/useForm"),
+            specs
+                .iter()
+                .any(|specifier| specifier == "react-hook-form/dist/useForm"),
             "expected deep react-hook-form/dist/useForm diagnostics auto-import candidate, got {specs:?}"
         );
     }

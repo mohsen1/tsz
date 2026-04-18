@@ -785,7 +785,8 @@ impl Server {
         else {
             return Vec::new();
         };
-        let Some(module_specifier) = Self::require_module_specifier_for_alias(source_text, &receiver)
+        let Some(module_specifier) =
+            Self::require_module_specifier_for_alias(source_text, &receiver)
         else {
             return Vec::new();
         };
@@ -808,9 +809,8 @@ impl Server {
                 if !export_name.starts_with(&member_prefix) || !seen.insert(export_name.clone()) {
                     continue;
                 }
-                let mut item =
-                    CompletionItem::new(export_name.clone(), CompletionItemKind::Alias)
-                        .with_sort_text(sort_priority::MEMBER);
+                let mut item = CompletionItem::new(export_name.clone(), CompletionItemKind::Alias)
+                    .with_sort_text(sort_priority::MEMBER);
                 let mut alias_detail = format!("var {export_name}");
                 if let Some(function_type) = Self::function_initializer_type_annotation(
                     &local_name,
@@ -851,7 +851,10 @@ impl Server {
         Vec::new()
     }
 
-    fn member_receiver_and_prefix(source_text: &str, completion_offset: u32) -> Option<(String, String)> {
+    fn member_receiver_and_prefix(
+        source_text: &str,
+        completion_offset: u32,
+    ) -> Option<(String, String)> {
         let prefix_end = (completion_offset as usize).min(source_text.len());
         let prefix = Self::strip_trailing_fourslash_marker_text(&source_text[..prefix_end]);
         let trimmed = prefix.trim_end();
@@ -1117,9 +1120,9 @@ impl Server {
         let Some(edits) = item.additional_text_edits.as_ref() else {
             return false;
         };
-        edits.iter().any(|edit| {
-            Self::import_text_is_default_binding_for_label(&edit.new_text, &item.label)
-        })
+        edits
+            .iter()
+            .any(|edit| Self::import_text_is_default_binding_for_label(&edit.new_text, &item.label))
     }
 
     fn import_text_is_default_binding_for_label(new_text: &str, label: &str) -> bool {
@@ -1262,9 +1265,9 @@ impl Server {
             .additional_text_edits
             .as_ref()
             .and_then(|edits| {
-                edits
-                    .iter()
-                    .find_map(|edit| Self::extract_module_specifier_from_import_text(&edit.new_text))
+                edits.iter().find_map(|edit| {
+                    Self::extract_module_specifier_from_import_text(&edit.new_text)
+                })
             })
             .or(item.source.as_deref())?;
 
@@ -1292,8 +1295,7 @@ impl Server {
                 if let Some(default_type) = Self::default_export_literal_type_text(&source) {
                     return Some((CompletionItemKind::Property, default_type));
                 }
-            } else if let Some(named_info) = Self::named_export_literal_info(&source, export_name)
-            {
+            } else if let Some(named_info) = Self::named_export_literal_info(&source, export_name) {
                 return Some(named_info);
             }
         }
@@ -1310,9 +1312,7 @@ impl Server {
         }
 
         let mut candidates = Vec::new();
-        let exts = [
-            "ts", "tsx", "d.ts", "js", "jsx", "mts", "cts", "mjs", "cjs",
-        ];
+        let exts = ["ts", "tsx", "d.ts", "js", "jsx", "mts", "cts", "mjs", "cjs"];
 
         let push_path = |out: &mut Vec<String>, path: std::path::PathBuf| {
             let normalized = Self::normalize_virtual_path(&path.to_string_lossy());
@@ -1332,7 +1332,10 @@ impl Server {
             }
 
             for ext in exts {
-                push_path(&mut candidates, base_dir.join(format!("{normalized}.{ext}")));
+                push_path(
+                    &mut candidates,
+                    base_dir.join(format!("{normalized}.{ext}")),
+                );
             }
             for ext in exts {
                 push_path(
@@ -2125,7 +2128,8 @@ impl Server {
         let effective_kind = self
             .auto_import_entry_kind_override(current_file, item)
             .unwrap_or_else(|| {
-                if item.kind == CompletionItemKind::Variable && Self::is_default_auto_import_item(item)
+                if item.kind == CompletionItemKind::Variable
+                    && Self::is_default_auto_import_item(item)
                 {
                     CompletionItemKind::Property
                 } else {
@@ -2173,7 +2177,10 @@ impl Server {
             if item.has_action {
                 data.insert("moduleSpecifier".to_string(), serde_json::json!(source));
                 if let Some(export_name) = Self::auto_import_export_name(item) {
-                    data.insert("exportName".to_string(), serde_json::json!(export_name.clone()));
+                    data.insert(
+                        "exportName".to_string(),
+                        serde_json::json!(export_name.clone()),
+                    );
                     // Force worker-mode completion detail requests to stay on tsz for
                     // auto-import entries. Native fallback details can drop/reshape
                     // tags and action metadata for these entries.
@@ -2890,33 +2897,46 @@ impl Server {
                                 .is_some_and(|name| name == requested_export_name)
                         };
                     let mut item = if let Some(source) = requested_source.as_deref() {
-                        items.iter().find(|i| {
+                        items
+                            .iter()
+                            .find(|i| {
                                 i.label == name
-                                && i.has_action
-                                && Self::completion_sources_match(i.source.as_deref(), source)
-                                && requested_export_name
-                                    .as_deref()
-                                    .map_or(true, |requested| export_name_matches(i, requested))
-                        }).or_else(|| {
-                            items.iter().find(|i| {
-                                i.label == name
-                                && Self::completion_sources_match(i.source.as_deref(), source)
-                                && requested_export_name
-                                    .as_deref()
-                                    .map_or(true, |requested| export_name_matches(i, requested))
-                            })
-                        }).or_else(|| {
-                            items.iter().find(|i| {
-                                i.label == name
+                                    && i.has_action
                                     && Self::completion_sources_match(i.source.as_deref(), source)
+                                    && requested_export_name
+                                        .as_deref()
+                                        .map_or(true, |requested| export_name_matches(i, requested))
                             })
-                        }).or_else(|| {
-                            requested_export_name.as_deref().and_then(|requested| {
+                            .or_else(|| {
                                 items.iter().find(|i| {
-                                    i.label == name && export_name_matches(i, requested)
+                                    i.label == name
+                                        && Self::completion_sources_match(
+                                            i.source.as_deref(),
+                                            source,
+                                        )
+                                        && requested_export_name
+                                            .as_deref()
+                                            .map_or(true, |requested| {
+                                                export_name_matches(i, requested)
+                                            })
                                 })
                             })
-                        })
+                            .or_else(|| {
+                                items.iter().find(|i| {
+                                    i.label == name
+                                        && Self::completion_sources_match(
+                                            i.source.as_deref(),
+                                            source,
+                                        )
+                                })
+                            })
+                            .or_else(|| {
+                                requested_export_name.as_deref().and_then(|requested| {
+                                    items.iter().find(|i| {
+                                        i.label == name && export_name_matches(i, requested)
+                                    })
+                                })
+                            })
                     } else if entry_name.as_object().is_some() {
                         items
                             .iter()
@@ -2943,9 +2963,9 @@ impl Server {
                             i.label == name && i.source.as_deref() == Some("ClassMemberSnippet/")
                         });
                     }
-                    let auto_import_export_name = requested_export_name.clone().or_else(|| {
-                        item.and_then(Self::auto_import_export_name)
-                    });
+                    let auto_import_export_name = requested_export_name
+                        .clone()
+                        .or_else(|| item.and_then(Self::auto_import_export_name));
                     let is_default_auto_import_item =
                         auto_import_export_name.as_deref() == Some("default");
                     let mut display_item_owned = None;
@@ -2957,12 +2977,8 @@ impl Server {
                             if export_name == "default" {
                                 adjusted_item.kind = CompletionItemKind::Property;
                             }
-                            if let Some((export_kind, export_type)) =
-                                self.auto_import_export_literal_info(
-                                    file,
-                                    &adjusted_item,
-                                    export_name,
-                                )
+                            if let Some((export_kind, export_type)) = self
+                                .auto_import_export_literal_info(file, &adjusted_item, export_name)
                             {
                                 adjusted_item.kind = export_kind;
                                 adjusted_item.detail = Some(export_type);
@@ -3427,10 +3443,7 @@ mod tests {
             Some("./pkg/index.d.ts"),
             "./pkg"
         ));
-        assert!(Server::completion_sources_match(
-            Some("node:path"),
-            "path"
-        ));
+        assert!(Server::completion_sources_match(Some("node:path"), "path"));
         assert!(Server::completion_sources_match(
             Some("./decl.d.mts"),
             "./decl.js"
