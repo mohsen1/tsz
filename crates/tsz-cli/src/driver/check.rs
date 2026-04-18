@@ -18,6 +18,39 @@ const fn checker_resolution_mode_override(
     }
 }
 
+fn checker_lookup_resolution_mode(
+    module_resolver: &mut ModuleResolver,
+    options: &ResolvedCompilerOptions,
+    file_path: &Path,
+    import_kind: tsz::module_resolver::ImportKind,
+    resolution_mode_override: Option<tsz::module_resolver::ImportingModuleKind>,
+) -> Option<tsz::checker::context::ResolutionModeOverride> {
+    use tsz::module_resolver::{ImportKind, ImportingModuleKind, ModuleExtension};
+
+    let mode = resolution_mode_override.unwrap_or_else(|| match options.checker.module {
+        // Mirror ModuleResolver::resolve_with_kind_and_module_kind() so request-keyed
+        // checker maps line up with the actual lookup mode used by the resolver.
+        ModuleKind::Preserve => {
+            let extension = ModuleExtension::from_path(file_path);
+            if extension.forces_esm() {
+                ImportingModuleKind::Esm
+            } else if extension.forces_cjs() {
+                ImportingModuleKind::CommonJs
+            } else {
+                match import_kind {
+                    ImportKind::EsmImport | ImportKind::DynamicImport | ImportKind::EsmReExport => {
+                        ImportingModuleKind::Esm
+                    }
+                    ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
+                }
+            }
+        }
+        _ => module_resolver.get_importing_module_kind(file_path),
+    });
+
+    checker_resolution_mode_override(Some(mode))
+}
+
 pub(super) struct CollectDiagnosticsResult {
     pub diagnostics: Vec<Diagnostic>,
     pub request_cache_counters: RequestCacheCounters,
@@ -654,6 +687,13 @@ pub(super) fn collect_diagnostics(
                     no_implicit_any: options.checker.no_implicit_any,
                     implied_classic_resolution: options.checker.implied_classic_resolution,
                 };
+                let request_mode_key = checker_lookup_resolution_mode(
+                    &mut module_resolver,
+                    options,
+                    file_path,
+                    *import_kind,
+                    *resolution_mode_override,
+                );
 
                 let result = module_resolver.lookup(
                     &request,
@@ -708,11 +748,7 @@ pub(super) fn collect_diagnostics(
                         if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
                             resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
                             resolved_module_request_paths.insert(
-                                (
-                                    file_idx,
-                                    specifier.clone(),
-                                    checker_resolution_mode_override(*resolution_mode_override),
-                                ),
+                                (file_idx, specifier.clone(), request_mode_key),
                                 target_idx,
                             );
                         }
@@ -731,11 +767,7 @@ pub(super) fn collect_diagnostics(
                         },
                     );
                     resolved_module_request_errors.insert(
-                        (
-                            file_idx,
-                            specifier.clone(),
-                            checker_resolution_mode_override(*resolution_mode_override),
-                        ),
+                        (file_idx, specifier.clone(), request_mode_key),
                         tsz::checker::context::ResolutionError {
                             code: error.code,
                             message: error.message.clone(),
