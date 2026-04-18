@@ -756,6 +756,111 @@ impl<'a> CheckerState<'a> {
         has_type && !has_value
     }
 
+    /// Check if an alias symbol resolves to an uninstantiated namespace
+    /// (namespace/module with no concrete runtime value members).
+    pub(crate) fn alias_resolves_to_uninstantiated_namespace(&self, sym_id: SymbolId) -> bool {
+        let lib_binders = self.get_lib_binders();
+        let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+            return false;
+        };
+
+        if (symbol.flags & symbol_flags::ALIAS) == 0 {
+            return false;
+        }
+
+        // Namespace imports (`import * as ns`) are always values.
+        if symbol.import_name.as_deref() == Some("*") {
+            return false;
+        }
+
+        let mut visited = Vec::new();
+        let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited) else {
+            return false;
+        };
+
+        let target_file_idx = self.ctx.resolve_symbol_file_index(target_sym_id);
+        let target_binder = target_file_idx
+            .and_then(|idx| self.ctx.get_binder_for_file(idx))
+            .unwrap_or(self.ctx.binder);
+        let Some(mut target_sym) = target_binder
+            .get_symbol(target_sym_id)
+            .or_else(|| self.ctx.binder.get_symbol_with_libs(target_sym_id, &lib_binders))
+        else {
+            return false;
+        };
+        let mut target_candidate_id = target_sym_id;
+
+        // Ambient `export default X` often resolves to a local ALIAS-like
+        // synthetic `default` symbol whose declaration is identifier `X`.
+        // Follow that identifier to classify whether `X` is an uninstantiated
+        // namespace.
+        if (target_sym.flags & symbol_flags::NAMESPACE_MODULE) == 0
+            && (target_sym.flags & symbol_flags::ALIAS) != 0
+            && target_sym.import_module.is_none()
+            && let Some(file_idx) = target_file_idx
+        {
+            let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
+            if let Some(target_file_name) = target_arena.source_files.first().map(|f| &f.file_name)
+                && let Some(decl_idx) = if target_sym.value_declaration.is_some() {
+                    Some(target_sym.value_declaration)
+                } else {
+                    target_sym.declarations.first().copied()
+                }
+                && let Some(target_decl_node) = target_arena.get(decl_idx)
+                && let Some(target_ident) = target_arena.get_identifier(target_decl_node)
+            {
+                let ident_name = target_ident.escaped_text.as_str();
+                let import_module = symbol
+                    .import_module
+                    .as_deref()
+                    .unwrap_or("")
+                    .trim_matches('"')
+                    .trim_matches('\'');
+                let module_keys = [
+                    symbol.import_module.as_deref().unwrap_or(""),
+                    import_module,
+                    target_file_name.as_str(),
+                ];
+
+                let mut target_ns_sym_id = None;
+                for key in module_keys {
+                    if key.is_empty() {
+                        continue;
+                    }
+                    if let Some(exports) = target_binder.module_exports.get(key)
+                        && let Some(sym) = exports.get(ident_name)
+                    {
+                        target_ns_sym_id = Some(sym);
+                        break;
+                    }
+                }
+                let target_ns_sym_id =
+                    target_ns_sym_id.or_else(|| target_binder.file_locals.get(ident_name));
+
+                if let Some(target_ns_sym_id) = target_ns_sym_id
+                    && let Some(resolved_target) = target_binder
+                        .get_symbol(target_ns_sym_id)
+                        .or_else(|| {
+                            self.ctx
+                                .binder
+                                .get_symbol_with_libs(target_ns_sym_id, &lib_binders)
+                        })
+                {
+                    target_candidate_id = target_ns_sym_id;
+                    target_sym = resolved_target;
+                }
+            }
+        }
+
+        let is_namespace = (target_sym.flags & symbol_flags::NAMESPACE_MODULE) != 0;
+        let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
+        let has_other_value = (target_sym.flags & value_flags_except_module) != 0;
+
+        is_namespace
+            && !has_other_value
+            && !self.symbol_has_runtime_value_in_binder(target_binder, target_candidate_id)
+    }
+
     pub(crate) fn symbol_member_is_type_only(
         &self,
         sym_id: SymbolId,
@@ -1279,6 +1384,62 @@ impl<'a> CheckerState<'a> {
                         visited,
                     ) {
                         return true;
+                    }
+                }
+
+                // `export default X` in ambient modules synthesizes a local ALIAS-like
+                // `default` export symbol whose declaration is the identifier `X`.
+                // When that target identifier is type-only (including namespace-only
+                // symbols with no runtime value members), treat the default export as
+                // type-only for cross-file import/value checks.
+                if export_name == "default"
+                    && sym.flags & symbol_flags::ALIAS != 0
+                    && sym.import_module.is_none()
+                    && let Some(target_decl_idx) = if sym.value_declaration.is_some() {
+                        Some(sym.value_declaration)
+                    } else {
+                        sym.declarations.first().copied()
+                    }
+                    && let Some(target_decl_node) = target_arena.get(target_decl_idx)
+                    && let Some(target_ident) = target_arena.get_identifier(target_decl_node)
+                {
+                    let target_name = target_ident.escaped_text.as_str();
+                    let target_sym_id = exports_table
+                        .get(target_name)
+                        .or_else(|| target_binder.file_locals.get(target_name));
+
+                    if let Some(target_sym_id) = target_sym_id
+                        && target_sym_id != sym_id
+                    {
+                        let target_sym_opt = target_binder
+                            .get_symbol(target_sym_id)
+                            .or_else(|| self.ctx.binder.get_symbol(target_sym_id));
+                        if let Some(target_sym) = target_sym_opt {
+                            const PURE_TYPE: u32 =
+                                symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS;
+                            const VALUE: u32 = symbol_flags::VARIABLE
+                                | symbol_flags::FUNCTION
+                                | symbol_flags::CLASS
+                                | symbol_flags::ENUM
+                                | symbol_flags::ENUM_MEMBER
+                                | symbol_flags::VALUE_MODULE;
+
+                            if target_sym.is_type_only
+                                || ((target_sym.flags & PURE_TYPE) != 0
+                                    && (target_sym.flags & VALUE) == 0)
+                                || ((target_sym.flags
+                                    & (symbol_flags::NAMESPACE_MODULE
+                                        | symbol_flags::VALUE_MODULE))
+                                    != 0
+                                    && !self
+                                        .symbol_has_runtime_value_in_binder(
+                                            target_binder,
+                                            target_sym_id,
+                                        ))
+                            {
+                                return true;
+                            }
+                        }
                     }
                 }
                 // Direct export exists and is not type-only — don't check wildcard re-exports.
