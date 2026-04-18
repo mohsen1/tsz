@@ -11,6 +11,80 @@ use std::borrow::Cow;
 use tsz_binder::SymbolId;
 
 impl<'a> TypeFormatter<'a> {
+    /// Format object-like parts with tsc-style long-type truncation:
+    /// keep a long prefix and the last member, inserting `... N more ...`.
+    ///
+    /// This is used for both plain object literals and object-with-index displays.
+    /// tsc starts truncating only on larger member counts (roughly 22+), and
+    /// preserves the tail member (often useful symbol members such as
+    /// `[Symbol.unscopables]`).
+    fn format_object_parts(&self, parts: Vec<String>) -> String {
+        if parts.is_empty() {
+            return "{}".to_string();
+        }
+
+        // Match tsc's higher truncation threshold (small/medium objects display fully).
+        const TRUNCATE_THRESHOLD: usize = 22;
+        if parts.len() < TRUNCATE_THRESHOLD {
+            return format!("{{ {}; }}", parts.join("; "));
+        }
+
+        // Keep at most this many leading members before the omitted-count marker.
+        const MAX_HEAD_PARTS: usize = 17;
+        // Soft budget for head text. Long member signatures (for example,
+        // `toLocaleString` overloads) reduce the number of retained heads.
+        const MAX_HEAD_CHARS: usize = 280;
+
+        let total = parts.len();
+        let tail = parts[total - 1].clone();
+        let mut head_count = 0usize;
+        let mut used_chars = 0usize;
+
+        for idx in 0..(total - 1) {
+            if head_count >= MAX_HEAD_PARTS {
+                break;
+            }
+            let part = &parts[idx];
+            let part_cost = if head_count == 0 {
+                part.len()
+            } else {
+                // "; " separator
+                part.len() + 2
+            };
+            let next_used = used_chars + part_cost;
+            let remaining_after = total - (idx + 1) - 1; // tail excluded
+            let omitted_digits = remaining_after.max(1).to_string().len();
+            // Reserve space for `; ... N more ...; <tail>`
+            let reserve_for_marker = 2 + 4 + omitted_digits + 9;
+            let reserve_for_tail = 2 + tail.len();
+
+            // Keep at least two head parts when available; after that, enforce budget.
+            if head_count >= 2 && next_used + reserve_for_marker + reserve_for_tail > MAX_HEAD_CHARS
+            {
+                break;
+            }
+
+            used_chars = next_used;
+            head_count += 1;
+        }
+
+        // Ensure progress even with extremely long first members.
+        if head_count == 0 {
+            head_count = 1;
+        }
+
+        let omitted = total.saturating_sub(head_count + 1);
+        if omitted == 0 {
+            return format!("{{ {}; }}", parts.join("; "));
+        }
+
+        let mut display_parts = Vec::with_capacity(head_count + 2);
+        display_parts.extend(parts.iter().take(head_count).cloned());
+        display_parts.push(format!("... {omitted} more ..."));
+        display_parts.push(tail);
+        format!("{{ {}; }}", display_parts.join("; "))
+    }
+
     pub(super) fn format_literal(&mut self, lit: &LiteralValue) -> String {
         match lit {
             LiteralValue::String(s) => {
@@ -76,24 +150,11 @@ impl<'a> TypeFormatter<'a> {
                 (Err(_), Err(_)) => std::cmp::Ordering::Equal,
             }
         });
-        // tsc does not truncate object properties in most diagnostics, but when
-        // we hit pathological object displays we still cap output. Include the
-        // omitted count (`... N more ...`) so fingerprint text aligns better with
-        // tsc's long-type display style.
-        if display_props.len() >= 10 {
-            let first: Vec<String> = display_props
-                .iter()
-                .take(8)
-                .map(|p| self.format_property(p))
-                .collect();
-            let omitted = display_props.len().saturating_sub(8);
-            return format!("{{ {}; ... {omitted} more ...; }}", first.join("; "));
-        }
         let formatted: Vec<String> = display_props
             .iter()
             .map(|p| self.format_property(p))
             .collect();
-        format!("{{ {}; }}", formatted.join("; "))
+        self.format_object_parts(formatted)
     }
 
     pub(super) fn format_property(&mut self, prop: &PropertyInfo) -> String {
@@ -379,11 +440,7 @@ impl<'a> TypeFormatter<'a> {
             parts.push(self.format_property(prop));
         }
 
-        if parts.is_empty() {
-            return "{}".to_string();
-        }
-
-        format!("{{ {}; }}", parts.join("; "))
+        self.format_object_parts(parts)
     }
 
     pub(super) fn format_union(&mut self, members: &[TypeId]) -> String {
