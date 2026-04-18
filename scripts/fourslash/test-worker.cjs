@@ -618,6 +618,16 @@ function patchSessionClient(SessionClient, ts) {
             return nativeResult;
         }
 
+        // Prefer native completion payloads whenever they are available.
+        // This keeps list contents, entry metadata, and `isNewIdentifierLocation`
+        // aligned with tsserver across the broad completion lane.
+        if (nativeResult) {
+            if (Array.isArray(nativeResult.entries) && nativeResult.entries.length === 0) {
+                return undefined;
+            }
+            return nativeResult;
+        }
+
         let isDotMemberAccessContext = false;
         if (nativeResult) {
             const sourceText = getSourceText();
