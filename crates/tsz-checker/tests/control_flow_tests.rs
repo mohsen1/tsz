@@ -428,6 +428,152 @@ switch (true) {
 }
 
 #[test]
+fn test_switch_true_fallthrough_clause_types() {
+    let source = r#"
+let x:
+  | { kind: "a"; aProps: string }
+  | { kind: "b"; bProps: string }
+  | { kind: "c"; cProps: string };
+switch (true) {
+  default:
+    const never: never = x;
+  case x.kind === "a":
+    x;
+    // fallthrough
+  case x.kind === "b":
+    x;
+    // fallthrough
+  case x.kind === "c":
+    x;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let arena = parser.get_arena();
+    let types = TypeInterner::new();
+    let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+
+    let kind_name = types.intern_string("kind");
+    let a_props_name = types.intern_string("aProps");
+    let b_props_name = types.intern_string("bProps");
+    let c_props_name = types.intern_string("cProps");
+    let lit_a = types.literal_string("a");
+    let lit_b = types.literal_string("b");
+    let lit_c = types.literal_string("c");
+
+    let member_a = types.object(vec![
+        PropertyInfo {
+            name: kind_name,
+            type_id: lit_a,
+            write_type: lit_a,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+            is_string_named: false,
+        },
+        PropertyInfo {
+            name: a_props_name,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 1,
+            is_string_named: false,
+        },
+    ]);
+
+    let member_b = types.object(vec![
+        PropertyInfo {
+            name: kind_name,
+            type_id: lit_b,
+            write_type: lit_b,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+            is_string_named: false,
+        },
+        PropertyInfo {
+            name: b_props_name,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 1,
+            is_string_named: false,
+        },
+    ]);
+
+    let member_c = types.object(vec![
+        PropertyInfo {
+            name: kind_name,
+            type_id: lit_c,
+            write_type: lit_c,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+            is_string_named: false,
+        },
+        PropertyInfo {
+            name: c_props_name,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 1,
+            is_string_named: false,
+        },
+    ]);
+
+    let union = types.union(vec![member_a, member_b, member_c]);
+    let switch_idx = get_switch_statement(arena, root, 1);
+    let case_b_expr = get_switch_clause_expression(arena, switch_idx, 2);
+    let case_c_expr = get_switch_clause_expression(arena, switch_idx, 3);
+
+    let flow_b = binder
+        .get_node_flow(case_b_expr)
+        .expect("flow for case b");
+    let narrowed_b = analyzer.get_flow_type(case_b_expr, union, flow_b);
+    let expected_b = types.union(vec![member_a, member_b]);
+    assert_eq!(narrowed_b, expected_b);
+
+    let flow_c = binder
+        .get_node_flow(case_c_expr)
+        .expect("flow for case c");
+    let narrowed_c = analyzer.get_flow_type(case_c_expr, union, flow_c);
+    let expected_c = types.union(vec![member_a, member_b, member_c]);
+    assert_eq!(narrowed_c, expected_c);
+}
+
+#[test]
 fn test_instanceof_narrows_to_object_union_members() {
     let source = r"
 let x: string | { a: number };
