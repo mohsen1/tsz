@@ -632,7 +632,7 @@ impl<'a> CheckerState<'a> {
             return format!("typeof import(\"{module_name}\")");
         }
         let has_object_shape =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, ty).is_some();
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty).is_some();
         let has_def = self.ctx.definition_store.find_def_for_type(ty).is_some();
         let has_alias = self
             .ctx
@@ -727,7 +727,11 @@ impl<'a> CheckerState<'a> {
         let base_name = self.named_type_display_name(type_id)?;
         let is_callable_or_constructible =
             tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id).is_some()
-                || tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id).is_some();
+                || crate::query_boundaries::common::function_shape_for_type(
+                    self.ctx.types,
+                    type_id,
+                )
+                .is_some();
         if !is_callable_or_constructible {
             return None;
         }
@@ -1069,9 +1073,11 @@ impl<'a> CheckerState<'a> {
             // Also skip when the node type is an array/iterable whose element equals
             // the passed source — this happens for yield* where we check the element
             // type but anchor at the array literal. Use the passed source directly.
-            let node_is_array_of_source =
-                tsz_solver::type_queries::get_array_element_type(self.ctx.types, expr_display_type)
-                    .is_some_and(|elem| elem == source);
+            let node_is_array_of_source = crate::query_boundaries::common::array_element_type(
+                self.ctx.types,
+                expr_display_type,
+            )
+            .is_some_and(|elem| elem == source);
             if node_is_array_of_source {
                 return self.format_assignability_type_for_message(source, target);
             }
@@ -1113,7 +1119,7 @@ impl<'a> CheckerState<'a> {
                 {
                     return display;
                 }
-                if tsz_solver::type_queries::get_array_element_type(self.ctx.types, display_type)
+                if crate::query_boundaries::common::array_element_type(self.ctx.types, display_type)
                     == Some(TypeId::UNKNOWN)
                     && let Some(display) = self.call_unknown_array_source_display(expr_idx, target)
                 {
@@ -1208,7 +1214,7 @@ impl<'a> CheckerState<'a> {
             {
                 return display;
             }
-            if tsz_solver::type_queries::get_array_element_type(self.ctx.types, display_type)
+            if crate::query_boundaries::common::array_element_type(self.ctx.types, display_type)
                 == Some(TypeId::UNKNOWN)
                 && let Some(display) = self.call_unknown_array_source_display(expr_idx, target)
             {
@@ -1593,7 +1599,7 @@ impl<'a> CheckerState<'a> {
         // is `{ new (a: number): number } | { new (a: number): Date }`),
         // TSC shows the actual result type, not the constructor variable name.
         // Return None to let the fallback formatting handle it.
-        if tsz_solver::type_queries::get_union_members(self.ctx.types, display_type).is_some() {
+        if crate::query_boundaries::common::union_members(self.ctx.types, display_type).is_some() {
             return None;
         }
 
@@ -1643,7 +1649,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let element_type =
-            tsz_solver::type_queries::get_array_element_type(self.ctx.types, first_arg_type)
+            crate::query_boundaries::common::array_element_type(self.ctx.types, first_arg_type)
                 .or_else(|| {
                     tsz_solver::operations::get_iterator_info(self.ctx.types, first_arg_type, false)
                         .map(|info| info.yield_type)
@@ -1698,7 +1704,8 @@ impl<'a> CheckerState<'a> {
                 .any(|prop| self.type_contains_string_literal(prop.type_id))
         };
 
-        if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, target)
+        if let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target)
             && has_literal_member(&shape)
         {
             return true;
@@ -2037,7 +2044,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> Option<String> {
         let element_type =
-            tsz_solver::type_queries::get_array_element_type(self.ctx.types, source_type)?;
+            crate::query_boundaries::common::array_element_type(self.ctx.types, source_type)?;
         if matches!(element_type, TypeId::ERROR | TypeId::UNKNOWN) {
             return None;
         }

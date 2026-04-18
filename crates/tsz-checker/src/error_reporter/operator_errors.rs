@@ -326,7 +326,7 @@ impl<'a> CheckerState<'a> {
             }
             let check_union = |t: TypeId| -> bool {
                 if let Some(members) =
-                    tsz_solver::type_queries::get_union_members(self.ctx.types, t)
+                    crate::query_boundaries::common::union_members(self.ctx.types, t)
                 {
                     members.iter().any(|&m| {
                         evaluator.is_symbol_like(m)

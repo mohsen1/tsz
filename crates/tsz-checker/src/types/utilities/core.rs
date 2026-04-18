@@ -44,7 +44,7 @@ impl<'a> CheckerState<'a> {
         let rest_param_type = self.contextual_rest_parameter_source_type(rest_param.type_id);
 
         if let Some(tuple_elements) =
-            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, rest_param_type)
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, rest_param_type)
         {
             // Variadic tuples (rest element followed by tail elements, e.g.
             // `[...((n: number) => void)[], (x: any) => void]`) require
@@ -73,7 +73,7 @@ impl<'a> CheckerState<'a> {
             let mut element_types = Vec::new();
             for member in members {
                 let Some(tuple_elements) =
-                    tsz_solver::type_queries::get_tuple_elements(self.ctx.types, member)
+                    crate::query_boundaries::common::tuple_elements(self.ctx.types, member)
                 else {
                     continue;
                 };
@@ -92,7 +92,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        tsz_solver::type_queries::get_array_element_type(self.ctx.types, rest_param_type)
+        crate::query_boundaries::common::array_element_type(self.ctx.types, rest_param_type)
     }
 
     fn contextual_rest_parameter_source_type(&mut self, rest_param_type: TypeId) -> TypeId {
@@ -616,7 +616,9 @@ impl<'a> CheckerState<'a> {
         // Collect function shapes from all members, flattening unions.
         let mut shapes: Vec<std::sync::Arc<FunctionShape>> = Vec::new();
         for &ty in types {
-            if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, ty) {
+            if let Some(shape) =
+                crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
+            {
                 shapes.push(shape);
             } else if let Some(members) =
                 crate::query_boundaries::common::union_members(self.ctx.types, ty)
@@ -624,9 +626,10 @@ impl<'a> CheckerState<'a> {
                 // Flatten union members: collect function shapes from each.
                 let mut found_any = false;
                 for &member in &members {
-                    if let Some(shape) =
-                        tsz_solver::type_queries::get_function_shape(self.ctx.types, member)
-                    {
+                    if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(
+                        self.ctx.types,
+                        member,
+                    ) {
                         shapes.push(shape);
                         found_any = true;
                     }
@@ -851,11 +854,11 @@ impl<'a> CheckerState<'a> {
         }
 
         fn is_tuple_like_rest_param(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
-            tsz_solver::type_queries::get_tuple_elements(db, ty).is_some()
+            crate::query_boundaries::common::tuple_elements(db, ty).is_some()
                 || crate::query_boundaries::common::union_members(db, ty).is_some_and(|members| {
                     !members.is_empty()
                         && members.iter().all(|member| {
-                            tsz_solver::type_queries::get_tuple_elements(db, *member).is_some()
+                            crate::query_boundaries::common::tuple_elements(db, *member).is_some()
                         })
                 })
         }
@@ -1132,10 +1135,10 @@ impl<'a> CheckerState<'a> {
         }
 
         let has_tuple_shape =
-            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, source_type).is_some()
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, source_type).is_some()
                 || state_query::union_members(self.ctx.types, source_type).is_some_and(|members| {
                     members.iter().all(|&member| {
-                        tsz_solver::type_queries::get_tuple_elements(self.ctx.types, member)
+                        crate::query_boundaries::common::tuple_elements(self.ctx.types, member)
                             .is_some()
                     })
                 });

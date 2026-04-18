@@ -56,19 +56,21 @@ impl<'a> CheckerState<'a> {
             ) {
                 let resolved_spread = self.evaluate_type_with_env(spread_type);
                 let resolved_spread = self.resolve_type_for_property_access(resolved_spread);
-                let has_jsx_managed_prop =
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_spread)
-                        .map(|shape| {
-                            shape.properties.iter().any(|p| {
-                                let name = self.ctx.types.resolve_atom(p.name);
-                                name == "key"
-                                    || name == "ref"
-                                    || name == "children"
-                                    || name.starts_with("data-")
-                                    || name.starts_with("aria-")
-                            })
-                        })
-                        .unwrap_or(false);
+                let has_jsx_managed_prop = crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    resolved_spread,
+                )
+                .map(|shape| {
+                    shape.properties.iter().any(|p| {
+                        let name = self.ctx.types.resolve_atom(p.name);
+                        name == "key"
+                            || name == "ref"
+                            || name == "children"
+                            || name.starts_with("data-")
+                            || name.starts_with("aria-")
+                    })
+                })
+                .unwrap_or(false);
 
                 if !has_jsx_managed_prop {
                     let source_str = self.format_type(spread_type);
@@ -98,7 +100,7 @@ impl<'a> CheckerState<'a> {
         let props_display = self.format_type(props_type);
 
         let Some(spread_shape) =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_spread)
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved_spread)
         else {
             // For generic spreads without a resolvable object shape, emit TS2322
             // if the spread type is not assignable to the props type.
@@ -137,7 +139,7 @@ impl<'a> CheckerState<'a> {
             && !suppress_missing_props
             && !spread_has_type_params
             && let Some(props_shape) =
-                tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, props_type)
         {
             let spread_prop_names: rustc_hash::FxHashSet<String> = spread_shape
                 .properties
@@ -309,9 +311,10 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                if let Some(shape) =
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, spread_type)
-                {
+                if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    spread_type,
+                ) {
                     let attr_atom = self.ctx.types.intern_string(attr_name);
                     let has_required_prop = shape
                         .properties

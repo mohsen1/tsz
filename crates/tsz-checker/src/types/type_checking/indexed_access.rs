@@ -1728,13 +1728,18 @@ impl<'a> CheckerState<'a> {
             } else {
                 object_type
             };
-        let object_shape =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, concrete_object_type);
+        let object_shape = crate::query_boundaries::common::object_shape_for_type(
+            self.ctx.types,
+            concrete_object_type,
+        );
         let object_has_shape = object_shape.is_some();
         let object_has_named_shape = object_shape.and_then(|shape| shape.symbol).is_some();
         let object_is_array_like = tsz_solver::is_array_type(self.ctx.types, concrete_object_type)
-            || tsz_solver::type_queries::get_tuple_elements(self.ctx.types, concrete_object_type)
-                .is_some();
+            || crate::query_boundaries::common::tuple_elements(
+                self.ctx.types,
+                concrete_object_type,
+            )
+            .is_some();
 
         if crate::query_boundaries::common::contains_type_parameters(
             self.ctx.types,
@@ -1900,7 +1905,7 @@ impl<'a> CheckerState<'a> {
             let is_literal_index =
                 tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
                     .is_some()
-                    || tsz_solver::type_queries::get_number_literal_value(
+                    || crate::query_boundaries::common::number_literal_value(
                         self.ctx.types,
                         index_type,
                     )

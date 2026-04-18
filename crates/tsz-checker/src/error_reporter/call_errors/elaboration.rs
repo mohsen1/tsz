@@ -84,9 +84,10 @@ impl<'a> CheckerState<'a> {
                 let mut display = None;
                 let mut ambiguous = false;
 
-                if let Some(shape) =
-                    tsz_solver::type_queries::get_function_shape(self.ctx.types, callee_type)
-                {
+                if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(
+                    self.ctx.types,
+                    callee_type,
+                ) {
                     let sig = tsz_solver::CallSignature {
                         type_params: shape.type_params.clone(),
                         params: shape.params.clone(),
@@ -142,7 +143,8 @@ impl<'a> CheckerState<'a> {
         arg_idx: NodeIndex,
     ) -> Option<String> {
         let evaluated_arg = self.evaluate_type_for_assignability(arg_type);
-        let arg_shape = tsz_solver::type_queries::get_object_shape(self.ctx.types, evaluated_arg)?;
+        let arg_shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, evaluated_arg)?;
         if arg_shape.properties.is_empty()
             && arg_shape.string_index.is_none()
             && arg_shape.number_index.is_none()
@@ -198,9 +200,10 @@ impl<'a> CheckerState<'a> {
                 let mut display = None;
                 let mut ambiguous = false;
 
-                if let Some(shape) =
-                    tsz_solver::type_queries::get_function_shape(self.ctx.types, callee_type)
-                {
+                if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(
+                    self.ctx.types,
+                    callee_type,
+                ) {
                     let sig = tsz_solver::CallSignature {
                         type_params: shape.type_params.clone(),
                         params: shape.params.clone(),
@@ -1573,7 +1576,7 @@ impl<'a> CheckerState<'a> {
                 target_type,
             ))
             .filter_map(|candidate| {
-                tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, candidate)
             })
             .any(|shape| shape.string_index.is_some() || shape.number_index.is_some());
 

@@ -15,7 +15,8 @@ impl<'a> CheckerState<'a> {
         let type_id =
             crate::query_boundaries::common::unwrap_readonly_or_noinfer(self.ctx.types, type_id)
                 .unwrap_or(type_id);
-        let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id)
+        let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
         else {
             return type_id;
         };
@@ -71,9 +72,13 @@ impl<'a> CheckerState<'a> {
         for member in members {
             let member = self.resolve_type_for_property_access(member);
             let member = self.evaluate_type_with_env(member);
-            let is_callable = tsz_solver::type_queries::get_function_shape(self.ctx.types, member)
-                .is_some_and(|shape| !shape.is_constructor)
-                || tsz_solver::type_queries::get_call_signatures(self.ctx.types, member)
+            let is_callable =
+                crate::query_boundaries::common::function_shape_for_type(self.ctx.types, member)
+                    .is_some_and(|shape| !shape.is_constructor)
+                    || crate::query_boundaries::common::call_signatures_for_type(
+                        self.ctx.types,
+                        member,
+                    )
                     .is_some_and(|sigs| !sigs.is_empty());
             if is_callable {
                 callable_members.push(self.normalize_jsx_contextual_callable_member(member));
@@ -185,7 +190,7 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved)
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved)
             .and_then(|shape| shape.number_index.as_ref().map(|index| index.value_type))
             .map(|value_type| self.refine_jsx_callable_contextual_type(value_type))
     }

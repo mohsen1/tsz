@@ -1534,12 +1534,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 children_request.contextual_type.is_some_and(|ctx_type| {
                                     let ctx_type =
                                         self.checker.resolve_type_for_property_access(ctx_type);
-                                    tsz_solver::type_queries::get_function_shape(
+                                    crate::query_boundaries::common::function_shape_for_type(
                                         self.checker.ctx.types,
                                         ctx_type,
                                     )
                                     .is_some()
-                                        || tsz_solver::type_queries::get_call_signatures(
+                                        || crate::query_boundaries::common::call_signatures_for_type(
                                             self.checker.ctx.types,
                                             ctx_type,
                                         )

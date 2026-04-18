@@ -136,7 +136,7 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
 
-            if !tsz_solver::type_queries::is_tuple_type(self.ctx.types, applicable) {
+            if !crate::query_boundaries::common::is_tuple_type(self.ctx.types, applicable) {
                 return false;
             }
             saw_tuple = true;
@@ -236,7 +236,7 @@ impl<'a> CheckerState<'a> {
                 let resolved = self.resolve_type_for_property_access(contextual);
                 let resolved = self.resolve_lazy_type(resolved);
                 let resolved = tsz_solver::remove_nullish(self.ctx.types, resolved);
-                if tsz_solver::type_queries::is_tuple_type(self.ctx.types, resolved) {
+                if crate::query_boundaries::common::is_tuple_type(self.ctx.types, resolved) {
                     return factory.tuple(vec![]);
                 }
             }
@@ -341,7 +341,8 @@ impl<'a> CheckerState<'a> {
         });
 
         let tuple_context = applicable_contextual_type.and_then(|applicable| {
-            let elems = tsz_solver::type_queries::get_tuple_elements(self.ctx.types, applicable)?;
+            let elems =
+                crate::query_boundaries::common::tuple_elements(self.ctx.types, applicable)?;
             // When all tuple elements are rest (e.g., `[...any[]]` from a
             // destructuring pattern like `[...rest]`), the contextual type is
             // effectively an array, not a fixed-length tuple.  Don't force
@@ -554,9 +555,10 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // If it's a tuple type, expand its elements
-                if let Some(elems) =
-                    tsz_solver::type_queries::get_tuple_elements(self.ctx.types, spread_expr_type)
-                {
+                if let Some(elems) = crate::query_boundaries::common::tuple_elements(
+                    self.ctx.types,
+                    spread_expr_type,
+                ) {
                     if let Some(ref _expected) = tuple_context {
                         // For tuple context, add each element with spread flag
                         for elem in &elems {
@@ -863,7 +865,7 @@ impl<'a> CheckerState<'a> {
 
             // Already a recognized array/tuple type?
             if let Some(elem) =
-                tsz_solver::type_queries::get_array_element_type(self.ctx.types, member)
+                crate::query_boundaries::common::array_element_type(self.ctx.types, member)
             {
                 element_types.push(elem);
                 continue;

@@ -189,7 +189,9 @@ impl<'a> CheckerState<'a> {
         let type_id = self.resolve_lazy_type(type_id);
         let type_id = self.evaluate_application_type(type_id);
         let mut widened = crate::query_boundaries::common::widen_type(self.ctx.types, type_id);
-        if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, widened) {
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, widened)
+        {
             let widened_return =
                 self.widen_fresh_object_literal_properties_for_display(shape.return_type);
             if widened_return != shape.return_type {
@@ -243,7 +245,9 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn widen_fresh_object_literal_properties_for_display(&self, ty: TypeId) -> TypeId {
-        let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, ty) else {
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)
+        else {
             return ty;
         };
         let mut widened_shape = shape.as_ref().clone();
@@ -406,11 +410,13 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        tsz_solver::type_queries::get_object_shape(self.ctx.types, ty).is_some_and(|shape| {
-            shape.properties.len() > 6
-                || shape.string_index.is_some()
-                || shape.number_index.is_some()
-        })
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty).is_some_and(
+            |shape| {
+                shape.properties.len() > 6
+                    || shape.string_index.is_some()
+                    || shape.number_index.is_some()
+            },
+        )
     }
 
     fn normalize_assignability_display_type_inner(
@@ -586,9 +592,10 @@ impl<'a> CheckerState<'a> {
                                 is_method: shape.is_method,
                             })
                     }
-                } else if let Some(shape) =
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, evaluated)
-                {
+                } else if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    evaluated,
+                ) {
                     let mut shape = shape.as_ref().clone();
                     let mut changed = false;
                     for prop in &mut shape.properties {
@@ -817,7 +824,7 @@ impl<'a> CheckerState<'a> {
                         })
                 }
             } else if let Some(shape) =
-                tsz_solver::type_queries::get_object_shape(self.ctx.types, evaluated)
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, evaluated)
             {
                 let mut shape = shape.as_ref().clone();
                 let mut changed = false;
@@ -963,7 +970,7 @@ impl<'a> CheckerState<'a> {
             .materialize_finite_mapped_type_for_display(ty)
             .unwrap_or(ty);
         let ty = self.split_optional_object_for_excess_display(ty);
-        let shape = tsz_solver::type_queries::get_object_shape(self.ctx.types, ty)?;
+        let shape = crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)?;
         if shape.string_index.is_some() || shape.number_index.is_some() {
             return None;
         }
@@ -1338,7 +1345,8 @@ impl<'a> CheckerState<'a> {
         // For function types with a return type that is a TypeQuery, don't use
         // the evaluated display. The evaluation would resolve the TypeQuery to
         // the full function type, causing double arrows like `() => () => typeof fn`.
-        if let Some(fn_shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, ty)
+        if let Some(fn_shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
             && tsz_solver::type_queries::is_type_query_type(self.ctx.types, fn_shape.return_type)
         {
             return false;
@@ -1428,7 +1436,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         ty: TypeId,
     ) -> Option<String> {
-        let shape = tsz_solver::type_queries::get_object_shape(self.ctx.types, ty)?;
+        let shape = crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)?;
         if shape.string_index.is_none() && shape.number_index.is_none() {
             return None;
         }

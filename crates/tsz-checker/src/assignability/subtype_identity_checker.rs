@@ -524,9 +524,10 @@ impl<'a> CheckerState<'a> {
 
         // For Object types, check if resolving Lazy(DefId) → ThisType properties
         // would produce the same property types as other_type.
-        if let Some(shape) =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types.as_type_database(), type_id)
-        {
+        if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+            self.ctx.types.as_type_database(),
+            type_id,
+        ) {
             // Check if any property has a Lazy → ThisType reference.
             let has_this_alias = shape
                 .properties

@@ -645,7 +645,7 @@ impl<'a> CheckerState<'a> {
         if let Some(index_value) = self
             .get_number_value_from_element_index(access.name_or_argument)
             .or_else(|| {
-                tsz_solver::type_queries::get_number_literal_value(self.ctx.types, index_type)
+                crate::query_boundaries::common::number_literal_value(self.ctx.types, index_type)
             })
             && index_value.is_finite()
             && index_value.fract() == 0.0
@@ -662,7 +662,10 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 object_for_tuple_check,
             );
-            if tsz_solver::type_queries::is_tuple_type(self.ctx.types, object_for_tuple_check) {
+            if crate::query_boundaries::common::is_tuple_type(
+                self.ctx.types,
+                object_for_tuple_check,
+            ) {
                 self.error_at_node(
                     access.name_or_argument,
                     crate::diagnostics::diagnostic_messages::A_TUPLE_TYPE_CANNOT_BE_INDEXED_WITH_A_NEGATIVE_VALUE,

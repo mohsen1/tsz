@@ -1342,7 +1342,7 @@ impl<'a> CheckerState<'a> {
                     if widened_flow == declared_type {
                         // Flow type is just the initializer literal - use widened declared type
                         declared_type
-                    } else if tsz_solver::type_queries::get_object_shape(
+                    } else if crate::query_boundaries::common::object_shape_for_type(
                         self.ctx.types,
                         self.evaluate_type_for_assignability(declared_type),
                     )
@@ -1388,8 +1388,11 @@ impl<'a> CheckerState<'a> {
                     && declared_type != TypeId::ANY
                     && declared_type != TypeId::ERROR
                     && flow_type != declared_type
-                    && tsz_solver::type_queries::get_object_shape(self.ctx.types, declared_type)
-                        .is_some())
+                    && crate::query_boundaries::common::object_shape_for_type(
+                        self.ctx.types,
+                        declared_type,
+                    )
+                    .is_some())
                     || (request.contextual_type.is_some()
                         && has_enclosing_binding_default
                         && flow_type != TypeId::ERROR

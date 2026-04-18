@@ -630,7 +630,7 @@ impl<'a> CheckerState<'a> {
                         if let Some(from_expected) = expected_contextual_type {
                             let direct_is_placeholderish = extracted == TypeId::ANY
                                 || extracted == TypeId::UNKNOWN
-                                || tsz_solver::type_queries::contains_infer_types_db(
+                                || crate::query_boundaries::common::contains_infer_types(
                                     self.ctx.types,
                                     extracted,
                                 );
@@ -648,19 +648,19 @@ impl<'a> CheckerState<'a> {
                                 });
                             let direct_is_rest_tuple_container = !param.dot_dot_dot_token
                                 && extracted != from_expected
-                                && (tsz_solver::type_queries::get_tuple_elements(
+                                && (crate::query_boundaries::common::tuple_elements(
                                     self.ctx.types,
                                     extracted,
                                 )
                                 .is_some()
-                                    || tsz_solver::type_queries::get_array_element_type(
+                                    || crate::query_boundaries::common::array_element_type(
                                         self.ctx.types,
                                         extracted,
                                     )
                                     .is_some());
                             let expected_is_more_informative = from_expected != TypeId::ANY
                                 && from_expected != TypeId::UNKNOWN
-                                && !tsz_solver::type_queries::contains_infer_types_db(
+                                && !crate::query_boundaries::common::contains_infer_types(
                                     self.ctx.types,
                                     from_expected,
                                 );
@@ -714,12 +714,12 @@ impl<'a> CheckerState<'a> {
                             .map(|type_id| {
                                 let type_id = self.resolve_lazy_type(type_id);
                                 let type_id = self.evaluate_application_type(type_id);
-                                tsz_solver::type_queries::get_function_shape(
+                                crate::query_boundaries::common::function_shape_for_type(
                                     self.ctx.types,
                                     type_id,
                                 )
                                 .is_some()
-                                    || tsz_solver::type_queries::get_call_signatures(
+                                    || crate::query_boundaries::common::call_signatures_for_type(
                                         self.ctx.types,
                                         type_id,
                                     )
@@ -1038,7 +1038,7 @@ impl<'a> CheckerState<'a> {
                         .get(param.initializer)
                         .and_then(|n| self.ctx.arena.get_literal_expr(n))
                         .is_some_and(|lit| lit.elements.nodes.is_empty())
-                        && let Some(elem_type) = tsz_solver::type_queries::get_array_element_type(
+                        && let Some(elem_type) = crate::query_boundaries::common::array_element_type(
                             self.ctx.types,
                             type_id,
                         )

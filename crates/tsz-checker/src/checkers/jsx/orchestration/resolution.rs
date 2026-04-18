@@ -743,12 +743,12 @@ impl<'a> CheckerState<'a> {
                                         attr_request.contextual_type.is_some_and(|ctx_type| {
                                             let ctx_type =
                                                 self.resolve_type_for_property_access(ctx_type);
-                                            tsz_solver::type_queries::get_function_shape(
+                                            crate::query_boundaries::common::function_shape_for_type(
                                                 self.ctx.types,
                                                 ctx_type,
                                             )
                                             .is_some()
-                                                || tsz_solver::type_queries::get_call_signatures(
+                                                || crate::query_boundaries::common::call_signatures_for_type(
                                                     self.ctx.types,
                                                     ctx_type,
                                                 )
@@ -1272,7 +1272,8 @@ impl<'a> CheckerState<'a> {
             return "children".to_string();
         }
 
-        let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, evaluated)
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, evaluated)
         else {
             return "children".to_string();
         };

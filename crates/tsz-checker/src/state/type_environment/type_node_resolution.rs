@@ -681,7 +681,7 @@ impl<'a> CheckerState<'a> {
         {
             ((*shape).clone(), shape.properties.len())
         } else if let Some(function_shape) =
-            tsz_solver::type_queries::get_function_shape(self.ctx.types, base_type)
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, base_type)
         {
             let signature = CallSignature {
                 type_params: function_shape.type_params.clone(),

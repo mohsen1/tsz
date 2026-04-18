@@ -183,7 +183,8 @@ impl<'a> CheckerState<'a> {
         for candidate in candidates {
             let candidate = self.resolve_lazy_type(candidate);
             let candidate = self.evaluate_application_type(candidate);
-            if tsz_solver::type_queries::get_function_shape(self.ctx.types, candidate).is_some()
+            if crate::query_boundaries::common::function_shape_for_type(self.ctx.types, candidate)
+                .is_some()
                 || tsz_solver::type_queries::get_callable_shape(self.ctx.types, candidate).is_some()
                 || tsz_solver::type_queries::get_call_signatures(self.ctx.types, candidate)
                     .is_some_and(|sigs| !sigs.is_empty())
