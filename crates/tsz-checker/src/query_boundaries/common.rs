@@ -611,6 +611,15 @@ pub(crate) fn keyof_inner_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option
     tsz_solver::keyof_inner_type(db, type_id)
 }
 
+/// Substitute `this` type references in `type_id` with `this_type`.
+pub(crate) fn substitute_this_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    this_type: TypeId,
+) -> TypeId {
+    tsz_solver::substitute_this_type(db, type_id, this_type)
+}
+
 /// Get the enum `DefId` for an enum type.
 pub(crate) fn enum_def_id(
     db: &dyn TypeDatabase,
