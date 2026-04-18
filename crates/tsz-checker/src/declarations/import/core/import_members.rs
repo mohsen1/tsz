@@ -803,7 +803,7 @@ impl<'a> CheckerState<'a> {
     fn import_local_binding_is_type_only(&self, local_name_idx: NodeIndex) -> bool {
         use tsz_binder::symbol_flags;
 
-        let Some(sym_id) = self.resolve_identifier_symbol(local_name_idx) else {
+        let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(local_name_idx) else {
             return false;
         };
         let lib_binders = self.get_lib_binders();
