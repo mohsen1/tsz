@@ -798,6 +798,19 @@ impl<'a> CheckerState<'a> {
         let inside_ambient_module =
             self.is_inside_string_literal_module_declaration(named_exports_idx);
 
+        // Detect `export type { … }` on the enclosing statement. tsc still
+        // reports TS2661/TS2304 for unresolved names inside a type-only
+        // export, but skips TS18043 ("types cannot appear in export
+        // declarations in JavaScript files") since the user already marked
+        // the clause type-only.
+        let enclosing_export_is_type_only = self
+            .ctx
+            .arena
+            .get_extended(named_exports_idx)
+            .and_then(|ext| self.ctx.arena.get(ext.parent))
+            .and_then(|parent_node| self.ctx.arena.get_export_decl(parent_node))
+            .is_some_and(|decl| decl.is_type_only);
+
         let mut seen_export_names: FxHashMap<String, NodeIndex> = FxHashMap::default();
 
         for &specifier_idx in &named_exports.elements.nodes {
@@ -895,6 +908,7 @@ impl<'a> CheckerState<'a> {
             if is_local
                 && self.is_js_file()
                 && self.ctx.should_resolve_jsdoc()
+                && !enclosing_export_is_type_only
                 && self.is_local_symbol_type_only(&name_str)
             {
                 self.error_at_node(
