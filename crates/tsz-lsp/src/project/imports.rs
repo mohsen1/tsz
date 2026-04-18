@@ -1662,7 +1662,7 @@ mod tests {
     fn auto_import_file_exclude_patterns_hide_store_layout_package_candidates() {
         let mut project = Project::new();
         project.set_auto_import_file_exclude_patterns(vec![
-            "/**/@remix-run/server-runtime".to_string()
+            "/**/@remix-run/server-runtime".to_string(),
         ]);
         project.set_file(
             "/home/src/workspaces/project/tsconfig.json".to_string(),
