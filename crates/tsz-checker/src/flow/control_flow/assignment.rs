@@ -273,7 +273,10 @@ impl<'a> FlowAnalyzer<'a> {
                             .is_some_and(|lit| lit.elements.nodes.is_empty())
                 });
             if is_unannotated_decl_init {
-                return Some(self.interner.array(TypeId::ANY));
+                return Some(crate::query_boundaries::flow_analysis::array_type(
+                    self.interner,
+                    TypeId::ANY,
+                ));
             }
 
             // Also handle `let x; x = []` — assignment of empty array to an
@@ -290,7 +293,10 @@ impl<'a> FlowAnalyzer<'a> {
                 && let Some(sym_id) = self.binder.resolve_identifier(self.arena, target)
                 && self.is_control_flow_typed_any_symbol(sym_id)
             {
-                return Some(self.interner.array(TypeId::ANY));
+                return Some(crate::query_boundaries::flow_analysis::array_type(
+                    self.interner,
+                    TypeId::ANY,
+                ));
             }
 
             // For flow narrowing, prefer literal types from AST nodes over the type checker's widened types
@@ -763,7 +769,10 @@ impl<'a> FlowAnalyzer<'a> {
             });
         }
 
-        Some(self.interner.tuple(tuple_elements))
+        Some(crate::query_boundaries::flow_analysis::tuple_type(
+            self.interner,
+            tuple_elements,
+        ))
     }
 
     fn destructuring_array_literal_element_type(&self, element: NodeIndex) -> Option<TypeId> {
@@ -1673,7 +1682,7 @@ impl<'a> FlowAnalyzer<'a> {
         } else if kept.len() == 1 {
             kept[0]
         } else {
-            self.interner.union(kept)
+            crate::query_boundaries::flow_analysis::union_types(self.interner, kept)
         }
     }
 

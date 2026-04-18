@@ -3875,12 +3875,13 @@ fn test_direct_interner_type_construction_ceiling() {
 
     // Ceiling: current count of direct interner type-construction calls.
     // This number must only shrink as calls are migrated to query_boundaries.
-    const CEILING: usize = 14;
+    const CEILING: usize = 0;
     assert!(
         total_count <= CEILING,
         "Direct interner type-construction calls outside query_boundaries have increased \
-         to {total_count} (ceiling: {CEILING}). Migrate new calls to use query_boundaries \
-         helpers (e.g., flow_analysis::union_types). Current occurrences:\n{}",
+         to {total_count} (ceiling: {CEILING}). Use query_boundaries helpers \
+         (e.g., flow_analysis::union_types, ::array_type, ::tuple_type, ::intersection_types). \
+         Current occurrences:\n{}",
         violations.join("\n")
     );
 }
