@@ -619,9 +619,40 @@ impl<'a> CheckerState<'a> {
                 && self.ctx.should_resolve_jsdoc()
             {
                 let right_type = self.get_type_of_node(right_idx);
-                if let Some((private_name, module_specifier)) =
-                    self.first_private_name_from_external_module_reference(right_type)
+                let mut private_ref =
+                    self.first_private_name_from_external_module_reference(right_type);
+
+                // Fallback for `module.exports = id` when `id` currently resolves to
+                // `any`/`unknown` at this site: inspect the identifier's initializer
+                // type directly, which is often richer in checked JS.
+                if private_ref.is_none()
+                    && matches!(right_type, TypeId::ANY | TypeId::UNKNOWN)
+                    && let Some(right_node) = self.ctx.arena.get(right_idx)
+                    && right_node.kind == SyntaxKind::Identifier as u16
+                    && let Some(sym_id) = self.resolve_identifier_symbol(right_idx)
+                    && let Some(symbol) = self.get_symbol_from_any_binder(sym_id)
                 {
+                    let decl_idx = if symbol.value_declaration.is_some() {
+                        symbol.value_declaration
+                    } else {
+                        symbol
+                            .declarations
+                            .first()
+                            .copied()
+                            .unwrap_or(NodeIndex::NONE)
+                    };
+                    if decl_idx.is_some()
+                        && let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                        && let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+                        && var_decl.initializer.is_some()
+                    {
+                        let init_type = self.get_type_of_node(var_decl.initializer);
+                        private_ref =
+                            self.first_private_name_from_external_module_reference(init_type);
+                    }
+                }
+
+                if let Some((private_name, module_specifier)) = private_ref {
                     let quoted_module = format!("\"{module_specifier}\"");
                     let report_node = self
                         .ctx

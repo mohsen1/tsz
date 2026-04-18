@@ -94,7 +94,6 @@ impl<'a> CheckerState<'a> {
         // guaranteed to appear in top-level scope tables, but they still participate in
         // duplicate-name checks for the current file.
         self.extend_duplicate_symbol_ids_with_local_augmentation_decls(&mut symbol_ids);
-
         let mut cross_file_conflicts = Vec::new();
         for &sym_id in &symbol_ids {
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
@@ -177,12 +176,12 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if !module_augmentation_declarations.is_empty()
-                || !script_scope_declarations.is_empty()
-                || !global_scope_declarations.is_empty()
-                || !jsx_runtime_conflict_declarations.is_empty()
-                || !default_import_alias_conflicts.is_empty()
-                || !module_block_scoped_conflicts.is_empty()
+            if !(module_augmentation_declarations.is_empty()
+                && script_scope_declarations.is_empty()
+                && global_scope_declarations.is_empty()
+                && jsx_runtime_conflict_declarations.is_empty()
+                && default_import_alias_conflicts.is_empty()
+                && module_block_scoped_conflicts.is_empty())
             {
                 has_remote = true;
             }

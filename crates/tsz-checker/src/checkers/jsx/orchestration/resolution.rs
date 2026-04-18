@@ -371,11 +371,15 @@ impl<'a> CheckerState<'a> {
             };
             let declared_component_type =
                 self.get_jsx_identifier_declared_type(tag_name_idx, component_type);
-            let prefer_declared_component_type = matches!(
-                component_type,
-                TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN
-            ) || (!tsz_solver::contains_type_parameters(self.ctx.types, component_type)
-                && tsz_solver::contains_type_parameters(self.ctx.types, declared_component_type));
+            let prefer_declared_component_type =
+                matches!(
+                    component_type,
+                    TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN
+                ) || (!tsz_solver::contains_type_parameters(self.ctx.types, component_type)
+                    && tsz_solver::contains_type_parameters(
+                        self.ctx.types,
+                        declared_component_type,
+                    ));
             let component_type = if prefer_declared_component_type {
                 declared_component_type
             } else {
@@ -886,7 +890,9 @@ impl<'a> CheckerState<'a> {
                 })
                 .or_else(|| {
                     let lib_binders = self.get_lib_binders();
-                    self.ctx.binder.get_global_type_with_libs("JSX", &lib_binders)
+                    self.ctx
+                        .binder
+                        .get_global_type_with_libs("JSX", &lib_binders)
                 })
         } else {
             let lib_binders = self.get_lib_binders();

@@ -431,6 +431,13 @@ impl<'a> CheckerState<'a> {
                 })
             })
             .or_else(|| {
+                export_keys.iter().find_map(|key| {
+                    binder
+                        .resolve_import_with_reexports_type_only(key, name)
+                        .map(|(resolved, _)| resolved)
+                })
+            })
+            .or_else(|| {
                 binder
                     .get_symbols()
                     .find_all_by_name(name)
@@ -609,7 +616,107 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        let alias_only = !declarations.is_empty()
+            && declarations
+                .iter()
+                .all(|(_, flags, _)| (*flags & symbol_flags::ALIAS) != 0);
+        if alias_only {
+            let mut merged = declarations.clone();
+            let push_unique =
+                |decls: Vec<(NodeIndex, u32, bool)>, out: &mut Vec<(NodeIndex, u32, bool)>| {
+                    for decl in decls {
+                        if !out.contains(&decl) {
+                            out.push(decl);
+                        }
+                    }
+                };
+
+            for &(decl_idx, _, _) in &declarations {
+                if let Some(resolved) =
+                    self.follow_reexport_specifier_to_source_declarations(file_idx, decl_idx)
+                    && !resolved.is_empty()
+                {
+                    push_unique(resolved, &mut merged);
+                }
+            }
+
+            let mut visited = FxHashSet::default();
+            if let Some((resolved_sym_id, owner_idx)) =
+                self.resolve_export_in_file(file_idx, name, &mut visited)
+                && let Some(owner_binder) = self.ctx.get_binder_for_file(owner_idx)
+            {
+                let owner_arena = self.ctx.get_arena_for_file(owner_idx as u32);
+                let mut resolved_decls = Vec::new();
+                let mut resolved_seen = FxHashSet::default();
+                self.push_export_surface_symbol_declarations_in_file(
+                    owner_binder,
+                    owner_arena,
+                    resolved_sym_id,
+                    Some(true),
+                    &mut resolved_decls,
+                    &mut resolved_seen,
+                );
+                if !resolved_decls.is_empty() {
+                    push_unique(resolved_decls, &mut merged);
+                }
+            }
+
+            return merged;
+        }
+
         declarations
+    }
+
+    fn follow_reexport_specifier_to_source_declarations(
+        &self,
+        file_idx: usize,
+        decl_idx: NodeIndex,
+    ) -> Option<Vec<(NodeIndex, u32, bool)>> {
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let resolved_decl_idx = self.resolve_duplicate_decl_node(arena, decl_idx)?;
+        let decl_node = arena.get(resolved_decl_idx)?;
+        if decl_node.kind != syntax_kind_ext::EXPORT_SPECIFIER {
+            return None;
+        }
+        let spec = arena.get_specifier(decl_node)?;
+        let export_name_idx = if spec.property_name.is_some() {
+            spec.property_name
+        } else {
+            spec.name
+        };
+        let export_name = arena
+            .get(export_name_idx)
+            .and_then(|node| arena.get_identifier(node))
+            .map(|ident| ident.escaped_text.clone())?;
+
+        let mut cursor = arena
+            .get_extended(resolved_decl_idx)
+            .map(|ext| ext.parent)
+            .unwrap_or(NodeIndex::NONE);
+        while cursor.is_some() {
+            let parent_node = arena.get(cursor)?;
+            if parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                let export_decl = arena.get_export_decl(parent_node)?;
+                if !export_decl.module_specifier.is_some() {
+                    return None;
+                }
+                let module_node = arena.get(export_decl.module_specifier)?;
+                let module_literal = arena.get_literal(module_node)?;
+                let target_idx = self
+                    .ctx
+                    .resolve_import_target_from_file(file_idx, &module_literal.text)?;
+                if target_idx == file_idx {
+                    return None;
+                }
+                return Some(self.export_surface_declarations_in_file(target_idx, &export_name));
+            }
+            cursor = arena
+                .get_extended(cursor)
+                .map(|ext| ext.parent)
+                .unwrap_or(NodeIndex::NONE);
+        }
+
+        None
     }
 
     fn default_export_alias_target_symbol_in_file(
