@@ -72,10 +72,9 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::symbol_flags;
         use tsz_scanner::SyntaxKind;
 
-        let sym_id = self
-            .ctx
-            .resolve_type_to_symbol_id(type_id)
-            .or_else(|| tsz_solver::type_queries::get_type_shape_symbol(self.ctx.types, type_id));
+        let sym_id = self.ctx.resolve_type_to_symbol_id(type_id).or_else(|| {
+            crate::query_boundaries::common::type_shape_symbol(self.ctx.types, type_id)
+        });
         let Some(sym_id) = sym_id else {
             return false;
         };
@@ -131,7 +130,7 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<String> {
         // For enum types, the solver can't access binder exports.
         // Collect enum member names directly from the binder's symbol exports.
-        if let Some(def_id) = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, type_id)
+        if let Some(def_id) = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)
             && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             && let Some(exports) = symbol.exports.as_ref()
@@ -186,8 +185,10 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::common::TypeResolver;
 
         let kind = if tsz_solver::type_queries::is_string_type(self.ctx.types, type_id)
-            || tsz_solver::type_queries::is_string_literal(self.ctx.types, type_id)
-        {
+            || crate::query_boundaries::checkers::iterable::is_string_literal_type(
+                self.ctx.types,
+                type_id,
+            ) {
             IntrinsicKind::String
         } else if tsz_solver::type_queries::is_number_type(self.ctx.types, type_id)
             || tsz_solver::type_queries::is_number_literal(self.ctx.types, type_id)

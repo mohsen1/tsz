@@ -416,7 +416,7 @@ impl<'a> CheckerState<'a> {
                 &substitution,
             );
             // Check if the resolved default still references any unsupplied type param.
-            if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, resolved) {
+            if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, resolved) {
                 // Check specifically for unsupplied param names
                 for &name in &unsupplied_names {
                     if tsz_solver::visitor::contains_type_parameter_named(

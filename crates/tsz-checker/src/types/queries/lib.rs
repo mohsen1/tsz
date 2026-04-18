@@ -1145,7 +1145,7 @@ impl<'a> CheckerState<'a> {
             // properties containing the namespace exports
             NamespaceMemberKind::Callable(_) => {
                 // Check if the callable has the property as a member (from namespace merge)
-                tsz_solver::type_queries::find_property_in_type_by_str(
+                crate::query_boundaries::common::find_property_by_str(
                     self.ctx.types,
                     object_type,
                     property_name,
@@ -1185,9 +1185,10 @@ impl<'a> CheckerState<'a> {
                 // Handle intersection types: when a module/namespace value is an
                 // intersection (e.g., `export = __React` produces an intersection of
                 // the namespace's type-side and value-side), try each member.
-                if let Some(members) =
-                    tsz_solver::type_queries::get_intersection_members(self.ctx.types, object_type)
-                {
+                if let Some(members) = crate::query_boundaries::common::intersection_members(
+                    self.ctx.types,
+                    object_type,
+                ) {
                     for member in members {
                         if let Some(result) =
                             self.resolve_namespace_value_member(member, property_name)

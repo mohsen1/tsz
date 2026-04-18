@@ -189,10 +189,9 @@ impl<'a> CheckerState<'a> {
             if effective_type_params.is_empty() {
                 let mut seen = rustc_hash::FxHashSet::default();
                 for &param_type in fallback.values() {
-                    if let Some(tp_info) = tsz_solver::type_queries::get_type_parameter_info(
-                        self.ctx.types,
-                        param_type,
-                    ) && seen.insert(tp_info.name)
+                    if let Some(tp_info) =
+                        crate::query_boundaries::common::type_param_info(self.ctx.types, param_type)
+                        && seen.insert(tp_info.name)
                     {
                         effective_type_params.push(tp_info);
                     }

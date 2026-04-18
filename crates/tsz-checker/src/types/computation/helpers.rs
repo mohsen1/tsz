@@ -187,7 +187,7 @@ impl<'a> CheckerState<'a> {
         // For patterns like `v[k]` where `v: T extends Record<K, number>`, the
         // type is `IndexAccess(T, K)` which must be evaluated iteratively via the
         // full TypeEnvironment resolver to eventually reach the concrete type `number`.
-        if tsz_solver::type_queries::get_index_access_types(self.ctx.types, result).is_some() {
+        if crate::query_boundaries::common::index_access_types(self.ctx.types, result).is_some() {
             let mut current = result;
             for _ in 0..3 {
                 let evaluated = self.evaluate_type_with_env(current);
@@ -195,7 +195,7 @@ impl<'a> CheckerState<'a> {
                     break;
                 }
                 current = evaluated;
-                if tsz_solver::type_queries::get_index_access_types(self.ctx.types, current)
+                if crate::query_boundaries::common::index_access_types(self.ctx.types, current)
                     .is_none()
                 {
                     break;

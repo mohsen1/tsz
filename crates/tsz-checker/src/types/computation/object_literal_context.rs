@@ -348,7 +348,7 @@ impl<'a> CheckerState<'a> {
                 .collect();
             if !callable_members.is_empty()
                 && callable_members.iter().all(|&member| {
-                    tsz_solver::type_queries::is_callable_type(self.ctx.types, member)
+                    crate::query_boundaries::common::is_callable_type(self.ctx.types, member)
                 })
             {
                 return Some(
@@ -361,7 +361,8 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        tsz_solver::type_queries::is_callable_type(self.ctx.types, type_id).then_some(type_id)
+        crate::query_boundaries::common::is_callable_type(self.ctx.types, type_id)
+            .then_some(type_id)
     }
 
     pub(crate) fn function_initializer_context_type(
@@ -479,7 +480,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(members) =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, type_id)
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
         {
             let mut saw_unknown = false;
             for member in members {
@@ -747,7 +748,7 @@ impl<'a> CheckerState<'a> {
                                                  intersection_type: TypeId,
                                                  property_name: &str|
          -> Option<TypeId> {
-            let members = tsz_solver::type_queries::get_intersection_members(
+            let members = crate::query_boundaries::common::intersection_members(
                 this.ctx.types,
                 intersection_type,
             )?;

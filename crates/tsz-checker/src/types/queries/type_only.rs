@@ -612,7 +612,7 @@ impl<'a> CheckerState<'a> {
             // For merged symbols, the namespace exports are stored as properties on the Callable
             NamespaceMemberKind::Callable(_) => {
                 // Check if the property exists in the callable's properties
-                if let Some(prop) = tsz_solver::type_queries::find_property_in_type_by_str(
+                if let Some(prop) = crate::query_boundaries::common::find_property_by_str(
                     self.ctx.types,
                     object_type,
                     property_name,

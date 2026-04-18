@@ -1081,7 +1081,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn resolve_type_for_interface_merge(&mut self, type_id: TypeId) -> TypeId {
-        if tsz_solver::type_queries::needs_evaluation_for_merge(self.ctx.types, type_id) {
+        if crate::query_boundaries::common::needs_evaluation_for_merge(self.ctx.types, type_id) {
             // Use the solver evaluator without ensure_relation_input_ready.
             // evaluate_type_with_env triggers lazy ref resolution which can cause
             // explosive type creation on augmented module interfaces (react + emotion).

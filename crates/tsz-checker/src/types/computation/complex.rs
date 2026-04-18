@@ -22,7 +22,7 @@ fn should_preserve_contextual_application_shape(
     db: &dyn tsz_solver::TypeDatabase,
     ty: TypeId,
 ) -> bool {
-    if tsz_solver::type_queries::get_application_info(db, ty).is_some() {
+    if crate::query_boundaries::common::application_info(db, ty).is_some() {
         return true;
     }
 
@@ -594,7 +594,7 @@ impl<'a> CheckerState<'a> {
             constructor_param_types = ?constructor_shape.as_ref().map(|s| s.params.iter().map(|p| (
                 self.format_type(p.type_id),
                 self.ctx.types.lookup(p.type_id),
-                tsz_solver::type_queries::get_application_info(self.ctx.types, p.type_id)
+                crate::query_boundaries::common::application_info(self.ctx.types, p.type_id)
                     .map(|(_, args)| args),
             )).collect::<Vec<_>>()),
             "New expression: two-pass inference check"

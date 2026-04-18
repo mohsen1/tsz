@@ -33,7 +33,9 @@ impl<'a> CheckerState<'a> {
         {
             return !shape.type_params.is_empty();
         }
-        if let Some(shape) = tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id) {
+        if let Some(shape) =
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
+        {
             return shape
                 .call_signatures
                 .iter()
@@ -55,7 +57,7 @@ impl<'a> CheckerState<'a> {
         {
             shape.params.iter().map(|p| p.type_id).collect::<Vec<_>>()
         } else if let Some(shape) =
-            tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id)
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
         {
             shape
                 .call_signatures
@@ -67,7 +69,7 @@ impl<'a> CheckerState<'a> {
         };
         params.iter().any(|&param_type| {
             if let Some(members) =
-                tsz_solver::type_queries::get_intersection_members(self.ctx.types, param_type)
+                crate::query_boundaries::common::intersection_members(self.ctx.types, param_type)
             {
                 members.iter().any(|&m| {
                     crate::query_boundaries::assignability::contains_type_parameters(
@@ -175,12 +177,16 @@ impl<'a> CheckerState<'a> {
         }
 
         let resolved = self.resolve_type_query_type(type_id);
-        let evaluated =
-            if tsz_solver::type_queries::get_type_application(self.ctx.types, resolved).is_some() {
-                self.evaluate_type_for_assignability(resolved)
-            } else {
-                self.evaluate_type_with_env(resolved)
-            };
+        let evaluated = if crate::query_boundaries::common::type_application(
+            self.ctx.types,
+            resolved,
+        )
+        .is_some()
+        {
+            self.evaluate_type_for_assignability(resolved)
+        } else {
+            self.evaluate_type_with_env(resolved)
+        };
         let type_id = if evaluated == TypeId::UNKNOWN && resolved != TypeId::UNKNOWN {
             resolved
         } else if evaluated != resolved {
@@ -268,7 +274,7 @@ impl<'a> CheckerState<'a> {
                 type_id
             }
         } else if let Some(members) =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, type_id)
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
         {
             let mut changed = false;
             let normalized_members: Vec<_> = members
@@ -364,8 +370,10 @@ impl<'a> CheckerState<'a> {
             // preserve their source-level surface. Normalizing conditional return
             // types here eagerly evaluates nested branches and widens literals
             // like `1` to `number`, which then leaks into assignability display.
-            let skip_for_type_query =
-                tsz_solver::type_queries::is_type_query_type(self.ctx.types, shape.return_type);
+            let skip_for_type_query = crate::query_boundaries::common::is_type_query_type(
+                self.ctx.types,
+                shape.return_type,
+            );
             let skip_for_conditional =
                 tsz_solver::is_conditional_type(self.ctx.types, shape.return_type);
             let skip = skip_for_type_params || skip_for_type_query || skip_for_conditional;
@@ -416,7 +424,9 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(type_id);
             return result;
         }
-        if let Some(shape) = tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id) {
+        if let Some(shape) =
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
+        {
             let mut changed = false;
             let call_signatures: Vec<_> = shape
                 .call_signatures
@@ -726,13 +736,17 @@ impl<'a> CheckerState<'a> {
         // context. Skip the suppression when both sides have their own signature-level
         // type params — the solver handles generic-to-generic comparison correctly.
         let is_callable_or_function = |type_id: TypeId| {
-            tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id).is_some()
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
+                .is_some()
                 || crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
                     .is_some()
-                || tsz_solver::type_queries::get_type_application(self.ctx.types, type_id)
+                || crate::query_boundaries::common::type_application(self.ctx.types, type_id)
                     .is_some_and(|app| {
-                        tsz_solver::type_queries::get_callable_shape(self.ctx.types, app.base)
-                            .is_some()
+                        crate::query_boundaries::common::callable_shape_for_type(
+                            self.ctx.types,
+                            app.base,
+                        )
+                        .is_some()
                             || crate::query_boundaries::common::function_shape_for_type(
                                 self.ctx.types,
                                 app.base,
@@ -743,7 +757,7 @@ impl<'a> CheckerState<'a> {
 
         let has_own_signature_type_params = |type_id: TypeId| -> bool {
             if let Some(shape) =
-                tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id)
+                crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
             {
                 return shape
                     .call_signatures
@@ -871,8 +885,8 @@ impl<'a> CheckerState<'a> {
         // unconstrained type parameters that should produce TS2322.
         let are_simple_generic_applications = |s: TypeId, t: TypeId| -> bool {
             if let (Some(s_app), Some(t_app)) = (
-                tsz_solver::type_queries::get_type_application(self.ctx.types, s),
-                tsz_solver::type_queries::get_type_application(self.ctx.types, t),
+                crate::query_boundaries::common::type_application(self.ctx.types, s),
+                crate::query_boundaries::common::type_application(self.ctx.types, t),
             ) {
                 // Same base type, both contain type parameters
                 return s_app.base == t_app.base
@@ -890,7 +904,7 @@ impl<'a> CheckerState<'a> {
         // This fixes false TS2769 errors when passing generic return types
         // (e.g., IterableIterator<T> from values()) to overloads.
         let is_generic_application_with_type_params = |ty: TypeId| -> bool {
-            if let Some(app) = tsz_solver::type_queries::get_type_application(self.ctx.types, ty)
+            if let Some(app) = crate::query_boundaries::common::type_application(self.ctx.types, ty)
                 && app
                     .args
                     .iter()
@@ -1063,7 +1077,7 @@ impl<'a> CheckerState<'a> {
     /// Check if a type contains an error application (recursively).
     fn type_contains_error_application(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
         // Check if it's a direct error application
-        if let Some(app) = tsz_solver::type_queries::get_type_application(db, type_id)
+        if let Some(app) = crate::query_boundaries::common::type_application(db, type_id)
             && app.base == TypeId::ERROR
         {
             return true;
@@ -1079,7 +1093,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if it's an intersection type containing an error application
-        if let Some(members) = tsz_solver::type_queries::get_intersection_members(db, type_id) {
+        if let Some(members) = crate::query_boundaries::common::intersection_members(db, type_id) {
             for member in members {
                 if Self::type_contains_error_application(db, member) {
                     return true;
@@ -1096,7 +1110,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if it's a callable type with error return
-        if let Some(callable) = tsz_solver::type_queries::get_callable_shape(db, type_id) {
+        if let Some(callable) =
+            crate::query_boundaries::common::callable_shape_for_type(db, type_id)
+        {
             for sig in &callable.call_signatures {
                 if Self::type_contains_error_application(db, sig.return_type) {
                     return true;

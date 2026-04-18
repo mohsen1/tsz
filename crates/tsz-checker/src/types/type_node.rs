@@ -909,13 +909,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// where the resolver doesn't know about the base type's definition). In such cases,
     /// the Application stays opaque and assignability checks may give incorrect results.
     fn predicate_type_contains_unevaluable_application(&self, type_id: TypeId) -> bool {
-        if tsz_solver::type_queries::get_application_info(self.ctx.types, type_id).is_some() {
+        if crate::query_boundaries::common::application_info(self.ctx.types, type_id).is_some() {
             // If evaluate_type returns the same TypeId, the Application couldn't be resolved
             let evaluated = self.ctx.types.evaluate_type(type_id);
             return evaluated == type_id;
         }
         if let Some(members) =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, type_id)
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
         {
             return members
                 .iter()

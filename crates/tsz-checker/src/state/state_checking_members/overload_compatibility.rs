@@ -34,16 +34,15 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        tsz_solver::type_queries::get_construct_signatures(self.ctx.types, type_id).and_then(
-            |sigs| {
+        crate::query_boundaries::common::construct_signatures_for_type(self.ctx.types, type_id)
+            .and_then(|sigs| {
                 sigs.first().map(|sig| {
                     sig.params
                         .iter()
                         .filter(|param| param.is_required())
                         .count()
                 })
-            },
-        )
+            })
     }
 
     fn jsdoc_overload_tag_span(

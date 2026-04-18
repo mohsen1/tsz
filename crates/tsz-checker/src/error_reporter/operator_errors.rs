@@ -237,7 +237,10 @@ impl<'a> CheckerState<'a> {
     /// Used to determine if `+` is string concatenation rather than arithmetic.
     fn is_string_like_type(&self, type_id: TypeId) -> bool {
         type_id == TypeId::STRING
-            || tsz_solver::type_queries::is_string_literal(self.ctx.types, type_id)
+            || crate::query_boundaries::checkers::iterable::is_string_literal_type(
+                self.ctx.types,
+                type_id,
+            )
     }
 
     /// Emit errors for binary operator type mismatches.
@@ -513,7 +516,7 @@ impl<'a> CheckerState<'a> {
         // We check both original and evaluated forms because evaluate_type_for_binary_ops
         // may partially resolve the type.
         let is_infer_placeholder = |type_id: TypeId| -> bool {
-            tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, type_id)
+            crate::query_boundaries::common::type_param_info(self.ctx.types, type_id)
                 .is_some_and(|tp| self.ctx.types.resolve_atom(tp.name).starts_with("__infer_"))
         };
         if is_infer_placeholder(eval_left)

@@ -2110,7 +2110,8 @@ impl<'a> CheckerState<'a> {
         {
             return shape.type_predicate;
         }
-        if let Some(sigs) = tsz_solver::type_queries::get_call_signatures(self.ctx.types, resolved)
+        if let Some(sigs) =
+            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, resolved)
             && let Some(sig) = sigs.first()
         {
             return sig.type_predicate;

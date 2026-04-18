@@ -93,9 +93,10 @@ impl<'a> CheckerState<'a> {
         // `get_contextual_signature` falls back to construct signatures when call
         // signatures are absent, so we must check the callable shape directly.
         // Tagged templates are function calls — constructor-only types are not callable.
-        if let Some(callable) =
-            tsz_solver::type_queries::get_callable_shape(self.ctx.types, resolved_tag_type)
-            && callable.call_signatures.is_empty()
+        if let Some(callable) = crate::query_boundaries::common::callable_shape_for_type(
+            self.ctx.types,
+            resolved_tag_type,
+        ) && callable.call_signatures.is_empty()
             && !callable.construct_signatures.is_empty()
         {
             self.type_check_template_substitutions_no_context(&tagged, request);
@@ -141,9 +142,11 @@ impl<'a> CheckerState<'a> {
         // For overloaded functions, tsc performs full overload resolution and reports
         // TS2769 ("No overload matches this call") instead of TS2345 per argument.
         // We only check arguments when the tag has a single call signature.
-        let is_overloaded =
-            tsz_solver::type_queries::get_callable_shape(self.ctx.types, resolved_tag_type)
-                .is_some_and(|callable| callable.call_signatures.len() > 1);
+        let is_overloaded = crate::query_boundaries::common::callable_shape_for_type(
+            self.ctx.types,
+            resolved_tag_type,
+        )
+        .is_some_and(|callable| callable.call_signatures.len() > 1);
         let should_check_args = !is_overloaded;
 
         // Apply explicit type arguments to the tag type (e.g., tag<Stuff>`...`).
@@ -239,7 +242,7 @@ impl<'a> CheckerState<'a> {
                 // `unknown` for unconstrained, uninferred type params.
                 for tp in &shape.type_params {
                     if let Some(resolved) = substitution.get(tp.name)
-                        && let Some(info) = tsz_solver::type_queries::get_type_parameter_info(
+                        && let Some(info) = crate::query_boundaries::common::type_param_info(
                             self.ctx.types,
                             resolved,
                         )
