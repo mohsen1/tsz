@@ -1260,11 +1260,21 @@ impl Server {
         if Self::is_default_auto_import_item(item) {
             return Some("default".to_string());
         }
-        let edits = item.additional_text_edits.as_ref()?;
-        for edit in edits {
-            if let Some(name) = Self::named_import_export_name_from_text(&edit.new_text) {
-                return Some(name);
+        if let Some(edits) = item.additional_text_edits.as_ref() {
+            for edit in edits {
+                if let Some(name) = Self::named_import_export_name_from_text(&edit.new_text) {
+                    return Some(name);
+                }
             }
+        }
+        // Fallback for auto-import items whose additional_text_edits haven't
+        // been attached yet (e.g. batched-detail flows where the edits arrive
+        // on the details request, not the initial list): the completion label
+        // IS the export name for named imports. Only accept when the item
+        // carries auto-import metadata and the label is a valid identifier,
+        // so ClassMemberSnippet / member-access labels are not misread.
+        if item.has_action && item.source.is_some() && Self::is_identifier(&item.label) {
+            return Some(item.label.clone());
         }
         None
     }
@@ -3251,6 +3261,14 @@ impl Server {
                 }
             }
             Self::sort_tsserver_completion_items(&mut items);
+            // Index merged items by label once so each entry_name lookup below
+            // doesn't linear-scan the full list (can be ~100s of items when
+            // the project has many exports). Lifetime-scoped to `items`, so
+            // the closure's returned &CompletionItem stays valid.
+            let mut items_by_label: FxHashMap<&str, Vec<&CompletionItem>> = FxHashMap::default();
+            for i in &items {
+                items_by_label.entry(i.label.as_str()).or_default().push(i);
+            }
             let member_parent = completion_result
                 .as_ref()
                 .and_then(|result| {
@@ -3318,66 +3336,52 @@ impl Server {
                                 .as_deref()
                                 .is_some_and(|name| name == requested_export_name)
                         };
+                    // Label-indexed candidates for this entry; avoids a fresh
+                    // linear scan of the full merged-items list for every
+                    // predicate branch below.
+                    let empty_candidates: Vec<&CompletionItem> = Vec::new();
+                    let candidates: &Vec<&CompletionItem> = items_by_label
+                        .get(name.as_str())
+                        .unwrap_or(&empty_candidates);
+                    let find = |pred: &dyn Fn(&CompletionItem) -> bool| -> Option<&CompletionItem> {
+                        candidates.iter().copied().find(|i| pred(i))
+                    };
                     let mut item = if let Some(source) = requested_source.as_deref() {
-                        items
-                            .iter()
-                            .find(|i| {
-                                i.label == name
-                                    && i.has_action
-                                    && Self::completion_sources_match(i.source.as_deref(), source)
+                        find(&|i| {
+                            i.has_action
+                                && Self::completion_sources_match(i.source.as_deref(), source)
+                                && requested_export_name
+                                    .as_deref()
+                                    .map_or(true, |requested| export_name_matches(i, requested))
+                        })
+                        .or_else(|| {
+                            find(&|i| {
+                                Self::completion_sources_match(i.source.as_deref(), source)
                                     && requested_export_name
                                         .as_deref()
                                         .map_or(true, |requested| export_name_matches(i, requested))
                             })
-                            .or_else(|| {
-                                items.iter().find(|i| {
-                                    i.label == name
-                                        && Self::completion_sources_match(
-                                            i.source.as_deref(),
-                                            source,
-                                        )
-                                        && requested_export_name
-                                            .as_deref()
-                                            .map_or(true, |requested| {
-                                                export_name_matches(i, requested)
-                                            })
-                                })
-                            })
-                            .or_else(|| {
-                                items.iter().find(|i| {
-                                    i.label == name
-                                        && Self::completion_sources_match(
-                                            i.source.as_deref(),
-                                            source,
-                                        )
-                                })
-                            })
-                            .or_else(|| {
-                                requested_export_name.as_deref().and_then(|requested| {
-                                    items.iter().find(|i| {
-                                        i.label == name && export_name_matches(i, requested)
-                                    })
-                                })
-                            })
+                        })
+                        .or_else(|| {
+                            find(&|i| Self::completion_sources_match(i.source.as_deref(), source))
+                        })
+                        .or_else(|| {
+                            requested_export_name
+                                .as_deref()
+                                .and_then(|requested| find(&|i| export_name_matches(i, requested)))
+                        })
                     } else if entry_name.as_object().is_some() {
-                        items
-                            .iter()
-                            .find(|i| {
-                                i.label == name
-                                    && i.source.as_deref() == Some("ClassMemberSnippet/")
-                            })
-                            .or_else(|| {
-                                items.iter().find(|i| {
-                                    i.label == name
-                                        && requested_export_name
-                                            .as_deref()
-                                            .map_or(true, |requested| {
-                                                export_name_matches(i, requested)
-                                            })
+                        find(&|i| i.source.as_deref() == Some("ClassMemberSnippet/")).or_else(
+                            || {
+                                find(&|i| {
+                                    requested_export_name
+                                        .as_deref()
+                                        .map_or(true, |requested| export_name_matches(i, requested))
                                 })
-                            })
+                            },
+                        )
                     } else {
-                        items.iter().find(|i| i.label == name)
+                        find(&|_| true)
                     };
                     if item.is_none() && requested_source.as_deref() == Some("ClassMemberSnippet/")
                     {
