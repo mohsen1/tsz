@@ -1921,8 +1921,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let all_satisfied = t_shape.properties.iter().all(|t_prop| {
                         let name = self.interner.resolve_atom(t_prop.name);
                         if name == "length" {
-                            // length property: tuple length is a numeric literal
-                            return self.check_subtype(TypeId::NUMBER, t_prop.type_id).is_true();
+                            let length_type = self.interner.literal_number(elements.len() as f64);
+                            return self.check_subtype(length_type, t_prop.type_id).is_true();
                         }
                         // Check if the property name is a numeric index matching a tuple element
                         if let Ok(idx) = name.parse::<usize>()

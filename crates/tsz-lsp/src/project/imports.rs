@@ -1497,6 +1497,68 @@ mod tests {
     }
 
     #[test]
+    fn auto_import_candidates_include_workspace_file_dependency_alias_specifier() {
+        let mut project = Project::new();
+        project.set_file(
+            "/home/src/workspaces/solution/packages/utils/package.json".to_string(),
+            r#"{
+  "name": "utils",
+  "version": "1.0.0",
+  "exports": "./dist/index.js"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/solution/packages/utils/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "lib": ["es5"],
+    "composite": true,
+    "module": "nodenext",
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src"]
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/solution/packages/utils/src/index.ts".to_string(),
+            "export function gainUtility() { return 0; }".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/solution/packages/web/package.json".to_string(),
+            r#"{
+  "name": "web",
+  "version": "1.0.0",
+  "dependencies": {
+    "@monorepo/utils": "file:../utils"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/solution/packages/web/src/index.ts".to_string(),
+            "gainUtility".to_string(),
+        );
+
+        let specs: Vec<String> = project
+            .get_import_candidates_for_prefix(
+                "/home/src/workspaces/solution/packages/web/src/index.ts",
+                "gainUtility",
+            )
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "gainUtility")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+
+        assert!(
+            specs.iter().any(|spec| spec == "@monorepo/utils"),
+            "expected @monorepo/utils candidate from file-linked workspace dependency, got {specs:?}"
+        );
+    }
+
+    #[test]
     fn auto_import_candidates_use_type_module_main_subpath_without_index() {
         let mut project = Project::new();
         project.set_file(
@@ -1585,6 +1647,131 @@ mod tests {
         specs.dedup();
 
         assert_eq!(specs, vec!["pkg/lib".to_string()]);
+    }
+
+    #[test]
+    fn auto_import_candidates_include_exports_types_root_and_subpath_entries() {
+        let mut project = Project::new();
+        project.set_file(
+            "/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "lib": ["es5"],
+    "module": "nodenext"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/package.json".to_string(),
+            r#"{
+  "dependencies": {
+    "dependency": "^1.0.0"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/node_modules/dependency/package.json".to_string(),
+            r#"{
+  "type": "module",
+  "name": "dependency",
+  "version": "1.0.0",
+  "exports": {
+    ".": { "types": "./lib/index.d.ts" },
+    "./lol": { "types": "./lib/lol.d.ts" }
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/node_modules/dependency/lib/index.d.ts".to_string(),
+            "export function fooFromIndex(): void;".to_string(),
+        );
+        project.set_file(
+            "/node_modules/dependency/lib/lol.d.ts".to_string(),
+            "export function fooFromLol(): void;".to_string(),
+        );
+        project.set_file("/src/foo.ts".to_string(), "fooFrom".to_string());
+
+        let candidates = project.get_import_candidates_for_prefix("/src/foo.ts", "fooFrom");
+        let specs_for = |name: &str| -> Vec<String> {
+            candidates
+                .iter()
+                .filter(|candidate| candidate.local_name == name)
+                .map(|candidate| candidate.module_specifier.clone())
+                .collect()
+        };
+
+        let index_specs = specs_for("fooFromIndex");
+        assert!(
+            index_specs
+                .iter()
+                .any(|specifier| specifier == "dependency"),
+            "expected fooFromIndex auto-import from dependency root export-map types entry, got {index_specs:?}"
+        );
+
+        let lol_specs = specs_for("fooFromLol");
+        assert!(
+            lol_specs
+                .iter()
+                .any(|specifier| specifier == "dependency/lol"),
+            "expected fooFromLol auto-import from dependency/lol export-map types entry, got {lol_specs:?}"
+        );
+    }
+
+    #[test]
+    fn auto_import_file_exclude_patterns_hide_store_layout_package_candidates() {
+        let mut project = Project::new();
+        project.set_auto_import_file_exclude_patterns(vec![
+            "/**/@remix-run/server-runtime".to_string(),
+        ]);
+        project.set_file(
+            "/home/src/workspaces/project/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "module": "commonjs"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/package.json".to_string(),
+            r#"{
+  "dependencies": {
+    "@remix-run/server-runtime": "*"
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/.store/@remix-run-server-runtime-virtual-c72daf0d/package/package.json".to_string(),
+            r#"{
+  "name": "@remix-run/server-runtime",
+  "version": "0.0.0",
+  "main": "index.js"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/node_modules/.store/@remix-run-server-runtime-virtual-c72daf0d/package/index.d.ts".to_string(),
+            "export declare function ServerRuntimeMetaFunction(): void;".to_string(),
+        );
+        project.set_file(
+            "/home/src/workspaces/project/index.ts".to_string(),
+            "ServerRuntimeMetaFunction".to_string(),
+        );
+
+        let candidates = project.get_import_candidates_for_prefix(
+            "/home/src/workspaces/project/index.ts",
+            "ServerRuntimeMetaFunction",
+        );
+        assert!(
+            !candidates
+                .iter()
+                .any(|candidate| candidate.local_name == "ServerRuntimeMetaFunction"),
+            "expected store-layout package candidate to be excluded, got {candidates:?}"
+        );
     }
 
     #[test]
