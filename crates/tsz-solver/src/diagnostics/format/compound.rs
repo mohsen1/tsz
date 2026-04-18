@@ -33,7 +33,7 @@ impl<'a> TypeFormatter<'a> {
         const MAX_HEAD_PARTS: usize = 17;
         // Soft budget for head text. Long member signatures (for example,
         // `toLocaleString` overloads) reduce the number of retained heads.
-        const MAX_HEAD_CHARS: usize = 280;
+        const MAX_HEAD_CHARS: usize = 300;
 
         let total = parts.len();
         let tail = parts[total - 1].clone();
