@@ -19179,6 +19179,39 @@ export let o4 = { [u]: 1 };
 }
 
 #[test]
+fn test_isolated_declarations_reports_exported_variable_statement_in_module_file() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            ("/dep.ts", "export {};"),
+            (
+                "/index.ts",
+                r#"
+import "./dep";
+
+declare const source: { foo: string };
+
+export const value = source.foo;
+"#,
+            ),
+        ],
+        "/index.ts",
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            isolated_declarations: true,
+            emit_declarations: true,
+            ..Default::default()
+        },
+    );
+
+    let ts9010_count = diagnostics.iter().filter(|(code, _)| *code == 9010).count();
+    assert_eq!(
+        ts9010_count, 1,
+        "Expected TS9010 for exported variable statements in module files under isolated declarations.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_isolated_declarations_parameter_default_type_assertion_needs_annotation() {
     let diagnostics = compile_and_get_diagnostics_named(
         "file2.ts",

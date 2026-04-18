@@ -1444,6 +1444,12 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|module| has_export(&module.modifiers))
                     || parent_is_export_decl()
             }
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                arena
+                    .get_variable(node)
+                    .is_some_and(|stmt| has_export(&stmt.modifiers))
+                    || parent_is_export_decl()
+            }
             k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
                 // Variable declaration exports are on the statement
                 if let Some(ext) = arena.get_extended(decl_idx)
