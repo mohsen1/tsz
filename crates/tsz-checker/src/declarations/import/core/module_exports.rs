@@ -538,7 +538,7 @@ impl<'a> CheckerState<'a> {
 
                         let is_type_only_ident = is_ident
                             && self
-                                .resolve_identifier_symbol(clause_idx)
+                                .resolve_identifier_symbol_without_tracking(clause_idx)
                                 .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
                                 .is_some_and(|sym| {
                                     use tsz_binder::symbols::symbol_flags;
@@ -635,7 +635,7 @@ impl<'a> CheckerState<'a> {
                                 true
                             }
                             k if k == SyntaxKind::Identifier as u16 => self
-                                .resolve_identifier_symbol(clause_idx)
+                                .resolve_identifier_symbol_without_tracking(clause_idx)
                                 .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
                                 .is_some_and(|sym| sym.has_any_flags(symbol_flags::VALUE)),
                             _ => false,
@@ -660,7 +660,7 @@ impl<'a> CheckerState<'a> {
                                         true
                                     }
                                     k if k == SyntaxKind::Identifier as u16 => self
-                                        .resolve_identifier_symbol(clause_idx)
+                                        .resolve_identifier_symbol_without_tracking(clause_idx)
                                         .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
                                         .is_some_and(|sym| sym.has_any_flags(symbol_flags::VALUE)),
                                     _ if self.export_decl_has_direct_named_default_export(
