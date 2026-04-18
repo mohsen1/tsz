@@ -871,8 +871,8 @@ impl<'a> CheckerState<'a> {
         interface_name: &str,
         base_type: tsz_solver::TypeId,
     ) -> tsz_solver::TypeId {
+        use crate::query_boundaries::common::{AugmentationTargetKind, classify_for_augmentation};
         use crate::query_boundaries::state::type_resolution as query;
-        use tsz_solver::type_queries::{AugmentationTargetKind, classify_for_augmentation};
         use tsz_solver::{CallableShape, ObjectShape};
 
         let guard_key = (

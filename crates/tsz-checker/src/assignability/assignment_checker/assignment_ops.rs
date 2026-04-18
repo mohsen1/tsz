@@ -856,7 +856,8 @@ impl<'a> CheckerState<'a> {
             }
 
             if check_assignability {
-                let widened_left = tsz_solver::widening::widen_type(self.ctx.types, left_type);
+                let widened_left =
+                    crate::query_boundaries::common::widen_type(self.ctx.types, left_type);
                 if widened_left != left_type
                     && let Some(right_node) = self.ctx.arena.get(right_idx)
                 {

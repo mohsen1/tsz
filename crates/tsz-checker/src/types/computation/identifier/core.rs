@@ -1221,8 +1221,10 @@ impl<'a> CheckerState<'a> {
                         // and lazy references, so widen_type can see the actual union members.
                         let evaluated_declared =
                             self.evaluate_type_for_assignability(declared_type);
-                        let widened_declared =
-                            tsz_solver::widening::widen_type(self.ctx.types, evaluated_declared);
+                        let widened_declared = crate::query_boundaries::common::widen_type(
+                            self.ctx.types,
+                            evaluated_declared,
+                        );
                         if widened_declared == flow_type {
                             declared_type
                         } else {
@@ -1335,7 +1337,8 @@ impl<'a> CheckerState<'a> {
                     // literal being returned. For mutable variables without annotations,
                     // the declared type is already widened (e.g., STRING for "hi"),
                     // so if the flow type widens to the declared type, use declared_type.
-                    let widened_flow = tsz_solver::widening::widen_type(self.ctx.types, flow_type);
+                    let widened_flow =
+                        crate::query_boundaries::common::widen_type(self.ctx.types, flow_type);
                     if widened_flow == declared_type {
                         // Flow type is just the initializer literal - use widened declared type
                         declared_type
@@ -1360,8 +1363,10 @@ impl<'a> CheckerState<'a> {
                         // and lazy references, so widen_type can see the actual union members.
                         let evaluated_declared =
                             self.evaluate_type_for_assignability(declared_type);
-                        let widened_declared =
-                            tsz_solver::widening::widen_type(self.ctx.types, evaluated_declared);
+                        let widened_declared = crate::query_boundaries::common::widen_type(
+                            self.ctx.types,
+                            evaluated_declared,
+                        );
                         if widened_declared == flow_type {
                             declared_type
                         } else {

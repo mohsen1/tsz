@@ -131,8 +131,10 @@ impl<'a> CheckerState<'a> {
         &mut self,
         component_type: TypeId,
     ) -> Option<TypeId> {
-        let sigs =
-            tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)?;
+        let sigs = crate::query_boundaries::common::construct_signatures_for_type(
+            self.ctx.types,
+            component_type,
+        )?;
         let sig = sigs.first()?;
         if sig.return_type == TypeId::ANY || sig.return_type == TypeId::ERROR {
             return None;

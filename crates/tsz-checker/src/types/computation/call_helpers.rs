@@ -1175,9 +1175,10 @@ impl<'a> CheckerState<'a> {
                 // Example: VuexStoreOptions pattern where `modules` has type
                 // `{ [k in keyof Modules]: VuexStoreOptions<Modules[k], never> }` and the
                 // initializer is `{ foo: { state() {...}, mutations: {...} } }`.
-                if let Some(mapped_id) =
-                    tsz_solver::type_queries::get_mapped_type_id(self.ctx.types, target_prop_type)
-                {
+                if let Some(mapped_id) = crate::query_boundaries::common::mapped_type_id(
+                    self.ctx.types,
+                    target_prop_type,
+                ) {
                     if let Some(nested_partial) = self.extract_inference_from_mapped_type_target(
                         prop.initializer,
                         mapped_id,

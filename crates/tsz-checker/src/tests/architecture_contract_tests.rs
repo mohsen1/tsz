@@ -4181,7 +4181,7 @@ fn test_no_inline_type_queries_in_cleaned_modules() {
         "state/type_analysis/computed_helpers.rs",
         "state/type_analysis/computed_helpers_private.rs",
         "state/type_analysis/computed_helpers_binding.rs",
-        // "state/type_analysis/computed/type_alias_variable_alias.rs", // TODO: re-add after migrating is_object_like_type call to query_boundaries
+        "state/type_analysis/computed/type_alias_variable_alias.rs",
         "state/type_analysis/core.rs",
         "state/type_analysis/core_type_query.rs",
         "state/type_analysis/symbol_type_helpers.rs",
@@ -4226,7 +4226,7 @@ fn test_no_inline_type_queries_in_cleaned_modules() {
 /// Callers should use `query_boundaries::common::widen_type` (free function) or
 /// `self.widen_literal_type()` (method on `CheckerState`) instead.
 ///
-/// Current ceiling: 8 occurrences. This number must only decrease over time.
+/// Current ceiling: 0 occurrences — all calls migrated to query_boundaries.
 #[test]
 fn test_direct_widening_calls_ceiling() {
     let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -4267,7 +4267,7 @@ fn test_direct_widening_calls_ceiling() {
         }
     }
 
-    const CEILING: usize = 8;
+    const CEILING: usize = 0;
     assert!(
         count <= CEILING,
         "Direct tsz_solver::widening::widen_type calls have grown to {count} (ceiling: {CEILING}). \
