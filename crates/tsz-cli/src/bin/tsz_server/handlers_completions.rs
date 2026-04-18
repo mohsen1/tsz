@@ -9,6 +9,7 @@ use std::cmp::Ordering;
 use std::path::Path;
 use tsz::lsp::Project;
 use tsz::lsp::completions::{CompletionItem, CompletionItemKind, Completions, sort_priority};
+use tsz::lsp::jsdoc::{jsdoc_for_node, parse_jsdoc};
 use tsz::lsp::position::{LineMap, Position};
 use tsz_solver::TypeInterner;
 
@@ -395,17 +396,30 @@ impl Server {
         let mut merged = provider_items;
         let mut seen = FxHashSet::default();
         for item in &merged {
-            seen.insert((item.label.clone(), item.source.clone()));
+            seen.insert(Self::completion_merge_key(item));
         }
 
         for item in project_items {
-            let key = (item.label.clone(), item.source.clone());
+            let key = Self::completion_merge_key(&item);
             if seen.insert(key) {
                 merged.push(item);
             }
         }
 
         merged
+    }
+
+    fn completion_merge_key(
+        item: &CompletionItem,
+    ) -> (String, Option<String>, String, Option<String>) {
+        (
+            item.label.clone(),
+            item.source.clone(),
+            Self::completion_kind_to_str(item.kind).to_string(),
+            item.additional_text_edits
+                .as_ref()
+                .and_then(|edits| edits.first().map(|edit| edit.new_text.clone())),
+        )
     }
 
     // Class member snippet methods are in handlers_completions_snippets.rs
@@ -760,6 +774,169 @@ impl Server {
         out
     }
 
+    fn commonjs_require_member_completion_items(
+        &self,
+        file_name: &str,
+        source_text: &str,
+        completion_offset: u32,
+    ) -> Vec<CompletionItem> {
+        let Some((receiver, member_prefix)) =
+            Self::member_receiver_and_prefix(source_text, completion_offset)
+        else {
+            return Vec::new();
+        };
+        let Some(module_specifier) = Self::require_module_specifier_for_alias(source_text, &receiver)
+        else {
+            return Vec::new();
+        };
+
+        let candidate_paths =
+            Self::resolve_auto_import_source_candidate_paths(file_name, &module_specifier);
+        for target_path in candidate_paths {
+            let Some((arena, binder, root, target_source_text)) =
+                self.parse_and_bind_file(&target_path)
+            else {
+                continue;
+            };
+            let exports = Self::extract_commonjs_assignment_exports(&target_source_text);
+            if exports.is_empty() {
+                continue;
+            }
+            let mut seen = FxHashSet::default();
+            let mut items = Vec::new();
+            for (export_name, local_name) in exports {
+                if !export_name.starts_with(&member_prefix) || !seen.insert(export_name.clone()) {
+                    continue;
+                }
+                let mut item =
+                    CompletionItem::new(export_name.clone(), CompletionItemKind::Alias)
+                        .with_sort_text(sort_priority::MEMBER);
+                let mut alias_detail = format!("var {export_name}");
+                if let Some(function_type) = Self::function_initializer_type_annotation(
+                    &local_name,
+                    &binder,
+                    &arena,
+                    &target_source_text,
+                ) {
+                    alias_detail.push_str(": ");
+                    alias_detail.push_str(&function_type);
+                }
+                alias_detail.push('\n');
+                alias_detail.push_str(&format!("import {receiver}.{export_name}"));
+                item = item.with_detail(alias_detail);
+                if let Some(symbol_id) = binder.file_locals.get(&local_name)
+                    && let Some(symbol) = binder.symbols.get(symbol_id)
+                {
+                    let decl = if symbol.value_declaration.is_some() {
+                        symbol.value_declaration
+                    } else if let Some(&first) = symbol.declarations.first() {
+                        first
+                    } else {
+                        tsz::parser::base::NodeIndex::NONE
+                    };
+                    if decl.is_some() {
+                        let doc = jsdoc_for_node(&arena, root, decl, &target_source_text);
+                        if !doc.is_empty() {
+                            item = item.with_documentation(doc);
+                        }
+                    }
+                }
+                items.push(item);
+            }
+            if !items.is_empty() {
+                return items;
+            }
+        }
+
+        Vec::new()
+    }
+
+    fn member_receiver_and_prefix(source_text: &str, completion_offset: u32) -> Option<(String, String)> {
+        let prefix_end = (completion_offset as usize).min(source_text.len());
+        let prefix = Self::strip_trailing_fourslash_marker_text(&source_text[..prefix_end]);
+        let trimmed = prefix.trim_end();
+        let dot_idx = trimmed.rfind('.')?;
+        let before_dot = trimmed[..dot_idx].trim_end();
+        let receiver = before_dot
+            .rsplit(|c: char| !(c == '_' || c == '$' || c.is_ascii_alphanumeric()))
+            .next()
+            .unwrap_or_default();
+        if receiver.is_empty() || !Self::is_identifier(receiver) {
+            return None;
+        }
+        let member_prefix = trimmed[dot_idx + 1..].trim();
+        if !member_prefix.is_empty() && !Self::is_identifier(member_prefix) {
+            return None;
+        }
+        Some((receiver.to_string(), member_prefix.to_string()))
+    }
+
+    fn require_module_specifier_for_alias(source_text: &str, alias: &str) -> Option<String> {
+        for line in source_text.lines() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with("import ") || !trimmed.contains("require(") {
+                continue;
+            }
+            let Some(eq_idx) = trimmed.find('=') else {
+                continue;
+            };
+            let alias_part = trimmed["import ".len()..eq_idx].trim();
+            if alias_part != alias {
+                continue;
+            }
+            let Some(require_idx) = trimmed.find("require(") else {
+                continue;
+            };
+            let after_require = &trimmed[require_idx + "require(".len()..];
+            let quote = after_require.chars().next()?;
+            if quote != '"' && quote != '\'' {
+                continue;
+            }
+            let end_rel = after_require[1..].find(quote)?;
+            let specifier = after_require[1..1 + end_rel].trim();
+            if !specifier.is_empty() {
+                return Some(specifier.to_string());
+            }
+        }
+        None
+    }
+
+    fn extract_commonjs_assignment_exports(content: &str) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for line in content.lines() {
+            let trimmed = line.trim();
+            for prefix in ["exports.", "module.exports."] {
+                let Some(rest) = trimmed.strip_prefix(prefix) else {
+                    continue;
+                };
+                let name_end = rest
+                    .find(|ch: char| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+                    .unwrap_or(rest.len());
+                if name_end == 0 {
+                    continue;
+                }
+                let export_name = rest[..name_end].trim();
+                if !Self::is_identifier(export_name) {
+                    continue;
+                }
+                let after_name = rest[name_end..].trim_start();
+                let Some(after_eq) = after_name.strip_prefix('=') else {
+                    continue;
+                };
+                let rhs = after_eq.trim_start();
+                let rhs_end = rhs
+                    .find(|ch: char| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+                    .unwrap_or(rhs.len());
+                let local_name = rhs[..rhs_end].trim();
+                if local_name.is_empty() || !Self::is_identifier(local_name) {
+                    continue;
+                }
+                out.push((export_name.to_string(), local_name.to_string()));
+            }
+        }
+        out
+    }
+
     fn extract_module_exports_object_members(content: &str) -> Vec<String> {
         let Some(exports_idx) = content.find("module.exports") else {
             return Vec::new();
@@ -933,6 +1110,544 @@ impl Server {
 
     // Class member snippet methods are in handlers_completions_snippets.rs
 
+    fn is_default_auto_import_item(item: &CompletionItem) -> bool {
+        if !item.has_action {
+            return false;
+        }
+        let Some(edits) = item.additional_text_edits.as_ref() else {
+            return false;
+        };
+        edits.iter().any(|edit| {
+            Self::import_text_is_default_binding_for_label(&edit.new_text, &item.label)
+        })
+    }
+
+    fn import_text_is_default_binding_for_label(new_text: &str, label: &str) -> bool {
+        let mut text = new_text.trim_start();
+        if let Some(rest) = text.strip_prefix("import type ") {
+            text = rest.trim_start();
+        } else if let Some(rest) = text.strip_prefix("import ") {
+            text = rest.trim_start();
+        } else {
+            return false;
+        }
+
+        if text.starts_with('{') || text.starts_with('*') {
+            return false;
+        }
+
+        let Some(binding) = Self::parse_default_import_binding(text) else {
+            return false;
+        };
+        if !label.is_empty() && binding != label {
+            return false;
+        }
+
+        let rest = text[binding.len()..].trim_start();
+        rest.starts_with("from ")
+    }
+
+    fn parse_default_import_binding(text: &str) -> Option<&str> {
+        let bytes = text.as_bytes();
+        let first = bytes.first().copied()?;
+        if !(first.is_ascii_alphabetic() || first == b'_' || first == b'$') {
+            return None;
+        }
+        let mut end = 1usize;
+        while end < bytes.len() {
+            let b = bytes[end];
+            if b.is_ascii_alphanumeric() || b == b'_' || b == b'$' {
+                end += 1;
+            } else {
+                break;
+            }
+        }
+        Some(&text[..end])
+    }
+
+    fn auto_import_export_name(item: &CompletionItem) -> Option<String> {
+        if Self::is_default_auto_import_item(item) {
+            return Some("default".to_string());
+        }
+        let edits = item.additional_text_edits.as_ref()?;
+        for edit in edits {
+            if let Some(name) = Self::named_import_export_name_from_text(&edit.new_text) {
+                return Some(name);
+            }
+        }
+        None
+    }
+
+    fn auto_import_entry_kind_override(
+        &self,
+        current_file: &str,
+        item: &CompletionItem,
+    ) -> Option<CompletionItemKind> {
+        if !item.has_action || item.source.as_ref().is_none() {
+            return None;
+        }
+        let export_name = Self::auto_import_export_name(item)?;
+        if export_name == "default" {
+            return Some(CompletionItemKind::Property);
+        }
+        self.auto_import_export_literal_info(current_file, item, &export_name)
+            .map(|(kind, _)| kind)
+    }
+
+    fn named_import_export_name_from_text(new_text: &str) -> Option<String> {
+        for import_prefix in ["import {", "import type {"] {
+            let Some((_, imports)) =
+                Self::parse_named_import_clause(new_text, import_prefix, "} from ")
+            else {
+                continue;
+            };
+            let first = imports
+                .split(',')
+                .map(str::trim)
+                .find(|part| !part.is_empty())?;
+            let first = first.trim_start_matches("type ").trim();
+            let export_name = first.split(" as ").next().unwrap_or(first).trim();
+            if !export_name.is_empty() {
+                return Some(export_name.to_string());
+            }
+        }
+        None
+    }
+
+    fn auto_import_export_literal_info(
+        &self,
+        current_file: &str,
+        item: &CompletionItem,
+        export_name: &str,
+    ) -> Option<(CompletionItemKind, String)> {
+        let module_specifier = item
+            .additional_text_edits
+            .as_ref()
+            .and_then(|edits| {
+                edits
+                    .iter()
+                    .find_map(|edit| Self::extract_module_specifier_from_import_text(&edit.new_text))
+            })
+            .or(item.source.as_deref())?;
+
+        let mut candidates =
+            Self::resolve_auto_import_source_candidate_paths(current_file, module_specifier);
+        if candidates.is_empty()
+            && let Some(source) = item.source.as_deref()
+        {
+            candidates = Self::resolve_auto_import_source_candidate_paths(current_file, source);
+        }
+
+        for candidate in candidates {
+            let normalized_candidate = Self::normalize_virtual_path(&candidate);
+            let source = self
+                .open_files
+                .get(&candidate)
+                .cloned()
+                .or_else(|| self.open_files.get(&normalized_candidate).cloned())
+                .or_else(|| std::fs::read_to_string(&candidate).ok())
+                .or_else(|| std::fs::read_to_string(&normalized_candidate).ok());
+            let Some(source) = source else {
+                continue;
+            };
+            if export_name == "default" {
+                if let Some(default_type) = Self::default_export_literal_type_text(&source) {
+                    return Some((CompletionItemKind::Property, default_type));
+                }
+            } else if let Some(named_info) = Self::named_export_literal_info(&source, export_name)
+            {
+                return Some(named_info);
+            }
+        }
+        None
+    }
+
+    fn resolve_auto_import_source_candidate_paths(
+        current_file: &str,
+        module_specifier: &str,
+    ) -> Vec<String> {
+        let normalized = module_specifier.trim();
+        if normalized.is_empty() {
+            return Vec::new();
+        }
+
+        let mut candidates = Vec::new();
+        let exts = [
+            "ts", "tsx", "d.ts", "js", "jsx", "mts", "cts", "mjs", "cjs",
+        ];
+
+        let push_path = |out: &mut Vec<String>, path: std::path::PathBuf| {
+            let normalized = Self::normalize_virtual_path(&path.to_string_lossy());
+            if !out.contains(&normalized) {
+                out.push(normalized);
+            }
+        };
+
+        if normalized.starts_with('.') {
+            let Some(base_dir) = std::path::Path::new(current_file).parent() else {
+                return Vec::new();
+            };
+            let joined = base_dir.join(normalized);
+            if joined.extension().is_some() {
+                push_path(&mut candidates, joined);
+                return candidates;
+            }
+
+            for ext in exts {
+                push_path(&mut candidates, base_dir.join(format!("{normalized}.{ext}")));
+            }
+            for ext in exts {
+                push_path(
+                    &mut candidates,
+                    base_dir.join(normalized).join(format!("index.{ext}")),
+                );
+            }
+            return candidates;
+        }
+
+        if normalized.starts_with('/') {
+            let absolute = std::path::PathBuf::from(normalized);
+            if absolute.extension().is_some() {
+                push_path(&mut candidates, absolute);
+                return candidates;
+            }
+            for ext in exts {
+                push_path(
+                    &mut candidates,
+                    std::path::PathBuf::from(format!("{normalized}.{ext}")),
+                );
+            }
+            for ext in exts {
+                push_path(
+                    &mut candidates,
+                    std::path::Path::new(normalized).join(format!("index.{ext}")),
+                );
+            }
+            return candidates;
+        }
+
+        Vec::new()
+    }
+
+    fn normalize_virtual_path(path: &str) -> String {
+        use std::path::Component;
+
+        let mut normalized = std::path::PathBuf::new();
+        for component in std::path::Path::new(path).components() {
+            match component {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    let _ = normalized.pop();
+                }
+                other => normalized.push(other.as_os_str()),
+            }
+        }
+        normalized.to_string_lossy().replace('\\', "/")
+    }
+
+    fn default_export_literal_type_text(source_text: &str) -> Option<String> {
+        let mut search_start = 0usize;
+        let marker = "export default";
+        while let Some(rel_idx) = source_text[search_start..].find(marker) {
+            let start = search_start + rel_idx + marker.len();
+            let rest = source_text[start..].trim_start();
+            if rest.is_empty() {
+                return None;
+            }
+
+            let expr = rest
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .split('\n')
+                .next()
+                .unwrap_or("")
+                .trim();
+            if let Some(literal) = Self::literal_type_text(expr) {
+                return Some(literal.to_string());
+            }
+
+            search_start = start;
+            if search_start >= source_text.len() {
+                break;
+            }
+        }
+        None
+    }
+
+    fn named_export_literal_info(
+        source_text: &str,
+        export_name: &str,
+    ) -> Option<(CompletionItemKind, String)> {
+        for line in source_text.lines() {
+            let trimmed = line.trim();
+            for (keyword, kind) in [
+                ("export const ", CompletionItemKind::Const),
+                ("export let ", CompletionItemKind::Let),
+                ("export var ", CompletionItemKind::Variable),
+            ] {
+                let Some(after_keyword) = trimmed.strip_prefix(keyword) else {
+                    continue;
+                };
+                let name_end = after_keyword
+                    .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'))
+                    .unwrap_or(after_keyword.len());
+                let declared_name = after_keyword[..name_end].trim();
+                if declared_name != export_name {
+                    continue;
+                }
+                let Some(eq_idx) = after_keyword.find('=') else {
+                    continue;
+                };
+                let initializer = after_keyword[eq_idx + 1..]
+                    .split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                if let Some(literal) = Self::literal_type_text(initializer) {
+                    return Some((kind, literal.to_string()));
+                }
+            }
+        }
+        None
+    }
+
+    fn literal_type_text(text: &str) -> Option<&str> {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let bytes = trimmed.as_bytes();
+        if bytes.len() >= 2
+            && ((bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"')
+                || (bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\''))
+        {
+            return Some(trimmed);
+        }
+        if trimmed == "true" || trimmed == "false" {
+            return Some(trimmed);
+        }
+        if trimmed
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || ch == '_' || ch == '.' || ch == '-' || ch == '+')
+            && trimmed.chars().any(|ch| ch.is_ascii_digit())
+        {
+            return Some(trimmed);
+        }
+        None
+    }
+
+    fn completion_doc_and_tags(
+        item: Option<&CompletionItem>,
+        name: &str,
+        arena: &tsz::parser::node::NodeArena,
+        binder: &tsz::binder::BinderState,
+        root: tsz::parser::base::NodeIndex,
+        source_text: &str,
+    ) -> (serde_json::Value, Vec<serde_json::Value>) {
+        let mut raw_doc = item
+            .and_then(|i| i.documentation.as_ref())
+            .map(std::string::ToString::to_string)
+            .unwrap_or_default();
+        let supplemental_jsdoc =
+            Self::leading_jsdoc_block_for_symbol(name, binder, arena, source_text);
+
+        if raw_doc.is_empty()
+            && let Some(symbol_id) = binder.file_locals.get(name)
+            && let Some(symbol) = binder.symbols.get(symbol_id)
+        {
+            let decl = if symbol.value_declaration.is_some() {
+                symbol.value_declaration
+            } else if let Some(&first) = symbol.declarations.first() {
+                first
+            } else {
+                tsz::parser::base::NodeIndex::NONE
+            };
+            if decl.is_some() {
+                raw_doc = jsdoc_for_node(arena, root, decl, source_text);
+            }
+        }
+        if raw_doc.trim().is_empty()
+            && let Some(supplemental_jsdoc) = supplemental_jsdoc.as_deref()
+        {
+            raw_doc = Self::normalize_jsdoc_text_for_parse(supplemental_jsdoc);
+        }
+
+        if raw_doc.trim().is_empty() {
+            return (serde_json::json!([]), Vec::new());
+        }
+
+        let mut parsed = parse_jsdoc(&raw_doc);
+        if let Some(supplemental_jsdoc) = supplemental_jsdoc.as_deref() {
+            let supplemental_doc = Self::normalize_jsdoc_text_for_parse(supplemental_jsdoc);
+            let supplemental_parsed = parse_jsdoc(&supplemental_doc);
+            if parsed
+                .summary
+                .as_deref()
+                .map_or(true, |text| text.trim().is_empty())
+            {
+                parsed.summary = supplemental_parsed.summary;
+            }
+            if parsed.params.is_empty() {
+                parsed.params = supplemental_parsed.params;
+            }
+            if parsed.tags.is_empty() {
+                parsed.tags = supplemental_parsed.tags;
+            }
+        }
+        let summary = parsed
+            .summary
+            .filter(|text| !text.trim().is_empty())
+            .unwrap_or_else(|| raw_doc.clone());
+        let documentation = serde_json::json!([{"text": summary, "kind": "text"}]);
+
+        let mut tags = Vec::new();
+        let mut param_names: Vec<String> = parsed.params.keys().cloned().collect();
+        if param_names.is_empty() {
+            let fallback_doc = supplemental_jsdoc
+                .as_deref()
+                .map(Self::normalize_jsdoc_text_for_parse)
+                .unwrap_or_else(|| Self::normalize_jsdoc_text_for_parse(&raw_doc));
+            param_names = Self::jsdoc_param_names_from_text(&fallback_doc);
+        }
+        param_names.sort();
+        param_names.dedup();
+        for param_name in param_names {
+            tags.push(serde_json::json!({
+                "name": "param",
+                "text": param_name,
+            }));
+        }
+        for tag in parsed.tags {
+            tags.push(serde_json::json!({
+                "name": tag.name,
+                "text": tag.text,
+            }));
+        }
+
+        (documentation, tags)
+    }
+
+    fn leading_jsdoc_block_for_symbol(
+        name: &str,
+        binder: &tsz::binder::BinderState,
+        arena: &tsz::parser::node::NodeArena,
+        source_text: &str,
+    ) -> Option<String> {
+        use tsz::parser::syntax_kind_ext;
+
+        let symbol_id = binder.file_locals.get(name)?;
+        let symbol = binder.symbols.get(symbol_id)?;
+        let decl = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            *symbol.declarations.first()?
+        };
+        let node = arena.get(decl)?;
+        let anchor = if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            if let Some(ext) = arena.get_extended(decl) {
+                let list_idx = ext.parent;
+                if let Some(list_node) = arena.get(list_idx) {
+                    if list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                        if let Some(list_ext) = arena.get_extended(list_idx) {
+                            let stmt_idx = list_ext.parent;
+                            if let Some(stmt_node) = arena.get(stmt_idx) {
+                                if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                                    stmt_node.pos as usize
+                                } else {
+                                    node.pos as usize
+                                }
+                            } else {
+                                node.pos as usize
+                            }
+                        } else {
+                            node.pos as usize
+                        }
+                    } else {
+                        node.pos as usize
+                    }
+                } else {
+                    node.pos as usize
+                }
+            } else {
+                node.pos as usize
+            }
+        } else {
+            node.pos as usize
+        };
+        Self::leading_jsdoc_block_before_offset_for_details(source_text, anchor)
+            .map(|text| text.to_string())
+    }
+
+    fn leading_jsdoc_block_before_offset_for_details(
+        source_text: &str,
+        offset: usize,
+    ) -> Option<&str> {
+        let clamped = offset.min(source_text.len());
+        let prefix = &source_text[..clamped];
+        let comment_end = prefix.rfind("*/")?;
+        let after_comment = &prefix[comment_end + 2..];
+        if !after_comment.chars().all(char::is_whitespace) {
+            return None;
+        }
+        let comment_start = prefix[..comment_end].rfind("/**")?;
+        Some(&prefix[comment_start + 3..comment_end])
+    }
+
+    fn normalize_jsdoc_text_for_parse(doc: &str) -> String {
+        doc.lines()
+            .map(|line| {
+                let trimmed = line.trim_start();
+                if let Some(stripped) = trimmed.strip_prefix('*') {
+                    stripped.trim_start()
+                } else {
+                    trimmed
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string()
+    }
+
+    fn jsdoc_param_names_from_text(doc: &str) -> Vec<String> {
+        let mut names = Vec::new();
+        for line in doc.lines() {
+            let trimmed = line.trim();
+            let Some(rest) = trimmed.strip_prefix("@param") else {
+                continue;
+            };
+            let mut rest = rest.trim();
+            if let Some(type_payload) = rest.strip_prefix('{')
+                && let Some(close_idx) = type_payload.find('}')
+            {
+                rest = type_payload[close_idx + 1..].trim_start();
+            }
+            let Some(raw_name) = rest.split_whitespace().next() else {
+                continue;
+            };
+            let normalized = Self::normalize_jsdoc_param_name_for_tags(raw_name);
+            if !normalized.is_empty() {
+                names.push(normalized);
+            }
+        }
+        names
+    }
+
+    fn normalize_jsdoc_param_name_for_tags(name: &str) -> String {
+        let mut normalized = name.trim();
+        if normalized.starts_with('[') && normalized.ends_with(']') && normalized.len() > 2 {
+            normalized = &normalized[1..normalized.len() - 1];
+        }
+        if let Some(eq_idx) = normalized.find('=') {
+            normalized = &normalized[..eq_idx];
+        }
+        if let Some(stripped) = normalized.strip_prefix("...") {
+            normalized = stripped;
+        }
+        normalized.trim().to_string()
+    }
+
     pub(super) fn extract_module_specifier_from_import_text(new_text: &str) -> Option<&str> {
         let candidates = [" from \"", " from '", "import \"", "import '"];
         for marker in candidates {
@@ -1031,6 +1746,10 @@ impl Server {
         }
 
         normalized
+    }
+
+    fn normalize_tsserver_newlines(text: &str) -> String {
+        text.replace("\r\n", "\n").replace('\n', "\r\n")
     }
 
     fn parse_named_import_clause<'a>(
@@ -1330,20 +2049,46 @@ impl Server {
             }
         }
 
+        let compare_auto_import_variant_order = |a: &CompletionItem, b: &CompletionItem| {
+            if a.label != b.label || a.source != b.source || !a.has_action || !b.has_action {
+                return Ordering::Equal;
+            }
+            let a_export = Self::auto_import_export_name(a);
+            let b_export = Self::auto_import_export_name(b);
+            match (a_export.as_deref(), b_export.as_deref()) {
+                (Some("default"), Some(other)) if other != "default" => Ordering::Less,
+                (Some(other), Some("default")) if other != "default" => Ordering::Greater,
+                _ => Ordering::Equal,
+            }
+        };
+
         items.sort_by(|a, b| {
             compare_case_sensitive_ui(a.effective_sort_text(), b.effective_sort_text())
                 .then_with(|| compare_case_sensitive_ui(&a.label, &b.label))
                 .then_with(|| compare_completion_sources(a.source.as_deref(), b.source.as_deref()))
+                .then_with(|| compare_auto_import_variant_order(a, b))
         });
     }
 
     fn completion_entry_from_item(
+        &self,
+        current_file: &str,
         item: &tsz::lsp::completions::CompletionItem,
         line_map: &LineMap,
         source_text: &str,
         include_insert_text: bool,
     ) -> serde_json::Value {
-        let kind = Self::completion_kind_to_str(item.kind);
+        let effective_kind = self
+            .auto_import_entry_kind_override(current_file, item)
+            .unwrap_or_else(|| {
+                if item.kind == CompletionItemKind::Variable && Self::is_default_auto_import_item(item)
+                {
+                    CompletionItemKind::Property
+                } else {
+                    item.kind
+                }
+            });
+        let kind = Self::completion_kind_to_str(effective_kind);
         let sort_text = item.effective_sort_text();
         let mut entry = serde_json::json!({
             "name": item.label,
@@ -1378,10 +2123,16 @@ impl Server {
         if let Some(source) = item.source.as_ref() {
             entry["source"] = serde_json::json!(source);
             entry["sourceDisplay"] = serde_json::json!([{ "text": source, "kind": "text" }]);
-            entry["data"] = serde_json::json!({
-                "name": item.label,
-                "source": source,
-            });
+            let mut data = serde_json::Map::new();
+            data.insert("name".to_string(), serde_json::json!(item.label.clone()));
+            data.insert("source".to_string(), serde_json::json!(source));
+            if item.has_action {
+                data.insert("moduleSpecifier".to_string(), serde_json::json!(source));
+                if let Some(export_name) = Self::auto_import_export_name(item) {
+                    data.insert("exportName".to_string(), serde_json::json!(export_name));
+                }
+            }
+            entry["data"] = serde_json::Value::Object(data);
         }
         if let Some((start, end)) = item.replacement_span {
             let start_pos = line_map.offset_to_position(start, source_text);
@@ -1763,6 +2514,20 @@ impl Server {
                     is_member_completion,
                 );
             }
+            if is_member_completion
+                && items.is_empty()
+                && let Some(completion_offset) =
+                    line_map.position_to_offset(completion_position, &source_text)
+            {
+                let fallback = self.commonjs_require_member_completion_items(
+                    &file,
+                    &source_text,
+                    completion_offset,
+                );
+                if !fallback.is_empty() {
+                    items = Self::merge_non_member_completion_items(items, fallback);
+                }
+            }
             Self::sort_tsserver_completion_items(&mut items);
             let items = Self::prune_deeper_auto_import_duplicates(items);
             let mut items = items;
@@ -1824,7 +2589,8 @@ impl Server {
             let entries: Vec<serde_json::Value> = items
                 .iter()
                 .map(|item| {
-                    Self::completion_entry_from_item(
+                    self.completion_entry_from_item(
+                        &file,
                         item,
                         &line_map,
                         &source_text,
@@ -1990,6 +2756,20 @@ impl Server {
                     is_member_completion,
                 );
             }
+            if is_member_completion
+                && items.is_empty()
+                && let Some(completion_offset) =
+                    line_map.position_to_offset(completion_position, &source_text)
+            {
+                let fallback = self.commonjs_require_member_completion_items(
+                    file,
+                    &source_text,
+                    completion_offset,
+                );
+                if !fallback.is_empty() {
+                    items = Self::merge_non_member_completion_items(items, fallback);
+                }
+            }
             Self::sort_tsserver_completion_items(&mut items);
             let member_parent = completion_result
                 .as_ref()
@@ -2002,47 +2782,52 @@ impl Server {
             let details: Vec<serde_json::Value> = entry_names
                 .iter()
                 .map(|entry_name| {
-                    let (name, requested_source) = if let Some(s) = entry_name.as_str() {
-                        (s.to_string(), None)
-                    } else if let Some(obj) = entry_name.as_object() {
-                        let source_from_value = |value: Option<&serde_json::Value>| {
-                            value.and_then(|v| {
-                                v.as_str()
-                                    .map(|s| s.trim().to_string())
-                                    .or_else(|| {
-                                        v.as_object()
-                                            .and_then(|obj| obj.get("text"))
-                                            .and_then(serde_json::Value::as_str)
-                                            .map(|s| s.trim().to_string())
-                                    })
-                                    .or_else(|| {
-                                        v.as_array().and_then(|arr| {
-                                            let mut text = String::new();
-                                            for part in arr {
-                                                let part_text = part
-                                                    .as_object()
-                                                    .and_then(|obj| obj.get("text"))
-                                                    .and_then(serde_json::Value::as_str)
-                                                    .unwrap_or_default();
-                                                text.push_str(part_text);
-                                            }
-                                            let text = text.trim().to_string();
-                                            (!text.is_empty()).then_some(text)
+                    let (name, requested_source, requested_export_name) =
+                        if let Some(s) = entry_name.as_str() {
+                            (s.to_string(), None, None)
+                        } else if let Some(obj) = entry_name.as_object() {
+                            let source_from_value = |value: Option<&serde_json::Value>| {
+                                value.and_then(|v| {
+                                    v.as_str()
+                                        .map(|s| s.trim().to_string())
+                                        .or_else(|| {
+                                            v.as_object()
+                                                .and_then(|obj| obj.get("text"))
+                                                .and_then(serde_json::Value::as_str)
+                                                .map(|s| s.trim().to_string())
                                         })
-                                    })
-                            })
+                                        .or_else(|| {
+                                            v.as_array().and_then(|arr| {
+                                                let mut text = String::new();
+                                                for part in arr {
+                                                    let part_text = part
+                                                        .as_object()
+                                                        .and_then(|obj| obj.get("text"))
+                                                        .and_then(serde_json::Value::as_str)
+                                                        .unwrap_or_default();
+                                                    text.push_str(part_text);
+                                                }
+                                                let text = text.trim().to_string();
+                                                (!text.is_empty()).then_some(text)
+                                            })
+                                        })
+                                })
+                            };
+                            (
+                                obj.get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                source_from_value(obj.get("source"))
+                                    .or_else(|| source_from_value(obj.get("sourceDisplay"))),
+                                obj.get("data")
+                                    .and_then(|data| data.get("exportName"))
+                                    .and_then(serde_json::Value::as_str)
+                                    .map(std::string::ToString::to_string),
+                            )
+                        } else {
+                            (String::new(), None, None)
                         };
-                        (
-                            obj.get("name")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string(),
-                            source_from_value(obj.get("source"))
-                                .or_else(|| source_from_value(obj.get("sourceDisplay"))),
-                        )
-                    } else {
-                        (String::new(), None)
-                    };
                     // Try to find the matching completion item.
                     // When source metadata is missing for duplicate labels, prefer
                     // ClassMemberSnippet entries to keep tsserver details/code-action
@@ -2069,18 +2854,39 @@ impl Server {
                         }
                         false
                     };
+                    let export_name_matches =
+                        |candidate: &CompletionItem, requested_export_name: &str| {
+                            Self::auto_import_export_name(candidate)
+                                .as_deref()
+                                .is_some_and(|name| name == requested_export_name)
+                        };
                     let mut item = if let Some(source) = requested_source.as_deref() {
                         items.iter().find(|i| {
-                            i.label == name && source_matches(i.source.as_deref(), source)
+                                i.label == name
+                                && source_matches(i.source.as_deref(), source)
+                                && requested_export_name
+                                    .as_deref()
+                                    .map_or(true, |requested| export_name_matches(i, requested))
                         })
-                    } else {
+                    } else if entry_name.as_object().is_some() {
                         items
                             .iter()
                             .find(|i| {
                                 i.label == name
                                     && i.source.as_deref() == Some("ClassMemberSnippet/")
                             })
-                            .or_else(|| items.iter().find(|i| i.label == name))
+                            .or_else(|| {
+                                items.iter().find(|i| {
+                                    i.label == name
+                                        && requested_export_name
+                                            .as_deref()
+                                            .map_or(true, |requested| {
+                                                export_name_matches(i, requested)
+                                            })
+                                })
+                            })
+                    } else {
+                        items.iter().find(|i| i.label == name)
                     };
                     if item.is_none() && requested_source.as_deref() == Some("ClassMemberSnippet/")
                     {
@@ -2088,21 +2894,66 @@ impl Server {
                             i.label == name && i.source.as_deref() == Some("ClassMemberSnippet/")
                         });
                     }
-                    let kind = item.map_or("property", |i| Self::completion_kind_to_str(i.kind));
-                    let kind_modifiers =
-                        item.and_then(|i| i.kind_modifiers.as_deref()).unwrap_or("");
+                    let auto_import_export_name = requested_export_name.clone().or_else(|| {
+                        item.and_then(Self::auto_import_export_name)
+                    });
+                    let is_default_auto_import_item =
+                        auto_import_export_name.as_deref() == Some("default");
+                    let mut display_item_owned = None;
+                    if item.is_some_and(|i| i.has_action && i.source.as_ref().is_some())
+                        && let Some(found_item) = item
+                    {
+                        let mut adjusted_item = found_item.clone();
+                        if let Some(export_name) = auto_import_export_name.as_deref() {
+                            if export_name == "default" {
+                                adjusted_item.kind = CompletionItemKind::Property;
+                            }
+                            if let Some((export_kind, export_type)) =
+                                self.auto_import_export_literal_info(
+                                    file,
+                                    &adjusted_item,
+                                    export_name,
+                                )
+                            {
+                                adjusted_item.kind = export_kind;
+                                adjusted_item.detail = Some(export_type);
+                            } else if adjusted_item
+                                .detail
+                                .as_deref()
+                                .is_some_and(|detail| detail.starts_with("auto-import"))
+                            {
+                                adjusted_item.detail = None;
+                            }
+                        }
+                        display_item_owned = Some(adjusted_item);
+                    }
+                    let display_item = display_item_owned.as_ref().or(item);
+                    let kind =
+                        display_item.map_or("property", |i| Self::completion_kind_to_str(i.kind));
+                    let kind_modifiers = display_item
+                        .and_then(|i| i.kind_modifiers.as_deref())
+                        .unwrap_or("");
+                    let display_name = if is_default_auto_import_item {
+                        "default"
+                    } else {
+                        &name
+                    };
                     let display_parts = Self::build_completion_display_parts(
-                        item,
-                        &name,
+                        display_item,
+                        display_name,
                         member_parent.as_deref(),
                         &arena,
                         &binder,
                         &source_text,
                     );
-                    let documentation = item
-                        .and_then(|i| i.documentation.as_ref())
-                        .filter(|doc| !doc.is_empty())
-                        .map(|doc| serde_json::json!([{"text": doc, "kind": "text"}]));
+                    let (documentation, jsdoc_tags) = Self::completion_doc_and_tags(
+                        display_item,
+                        &name,
+                        &arena,
+                        &binder,
+                        root,
+                        &source_text,
+                    );
                     let mut detail = serde_json::Map::new();
                     detail.insert("name".to_string(), serde_json::json!(name));
                     detail.insert("kind".to_string(), serde_json::json!(kind));
@@ -2113,15 +2964,18 @@ impl Server {
                     detail.insert("displayParts".to_string(), display_parts);
                     let is_auto_import_item =
                         item.is_some_and(|i| i.has_action && i.source.as_ref().is_some());
-                    if let Some(documentation) = documentation
-                        && !is_auto_import_item
-                    {
+                    if !is_auto_import_item && documentation != serde_json::json!([]) {
                         detail.insert("documentation".to_string(), documentation);
                     }
-                    if !is_auto_import_item {
-                        detail.insert("tags".to_string(), serde_json::json!([]));
-                    }
-                    if let Some(source) = item.and_then(|i| i.source.as_ref()) {
+                    detail.insert(
+                        "tags".to_string(),
+                        if is_auto_import_item {
+                            serde_json::json!([])
+                        } else {
+                            serde_json::json!(jsdoc_tags)
+                        },
+                    );
+                    if let Some(source) = display_item.and_then(|i| i.source.as_ref()) {
                         let source_display =
                             serde_json::json!([{ "text": source, "kind": "text" }]);
                         detail.insert("source".to_string(), source_display.clone());
@@ -2155,7 +3009,7 @@ impl Server {
                                         "start": start,
                                         "length": end.saturating_sub(start),
                                     },
-                                    "newText": new_text,
+                                    "newText": Self::normalize_tsserver_newlines(&new_text),
                                 })
                             })
                             .collect();
