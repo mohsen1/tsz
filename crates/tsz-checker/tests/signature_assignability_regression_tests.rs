@@ -38,6 +38,7 @@ class Base { foo: string; }
 class Derived extends Base { bar: string; }
 class Derived2 extends Derived { baz: string; }
 class OtherDerived extends Base { bing: string; }
+declare class Date {}
 
 declare var a6: (x: (arg: Base) => Derived) => Base;
 declare var a7: (x: (arg: Base) => Derived) => (r: Base) => Derived;

@@ -713,28 +713,50 @@ impl ParserState {
                 if !self.is_js_file() && self.is_token(SyntaxKind::LessThanSlashToken) {
                     let snapshot = self.scanner.save_state();
                     let current = self.current_token;
+
                     self.next_token();
                     let malformed = !self.is_token(SyntaxKind::GreaterThanToken);
+                    let diagnostic_anchor = if malformed {
+                        let expected_start = self.token_pos();
+                        let expected_length = self.token_end().saturating_sub(expected_start);
+
+                        if self.is_identifier_or_keyword() {
+                            self.next_token();
+                        }
+                        let fragment_unclosed_pos = if self.is_token(SyntaxKind::GreaterThanToken)
+                        {
+                            let end = self.token_end();
+                            self.next_token();
+                            end
+                        } else {
+                            self.token_end()
+                        };
+
+                        Some((expected_start, expected_length, fragment_unclosed_pos))
+                    } else {
+                        None
+                    };
+
                     self.scanner.restore_state(snapshot);
                     self.current_token = current;
-                    malformed
+                    diagnostic_anchor
                 } else {
-                    false
+                    None
                 };
 
-            if malformed_named_closing_fragment {
+            if let Some((expected_start, expected_length, fragment_unclosed_pos)) =
+                malformed_named_closing_fragment
+            {
                 use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
-                if let Some(open_fragment) = self.arena.get(opening) {
-                    self.parse_error_at(
-                        open_fragment.pos,
-                        open_fragment.end.saturating_sub(open_fragment.pos),
-                        diagnostic_messages::EXPECTED_CORRESPONDING_CLOSING_TAG_FOR_JSX_FRAGMENT,
-                        diagnostic_codes::EXPECTED_CORRESPONDING_CLOSING_TAG_FOR_JSX_FRAGMENT,
-                    );
-                }
                 self.parse_error_at(
-                    self.token_pos(),
-                    self.token_end().saturating_sub(self.token_pos()),
+                    expected_start,
+                    expected_length,
+                    diagnostic_messages::EXPECTED_CORRESPONDING_CLOSING_TAG_FOR_JSX_FRAGMENT,
+                    diagnostic_codes::EXPECTED_CORRESPONDING_CLOSING_TAG_FOR_JSX_FRAGMENT,
+                );
+                self.parse_error_at(
+                    fragment_unclosed_pos,
+                    0,
                     diagnostic_messages::JSX_FRAGMENT_HAS_NO_CORRESPONDING_CLOSING_TAG,
                     diagnostic_codes::JSX_FRAGMENT_HAS_NO_CORRESPONDING_CLOSING_TAG,
                 );

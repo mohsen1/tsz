@@ -56,6 +56,41 @@ fn check_without_lib_with_options(
     checker.ctx.diagnostics.clone()
 }
 
+const MINIMAL_CORE_GLOBAL_DECLS: &[(&str, &str)] = &[
+    ("Array", "interface Array<T> {}"),
+    ("Boolean", "interface Boolean {}"),
+    ("CallableFunction", "interface CallableFunction {}"),
+    ("Function", "interface Function {}"),
+    ("IArguments", "interface IArguments {}"),
+    ("NewableFunction", "interface NewableFunction {}"),
+    ("Number", "interface Number {}"),
+    ("Object", "interface Object {}"),
+    ("RegExp", "interface RegExp {}"),
+    ("String", "interface String {}"),
+];
+
+fn check_without_lib_with_minimal_core_globals(
+    source: &str,
+) -> Vec<crate::checker::diagnostics::Diagnostic> {
+    check_without_lib_with_minimal_core_globals_except(&[], source)
+}
+
+fn check_without_lib_with_minimal_core_globals_except(
+    omitted: &[&str],
+    source: &str,
+) -> Vec<crate::checker::diagnostics::Diagnostic> {
+    let mut full_source = String::new();
+    for &(name, decl) in MINIMAL_CORE_GLOBAL_DECLS {
+        if omitted.iter().any(|omitted_name| omitted_name == &name) {
+            continue;
+        }
+        full_source.push_str(decl);
+        full_source.push('\n');
+    }
+    full_source.push_str(source);
+    check_without_lib(&full_source)
+}
+
 #[test]
 fn test_missing_promise_emits_ts2583_without_lib() {
     // Without lib.d.ts, Promise should emit TS2583 (Cannot find name - change lib)
@@ -198,6 +233,135 @@ fn test_console_emits_ts2304_without_lib() {
     assert!(
         !ts2584_errors.is_empty(),
         "Expected TS2584 error for console without lib.d.ts, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_document_type_reference_emits_ts2304_with_minimal_core_globals() {
+    let diagnostics = check_without_lib_with_minimal_core_globals("let x: Document;");
+    let ts2304_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && d.message_text.contains("'Document'"))
+        .collect();
+
+    assert!(
+        !ts2304_errors.is_empty(),
+        "Expected TS2304 for Document type reference without DOM libs, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_arraylike_type_reference_emits_ts2304_with_minimal_core_globals() {
+    let diagnostics = check_without_lib_with_minimal_core_globals("let x: ArrayLike<number>;");
+    let ts2304_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && d.message_text.contains("'ArrayLike'"))
+        .collect();
+
+    assert!(
+        !ts2304_errors.is_empty(),
+        "Expected TS2304 for ArrayLike type reference without ES2015 libs, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_promise_constructor_type_reference_emits_ts2304_with_minimal_core_globals() {
+    let diagnostics = check_without_lib_with_minimal_core_globals("let x: PromiseConstructor;");
+    let ts2304_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && d.message_text.contains("'PromiseConstructor'"))
+        .collect();
+
+    assert!(
+        !ts2304_errors.is_empty(),
+        "Expected TS2304 for PromiseConstructor type reference without ES2015 libs, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_promise_type_reference_emits_ts2583_with_minimal_core_globals() {
+    let diagnostics = check_without_lib_with_minimal_core_globals("let x: Promise<number>;");
+    let ts2583_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2583 && d.message_text.contains("'Promise'"))
+        .collect();
+
+    assert!(
+        !ts2583_errors.is_empty(),
+        "Expected TS2583 for Promise type reference without ES2015 libs, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_reflect_type_reference_emits_ts2583_with_minimal_core_globals() {
+    let diagnostics = check_without_lib_with_minimal_core_globals("let x: Reflect;");
+    let ts2583_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2583 && d.message_text.contains("'Reflect'"))
+        .collect();
+
+    assert!(
+        !ts2583_errors.is_empty(),
+        "Expected TS2583 for Reflect in type position without ES2015 libs, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_async_iterable_iterator_type_reference_emits_ts2583_with_minimal_core_globals() {
+    let diagnostics =
+        check_without_lib_with_minimal_core_globals("let x: AsyncIterableIterator<number>;");
+    let ts2583_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2583 && d.message_text.contains("'AsyncIterableIterator'"))
+        .collect();
+
+    assert!(
+        !ts2583_errors.is_empty(),
+        "Expected TS2583 for AsyncIterableIterator without ES2018 libs, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_regexp_type_reference_emits_ts2318_when_core_global_missing() {
+    let diagnostics =
+        check_without_lib_with_minimal_core_globals_except(&["RegExp"], "let x: RegExp;");
+    let ts2318_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2318 && d.message_text.contains("'RegExp'"))
+        .collect();
+
+    assert!(
+        !ts2318_errors.is_empty(),
+        "Expected TS2318 for missing RegExp global type, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_iarguments_type_reference_emits_ts2318_when_core_global_missing() {
+    let diagnostics =
+        check_without_lib_with_minimal_core_globals_except(&["IArguments"], "let x: IArguments;");
+    let ts2318_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2318 && d.message_text.contains("'IArguments'"))
+        .collect();
+
+    assert!(
+        !ts2318_errors.is_empty(),
+        "Expected TS2318 for missing IArguments global type, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_promise_like_type_reference_emits_ts2304_with_minimal_core_globals() {
+    let diagnostics = check_without_lib_with_minimal_core_globals("let x: PromiseLike<number>;");
+    let ts2304_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && d.message_text.contains("'PromiseLike'"))
+        .collect();
+
+    assert!(
+        !ts2304_errors.is_empty(),
+        "Expected TS2304 for PromiseLike type reference without libs, got: {diagnostics:?}"
     );
 }
 

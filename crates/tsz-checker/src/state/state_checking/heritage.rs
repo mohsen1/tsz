@@ -1082,11 +1082,11 @@ impl<'a> CheckerState<'a> {
                             ) {
                                 continue;
                             }
-                            if self.is_known_global_type_name(&name) {
+                            if self.has_special_missing_lib_type_diagnostic(&name) {
                                 // Check if the global type is actually available in lib contexts
                                 if !self.ctx.has_name_in_lib(&name) {
                                     // TS2318/TS2583: Emit error for missing global type
-                                    self.error_cannot_find_global_type(&name, expr_idx);
+                                    self.report_missing_lib_type_name(&name, expr_idx);
                                 }
                                 continue;
                             }

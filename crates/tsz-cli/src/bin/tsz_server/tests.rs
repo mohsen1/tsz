@@ -40,11 +40,29 @@ fn make_server() -> Server {
 fn make_server_with_real_libs() -> Server {
     let mut server = make_server();
     server.lib_dir = Server::find_lib_dir().expect("lib dir should be discoverable in tests");
-    server.tests_lib_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../TypeScript/tests/lib")
-        .canonicalize()
-        .expect("TypeScript tests lib dir should exist");
+    server.tests_lib_dir = Server::find_tests_lib_dir(&server.lib_dir);
     server
+}
+
+#[test]
+fn test_find_lib_dir_finds_workspace_libs() {
+    let lib_dir = Server::find_lib_dir().expect("lib dir should be discoverable in tests");
+    assert!(
+        lib_dir.join("lib.es5.d.ts").exists() || lib_dir.join("es5.d.ts").exists(),
+        "expected lib.es5.d.ts or es5.d.ts in {}",
+        lib_dir.display()
+    );
+}
+
+#[test]
+fn test_find_tests_lib_dir_returns_existing_directory() {
+    let lib_dir = Server::find_lib_dir().expect("lib dir should be discoverable in tests");
+    let tests_lib_dir = Server::find_tests_lib_dir(&lib_dir);
+    assert!(
+        tests_lib_dir.exists(),
+        "expected tests lib dir fallback to exist, got {}",
+        tests_lib_dir.display()
+    );
 }
 
 fn make_request(command: &str, arguments: serde_json::Value) -> TsServerRequest {
