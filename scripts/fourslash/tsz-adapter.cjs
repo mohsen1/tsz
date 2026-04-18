@@ -194,6 +194,34 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
     const LanguageServiceAdapterHost = Harness.LanguageService.LanguageServiceAdapterHost;
     const virtualFileSystemRoot = Harness.virtualFileSystemRoot;
 
+    const normalizeModuleDirective = (value) => {
+        if (typeof value !== "string") return value;
+        const normalized = value.trim().toLowerCase();
+        if (normalized === "node" || normalized === "nodejs") {
+            return "commonjs";
+        }
+        return value;
+    };
+
+    const normalizeCompilerOptions = (rawOptions) => {
+        if (!rawOptions || typeof rawOptions !== "object") return rawOptions;
+        const normalized = { ...rawOptions };
+        for (const [key, value] of Object.entries(rawOptions)) {
+            const lowerKey = key.toLowerCase();
+            if (lowerKey === "module") {
+                const normalizedValue = typeof value === "string" ? normalizeModuleDirective(value) : value;
+                if (key !== "module") {
+                    delete normalized[key];
+                }
+                normalized.module = normalizedValue;
+            } else if (lowerKey === "target" && key !== "target") {
+                delete normalized[key];
+                normalized.target = value;
+            }
+        }
+        return normalized;
+    };
+
     function estimateJsdocInferActionLabels(content, startLineOneBased) {
         const lines = content.split(/\r?\n/);
         if (!lines.length) return [];
@@ -253,18 +281,18 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
                 const lines = content.split(/\r?\n/, 64);
                 for (const line of lines) {
                     const trimmed = line.trimStart();
-                    if (trimmed.startsWith("// @module:")) {
-                        const value = trimmed.slice("// @module:".length).split(",")[0]?.trim();
-                        if (value) {
-                            inferred.module = value;
-                            sawDirective = true;
-                        }
-                    } else if (trimmed.startsWith("// @target:")) {
-                        const value = trimmed.slice("// @target:".length).split(",")[0]?.trim();
-                        if (value) {
-                            inferred.target = value;
-                            sawDirective = true;
-                        }
+                    const match = trimmed.match(/^\/\/\s*@([A-Za-z]+)\s*:\s*(.*)$/);
+                    if (!match) continue;
+                    const [, rawKey, rawValue] = match;
+                    const key = rawKey.toLowerCase();
+                    const value = rawValue.split(",")[0]?.trim();
+                    if (!value) continue;
+                    if (key === "module") {
+                        inferred.module = normalizeModuleDirective(value);
+                        sawDirective = true;
+                    } else if (key === "target") {
+                        inferred.target = value;
+                        sawDirective = true;
                     }
                 }
             }
@@ -284,9 +312,28 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
          * We receive the response and format it for SessionClient.onMessage().
          */
         writeMessage(message) {
+            let outboundMessage = message;
+            try {
+                const request = JSON.parse(message);
+                if (
+                    request &&
+                    request.command === "compilerOptionsForInferredProjects" &&
+                    request.arguments &&
+                    request.arguments.options
+                ) {
+                    const normalizedOptions = normalizeCompilerOptions(request.arguments.options);
+                    request.arguments.options = ts.optionMapToObject(
+                        ts.serializeCompilerOptions(normalizedOptions || {})
+                    );
+                    outboundMessage = JSON.stringify(request);
+                }
+            } catch {
+                // Best-effort normalization only; keep original payload on parse failures.
+            }
+
             // message is the raw JSON request from SessionClient
             // Send to tsz-server and get raw JSON response
-            const responseBody = bridge.sendRequest(message);
+            const responseBody = bridge.sendRequest(outboundMessage);
 
             // Format response for SessionClient.onMessage():
             // SessionClient.extractMessage expects:
@@ -727,14 +774,24 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
                     return deduped;
                 };
             }
+            const originalSetCompilerOptionsForInferredProjects = this._client.setCompilerOptionsForInferredProjects?.bind(this._client);
+            if (originalSetCompilerOptionsForInferredProjects) {
+                this._client.setCompilerOptionsForInferredProjects = (rawOptions) => {
+                    const normalizedOptions = normalizeCompilerOptions(rawOptions);
+                    return originalSetCompilerOptionsForInferredProjects(
+                        ts.optionMapToObject(ts.serializeCompilerOptions(normalizedOptions || {}))
+                    );
+                };
+            }
             this._host.setClient(this._client);
             const directiveOptions = this._host.getFourslashInferredCompilerOptions?.();
             const inferredOptions = directiveOptions
                 ? { ...(options || {}), ...directiveOptions }
                 : options;
-            if (inferredOptions && this._client.setCompilerOptionsForInferredProjects) {
+            const effectiveCompilerOptions = normalizeCompilerOptions(inferredOptions);
+            if (effectiveCompilerOptions && this._client.setCompilerOptionsForInferredProjects) {
                 this._client.setCompilerOptionsForInferredProjects(
-                    ts.optionMapToObject(ts.serializeCompilerOptions(inferredOptions))
+                    ts.optionMapToObject(ts.serializeCompilerOptions(effectiveCompilerOptions))
                 );
             }
             if (typeof this._client.openFile === "function") {
@@ -760,8 +817,12 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
             throw new Error("getClassifier is not available using the tsz-server interface.");
         }
 
-        getPreProcessedFileInfo() {
-            throw new Error("getPreProcessedFileInfo is not available using the tsz-server interface.");
+        getPreProcessedFileInfo(fileName, fileContents) {
+            return ts.preProcessFile(
+                fileContents,
+                /*readImportFiles*/ true,
+                ts.hasJSFileExtension(fileName),
+            );
         }
 
         assertTextConsistent(fileName) {
