@@ -1112,6 +1112,8 @@ impl<'a> CheckerState<'a> {
         // did not report a concrete resolution failure for this import.
         if self.is_ambient_module_match(module_name) {
             tracing::trace!(%module_name, "check_import_declaration: ambient module match, returning");
+            // Keep JS-mode type-only import diagnostics (TS18042) for ambient modules.
+            self.check_imported_members(import, module_name);
             self.ctx.import_resolution_stack.pop();
             return;
         }
@@ -1131,6 +1133,8 @@ impl<'a> CheckerState<'a> {
             };
             if found {
                 tracing::trace!(%module_name, "check_import_declaration: found in declared/shorthand modules, returning");
+                // Keep JS-mode type-only import diagnostics (TS18042) for ambient modules.
+                self.check_imported_members(import, module_name);
                 self.ctx.import_resolution_stack.pop();
                 return;
             }
