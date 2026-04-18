@@ -76,10 +76,10 @@ pub(super) fn marker_comment_bounds_around(source_text: &str, offset: u32) -> Op
     for start in start_search..=end_search {
         if let Some((marker_start, marker_end)) = marker_comment_bounds_at(source_text, start)
             && marker_end.saturating_sub(marker_start) <= 32
+            && offset >= marker_start
+            && offset < marker_end
         {
-            if offset >= marker_start && offset < marker_end {
-                return Some((marker_start, marker_end));
-            }
+            return Some((marker_start, marker_end));
         }
     }
     None
