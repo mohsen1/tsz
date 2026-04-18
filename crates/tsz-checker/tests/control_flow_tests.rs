@@ -558,16 +558,12 @@ switch (true) {
     let case_b_expr = get_switch_clause_expression(arena, switch_idx, 2);
     let case_c_expr = get_switch_clause_expression(arena, switch_idx, 3);
 
-    let flow_b = binder
-        .get_node_flow(case_b_expr)
-        .expect("flow for case b");
+    let flow_b = binder.get_node_flow(case_b_expr).expect("flow for case b");
     let narrowed_b = analyzer.get_flow_type(case_b_expr, union, flow_b);
     let expected_b = types.union(vec![member_a, member_b]);
     assert_eq!(narrowed_b, expected_b);
 
-    let flow_c = binder
-        .get_node_flow(case_c_expr)
-        .expect("flow for case c");
+    let flow_c = binder.get_node_flow(case_c_expr).expect("flow for case c");
     let narrowed_c = analyzer.get_flow_type(case_c_expr, union, flow_c);
     let expected_c = types.union(vec![member_a, member_b, member_c]);
     assert_eq!(narrowed_c, expected_c);
