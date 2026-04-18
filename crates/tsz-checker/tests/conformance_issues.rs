@@ -13504,6 +13504,10 @@ fn test_divergent_accessor_read_keeps_getter_surface_without_ts2339() {
         r#"
 export {};
 
+interface CSSStyleDeclaration {
+    animationTimingFunction: string;
+}
+
 interface Element {
     get style(): CSSStyleDeclaration;
     set style(cssText: string);

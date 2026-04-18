@@ -113,8 +113,12 @@ impl Project {
             .cloned()
             .collect();
 
-        let files_to_check =
-            self.files_to_check_for_symbol(missing_name, &all_files, &wildcard_reexport_files);
+        let files_to_check = self.files_to_check_for_symbol(
+            missing_name,
+            from_file.file_name(),
+            &all_files,
+            &wildcard_reexport_files,
+        );
 
         for file_name in files_to_check {
             if file_name == from_file.file_name() {
@@ -288,7 +292,12 @@ impl Project {
             let files_to_check = if supplemental_symbol_set.contains(&symbol_name) {
                 all_files.clone()
             } else {
-                self.files_to_check_for_symbol(&symbol_name, &all_files, &wildcard_reexport_files)
+                self.files_to_check_for_symbol(
+                    &symbol_name,
+                    from_file.file_name(),
+                    &all_files,
+                    &wildcard_reexport_files,
+                )
             };
 
             for file_name in files_to_check {
@@ -401,11 +410,15 @@ impl Project {
     fn files_to_check_for_symbol(
         &self,
         symbol_name: &str,
+        from_file_name: &str,
         all_files: &[String],
         wildcard_reexport_files: &[String],
     ) -> Vec<String> {
         let candidate_files = self.symbol_index.get_files_with_symbol(symbol_name);
-        if candidate_files.is_empty() {
+        let has_external_candidates = candidate_files
+            .iter()
+            .any(|file_name| file_name != from_file_name);
+        if candidate_files.is_empty() || !has_external_candidates {
             return all_files.to_vec();
         }
 
@@ -443,7 +456,16 @@ impl Project {
             let Some(export) = arena.get_export_decl(stmt_node) else {
                 return false;
             };
-            export.module_specifier.is_some() && export.export_clause.is_none()
+            let is_namespace_reexport = if export.export_clause.is_none() {
+                false
+            } else if let Some(clause_node) = arena.get(export.export_clause) {
+                clause_node.kind == SyntaxKind::Identifier as u16
+                    || clause_node.kind == SyntaxKind::StringLiteral as u16
+            } else {
+                false
+            };
+            export.module_specifier.is_some()
+                && (export.export_clause.is_none() || is_namespace_reexport)
         })
     }
 
@@ -1421,11 +1443,14 @@ impl Project {
                 continue;
             }
             let clause_node = arena.get(export.export_clause)?;
-            if clause_node.kind != SyntaxKind::Identifier as u16 {
-                continue;
-            }
-            let export_text = arena.get_identifier_text(export.export_clause)?;
-            if export_text == "default" {
+            let export_text = if clause_node.kind == SyntaxKind::Identifier as u16 {
+                arena.get_identifier_text(export.export_clause)
+            } else if clause_node.kind == SyntaxKind::StringLiteral as u16 {
+                arena.get_literal_text(export.export_clause)
+            } else {
+                None
+            };
+            if export_text == Some("default") {
                 return Some(export.is_type_only);
             }
         }
