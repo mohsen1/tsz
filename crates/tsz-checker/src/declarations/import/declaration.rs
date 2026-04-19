@@ -863,8 +863,18 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
+        // tsc only emits TS2846 when the .d.ts module actually resolves; if
+        // the file doesn't exist, TS2307 (cannot find module) takes priority.
+        // Without this guard we emit both TS5097/TS2846 AND tsc's TS2307,
+        // producing extra diagnostics on missing imports.
+        let module_resolves_dts = self
+            .ctx
+            .resolve_import_target_from_file_with_mode(self.ctx.current_file_idx, module_name, None)
+            .is_some()
+            || self.ctx.binder.module_exports.contains_key(module_name);
         if let Some((dts_suffix, ts_ext, js_ext)) = dts_ext
             && !is_type_only_import
+            && module_resolves_dts
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
             let base = module_name.trim_end_matches(dts_suffix);
@@ -904,11 +914,21 @@ impl<'a> CheckerState<'a> {
             e.code
                 == crate::diagnostics::diagnostic_codes::MODULE_WAS_RESOLVED_TO_BUT_JSX_IS_NOT_SET
         });
+        // tsc only emits TS5097 when the module actually resolves (so the .ts
+        // extension is the user's mistake on a real file). When the module
+        // doesn't resolve at all, tsc emits TS2307 ('cannot find module')
+        // instead — emitting both produces a misleading double-diagnostic.
+        let module_resolves = self
+            .ctx
+            .resolve_import_target_from_file_with_mode(self.ctx.current_file_idx, module_name, None)
+            .is_some()
+            || self.ctx.binder.module_exports.contains_key(module_name);
         if !self.ctx.compiler_options.allow_importing_ts_extensions
             && !self.ctx.compiler_options.rewrite_relative_import_extensions
             && !is_type_only_import
             && !self.ctx.is_declaration_file()
             && !has_jsx_not_set_error
+            && module_resolves
             && let Some(ext) = ts_extension_suffix(module_name)
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
