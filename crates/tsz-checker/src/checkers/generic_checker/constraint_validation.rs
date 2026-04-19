@@ -465,7 +465,28 @@ impl<'a> CheckerState<'a> {
                                 self.ctx.types.as_type_database(),
                                 type_arg,
                             ) {
-                                continue;
+                                // Keep eager checking for callable constraints when
+                                // the application evaluates to a generic indexed-access
+                                // form (e.g., `Alias<T, F>` -> `DataFetchFns[T][F]`).
+                                // tsc reports TS2344 in this case because callability
+                                // is not provable at definition time.
+                                let constraint_resolved = self.resolve_lazy_type(constraint);
+                                let constraint_is_callable = query::is_callable_type(
+                                    self.ctx.types.as_type_database(),
+                                    constraint_resolved,
+                                ) || self.is_function_constraint(
+                                    param.constraint.unwrap_or(TypeId::NEVER),
+                                );
+                                let generic_indexed_type_arg =
+                                    self.generic_indexed_access_subject(type_arg);
+                                let keep_eager_check = constraint_is_callable
+                                    && generic_indexed_type_arg.is_some()
+                                    && !self.indexed_access_resolves_to_callable(
+                                        generic_indexed_type_arg.unwrap_or(type_arg),
+                                    );
+                                if !keep_eager_check {
+                                    continue;
+                                }
                             }
                             let constraint_resolved = self.resolve_lazy_type(constraint);
                             let mut subst =
@@ -489,6 +510,8 @@ impl<'a> CheckerState<'a> {
                             }
                             let db = self.ctx.types.as_type_database();
                             let original_constraint = param.constraint.unwrap_or(TypeId::NEVER);
+                            let generic_indexed_type_arg =
+                                self.generic_indexed_access_subject(type_arg);
 
                             // Special case: tsc eagerly reports TS2344 for generic indexed access
                             // types (A[B] where A contains type params) when the constraint is
@@ -501,8 +524,10 @@ impl<'a> CheckerState<'a> {
                                 query::is_callable_type(db, inst_constraint)
                                     || self.is_function_constraint(original_constraint);
                             if constraint_is_callable
-                                && self.is_generic_indexed_access(type_arg)
-                                && !self.indexed_access_resolves_to_callable(type_arg)
+                                && generic_indexed_type_arg.is_some()
+                                && !self.indexed_access_resolves_to_callable(
+                                    generic_indexed_type_arg.unwrap_or(type_arg),
+                                )
                                 && let Some(&arg_idx) = type_args_list.nodes.get(i)
                                 && !self.type_argument_is_narrowed_by_conditional_true_branch(
                                     arg_idx,
@@ -1195,6 +1220,47 @@ impl<'a> CheckerState<'a> {
             return query::contains_type_parameters(self.ctx.types, object);
         }
         false
+    }
+
+    /// Return the indexed-access subject used for TS2344 callable checks.
+    ///
+    /// Supports both direct indexed-access type arguments (`A[B]`) and
+    /// application-wrapped aliases whose instantiated body is indexed access
+    /// (e.g., `Alias<T, F>` where `type Alias<T, F> = A[T][F]`).
+    fn generic_indexed_access_subject(&mut self, type_id: TypeId) -> Option<TypeId> {
+        if self.is_generic_indexed_access(type_id) {
+            return Some(type_id);
+        }
+
+        let db = self.ctx.types.as_type_database();
+        let (Some(base_def), app_args) = query::application_base_def_and_args(db, type_id)? else {
+            return None;
+        };
+        let Some(def_info) = self.ctx.definition_store.get(base_def) else {
+            return None;
+        };
+        if def_info.kind != tsz_solver::def::DefKind::TypeAlias {
+            return None;
+        }
+        let body = self.ctx.definition_store.get_body(base_def)?;
+
+        let mut instantiated_body = body;
+        if let Some(type_params) = self.ctx.definition_store.get_type_params(base_def)
+            && !type_params.is_empty()
+            && !app_args.is_empty()
+        {
+            let mut subst = crate::query_boundaries::common::TypeSubstitution::new();
+            for (param, arg) in type_params.iter().zip(app_args.iter()) {
+                subst.insert(param.name, *arg);
+            }
+            if !subst.is_empty() {
+                instantiated_body =
+                    crate::query_boundaries::common::instantiate_type(self.ctx.types, body, &subst);
+            }
+        }
+
+        self.is_generic_indexed_access(instantiated_body)
+            .then_some(instantiated_body)
     }
 
     /// Check if an indexed access type `T[M]` resolves to a callable type
