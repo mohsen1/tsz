@@ -897,6 +897,7 @@ impl<'a> CheckerState<'a> {
     /// position), or `(tag, None)` when it is a fully-dangling JSDoc comment
     /// not attached to any statement (tsc reports these at program level with
     /// no file/position).
+    #[allow(clippy::type_complexity)]
     pub(crate) fn find_orphaned_extends_tags_for_statements(
         &self,
         statements: &[NodeIndex],
