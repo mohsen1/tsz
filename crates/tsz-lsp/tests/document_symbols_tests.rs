@@ -695,11 +695,9 @@ fn test_document_symbols_static_property() {
         "Expected 'static' in kind_modifiers, got: '{}'",
         prop.kind_modifiers
     );
-    assert!(
-        prop.kind_modifiers.contains("readonly"),
-        "Expected 'readonly' in kind_modifiers, got: '{}'",
-        prop.kind_modifiers
-    );
+    // `readonly` is not part of tsc's ScriptElementKindModifier set —
+    // it affects the declaration kind (const vs let etc.) but never
+    // appears as a kindModifier string.
 }
 
 #[test]
@@ -757,11 +755,10 @@ fn test_document_symbols_const_enum() {
     assert_eq!(symbols.len(), 1);
     assert_eq!(symbols[0].name, "Direction");
     assert_eq!(symbols[0].kind, SymbolKind::Enum);
-    assert!(
-        symbols[0].kind_modifiers.contains("const"),
-        "Expected 'const' modifier on const enum, got: '{}'",
-        symbols[0].kind_modifiers
-    );
+    // tsc's getNodeModifiers does not emit `const` — it's absorbed
+    // into the declaration kind rather than surfaced as a
+    // ScriptElementKindModifier. We match that exactly.
+    assert_eq!(symbols[0].kind_modifiers, "");
     assert_eq!(symbols[0].children.len(), 2);
 }
 

@@ -1696,7 +1696,7 @@ pub(crate) fn widen_type_deep(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId 
 pub(crate) fn string_intrinsic_components(
     db: &dyn TypeDatabase,
     type_id: TypeId,
-) -> Option<(tsz_solver::types::StringIntrinsicKind, TypeId)> {
+) -> Option<(tsz_solver::StringIntrinsicKind, TypeId)> {
     tsz_solver::string_intrinsic_components(db, type_id)
 }
 

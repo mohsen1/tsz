@@ -251,8 +251,8 @@ pub use types::{
 pub use types::{
     CallableShape, ConditionalType, ConditionalTypeId, FunctionShape, FunctionShapeId,
     IndexSignature, MappedType, MappedTypeId, ObjectFlags, ObjectShape, OrderedFloat, ParamInfo,
-    RelationCacheKey, TemplateSpan, TupleElement, TupleListId, TypeParamInfo, TypePredicate,
-    TypePredicateTarget,
+    RelationCacheKey, StringIntrinsicKind, TemplateSpan, TupleElement, TupleListId, TypeParamInfo,
+    TypePredicate, TypePredicateTarget,
 };
 // unsoundness_audit: accessed via tsz_solver::unsoundness_audit module path
 pub use widening::*;
