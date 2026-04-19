@@ -6,8 +6,8 @@ resolver = "3"
 [workspace.package]
 version = "0.1.9"
 edition = "2024"
-repository = "https://github.com/mohsenazimi/tsz"
-homepage = "https://github.com/mohsenazimi/tsz"
+repository = "https://github.com/mohsen1/tsz"
+homepage = "https://github.com/mohsen1/tsz"
 license = "Apache-2.0"
 authors = ["Mohsen Azimi <mohsen@users.noreply.github.com>"]
 keywords = ["typescript", "type-checker", "compiler", "language", "tsz"]
