@@ -1706,17 +1706,18 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         request: &crate::context::TypingRequest,
     ) -> TypeId {
-        use crate::ExpressionChecker;
+        use crate::{ExprCheckResult, ExpressionChecker};
 
         let expr_result = {
             let mut expr_checker = ExpressionChecker::new(&mut self.ctx);
-            expr_checker.compute_type_uncached_with_context(idx, request.contextual_type)
+            expr_checker.try_compute_expr_type_with_context(idx, request.contextual_type)
         };
 
-        if expr_result != TypeId::DELEGATE {
-            expr_result
-        } else {
-            self.compute_type_of_node_complex_with_request(idx, request)
+        match expr_result {
+            ExprCheckResult::Type(ty) => ty,
+            ExprCheckResult::Delegate => {
+                self.compute_type_of_node_complex_with_request(idx, request)
+            }
         }
     }
 
@@ -1949,15 +1950,11 @@ impl<'a> CheckerState<'a> {
 
     /// Compute the type of a node (internal, not cached).
     ///
-    /// This method first delegates to `ExpressionChecker` for expression type checking.
-    /// If `ExpressionChecker` returns `TypeId::DELEGATE`, we fall back to the full
-    /// `CheckerState` implementation that has access to symbol resolution, contextual
-    /// typing, and other complex type checking features.
-    /// Complex type computation that needs full `CheckerState` context.
-    ///
-    /// This is called when `ExpressionChecker` returns `TypeId::DELEGATE`,
-    /// indicating the expression needs symbol resolution, contextual typing,
-    /// or other features only available in `CheckerState`.
+    /// This method first dispatches through `ExpressionChecker`. If the
+    /// dispatcher returns [`crate::ExprCheckResult::Delegate`], we fall back
+    /// to the full `CheckerState` implementation that has access to symbol
+    /// resolution, contextual typing, and other complex type checking
+    /// features. Delegation is control flow — it never appears as a `TypeId`.
     #[allow(dead_code)]
     fn compute_type_of_node_complex(&mut self, idx: NodeIndex) -> TypeId {
         self.compute_type_of_node_complex_with_request(idx, &crate::context::TypingRequest::NONE)
