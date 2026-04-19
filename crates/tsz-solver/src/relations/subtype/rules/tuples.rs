@@ -472,6 +472,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         };
         let target_shape = self.interner.object_shape(target_shape_id);
+        let sym_iter = self.interner.intern_string("[Symbol.iterator]");
+        let internal_iter = self.interner.intern_string("__@iterator");
 
         // Get the source array's object shape
         let source_eval =
@@ -483,6 +485,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Check each required target property
         for t_prop in &target_shape.properties {
             if t_prop.optional {
+                continue;
+            }
+            // Iterable protocol members are checked by the iterator fallback below.
+            // Do not treat them as "extra required properties" that block fallback.
+            if t_prop.name == sym_iter || t_prop.name == internal_iter {
                 continue;
             }
             // If the source doesn't have this property, the target has extra requirements
