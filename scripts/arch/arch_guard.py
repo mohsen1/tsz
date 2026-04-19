@@ -298,6 +298,21 @@ CHECKS = [
         },
     ),
     (
+        "Core boundary: wasm bindings must stay in current wasm surface files",
+        ROOT / "crates" / "tsz-core" / "src",
+        re.compile(r"\bwasm_bindgen\b|\bserde_wasm_bindgen\b|\bJsValue\b"),
+        {
+            "exclude_dirs": {"tests"},
+            "exclude_files": {
+                # Transitional baseline: core lib exports the wasm API today.
+                "crates/tsz-core/src/lib.rs",
+                # Explicit wasm API module.
+                "crates/tsz-core/src/api/wasm/code_actions.rs",
+            },
+            "ignore_comment_lines": True,
+        },
+    ),
+    (
         "LSP boundary: direct lookup() on solver interner",
         ROOT / "crates" / "tsz-lsp",
         re.compile(r"\.lookup\s*\("),

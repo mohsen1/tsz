@@ -131,6 +131,44 @@ class ArchGuardSolverRelationBoundaryTests(unittest.TestCase):
         self.assertEqual(test_hits, [])
 
 
+class ArchGuardCoreWasmBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _core_wasm_boundary_check(self):
+        for name, _base, pattern, excludes in self.arch_guard.CHECKS:
+            if name == "Core boundary: wasm bindings must stay in current wasm surface files":
+                return pattern, excludes
+        self.fail("core wasm boundary check is missing from CHECKS")
+
+    def test_rule_exists(self):
+        self._core_wasm_boundary_check()
+
+    def test_rule_flags_non_allowlisted_core_file(self):
+        pattern, excludes = self._core_wasm_boundary_check()
+        text = "use wasm_bindgen::prelude::wasm_bindgen;"
+        hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-core/src/source_file.rs", excludes
+        )
+        self.assertEqual(hits, [1])
+
+    def test_rule_allows_existing_wasm_surface_files(self):
+        pattern, excludes = self._core_wasm_boundary_check()
+        text = "use wasm_bindgen::prelude::JsValue;"
+        lib_hits = self.arch_guard.find_matches(text, pattern, "crates/tsz-core/src/lib.rs", excludes)
+        api_hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-core/src/api/wasm/code_actions.rs", excludes
+        )
+        self.assertEqual(lib_hits, [])
+        self.assertEqual(api_hits, [])
+
+    def test_rule_ignores_tests_directory(self):
+        pattern, excludes = self._core_wasm_boundary_check()
+        text = "use wasm_bindgen::prelude::JsValue;"
+        hits = self.arch_guard.find_matches(text, pattern, "crates/tsz-core/tests/foo.rs", excludes)
+        self.assertEqual(hits, [])
+
+
 class ArchGuardCheckerFileSizeBoundaryTests(unittest.TestCase):
     def setUp(self):
         self.arch_guard = load_arch_guard_module()
