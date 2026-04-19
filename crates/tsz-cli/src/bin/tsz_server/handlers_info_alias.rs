@@ -37,7 +37,15 @@ impl Server {
         &self,
         mut payload: serde_json::Value,
     ) -> Option<serde_json::Value> {
+        // Temporary short-circuit: probe how many LSP operations still work
+        // when tsz-server answers them entirely in Rust, without delegating
+        // to a `node` subprocess running the real `tsc` LanguageService.
+        if std::env::var_os("TSZ_DISABLE_NATIVE_TS").is_some() {
+            let _ = &mut payload;
+            return None;
+        }
         const SCRIPT: &str = include_str!("native_ts_worker.js");
+
 
         let payload_obj = payload.as_object_mut()?;
         if payload_obj.get("openFiles").is_none() {
