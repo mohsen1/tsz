@@ -1894,7 +1894,6 @@ fn compare_module_specifier_candidates(a: &String, b: &String) -> Ordering {
     a_segments
         .cmp(&b_segments)
         .then_with(|| a_rank.cmp(&b_rank))
-        .then_with(|| a.len().cmp(&b.len()))
         .then_with(|| a.cmp(b))
 }
 
