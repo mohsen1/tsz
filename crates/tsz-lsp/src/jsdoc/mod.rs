@@ -308,7 +308,7 @@ fn parse_param_tag(line: &str) -> Option<(String, String)> {
 }
 
 #[cfg(test)]
-#[path = "../tests/jsdoc_tests.rs"]
+#[path = "../../tests/jsdoc_tests.rs"]
 mod jsdoc_tests;
 
 fn normalize_param_name(name: &str) -> String {
