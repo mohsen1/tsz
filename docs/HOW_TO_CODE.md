@@ -248,23 +248,43 @@ Full list of abstraction opportunities: `docs/todo/abstraction-opportunities.md`
 
 Hard-won patterns from real bugs and refactoring sessions. Follow these to keep the codebase clean.
 
-### Use named constants for bitmask flags
+### Use typed config for relation cache keys
 
-Never write `flags |= 1 << 3`. Use the named constants on `RelationCacheKey`:
+Never write `flags |= 1 << 3` or hand-roll a `RelationCacheKey` out of raw
+`u16`/`u8` tuples. Use the typed builders and the named boundary constants:
 
 ```rust
-// WRONG — what does bit 3 mean?
-let mut flags: u16 = 0;
-if self.strict_null_checks { flags |= 1 << 0; }
-if self.strict_function_types { flags |= 1 << 1; }
+// WRONG — magic bit, magic 0
+let key = RelationCacheKey::subtype(source, target, flags, 0);
 
-// RIGHT — self-documenting
-let mut flags: u16 = 0;
-if self.strict_null_checks { flags |= RelationCacheKey::FLAG_STRICT_NULL_CHECKS; }
-if self.strict_function_types { flags |= RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES; }
+// RIGHT — typed config with a canonical construction point
+let key = assignability_cache_key(source, target, self.ctx.pack_relation_flags());
+// or, inside the solver:
+let key = RelationCacheKey::for_subtype(source, target, policy.cache_config());
 ```
 
-The checker has `CheckerContext::pack_relation_flags()` as the single source of truth for packing compiler options into a cache key bitmask. Use it instead of hand-packing flags.
+Key pieces of the typed API:
+
+* **`RelationFlags`** (solver-level `bitflags`): the behavior-affecting
+  boolean options. Every bit maps 1:1 to a compiler option or mode toggle.
+* **`CachedAnyMode`**: typed replacement for the old `any_mode: u8`.
+* **`RelationCacheConfig`**: canonical cache-partitioning bundle. Holds
+  the flags and the effective any-mode and is the `config` field of a
+  `RelationCacheKey`.
+* **`RelationCacheKey::for_subtype` / `for_assignability` / `for_identical`**:
+  typed builders. Prefer these over the legacy
+  `RelationCacheKey::subtype(..)` / `::assignability(..)` shims, which only
+  exist to keep older callers compiling.
+* **`RelationPolicy::cache_config()`**: the single conversion point from the
+  high-level policy bundle to `RelationCacheConfig`. Every
+  behavior-affecting field on `RelationPolicy` must be reflected here so
+  that two queries with different policies can never share a cache slot.
+
+The checker still exposes `CheckerContext::pack_relation_flags()` as the
+single source of truth for packing compiler options into a legacy `u16`
+bitmask. Inside the checker, route the result through
+`assignability_cache_key` / `subtype_cache_key` so you never construct a
+`RelationCacheKey` out of raw bits.
 
 ### Extract shared logic when two functions differ only in direction
 
