@@ -232,8 +232,43 @@ impl Server {
             let mut provider =
                 SemanticTokensProvider::new(&arena, &binder, &line_map, &source_text);
             let tokens = provider.get_semantic_tokens(root);
+            // Provider emits the LSP 5-tuple delta encoding
+            // (deltaLine, deltaChar, length, tokenType, tokenModifiers).
+            // tsserver's `encodedSemanticClassifications-full` expects the
+            // "2020" format: triples of (absStart, length, classId) with
+            // `classId = (modifierBits << 8) | tokenType`. Convert in
+            // place so the fourslash harness's span-length assertions
+            // match tsc.
+            let mut converted: Vec<u32> = Vec::with_capacity(tokens.len() / 5 * 3);
+            let mut prev_line: u32 = 0;
+            let mut prev_char: u32 = 0;
+            let mut i = 0;
+            while i + 4 < tokens.len() {
+                let delta_line = tokens[i];
+                let delta_char = tokens[i + 1];
+                let length = tokens[i + 2];
+                let token_type = tokens[i + 3];
+                let token_modifiers = tokens[i + 4];
+                let line = prev_line + delta_line;
+                let char = if delta_line == 0 {
+                    prev_char + delta_char
+                } else {
+                    delta_char
+                };
+                let position = tsz_common::position::Position::new(line, char);
+                let abs_start = line_map
+                    .position_to_offset(position, &source_text)
+                    .unwrap_or(0);
+                let class_id = (token_modifiers << 8) | token_type;
+                converted.push(abs_start);
+                converted.push(length);
+                converted.push(class_id);
+                prev_line = line;
+                prev_char = char;
+                i += 5;
+            }
             Some(serde_json::json!({
-                "spans": tokens,
+                "spans": converted,
                 "endOfLineState": 0,
             }))
         })();
