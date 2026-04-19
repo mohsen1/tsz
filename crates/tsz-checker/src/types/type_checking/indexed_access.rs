@@ -788,6 +788,13 @@ impl<'a> CheckerState<'a> {
 
     /// Check an indexed access type (T[K]).
     pub(crate) fn check_indexed_access_type(&mut self, node_idx: NodeIndex) {
+        // tsc does not re-type-check declaration files (.d.ts) — they are trusted
+        // as correct declarations. Checking them generates false positives because
+        // the type constraint relationships (e.g. keyof Readonly<T> = keyof T) are
+        // not always reconstructible from type IDs without full evaluation.
+        if self.ctx.is_declaration_file() {
+            return;
+        }
         let Some(node) = self.ctx.arena.get(node_idx) else {
             return;
         };
