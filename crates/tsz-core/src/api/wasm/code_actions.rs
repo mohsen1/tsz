@@ -72,7 +72,7 @@ pub(crate) fn parse_code_action_context(context: JsValue) -> Result<CodeActionCo
     })
 }
 
-pub(crate) fn default_code_action_context() -> CodeActionContext {
+pub(crate) const fn default_code_action_context() -> CodeActionContext {
     CodeActionContext {
         diagnostics: Vec::new(),
         only: None,
