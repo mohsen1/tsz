@@ -8,6 +8,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PKG="$PROJECT_ROOT/pkg"
 
+extract_workspace_package_field() {
+    local field="$1"
+    awk -F '"' -v key="$field" '
+        BEGIN { in_workspace_pkg = 0 }
+        /^\[workspace\.package\]/ { in_workspace_pkg = 1; next }
+        /^\[/ { if (in_workspace_pkg) exit }
+        in_workspace_pkg && $1 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+            print $2
+            exit
+        }
+    ' "$PROJECT_ROOT/Cargo.toml"
+}
+
 # ---------------------------------------------------------------------------
 # Preflight
 # ---------------------------------------------------------------------------
@@ -42,8 +55,23 @@ wasm-pack build crates/tsz-wasm --target bundler --out-dir "$PKG/bundler"
 # `npm publish` to exclude all files inside those directories.  Remove them.
 rm -f "$PKG/node/.gitignore" "$PKG/bundler/.gitignore"
 
-# Extract version from workspace Cargo.toml so npm package stays in sync.
-CARGO_VERSION=$(grep '^version' "$PROJECT_ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)"/\1/')
+# Extract metadata from workspace Cargo.toml so npm package stays in sync.
+CARGO_VERSION="$(extract_workspace_package_field "version")"
+WORKSPACE_REPOSITORY="$(extract_workspace_package_field "repository")"
+
+if [ -z "$CARGO_VERSION" ]; then
+    echo "Error: failed to read workspace.package.version from Cargo.toml"
+    exit 1
+fi
+
+if [ -z "$WORKSPACE_REPOSITORY" ]; then
+    echo "Error: failed to read workspace.package.repository from Cargo.toml"
+    exit 1
+fi
+
+WORKSPACE_REPOSITORY="${WORKSPACE_REPOSITORY%.git}"
+WORKSPACE_REPOSITORY="${WORKSPACE_REPOSITORY%/}"
+NPM_REPOSITORY_URL="git+${WORKSPACE_REPOSITORY}.git"
 
 echo "Writing unified package.json (version $CARGO_VERSION)..."
 cat > "$PKG/package.json" <<EOF
@@ -55,7 +83,7 @@ cat > "$PKG/package.json" <<EOF
   "author": "Mohsen Azimi <mohsen@users.noreply.github.com>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mohsenazimi/tsz.git"
+    "url": "$NPM_REPOSITORY_URL"
   },
   "keywords": ["typescript", "type-checker", "compiler", "wasm"],
   "main": "node/tsz_wasm.js",
