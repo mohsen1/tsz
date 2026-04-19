@@ -590,13 +590,14 @@ impl<'a> CheckerState<'a> {
         let evaluated = self.evaluate_type_with_env(type_id);
 
         // If fully resolved (no longer an IndexAccess), use it
-        if !tsz_solver::is_index_access_type(self.ctx.types, evaluated) {
+        if !crate::query_boundaries::common::is_index_access_type(self.ctx.types, evaluated) {
             return evaluated;
         }
 
         // Still an IndexAccess — try resolving the index type parameter's constraint.
         // E.g., {[s:string]:V}[K] where K extends keyof T => evaluate {[s:string]:V}[keyof T] => V
-        if let Some((ia_obj, ia_idx)) = tsz_solver::index_access_parts(self.ctx.types, evaluated)
+        if let Some((ia_obj, ia_idx)) =
+            crate::query_boundaries::common::index_access_parts(self.ctx.types, evaluated)
             && let Some(constraint) =
                 access_query::type_parameter_constraint(self.ctx.types, ia_idx)
         {
@@ -604,7 +605,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .types
                 .evaluate_index_access_with_options(ia_obj, constraint, false);
-            if !tsz_solver::is_index_access_type(self.ctx.types, resolved) {
+            if !crate::query_boundaries::common::is_index_access_type(self.ctx.types, resolved) {
                 return resolved;
             }
         }

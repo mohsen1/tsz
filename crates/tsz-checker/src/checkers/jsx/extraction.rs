@@ -136,7 +136,10 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::common::PropertyAccessResult::Success { .. }
             );
         if !has_managed_props_metadata
-            && (tsz_solver::contains_type_parameters(self.ctx.types, props_type)
+            && (crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                props_type,
+            )
                 || crate::computation::call_inference::should_preserve_contextual_application_shape(
                     self.ctx.types,
                     props_type,
@@ -170,7 +173,7 @@ impl<'a> CheckerState<'a> {
             // LibraryManagedAttributes), fall back to the raw props type rather than
             // using a broken evaluation result that would cause false TS2322 diagnostics.
             if evaluated != TypeId::ERROR
-                && tsz_solver::contains_error_type(self.ctx.types, evaluated)
+                && crate::query_boundaries::common::contains_error_type(self.ctx.types, evaluated)
             {
                 return props_type;
             }
@@ -221,7 +224,7 @@ impl<'a> CheckerState<'a> {
                     self.get_jsx_props_type_for_component_member(member, None)
                 else {
                     if self.is_generic_jsx_component(member)
-                        || tsz_solver::contains_type_parameters(self.ctx.types, member)
+                        || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, member)
                         || crate::query_boundaries::common::needs_evaluation_for_merge(
                             self.ctx.types,
                             member,
@@ -295,9 +298,10 @@ impl<'a> CheckerState<'a> {
             // props were already resolved via constraint substitution in
             // `get_class_component_props_type`, so re-deriving them is unnecessary
             // and can produce the wrong type for optional-parameter constructors.
-            let raw_has_tp = tsz_solver::contains_type_parameters(self.ctx.types, props)
-                || (self.is_generic_jsx_component(component_type)
-                    && self.generic_jsx_component_has_defaults(component_type));
+            let raw_has_tp =
+                crate::query_boundaries::common::contains_type_parameters(self.ctx.types, props)
+                    || (self.is_generic_jsx_component(component_type)
+                        && self.generic_jsx_component_has_defaults(component_type));
             return Some((props, raw_has_tp));
         }
 
@@ -376,7 +380,7 @@ impl<'a> CheckerState<'a> {
             // to avoid false TS2604.  This mirrors the skip logic in
             // `get_jsx_props_type_for_component` for union members.
             if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty)
-                || tsz_solver::contains_type_parameters(self.ctx.types, ty)
+                || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
                 || self.is_generic_jsx_component(ty)
             {
                 if is_this_tag || crate::query_boundaries::common::is_this_type(self.ctx.types, ty)
@@ -573,8 +577,10 @@ impl<'a> CheckerState<'a> {
                         // TSC allows null/undefined in SFC return types
                         // (e.g., `() => Element | null` is valid).
                         // Strip null/undefined before checking against JSX.Element.
-                        let non_null_return =
-                            tsz_solver::remove_nullish(self.ctx.types, return_type);
+                        let non_null_return = crate::query_boundaries::common::remove_nullish(
+                            self.ctx.types,
+                            return_type,
+                        );
                         if non_null_return == TypeId::NEVER
                             || !self.is_assignable_to(non_null_return, element_type)
                         {
@@ -627,7 +633,10 @@ impl<'a> CheckerState<'a> {
                         any_concrete = true;
                         target.is_none_or(|t| {
                             let check_ret = if is_call_sig {
-                                let stripped = tsz_solver::remove_nullish(self.ctx.types, ret);
+                                let stripped = crate::query_boundaries::common::remove_nullish(
+                                    self.ctx.types,
+                                    ret,
+                                );
                                 if stripped == TypeId::NEVER {
                                     return true;
                                 }
@@ -697,7 +706,8 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let non_null_return = tsz_solver::remove_nullish(self.ctx.types, evaluated_return);
+        let non_null_return =
+            crate::query_boundaries::common::remove_nullish(self.ctx.types, evaluated_return);
         if non_null_return == TypeId::NEVER {
             return;
         }
@@ -738,13 +748,14 @@ impl<'a> CheckerState<'a> {
             // Check for type parameters BEFORE evaluation, since evaluation may
             // collapse `T & {children?: ReactNode}` into a concrete object type
             // that loses the type parameter information.
-            let raw_has_type_params = tsz_solver::contains_type_parameters(self.ctx.types, props);
+            let raw_has_type_params =
+                crate::query_boundaries::common::contains_type_parameters(self.ctx.types, props);
             // When the raw props type is already a union (e.g., discriminated unions like
             // `{ variant: Avatar } | { variant: OneLine }`), skip full evaluation.
             // The type evaluator may incorrectly merge union members with the same
             // property names into a single object, losing the discriminated union
             // structure needed for correct assignability checking.
-            let evaluated = if tsz_solver::is_union_type(self.ctx.types, props)
+            let evaluated = if crate::query_boundaries::common::is_union_type(self.ctx.types, props)
                 || should_preserve_contextual_application_shape(self.ctx.types, props)
             {
                 props
@@ -753,7 +764,10 @@ impl<'a> CheckerState<'a> {
             };
             let managed = self.apply_jsx_library_managed_attributes(component_type, evaluated);
             let managed_raw_has_type_params = raw_has_type_params
-                || tsz_solver::contains_type_parameters(self.ctx.types, managed);
+                || crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    managed,
+                );
             return Some((managed, managed_raw_has_type_params));
         }
 
@@ -776,7 +790,8 @@ impl<'a> CheckerState<'a> {
                 .first()
                 .map(|p| p.type_id)
                 .unwrap_or_else(|| self.ctx.types.factory().object(vec![]));
-            let raw_has_type_params = tsz_solver::contains_type_parameters(self.ctx.types, props);
+            let raw_has_type_params =
+                crate::query_boundaries::common::contains_type_parameters(self.ctx.types, props);
             let evaluated = if should_preserve_contextual_application_shape(self.ctx.types, props) {
                 props
             } else {
@@ -784,7 +799,10 @@ impl<'a> CheckerState<'a> {
             };
             let managed = self.apply_jsx_library_managed_attributes(component_type, evaluated);
             let managed_raw_has_type_params = raw_has_type_params
-                || tsz_solver::contains_type_parameters(self.ctx.types, managed);
+                || crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    managed,
+                );
             return Some((managed, managed_raw_has_type_params));
         }
 
@@ -822,18 +840,19 @@ impl<'a> CheckerState<'a> {
             props_type,
             &substitution,
         );
-        let evaluated = if tsz_solver::is_union_type(self.ctx.types, instantiated)
-            || should_preserve_contextual_application_shape(self.ctx.types, instantiated)
-        {
-            instantiated
-        } else {
-            self.evaluate_type_with_env(instantiated)
-        };
+        let evaluated =
+            if crate::query_boundaries::common::is_union_type(self.ctx.types, instantiated)
+                || should_preserve_contextual_application_shape(self.ctx.types, instantiated)
+            {
+                instantiated
+            } else {
+                self.evaluate_type_with_env(instantiated)
+            };
         let managed = self.apply_jsx_library_managed_attributes(component_type, evaluated);
         if managed == TypeId::ANY
             || managed == TypeId::UNKNOWN
             || managed == TypeId::ERROR
-            || tsz_solver::contains_type_parameters(self.ctx.types, managed)
+            || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, managed)
         {
             return None;
         }
@@ -1095,7 +1114,8 @@ impl<'a> CheckerState<'a> {
             let evaluated = self.evaluate_type_with_env(raw_instance_type);
             // After evaluation, if the type still contains type parameters,
             // we can't resolve it further — bail out.
-            if tsz_solver::contains_type_parameters(self.ctx.types, evaluated) {
+            if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, evaluated)
+            {
                 return None;
             }
             evaluated

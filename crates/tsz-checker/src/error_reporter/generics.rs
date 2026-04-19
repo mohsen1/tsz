@@ -28,7 +28,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(shape_id) = tsz_solver::callable_shape_id(self.ctx.types, type_id) {
+        if let Some(shape_id) =
+            crate::query_boundaries::common::callable_shape_id(self.ctx.types, type_id)
+        {
             let shape = self.ctx.types.callable_shape(shape_id);
             let mut changed = false;
 
@@ -140,7 +142,7 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
     ) -> Option<String> {
         let app = crate::query_boundaries::common::type_application(self.ctx.types, type_id)?;
-        let sym = tsz_solver::type_query_symbol(self.ctx.types, app.base)?;
+        let sym = crate::query_boundaries::common::type_query_symbol(self.ctx.types, app.base)?;
         let symbol_type = self.get_type_of_symbol(SymbolId(sym.0));
         let shape =
             crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, symbol_type)?;
@@ -192,7 +194,7 @@ impl<'a> CheckerState<'a> {
         if let Some(display) = self.try_format_type_query_instantiation_overlap_display(type_id) {
             return Some(display);
         }
-        let shape_id = tsz_solver::callable_shape_id(self.ctx.types, type_id)?;
+        let shape_id = crate::query_boundaries::common::callable_shape_id(self.ctx.types, type_id)?;
         let shape = self.ctx.types.callable_shape(shape_id);
         if shape.call_signatures.len() != 1
             || shape.construct_signatures.len() > 1

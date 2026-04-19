@@ -60,12 +60,12 @@ impl<'a> CheckerState<'a> {
         let left_stripped = if left_eval == TypeId::VOID {
             left_eval
         } else {
-            tsz_solver::remove_nullish(self.ctx.types, left_eval)
+            crate::query_boundaries::common::remove_nullish(self.ctx.types, left_eval)
         };
         let right_stripped = if right_eval == TypeId::VOID {
             right_eval
         } else {
-            tsz_solver::remove_nullish(self.ctx.types, right_eval)
+            crate::query_boundaries::common::remove_nullish(self.ctx.types, right_eval)
         };
         let left_is_valid = self.is_arithmetic_operand(left_stripped);
         let right_is_valid = self.is_arithmetic_operand(right_stripped);
@@ -124,7 +124,9 @@ impl<'a> CheckerState<'a> {
         let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
         let eval_left = self.evaluate_type_for_binary_ops(left_read_type);
         let eval_right = self.evaluate_type_for_binary_ops(right_type);
-        if let Some(binary_op) = tsz_solver::map_compound_assignment_to_binary(operator) {
+        if let Some(binary_op) =
+            crate::query_boundaries::common::map_compound_assignment_to_binary(operator)
+        {
             let result = evaluator.evaluate(eval_left, eval_right, binary_op);
             if let crate::query_boundaries::type_computation::core::BinaryOpResult::TypeError {
                 ..

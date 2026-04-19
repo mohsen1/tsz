@@ -111,9 +111,13 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         type_id.map(|type_id| {
             if let Some(receiver_this_type) = receiver_this_type
-                && tsz_solver::contains_this_type(self.ctx.types, type_id)
+                && crate::query_boundaries::common::contains_this_type(self.ctx.types, type_id)
             {
-                tsz_solver::substitute_this_type(self.ctx.types, type_id, receiver_this_type)
+                crate::query_boundaries::common::substitute_this_type(
+                    self.ctx.types,
+                    type_id,
+                    receiver_this_type,
+                )
             } else {
                 type_id
             }

@@ -400,7 +400,10 @@ impl<'a> CheckerState<'a> {
                 if query::is_type_parameter_like(self.ctx.types, resolved_member) {
                     return;
                 }
-                if tsz_solver::is_primitive_type(self.ctx.types, resolved_member) {
+                if crate::query_boundaries::common::is_primitive_type(
+                    self.ctx.types,
+                    resolved_member,
+                ) {
                     has_primitive_member = true;
                     continue;
                 }

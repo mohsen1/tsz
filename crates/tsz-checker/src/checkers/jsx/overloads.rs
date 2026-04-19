@@ -432,7 +432,8 @@ impl<'a> CheckerState<'a> {
             if let PropertyAccessResult::Success { type_id, .. } =
                 self.resolve_property_access_with_env(props_type, &attr.name)
             {
-                let expected = tsz_solver::remove_undefined(self.ctx.types, type_id);
+                let expected =
+                    crate::query_boundaries::common::remove_undefined(self.ctx.types, type_id);
                 if !self.is_assignable_to(attr.type_id, expected) {
                     return false;
                 }
@@ -472,7 +473,8 @@ impl<'a> CheckerState<'a> {
                 if attr.type_id == TypeId::ANY || attr.type_id == TypeId::ERROR {
                     continue;
                 }
-                let expected = tsz_solver::remove_undefined(self.ctx.types, type_id);
+                let expected =
+                    crate::query_boundaries::common::remove_undefined(self.ctx.types, type_id);
                 if !self.is_assignable_to(attr.type_id, expected) {
                     return Some(attr.name.clone());
                 }

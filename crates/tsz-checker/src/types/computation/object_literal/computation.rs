@@ -91,8 +91,10 @@ impl<'a> CheckerState<'a> {
             if ctx == TypeId::UNDEFINED || ctx == TypeId::NULL || ctx == TypeId::VOID {
                 contextual_type = None;
             } else {
-                let (non_nullish, _) =
-                    tsz_solver::split_nullish_type(self.ctx.types.as_type_database(), ctx);
+                let (non_nullish, _) = crate::query_boundaries::common::split_nullish_type(
+                    self.ctx.types.as_type_database(),
+                    ctx,
+                );
                 if let Some(non_nullish) = non_nullish
                     && non_nullish != ctx
                 {
@@ -361,7 +363,10 @@ impl<'a> CheckerState<'a> {
                         // (e.g., `deprecate<T extends Function>(fn: T): T` should
                         // infer T as the handler type, not fall back to `Function`).
                         if let Some(pct) = property_context_type {
-                            let stripped = tsz_solver::remove_undefined(self.ctx.types, pct);
+                            let stripped = crate::query_boundaries::common::remove_undefined(
+                                self.ctx.types,
+                                pct,
+                            );
                             if stripped != TypeId::UNDEFINED && stripped != pct {
                                 property_context_type = Some(stripped);
                             }
@@ -569,7 +574,10 @@ impl<'a> CheckerState<'a> {
                             && !self.is_assignable_to(value_type, declared_type)
                         {
                             let declared_check_type =
-                                tsz_solver::remove_undefined(self.ctx.types, declared_type);
+                                crate::query_boundaries::common::remove_undefined(
+                                    self.ctx.types,
+                                    declared_type,
+                                );
                             self.check_assignable_or_report_at_exact_anchor(
                                 value_type,
                                 declared_check_type,
@@ -589,7 +597,7 @@ impl<'a> CheckerState<'a> {
                         {
                             value_type
                         } else {
-                            tsz_solver::apply_contextual_type(
+                            crate::query_boundaries::common::apply_contextual_type(
                                 self.ctx.types,
                                 value_type,
                                 property_context_type,
@@ -1102,7 +1110,7 @@ impl<'a> CheckerState<'a> {
                         declared_type
                     } else {
                         // Apply bidirectional type inference and widen (same as named properties)
-                        let value_type = tsz_solver::apply_contextual_type(
+                        let value_type = crate::query_boundaries::common::apply_contextual_type(
                             self.ctx.types,
                             value_type,
                             property_context_type,

@@ -101,7 +101,7 @@ impl<'a> CheckerState<'a> {
             return Some(body_type);
         }
 
-        Some(tsz_solver::instantiate_generic(
+        Some(crate::query_boundaries::common::instantiate_generic(
             self.ctx.types,
             body_type,
             &type_params,

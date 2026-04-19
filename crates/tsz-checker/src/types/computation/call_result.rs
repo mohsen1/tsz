@@ -764,8 +764,10 @@ impl<'a> CheckerState<'a> {
         // the mismatch comes from variance checking, not from contextual typing.
         // Don't defer — the variance rejection is definitive. This matches tsc which
         // reports TS2345 immediately for same-generic-type argument mismatches.
-        if let Some(s_app_id) = tsz_solver::application_id(self.ctx.types, actual)
-            && let Some(t_app_id) = tsz_solver::application_id(self.ctx.types, expected)
+        if let Some(s_app_id) =
+            crate::query_boundaries::common::application_id(self.ctx.types, actual)
+            && let Some(t_app_id) =
+                crate::query_boundaries::common::application_id(self.ctx.types, expected)
         {
             let s_app = self.ctx.types.type_application(s_app_id);
             let t_app = self.ctx.types.type_application(t_app_id);

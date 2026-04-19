@@ -412,7 +412,10 @@ impl<'a> CheckerState<'a> {
                 let type_params = self.get_type_params_for_symbol(sym_id);
                 if !type_params.is_empty() && type_params.iter().all(|p| p.default.is_some()) {
                     let default_args: Vec<TypeId> =
-                        tsz_solver::resolve_default_type_args(self.ctx.types, &type_params);
+                        crate::query_boundaries::common::resolve_default_type_args(
+                            self.ctx.types,
+                            &type_params,
+                        );
                     let def_id = self
                         .ctx
                         .get_or_create_def_id_with_params(sym_id, type_params);

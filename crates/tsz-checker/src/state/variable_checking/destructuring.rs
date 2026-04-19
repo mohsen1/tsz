@@ -1328,7 +1328,7 @@ impl<'a> CheckerState<'a> {
                                     any_found = true;
                                 }
                                 PropertyAccessResult::PropertyNotFound { .. } => {
-                                    if tsz_solver::is_empty_object_type(
+                                    if crate::query_boundaries::common::is_empty_object_type(
                                         self.ctx.types.as_type_database(),
                                         member,
                                     ) {

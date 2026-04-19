@@ -89,9 +89,10 @@ impl<'a> CheckerState<'a> {
         concrete_type: TypeId,
         replacements: &mut FxHashMap<tsz_common::interner::Atom, TypeId>,
     ) {
-        if let Some(raw_tp) =
-            tsz_solver::type_param_info(self.ctx.types.as_type_database(), raw_type)
-        {
+        if let Some(raw_tp) = crate::query_boundaries::common::type_param_info(
+            self.ctx.types.as_type_database(),
+            raw_type,
+        ) {
             replacements.entry(raw_tp.name).or_insert_with(|| {
                 crate::query_boundaries::common::widen_type(self.ctx.types, concrete_type)
             });
@@ -417,7 +418,7 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .zip(concrete_shape.params.iter())
                 .find_map(|(raw_param, concrete_param)| {
-                    let raw_tp = tsz_solver::type_param_info(
+                    let raw_tp = crate::query_boundaries::common::type_param_info(
                         self.ctx.types.as_type_database(),
                         raw_param.type_id,
                     )?;
@@ -430,7 +431,7 @@ impl<'a> CheckerState<'a> {
                     })
                 })
                 .or_else(|| {
-                    let raw_tp = tsz_solver::type_param_info(
+                    let raw_tp = crate::query_boundaries::common::type_param_info(
                         self.ctx.types.as_type_database(),
                         raw_shape.return_type,
                     )?;
@@ -790,33 +791,36 @@ impl<'a> CheckerState<'a> {
             })
             .find_map(|shape| {
                 shape
-                    .properties
-                    .iter()
-                    .find(|p| p.name == prop_atom && p.optional)
-                    .map(|p| {
-                        // tsc displays optional property types with `| undefined`
-                        // in error messages only when strictNullChecks is enabled.
-                        // Without strictNullChecks, undefined is implicit in all types
-                        // and tsc shows the declared type without `| undefined`.
-                        if !self.ctx.strict_null_checks() {
-                            return p.type_id;
-                        }
-                        // Create a union with undefined if not already present.
-                        if p.type_id == TypeId::UNDEFINED {
-                            p.type_id
-                        } else if let Some(list_id) =
-                            tsz_solver::union_list_id(self.ctx.types, p.type_id)
-                        {
-                            let members = self.ctx.types.type_list(list_id);
-                            if members.contains(&TypeId::UNDEFINED) {
+                        .properties
+                        .iter()
+                        .find(|p| p.name == prop_atom && p.optional)
+                        .map(|p| {
+                            // tsc displays optional property types with `| undefined`
+                            // in error messages only when strictNullChecks is enabled.
+                            // Without strictNullChecks, undefined is implicit in all types
+                            // and tsc shows the declared type without `| undefined`.
+                            if !self.ctx.strict_null_checks() {
+                                return p.type_id;
+                            }
+                            // Create a union with undefined if not already present.
+                            if p.type_id == TypeId::UNDEFINED {
                                 p.type_id
+                            } else if let Some(list_id) =
+                                crate::query_boundaries::common::union_list_id(
+                                    self.ctx.types,
+                                    p.type_id,
+                                )
+                            {
+                                let members = self.ctx.types.type_list(list_id);
+                                if members.contains(&TypeId::UNDEFINED) {
+                                    p.type_id
+                                } else {
+                                    self.ctx.types.union2(p.type_id, TypeId::UNDEFINED)
+                                }
                             } else {
                                 self.ctx.types.union2(p.type_id, TypeId::UNDEFINED)
                             }
-                        } else {
-                            self.ctx.types.union2(p.type_id, TypeId::UNDEFINED)
-                        }
-                    })
+                        })
             });
 
             let effective_type =
@@ -829,13 +833,19 @@ impl<'a> CheckerState<'a> {
             // the effective type and the diagnostic type. Without strictNullChecks,
             // `undefined` is implicit in all types and tsc does not display it.
             let effective_type = if !self.ctx.strict_null_checks() {
-                tsz_solver::remove_undefined(self.ctx.types.as_type_database(), effective_type)
+                crate::query_boundaries::common::remove_undefined(
+                    self.ctx.types.as_type_database(),
+                    effective_type,
+                )
             } else {
                 effective_type
             };
             let declared_optional_type = declared_optional_type.map(|t| {
                 if !self.ctx.strict_null_checks() {
-                    tsz_solver::remove_undefined(self.ctx.types.as_type_database(), t)
+                    crate::query_boundaries::common::remove_undefined(
+                        self.ctx.types.as_type_database(),
+                        t,
+                    )
                 } else {
                     t
                 }
@@ -1458,7 +1468,9 @@ impl<'a> CheckerState<'a> {
         resolved = self.resolve_type_for_property_access(resolved);
         resolved = self.resolve_lazy_type(resolved);
         resolved = self.evaluate_application_type(resolved);
-        let readonly = tsz_solver::readonly_inner_type(self.ctx.types, resolved).is_some();
+        let readonly =
+            crate::query_boundaries::common::readonly_inner_type(self.ctx.types, resolved)
+                .is_some();
         resolved = query_common::unwrap_readonly(self.ctx.types, resolved);
         let elements = query_common::tuple_elements(self.ctx.types, resolved)?;
         if !elements.iter().any(|element| element.rest) {

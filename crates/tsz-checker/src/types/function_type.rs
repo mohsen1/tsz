@@ -267,9 +267,11 @@ impl<'a> CheckerState<'a> {
                 && helper_probe.get_return_type().is_none()
                 && helper_probe.get_parameter_type(0).is_none()
                 && helper_probe.get_rest_parameter_type(0).is_none()
-                && !tsz_solver::is_union_type(self.ctx.types, evaluated_type)
-                && !tsz_solver::is_intersection_type(self.ctx.types, evaluated_type)
-            {
+                && !crate::query_boundaries::common::is_union_type(self.ctx.types, evaluated_type)
+                && !crate::query_boundaries::common::is_intersection_type(
+                    self.ctx.types,
+                    evaluated_type,
+                ) {
                 crate::query_boundaries::checkers::call::get_contextual_signature(
                     self.ctx.types,
                     evaluated_type,
@@ -1155,16 +1157,18 @@ impl<'a> CheckerState<'a> {
                 {
                     let db = self.ctx.types.as_type_database();
                     if rest
-                        && (tsz_solver::is_generic_application(db, type_id)
-                            || tsz_solver::is_mapped_type(db, type_id)
-                            || tsz_solver::is_conditional_type(db, type_id)
-                            || tsz_solver::is_intersection_type(db, type_id))
+                        && (crate::query_boundaries::common::is_generic_application(db, type_id)
+                            || crate::query_boundaries::common::is_mapped_type(db, type_id)
+                            || crate::query_boundaries::common::is_conditional_type(db, type_id)
+                            || crate::query_boundaries::common::is_intersection_type(db, type_id))
                     {
-                        let evaluated = if tsz_solver::is_generic_application(db, type_id) {
-                            self.evaluate_application_type(type_id)
-                        } else {
-                            self.evaluate_type_with_env(type_id)
-                        };
+                        let evaluated =
+                            if crate::query_boundaries::common::is_generic_application(db, type_id)
+                            {
+                                self.evaluate_application_type(type_id)
+                            } else {
+                                self.evaluate_type_with_env(type_id)
+                            };
                         let array_like = matches!(
                             type_query::classify_array_like(self.ctx.types, evaluated),
                             type_query::ArrayLikeKind::Array(_)
@@ -1187,7 +1191,10 @@ impl<'a> CheckerState<'a> {
                     && type_id != TypeId::ANY
                     && type_id != TypeId::UNKNOWN
                     && type_id != TypeId::ERROR
-                    && !tsz_solver::type_contains_undefined(self.ctx.types, type_id);
+                    && !crate::query_boundaries::common::type_contains_undefined(
+                        self.ctx.types,
+                        type_id,
+                    );
                 params.push(ParamInfo {
                     name,
                     type_id,
@@ -1595,7 +1602,7 @@ impl<'a> CheckerState<'a> {
                     && ctx_type != TypeId::ANY
                     && ctx_type != TypeId::UNKNOWN
                     && ctx_type != TypeId::NEVER
-                    && !tsz_solver::is_union_type(self.ctx.types, ctx_type)
+                    && !crate::query_boundaries::common::is_union_type(self.ctx.types, ctx_type)
                     && !self.is_promise_type(ctx_type)
                 {
                     let promise_like_t = self.get_promise_like_type(ctx_type);
@@ -1839,10 +1846,12 @@ impl<'a> CheckerState<'a> {
             // contextually-typed functions may carry `ThisType` from their
             // contextual signature but substituting would produce false positives.
             let body_return_type = if (has_type_annotation || jsdoc_return_context.is_some())
-                && tsz_solver::contains_this_type(self.ctx.types, body_return_type)
-            {
+                && crate::query_boundaries::common::contains_this_type(
+                    self.ctx.types,
+                    body_return_type,
+                ) {
                 if let Some(concrete_this) = self.current_this_type() {
-                    tsz_solver::substitute_this_type(
+                    crate::query_boundaries::common::substitute_this_type(
                         self.ctx.types,
                         body_return_type,
                         concrete_this,
@@ -1895,17 +1904,19 @@ impl<'a> CheckerState<'a> {
             {
                 let raw_expected_return_type =
                     expected_expression_return_type.expect("is_some checked in outer condition");
-                let expected_return_type =
-                    if tsz_solver::is_index_access_type(self.ctx.types, raw_expected_return_type) {
-                        let evaluated = self.evaluate_type_with_env(raw_expected_return_type);
-                        if evaluated != TypeId::ERROR {
-                            evaluated
-                        } else {
-                            raw_expected_return_type
-                        }
+                let expected_return_type = if crate::query_boundaries::common::is_index_access_type(
+                    self.ctx.types,
+                    raw_expected_return_type,
+                ) {
+                    let evaluated = self.evaluate_type_with_env(raw_expected_return_type);
+                    if evaluated != TypeId::ERROR {
+                        evaluated
                     } else {
                         raw_expected_return_type
-                    };
+                    }
+                } else {
+                    raw_expected_return_type
+                };
                 if expected_return_type != TypeId::ANY
                     && !self.type_contains_error(expected_return_type)
                 {
@@ -1947,8 +1958,11 @@ impl<'a> CheckerState<'a> {
                             let can_apply_contextual_body =
                                 !self.type_has_unresolved_inference_holes(expected_return_type);
                             let literal_sensitive_return =
-                                tsz_solver::literal_value(self.ctx.types, expected_return_type)
-                                    .is_some()
+                                crate::query_boundaries::common::literal_value(
+                                    self.ctx.types,
+                                    expected_return_type,
+                                )
+                                .is_some()
                                     || crate::query_boundaries::common::enum_def_id(
                                         self.ctx.types,
                                         expected_return_type,
@@ -1960,18 +1974,20 @@ impl<'a> CheckerState<'a> {
                                     )
                                         && expected_return_type != TypeId::SYMBOL)
                                     || expected_return_type == TypeId::NEVER
-                                    || tsz_solver::union_list_id(
+                                    || crate::query_boundaries::common::union_list_id(
                                         self.ctx.types,
                                         expected_return_type,
                                     )
                                     .is_some_and(|list_id| {
                                         self.ctx.types.type_list(list_id).iter().any(|&member| {
-                                            tsz_solver::is_literal_type(self.ctx.types, member)
-                                                || crate::query_boundaries::common::enum_def_id(
-                                                    self.ctx.types,
-                                                    member,
-                                                )
-                                                .is_some()
+                                            crate::query_boundaries::common::is_literal_type(
+                                                self.ctx.types,
+                                                member,
+                                            ) || crate::query_boundaries::common::enum_def_id(
+                                                self.ctx.types,
+                                                member,
+                                            )
+                                            .is_some()
                                         })
                                     });
                             let concrete_return_context = expected_return_type != TypeId::ANY

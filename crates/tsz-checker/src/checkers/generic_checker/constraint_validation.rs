@@ -923,8 +923,10 @@ impl<'a> CheckerState<'a> {
                 // with TS2559 ("Type has no properties in common").
                 let constraint_is_all_optional = {
                     let db = self.ctx.types.as_type_database();
-                    if let Some(shape_id) = tsz_solver::object_shape_id(db, instantiated_constraint)
-                    {
+                    if let Some(shape_id) = crate::query_boundaries::common::object_shape_id(
+                        db,
+                        instantiated_constraint,
+                    ) {
                         let shape = db.object_shape(shape_id);
                         !shape.properties.is_empty()
                             && shape.properties.iter().all(|p| p.optional)
