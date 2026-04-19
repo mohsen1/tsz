@@ -1,7 +1,6 @@
 use wasm_bindgen::prelude::wasm_bindgen;
 
 mod api;
-mod project;
 
 // Shared test fixtures for reduced allocation overhead
 #[cfg(test)]
