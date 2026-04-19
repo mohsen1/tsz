@@ -1415,8 +1415,32 @@ impl<'a> CheckerState<'a> {
         resolution_mode: Option<crate::context::ResolutionModeOverride>,
     ) -> Option<(bool, Option<String>)> {
         // Check if the symbol exists in the binder's file-level symbol table
-        // (not just the arena, which doesn't include all declarations)
-        let mut symbol_exists = binder.file_locals.has(import_name);
+        // (not just the arena, which doesn't include all declarations).
+        // Per-file binders share user symbols across files (lib_symbols_merged
+        // contamination), so file_locals.has(name) alone is too permissive — it
+        // can return true for a name declared in an unrelated file.
+        // Verify the symbol's declaration is from THIS file (decl_file_idx).
+        let target_file_idx = self
+            .ctx
+            .resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_name,
+                resolution_mode,
+            )
+            .map(|i| i as u32);
+        let mut symbol_exists = binder.file_locals.has(import_name)
+            && match (
+                binder
+                    .file_locals
+                    .get(import_name)
+                    .and_then(|sym_id| binder.get_symbol(sym_id)),
+                target_file_idx,
+            ) {
+                (Some(sym), Some(target_idx)) => {
+                    sym.decl_file_idx == u32::MAX || sym.decl_file_idx == target_idx
+                }
+                _ => true,
+            };
         if symbol_exists
             && let Some(sym_id) = binder.file_locals.get(import_name)
             && let Some(sym) = self.get_symbol_globally(sym_id)
