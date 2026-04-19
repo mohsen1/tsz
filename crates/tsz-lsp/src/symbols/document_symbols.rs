@@ -245,6 +245,11 @@ impl<'a> DocumentSymbolProvider<'a> {
                     // entry with the assigned names as its members.
                     // Match tsc's navigation-bar behavior for JS files.
                     self.apply_expando_assignments(&sf.statements.nodes, &mut symbols);
+                    // Top-level assignment `x = { … }` where `x` is a
+                    // previously-declared var — treat the RHS object
+                    // literal as `x`'s children. Handles patterns like
+                    // `var b; b = { foo: function() {} }`.
+                    self.apply_identifier_object_assignments(&sf.statements.nodes, &mut symbols);
                     // Multiple `namespace A {}` / `namespace A.B {}`
                     // declarations merge into a single nested nav
                     // entry (matches tsc's `mergeChildren`).
@@ -1408,6 +1413,65 @@ impl<'a> DocumentSymbolProvider<'a> {
         // SymbolKind::Struct }` entries. Until then this is a no-op.
     }
 
+    /// Post-process: scan top-level expression statements for
+    /// `identifier = { … }` and attach the RHS object literal's
+    /// members as children of the matching var / const entry. Skips
+    /// owners that already have children (from an initializer or an
+    /// expando promotion).
+    fn apply_identifier_object_assignments(
+        &self,
+        statements: &[NodeIndex],
+        symbols: &mut [DocumentSymbol],
+    ) {
+        for &stmt_idx in statements {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(exp_stmt) = self.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let Some(expr_node) = self.arena.get(exp_stmt.expression) else {
+                continue;
+            };
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(bin) = self.arena.get_binary_expr(expr_node) else {
+                continue;
+            };
+            if bin.operator_token != SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+            let Some(lhs) = self.arena.get(bin.left) else {
+                continue;
+            };
+            if lhs.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let Some(owner) = self.get_name(bin.left) else {
+                continue;
+            };
+            let Some(rhs_node) = self.arena.get(bin.right) else {
+                continue;
+            };
+            if rhs_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                continue;
+            }
+            for sym in symbols.iter_mut() {
+                if sym.name == owner
+                    && sym.children.is_empty()
+                    && matches!(sym.kind, SymbolKind::Variable | SymbolKind::Constant)
+                {
+                    sym.children = self.collect_object_literal_members(bin.right, Some(&sym.name));
+                    break;
+                }
+            }
+        }
+    }
+
     fn apply_expando_assignments(&self, statements: &[NodeIndex], symbols: &mut [DocumentSymbol]) {
         // Group expando members by owner name. `(owner → Vec<(member_name,
         // prototype?, method?, fn_body?)>)`. We also track whether any
@@ -1765,7 +1829,15 @@ impl<'a> DocumentSymbolProvider<'a> {
                 if start > end || end > self.source_text.len() {
                     return None;
                 }
-                format!("[{}]", self.source_text[start..end].trim())
+                // Parser records `end` as the position after the next
+                // consumed token, so for `f[Symbol.iterator]` the arg
+                // slice picks up the closing `]`. Trim trailing `]`
+                // before wrapping so the bracket form doesn't double up.
+                let mut inner = self.source_text[start..end].trim();
+                if inner.ends_with(']') {
+                    inner = &inner[..inner.len() - 1];
+                }
+                format!("[{}]", inner.trim_end())
             }
         };
 
