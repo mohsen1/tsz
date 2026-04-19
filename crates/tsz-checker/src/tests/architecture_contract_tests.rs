@@ -4279,7 +4279,7 @@ fn test_no_inline_solver_function_calls_in_checker_modules() {
                     let name_end = after
                         .find(|c: char| !c.is_alphanumeric() && c != '_')
                         .unwrap_or(after.len());
-                    let name = &after[..name_end];
+                    let _name = &after[..name_end];
                     let suffix = &after[name_end..];
                     // It's a direct function call if followed immediately by `(`
                     if suffix.starts_with('(') {

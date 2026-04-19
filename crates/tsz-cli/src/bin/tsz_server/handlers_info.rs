@@ -1902,10 +1902,10 @@ impl Server {
             /// primary navigation bar menu. Mirrors tsc's
             /// `shouldAppearInPrimaryNavBarMenu` /
             /// `isTopLevelFunctionDeclaration`: leaf functions only promote
-            /// when their parent is SourceFile / ModuleBlock / Method /
-            /// Constructor — not SetAccessor / GetAccessor, which is why
+            /// when their parent is `SourceFile` / `ModuleBlock` / `Method` /
+            /// `Constructor` — not `SetAccessor` / `GetAccessor`, which is why
             /// `function f() {}` inside a setter stays collapsed.
-            fn should_appear_in_primary_navbar(
+            const fn should_appear_in_primary_navbar(
                 sym: &tsz::lsp::symbols::document_symbols::DocumentSymbol,
                 parent_kind: Option<tsz::lsp::symbols::document_symbols::SymbolKind>,
             ) -> bool {
