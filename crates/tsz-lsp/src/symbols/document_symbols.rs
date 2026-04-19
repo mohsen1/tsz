@@ -14,6 +14,7 @@
 
 use crate::utils::node_range;
 use tsz_common::position::{Position, Range};
+use tsz_parser::parser::node::Node;
 use tsz_parser::{NodeIndex, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
@@ -47,6 +48,10 @@ pub enum SymbolKind {
     Event = 24,
     Operator = 25,
     TypeParameter = 26,
+    // Non-LSP kinds used internally for tsserver parity (`alias` does not
+    // have a 1:1 LSP mapping — clients that surface these via LSP should
+    // treat it as a variable/module).
+    Alias = 27,
 }
 
 impl SymbolKind {
@@ -67,6 +72,7 @@ impl SymbolKind {
             Self::EnumMember => "enum member",
             Self::TypeParameter => "type parameter",
             Self::Struct => "type",
+            Self::Alias => "alias",
         }
     }
 }
@@ -714,29 +720,47 @@ impl<'a> DocumentSymbolProvider<'a> {
 
                     if export_clause.is_some()
                         && let Some(clause_node) = self.arena.get(export_clause)
-                        && self.is_declaration(clause_node.kind)
                     {
-                        // Collect the inner declaration and add the "export"
-                        // (and optional "default") modifier. Use
-                        // `append_modifier` to de-duplicate when the inner
-                        // declaration already reports its own `export` —
-                        // e.g. when a `VARIABLE_STATEMENT` with an `export`
-                        // modifier is nested under an EXPORT_DECLARATION
-                        // wrapper — so the emitted kindModifiers doesn't
-                        // end up as `"export,export"`.
-                        let mut symbols = self.collect_symbols(export_clause, container_name);
-                        for sym in &mut symbols {
-                            let mut mods = String::from("export");
-                            if is_default {
-                                append_modifier(&mut mods, "default");
+                        // `export import e = require(...)` is parsed as an
+                        // EXPORT_DECLARATION wrapping IMPORT_EQUALS_DECLARATION.
+                        // The inner alias should carry the `export` modifier.
+                        if clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                            || self.is_declaration(clause_node.kind)
+                        {
+                            // Collect the inner declaration/alias and add the
+                            // `export` (and optional `default`) modifier. Use
+                            // `append_modifier` to de-duplicate when the inner
+                            // declaration already reports its own `export` —
+                            // e.g. when a `VARIABLE_STATEMENT` with an `export`
+                            // modifier is nested under an EXPORT_DECLARATION
+                            // wrapper — so the emitted kindModifiers doesn't
+                            // end up as `"export,export"`.
+                            let mut symbols = self.collect_symbols(export_clause, container_name);
+                            for sym in &mut symbols {
+                                let mut mods = String::from("export");
+                                if is_default {
+                                    append_modifier(&mut mods, "default");
+                                }
+                                for existing in
+                                    sym.kind_modifiers.split(',').filter(|m| !m.is_empty())
+                                {
+                                    append_modifier(&mut mods, existing);
+                                }
+                                sym.kind_modifiers = mods;
                             }
-                            for existing in sym.kind_modifiers.split(',').filter(|m| !m.is_empty())
-                            {
-                                append_modifier(&mut mods, existing);
-                            }
-                            sym.kind_modifiers = mods;
+                            return symbols;
                         }
-                        return symbols;
+
+                        // `export { a, b as B } from "mod"` — emit one alias
+                        // entry per specifier (tsc's navtree collapses these
+                        // down to their exported names).
+                        if clause_node.kind == syntax_kind_ext::NAMED_EXPORTS {
+                            return self.collect_import_export_specifiers(
+                                export_clause,
+                                container_name,
+                                /* treat_as_export */ false,
+                            );
+                        }
                     }
 
                     // export default <expression> (non-declaration)
@@ -757,6 +781,18 @@ impl<'a> DocumentSymbolProvider<'a> {
                     }
                 }
                 vec![]
+            }
+
+            // Import Declaration: `import x from "mod"`, `import { a, b as B } from "mod"`,
+            // `import * as ns from "mod"`, `import "mod"` (no bindings).
+            k if k == syntax_kind_ext::IMPORT_DECLARATION => {
+                self.collect_import_decl(node, node_idx, container_name)
+            }
+
+            // `import e = require("mod")` / `import e = ns.x`. The `export`
+            // modifier (when present) becomes a kindModifier on the alias.
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                self.collect_import_equals(node, node_idx, container_name)
             }
 
             // Export Assignment (export default ...)
@@ -829,6 +865,167 @@ impl<'a> DocumentSymbolProvider<'a> {
             || kind == syntax_kind_ext::INTERFACE_DECLARATION
             || kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
             || kind == syntax_kind_ext::ENUM_DECLARATION
+    }
+
+    /// Build an `alias` entry for a single import/export binding. The `name`
+    /// is the local identifier the binding introduces into scope (e.g. `B`
+    /// for `import { x as B }` or `export { a as B }`). `decl_idx` is the
+    /// enclosing statement used for the range span — tsc anchors specifier
+    /// spans to the whole statement, not the specifier token.
+    fn alias_symbol(
+        &self,
+        name: String,
+        name_node: NodeIndex,
+        decl_idx: NodeIndex,
+        container_name: Option<&str>,
+        modifiers: String,
+    ) -> DocumentSymbol {
+        let range = node_range(self.arena, self.line_map, self.source_text, decl_idx);
+        let selection_range = if name_node.is_some() {
+            node_range(self.arena, self.line_map, self.source_text, name_node)
+        } else {
+            self.get_range_keyword(decl_idx, 6)
+        };
+        DocumentSymbol {
+            name,
+            detail: None,
+            kind: SymbolKind::Alias,
+            kind_modifiers: modifiers,
+            range,
+            selection_range,
+            container_name: container_name.map(std::string::ToString::to_string),
+            children: vec![],
+        }
+    }
+
+    /// Collect specifiers from a `NAMED_EXPORTS` / `NAMED_IMPORTS` clause.
+    /// Each specifier's local name becomes an alias. When `treat_as_export`
+    /// is true, the `export` modifier is applied (used for
+    /// `export { a } from "x"` so we can attach modifiers at the
+    /// declaration site; currently tsc doesn't emit `export` on these so we
+    /// always pass false).
+    fn collect_import_export_specifiers(
+        &self,
+        clause_idx: NodeIndex,
+        container_name: Option<&str>,
+        treat_as_export: bool,
+    ) -> Vec<DocumentSymbol> {
+        let Some(clause_node) = self.arena.get(clause_idx) else {
+            return Vec::new();
+        };
+        let Some(named) = self.arena.get_named_imports(clause_node) else {
+            return Vec::new();
+        };
+        let mut symbols = Vec::new();
+        for &spec_idx in &named.elements.nodes {
+            let Some(spec_node) = self.arena.get(spec_idx) else {
+                continue;
+            };
+            let Some(spec) = self.arena.get_specifier(spec_node) else {
+                continue;
+            };
+            let name = self
+                .get_name(spec.name)
+                .unwrap_or_else(|| "<unknown>".to_string());
+            let mods = if treat_as_export {
+                String::from("export")
+            } else {
+                String::new()
+            };
+            symbols.push(self.alias_symbol(name, spec.name, spec_idx, container_name, mods));
+        }
+        symbols
+    }
+
+    /// Collect aliases from an `import ...` declaration.
+    fn collect_import_decl(
+        &self,
+        node: &Node,
+        node_idx: NodeIndex,
+        container_name: Option<&str>,
+    ) -> Vec<DocumentSymbol> {
+        let Some(import) = self.arena.get_import_decl(node) else {
+            return Vec::new();
+        };
+        let clause_idx = import.import_clause;
+        if clause_idx.is_none() {
+            return Vec::new();
+        }
+        let Some(clause_node) = self.arena.get(clause_idx) else {
+            return Vec::new();
+        };
+        let Some(clause) = self.arena.get_import_clause(clause_node) else {
+            return Vec::new();
+        };
+        let mut symbols = Vec::new();
+
+        // `import foo from "..."` — default import.
+        if clause.name.is_some()
+            && let Some(name) = self.get_name(clause.name)
+        {
+            symbols.push(self.alias_symbol(
+                name,
+                clause.name,
+                node_idx,
+                container_name,
+                String::new(),
+            ));
+        }
+
+        // Named bindings: either `NAMESPACE_IMPORT` (for `* as ns`) or
+        // `NAMED_IMPORTS` (for `{ a, b as B }`).
+        let named_idx = clause.named_bindings;
+        if !named_idx.is_none()
+            && let Some(named_node) = self.arena.get(named_idx)
+        {
+            if named_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+                if let Some(named) = self.arena.get_named_imports(named_node) {
+                    let name = if named.name.is_some() {
+                        self.get_name(named.name)
+                            .unwrap_or_else(|| "<unknown>".to_string())
+                    } else {
+                        "<unknown>".to_string()
+                    };
+                    symbols.push(self.alias_symbol(
+                        name,
+                        named.name,
+                        node_idx,
+                        container_name,
+                        String::new(),
+                    ));
+                }
+            } else if named_node.kind == syntax_kind_ext::NAMED_IMPORTS {
+                symbols.extend(self.collect_import_export_specifiers(
+                    named_idx,
+                    container_name,
+                    false,
+                ));
+            }
+        }
+
+        symbols
+    }
+
+    /// Collect an alias from an `import e = require("...")` / `import e = x.y`
+    /// declaration. When the statement has an `export` modifier, it is
+    /// surfaced as a `kindModifier` on the alias.
+    fn collect_import_equals(
+        &self,
+        node: &Node,
+        node_idx: NodeIndex,
+        container_name: Option<&str>,
+    ) -> Vec<DocumentSymbol> {
+        let Some(import) = self.arena.get_import_decl(node) else {
+            return Vec::new();
+        };
+        // For IMPORT_EQUALS_DECLARATION, `import_clause` is the identifier
+        // on the LHS of the `=`.
+        let name_idx = import.import_clause;
+        let Some(name) = self.get_name(name_idx) else {
+            return Vec::new();
+        };
+        let modifiers = self.get_kind_modifiers_from_list(&import.modifiers);
+        vec![self.alias_symbol(name, name_idx, node_idx, container_name, modifiers)]
     }
 
     /// Get range for a keyword (when no identifier exists, e.g. "constructor").
