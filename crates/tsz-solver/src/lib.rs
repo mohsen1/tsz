@@ -78,12 +78,13 @@ pub mod type_handles {
         SubtypeFailureReason,
     };
     pub use crate::types::{
-        CallSignature, CallableShape, CallableShapeId, ConditionalType, FunctionShape,
-        FunctionShapeId, IndexSignature, IntrinsicKind, LiteralValue, MappedModifier, MappedType,
-        MappedTypeId, ObjectFlags, ObjectShape, ObjectShapeId, OrderedFloat, ParamInfo,
-        PropertyInfo, PropertyLookup, SymbolRef, TemplateSpan, TupleElement, TupleListId,
-        TypeApplication, TypeApplicationId, TypeData, TypeId, TypeListId, TypeParamInfo,
-        TypePredicate, TypePredicateTarget, Variance, Visibility, is_compiler_managed_type,
+        CallSignature, CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId,
+        FunctionShape, FunctionShapeId, IndexSignature, IntrinsicKind, LiteralValue,
+        MappedModifier, MappedType, MappedTypeId, ObjectFlags, ObjectShape, ObjectShapeId,
+        OrderedFloat, ParamInfo, PropertyInfo, PropertyLookup, SymbolRef, TemplateSpan,
+        TupleElement, TupleListId, TypeApplication, TypeApplicationId, TypeData, TypeId,
+        TypeListId, TypeParamInfo, TypePredicate, TypePredicateTarget, Variance, Visibility,
+        is_compiler_managed_type,
     };
 }
 
@@ -248,9 +249,10 @@ pub use types::{
     TypeListId, Visibility, is_compiler_managed_type,
 };
 pub use types::{
-    CallableShape, ConditionalType, FunctionShape, FunctionShapeId, IndexSignature, MappedType,
-    MappedTypeId, ObjectFlags, ObjectShape, OrderedFloat, ParamInfo, RelationCacheKey,
-    TemplateSpan, TupleElement, TupleListId, TypeParamInfo, TypePredicate, TypePredicateTarget,
+    CallableShape, ConditionalType, ConditionalTypeId, FunctionShape, FunctionShapeId,
+    IndexSignature, MappedType, MappedTypeId, ObjectFlags, ObjectShape, OrderedFloat, ParamInfo,
+    RelationCacheKey, TemplateSpan, TupleElement, TupleListId, TypeParamInfo, TypePredicate,
+    TypePredicateTarget,
 };
 // unsoundness_audit: accessed via tsz_solver::unsoundness_audit module path
 pub use widening::*;
