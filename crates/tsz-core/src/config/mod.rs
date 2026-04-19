@@ -1838,14 +1838,18 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
 
         // TS6379: Composite projects may not disable incremental compilation.
         // When composite: true, incremental must not be explicitly false.
+        // tsc anchors the error at the `compilerOptions` key itself (the
+        // enclosing block that contains both interacting options), rather
+        // than at `composite` or `incremental`.
         if option_is_effectively_enabled(compiler_opts, &ts5024_keys, "composite")
             && matches!(
                 compiler_opts.get("incremental"),
                 Some(serde_json::Value::Bool(false))
             )
         {
-            let start = find_key_offset_in_source(&stripped, "incremental");
-            let key_len = "incremental".len() as u32 + 2;
+            let search = "\"compilerOptions\"";
+            let start = stripped.find(search).map(|p| p as u32).unwrap_or(0);
+            let key_len = search.len() as u32;
             diagnostics.push(Diagnostic::error(
                 file_path,
                 start,
