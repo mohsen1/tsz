@@ -316,22 +316,7 @@ impl TryFrom<ImportCandidateInput> for ImportCandidate {
     }
 }
 
-/// Opaque wrapper for transform directives across the wasm boundary.
-#[wasm_bindgen]
-pub struct WasmTransformContext {
-    inner: TransformContext,
-    target_es5: bool,
-    module_kind: ModuleKind,
-}
-
-#[wasm_bindgen]
-impl WasmTransformContext {
-    /// Get the number of transform directives generated.
-    #[wasm_bindgen(js_name = getCount)]
-    pub fn get_count(&self) -> usize {
-        self.inner.len()
-    }
-}
+pub use crate::api::wasm::transforms::WasmTransformContext;
 
 /// High-performance parser using Node architecture (16 bytes/node).
 /// This is the optimized path for Phase 8 test suite evaluation.
