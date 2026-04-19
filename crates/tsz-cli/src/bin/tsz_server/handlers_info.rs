@@ -124,22 +124,36 @@ fn sort_symbols_deep(symbols: &mut [tsz::lsp::symbols::document_symbols::Documen
         return;
     }
     fn sort_key(sym: &tsz::lsp::symbols::document_symbols::DocumentSymbol) -> Option<String> {
-        // Mirror tsc's `tryGetName`: anything without a normal declaration
-        // name compares as "nameless" (sorts ahead of named siblings and
-        // falls back to kind ordinal among itself). Covers computed
-        // property names (`[x]`, `["foo"]`, `[1]`), interface-type
-        // signatures (`()` call, `new()` construct, `[]` index), and
-        // constructors (tsc's `tryGetName` returns undefined for
-        // Constructor since it has no declaration name).
-        let nameless = sym.name.starts_with('[')
-            || sym.name == "()"
-            || sym.name == "new()"
-            || matches!(sym.kind, SymbolKind::Constructor);
-        if nameless {
-            None
-        } else {
-            Some(sym.name.to_lowercase())
+        // Mirror tsc's `tryGetName`: constructors and interface-type
+        // signatures are truly nameless. Computed property names
+        // where the inner expression is a simple literal (`[1]`,
+        // `["foo"]`) unwrap to the literal's value so they sort
+        // alongside identifier-named siblings — `[1]` compares as
+        // `"1"`, `["A7"]` as `"A7"`. Complex computed expressions
+        // stay nameless.
+        if sym.name == "()" || sym.name == "new()" || sym.name == "[]" {
+            return None;
         }
+        if matches!(sym.kind, SymbolKind::Constructor) {
+            return None;
+        }
+        if let Some(stripped) = sym.name.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            let inner = stripped.trim();
+            // Numeric literal: `[1]`, `[42]`, `[3.14]`.
+            if !inner.is_empty() && inner.chars().all(|c| c.is_ascii_digit() || c == '.') {
+                return Some(inner.to_lowercase());
+            }
+            // String literal: `["foo"]` or `['foo']`. Strip the quotes.
+            if (inner.starts_with('"') && inner.ends_with('"') && inner.len() >= 2)
+                || (inner.starts_with('\'') && inner.ends_with('\'') && inner.len() >= 2)
+            {
+                return Some(inner[1..inner.len() - 1].to_lowercase());
+            }
+            // Anything else (`[Symbol.iterator]`, `[a]`, `[1+1]`) —
+            // tsc's `tryGetName` returns undefined → nameless.
+            return None;
+        }
+        Some(sym.name.to_lowercase())
     }
     // tsc's `compareChildren` tiebreaker is `navigationBarNodeKind` — the
     // AST SyntaxKind of the underlying node. Map our higher-level
