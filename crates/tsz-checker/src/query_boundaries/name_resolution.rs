@@ -509,17 +509,39 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // tsc includes the module prefix (e.g., '"test".c') for exported namespaces
-        // in external modules. The one exception is global/ambient namespaces that are
-        // re-exported via `export { X }` (where the namespace declaration itself
-        // doesn't have the export modifier). However, detecting this reliably across
-        // arenas is complex, so we conservatively include the prefix for all exported
-        // symbols in external modules. This matches tsc's behavior in the common case.
+        // tsc includes the module prefix (e.g., '"test".c') for namespaces whose
+        // declaration itself carries the `export` modifier. Namespaces declared
+        // ambiently (`declare namespace X {}`) and merely re-exported via a
+        // separate `export { X }` specifier keep the bare local name in tsc's
+        // TS2694 message. Check the declaration modifiers so we match both cases.
+
+        let arena = self.ctx.get_arena_for_file(symbol.decl_file_idx);
+        let declaration_has_export_modifier = symbol.declarations.iter().any(|&decl_idx| {
+            // `export namespace Foo {}` carries modifiers on the declaration
+            // itself.
+            let own_has_export = arena.get(decl_idx).is_some_and(|node| {
+                arena.get_declaration_modifiers(node).is_some_and(|mods| {
+                    arena.has_modifier_ref(Some(mods), SyntaxKind::ExportKeyword)
+                })
+            });
+            if own_has_export {
+                return true;
+            }
+            // `export namespace Foo {}` is parsed as an EXPORT_DECLARATION
+            // wrapper around a modifier-less ModuleDeclaration, so also check
+            // whether the declaration's immediate parent is that wrapper.
+            arena
+                .get_extended(decl_idx)
+                .and_then(|ext| arena.get(ext.parent))
+                .is_some_and(|parent| parent.kind == syntax_kind_ext::EXPORT_DECLARATION)
+        });
+        if !declaration_has_export_modifier {
+            return None;
+        }
 
         let (is_external_module, file_name) = if symbol.decl_file_idx != u32::MAX {
             let file_idx = symbol.decl_file_idx as usize;
             let binder = self.ctx.get_binder_for_file(file_idx)?;
-            let arena = self.ctx.get_arena_for_file(symbol.decl_file_idx);
             let file_name = arena.source_files.first()?.file_name.clone();
             (binder.is_external_module(), file_name)
         } else {
