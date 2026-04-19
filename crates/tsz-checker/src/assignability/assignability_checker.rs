@@ -1,13 +1,13 @@
 //! Type assignability and excess property checking.
 //! Subtype, identity, and redeclaration compatibility live in `subtype_identity_checker`.
 
-use crate::query_boundaries::assignability::RelationCacheKey;
 use crate::query_boundaries::assignability::{
     AssignabilityEvalKind, AssignabilityQueryInputs, are_types_overlapping_with_env,
-    check_application_variance_assignability, classify_for_assignability_eval,
-    contains_free_infer_types, get_allowed_keys, get_keyof_type, get_string_literal_value,
-    get_union_members, is_assignable_bivariant_with_resolver, is_assignable_with_overrides,
-    is_relation_cacheable, is_type_parameter_like, keyof_object_properties, map_compound_members,
+    assignability_cache_key, check_application_variance_assignability,
+    classify_for_assignability_eval, contains_free_infer_types, get_allowed_keys, get_keyof_type,
+    get_string_literal_value, get_union_members, is_assignable_bivariant_with_resolver,
+    is_assignable_with_overrides, is_relation_cacheable, is_type_parameter_like,
+    keyof_object_properties, map_compound_members,
 };
 use crate::query_boundaries::common::{collect_lazy_def_ids, collect_type_queries};
 use crate::state::{CheckerOverrideProvider, CheckerState};
@@ -1587,7 +1587,7 @@ impl<'a> CheckerState<'a> {
         let flags = self.ctx.pack_relation_flags() | extra_flags;
 
         if is_cacheable {
-            let cache_key = RelationCacheKey::assignability(source, target, flags, 0);
+            let cache_key = assignability_cache_key(source, target, flags);
             if let Some(cached) = self.ctx.types.lookup_assignability_cache(cache_key) {
                 return cached;
             }
@@ -1615,7 +1615,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if is_cacheable {
-            let cache_key = RelationCacheKey::assignability(source, target, flags, 0);
+            let cache_key = assignability_cache_key(source, target, flags);
             self.ctx.types.insert_assignability_cache(cache_key, result);
         }
 
@@ -2130,7 +2130,7 @@ impl<'a> CheckerState<'a> {
         if is_cacheable {
             // Note: For assignability checks, we use AnyPropagationMode::All (0)
             // since the checker doesn't track depth like SubtypeChecker does
-            let cache_key = RelationCacheKey::assignability(source, target, flags, 0);
+            let cache_key = assignability_cache_key(source, target, flags);
 
             if let Some(cached) = self.ctx.types.lookup_assignability_cache(cache_key) {
                 return cached;
@@ -2152,7 +2152,7 @@ impl<'a> CheckerState<'a> {
         // Cache the result for non-inference types
         // Use ORIGINAL types for cache key (not evaluated types)
         if is_cacheable {
-            let cache_key = RelationCacheKey::assignability(source, target, flags, 0);
+            let cache_key = assignability_cache_key(source, target, flags);
 
             self.ctx.types.insert_assignability_cache(cache_key, result);
         }

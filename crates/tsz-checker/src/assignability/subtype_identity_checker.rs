@@ -5,9 +5,9 @@
 //! - `is_subtype_of`
 //! - `are_var_decl_types_compatible` (TS2403)
 
-use crate::query_boundaries::assignability::RelationCacheKey;
 use crate::query_boundaries::assignability::{
     is_redeclaration_identical_with_resolver, is_relation_cacheable, is_subtype_with_resolver,
+    subtype_cache_key,
 };
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
@@ -43,7 +43,7 @@ impl<'a> CheckerState<'a> {
         if is_cacheable {
             // Note: For subtype checks in the checker, we use AnyPropagationMode::All (0)
             // since the checker doesn't track depth like SubtypeChecker does
-            let cache_key = RelationCacheKey::subtype(source, target, flags, 0);
+            let cache_key = subtype_cache_key(source, target, flags);
 
             if let Some(cached) = self.ctx.types.lookup_subtype_cache(cache_key) {
                 return cached;
@@ -85,7 +85,7 @@ impl<'a> CheckerState<'a> {
 
         // Cache the result for non-inference types
         if is_cacheable {
-            let cache_key = RelationCacheKey::subtype(source, target, flags, 0);
+            let cache_key = subtype_cache_key(source, target, flags);
 
             self.ctx.types.insert_subtype_cache(cache_key, result);
         }
