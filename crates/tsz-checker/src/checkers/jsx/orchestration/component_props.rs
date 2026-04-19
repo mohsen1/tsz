@@ -1374,8 +1374,23 @@ impl<'a> CheckerState<'a> {
     ) -> Option<(TypeId, bool)> {
         let normalized_component_type =
             self.normalize_jsx_component_type_for_resolution(component_type);
+        // Only pass element_idx (which authorizes TS2607 emission) when the
+        // JSX usage actually supplies attributes that would need a props type.
+        // `<Foo />` with no attributes shouldn't trip "missing 'props' property"
+        // even if the class doesn't expose one, since nothing is being checked.
+        let attributes_have_content = self
+            .ctx
+            .arena
+            .get(attributes_idx)
+            .and_then(|n| self.ctx.arena.get_jsx_attributes(n))
+            .is_some_and(|a| !a.properties.nodes.is_empty());
+        let element_idx_for_emit = if attributes_have_content {
+            element_idx
+        } else {
+            None
+        };
         if let Some((props_type, raw_has_type_params)) =
-            self.get_jsx_props_type_for_component(component_type, element_idx)
+            self.get_jsx_props_type_for_component(component_type, element_idx_for_emit)
         {
             if raw_has_type_params
                 && let Some(inferred_props) = self

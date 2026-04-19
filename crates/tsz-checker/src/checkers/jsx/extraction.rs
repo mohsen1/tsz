@@ -351,9 +351,11 @@ impl<'a> CheckerState<'a> {
         // If props extraction succeeds, the type is already recognized as a
         // valid JSX component shape (callable/constructable in JSX context).
         // Keep `this` tags strict: `<this/>` should still report TS2604.
+        // Pass `None` for element_idx so this probe doesn't emit its own
+        // TS2607 — the call is purely a "did extraction succeed?" check.
         if !is_this_tag
             && self
-                .get_jsx_props_type_for_component_member(component_type, Some(tag_name_idx))
+                .get_jsx_props_type_for_component_member(component_type, None)
                 .is_some()
         {
             return;
@@ -1157,21 +1159,20 @@ impl<'a> CheckerState<'a> {
                             {
                                 return Some(param_type);
                             }
-                            // Class has construct params but none suitable for props.
-                            // Emit TS2607 to flag the missing attributes property.
-                            if let Some(elem_idx) = element_idx {
-                                use crate::diagnostics::diagnostic_codes;
-                                self.error_at_node_msg(
-                                    elem_idx,
-                                    diagnostic_codes::JSX_ELEMENT_CLASS_DOES_NOT_SUPPORT_ATTRIBUTES_BECAUSE_IT_DOES_NOT_HAVE_A_PROPERT,
-                                    &[name],
-                                );
-                            }
                         }
-                        // When the class has no construct parameters (e.g., inherited
-                        // from a generic base like React.Component), tsc falls back
-                        // gracefully without emitting TS2607. Skip the diagnostic
-                        // and let the caller handle the missing props type.
+                        // The class doesn't expose the configured ElementAttributesProperty
+                        // member (e.g., `props`) on its instance and there's no usable
+                        // first-construct-parameter fallback. tsc emits TS2607 in this
+                        // case regardless of whether the class lacks construct params
+                        // entirely (inherited from `any`) or has unusable ones.
+                        if let Some(elem_idx) = element_idx {
+                            use crate::diagnostics::diagnostic_codes;
+                            self.error_at_node_msg(
+                                elem_idx,
+                                diagnostic_codes::JSX_ELEMENT_CLASS_DOES_NOT_SUPPORT_ATTRIBUTES_BECAUSE_IT_DOES_NOT_HAVE_A_PROPERT,
+                                &[name],
+                            );
+                        }
                         None
                     }
                 }
