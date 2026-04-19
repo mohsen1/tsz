@@ -93,7 +93,7 @@ pub fn slice(s: &str, start: usize, end: usize) -> Result<&str, SliceError> {
 ///
 /// New code should call [`slice`] directly and handle [`SliceError`].
 ///
-/// TODO(safe_slice): remove once every emitter call site has been audited.
+/// TODO(`safe_slice`): remove once every emitter call site has been audited.
 pub fn slice_or_empty(s: &str, start: usize, end: usize) -> &str {
     slice(s, start, end).unwrap_or("")
 }
