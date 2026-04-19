@@ -2031,6 +2031,25 @@ impl<'a> CheckerState<'a> {
         module_specifier: &str,
         export_name: &str,
     ) -> Option<tsz_binder::SymbolId> {
+        let mut visited = Vec::new();
+        self.resolve_named_export_via_export_equals_tracked(
+            module_specifier,
+            export_name,
+            &mut visited,
+        )
+    }
+
+    /// Cycle-aware variant of [`resolve_named_export_via_export_equals`]. Shares
+    /// the caller's `visited_aliases` set with [`Self::resolve_alias_symbol`]
+    /// when walking an `export=` target that itself refers to an alias. Callers
+    /// already inside alias resolution must use this variant so cycle tracking
+    /// is preserved across the mutual recursion boundary.
+    pub(crate) fn resolve_named_export_via_export_equals_tracked(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+        visited_aliases: &mut Vec<tsz_binder::SymbolId>,
+    ) -> Option<tsz_binder::SymbolId> {
         let symbol_export_named_member =
             |symbol: &tsz_binder::Symbol, member_name: &str| -> Option<tsz_binder::SymbolId> {
                 if let Some(exports) = symbol.exports.as_ref()
@@ -2113,102 +2132,99 @@ impl<'a> CheckerState<'a> {
             member_id
         };
 
-        let resolve_from_exports =
-            |exports: &tsz_binder::SymbolTable| -> Option<tsz_binder::SymbolId> {
-                let export_equals_sym = exports.get("export=")?;
-                if export_name == "default" {
-                    return Some(export_equals_sym);
-                }
-                let mut candidate_symbol_ids = vec![export_equals_sym];
+        let resolve_from_exports = |exports: &tsz_binder::SymbolTable,
+                                    visited_aliases: &mut Vec<tsz_binder::SymbolId>|
+         -> Option<tsz_binder::SymbolId> {
+            let export_equals_sym = exports.get("export=")?;
+            if export_name == "default" {
+                return Some(export_equals_sym);
+            }
+            let mut candidate_symbol_ids = vec![export_equals_sym];
 
-                // If `export =` points at an alias, follow the alias chain first.
-                // This is required for ambient patterns like:
-                //   namespace a.b { class C {} } export = a.b;
-                // where named imports should resolve via members on `a.b`.
-                if let Some(export_equals_symbol) = lookup_symbol(export_equals_sym)
-                    && (export_equals_symbol.flags & symbol_flags::ALIAS) != 0
+            // If `export =` points at an alias, follow the alias chain first.
+            // This is required for ambient patterns like:
+            //   namespace a.b { class C {} } export = a.b;
+            // where named imports should resolve via members on `a.b`.
+            if let Some(export_equals_symbol) = lookup_symbol(export_equals_sym)
+                && (export_equals_symbol.flags & symbol_flags::ALIAS) != 0
+            {
+                if let Some(resolved_export_equals) =
+                    self.resolve_alias_symbol(export_equals_sym, visited_aliases)
+                    && resolved_export_equals != export_equals_sym
                 {
-                    let mut visited_aliases = Vec::new();
-                    if let Some(resolved_export_equals) =
-                        self.resolve_alias_symbol(export_equals_sym, &mut visited_aliases)
-                        && resolved_export_equals != export_equals_sym
-                    {
-                        candidate_symbol_ids.push(resolved_export_equals);
-                    }
-
-                    // For `export = alias` where alias is an import-equals qualified
-                    // name (`import x = a.b`), resolve the qualified target too.
-                    let mut decl_candidates = export_equals_symbol.declarations.clone();
-                    if export_equals_symbol.value_declaration.is_some()
-                        && !decl_candidates.contains(&export_equals_symbol.value_declaration)
-                    {
-                        decl_candidates.push(export_equals_symbol.value_declaration);
-                    }
-                    for decl_idx in decl_candidates {
-                        if !decl_idx.is_some() {
-                            continue;
-                        }
-                        if let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                            && decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                            && let Some(import_decl) = self.ctx.arena.get_import_decl(decl_node)
-                        {
-                            let module_ref = import_decl.module_specifier;
-                            if let Some(module_ref_node) = self.ctx.arena.get(module_ref)
-                                && module_ref_node.kind != SyntaxKind::StringLiteral as u16
-                                && let Some(target_id) = self.resolve_qualified_symbol(module_ref)
-                            {
-                                candidate_symbol_ids.push(target_id);
-                            }
-                        }
-                    }
+                    candidate_symbol_ids.push(resolved_export_equals);
                 }
 
-                let mut seen_symbol_ids = rustc_hash::FxHashSet::default();
-                for sym_id in candidate_symbol_ids {
-                    if !seen_symbol_ids.insert(sym_id) {
+                // For `export = alias` where alias is an import-equals qualified
+                // name (`import x = a.b`), resolve the qualified target too.
+                let mut decl_candidates = export_equals_symbol.declarations.clone();
+                if export_equals_symbol.value_declaration.is_some()
+                    && !decl_candidates.contains(&export_equals_symbol.value_declaration)
+                {
+                    decl_candidates.push(export_equals_symbol.value_declaration);
+                }
+                for decl_idx in decl_candidates {
+                    if !decl_idx.is_some() {
                         continue;
                     }
-                    let Some(candidate_symbol) = lookup_symbol(sym_id) else {
+                    if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                        && decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                        && let Some(import_decl) = self.ctx.arena.get_import_decl(decl_node)
+                    {
+                        let module_ref = import_decl.module_specifier;
+                        if let Some(module_ref_node) = self.ctx.arena.get(module_ref)
+                            && module_ref_node.kind != SyntaxKind::StringLiteral as u16
+                            && let Some(target_id) = self.resolve_qualified_symbol(module_ref)
+                        {
+                            candidate_symbol_ids.push(target_id);
+                        }
+                    }
+                }
+            }
+
+            let mut seen_symbol_ids = rustc_hash::FxHashSet::default();
+            for sym_id in candidate_symbol_ids {
+                if !seen_symbol_ids.insert(sym_id) {
+                    continue;
+                }
+                let Some(candidate_symbol) = lookup_symbol(sym_id) else {
+                    continue;
+                };
+
+                if let Some(member_id) = symbol_export_named_member(candidate_symbol, export_name) {
+                    return Some(prefer_value_named_member(member_id));
+                }
+
+                // Namespace-merge fallback (function/class + namespace split symbols).
+                let merged_candidates = lookup_by_name(&candidate_symbol.escaped_name);
+                for candidate_id in merged_candidates {
+                    if !seen_symbol_ids.insert(candidate_id) {
+                        continue;
+                    }
+                    let Some(merged_symbol) = lookup_symbol(candidate_id) else {
                         continue;
                     };
-
-                    if let Some(member_id) =
-                        symbol_export_named_member(candidate_symbol, export_name)
+                    if (merged_symbol.flags
+                        & (symbol_flags::MODULE
+                            | symbol_flags::NAMESPACE_MODULE
+                            | symbol_flags::VALUE_MODULE))
+                        == 0
+                    {
+                        continue;
+                    }
+                    if let Some(member_id) = symbol_export_named_member(merged_symbol, export_name)
                     {
                         return Some(prefer_value_named_member(member_id));
                     }
-
-                    // Namespace-merge fallback (function/class + namespace split symbols).
-                    let merged_candidates = lookup_by_name(&candidate_symbol.escaped_name);
-                    for candidate_id in merged_candidates {
-                        if !seen_symbol_ids.insert(candidate_id) {
-                            continue;
-                        }
-                        let Some(merged_symbol) = lookup_symbol(candidate_id) else {
-                            continue;
-                        };
-                        if (merged_symbol.flags
-                            & (symbol_flags::MODULE
-                                | symbol_flags::NAMESPACE_MODULE
-                                | symbol_flags::VALUE_MODULE))
-                            == 0
-                        {
-                            continue;
-                        }
-                        if let Some(member_id) =
-                            symbol_export_named_member(merged_symbol, export_name)
-                        {
-                            return Some(prefer_value_named_member(member_id));
-                        }
-                    }
                 }
+            }
 
-                None
-            };
+            None
+        };
 
         for candidate in module_specifier_candidates(module_specifier) {
             if let Some(exports) = self.ctx.binder.module_exports.get(&candidate)
-                && let Some(sym_id) = resolve_from_exports(exports)
+                && let Some(sym_id) = resolve_from_exports(exports, visited_aliases)
             {
                 return Some(sym_id);
             }
@@ -2217,7 +2233,7 @@ impl<'a> CheckerState<'a> {
                     for &file_idx in file_indices {
                         if let Some(binder) = all_binders.get(file_idx)
                             && let Some(exports) = binder.module_exports.get(&candidate)
-                            && let Some(sym_id) = resolve_from_exports(exports)
+                            && let Some(sym_id) = resolve_from_exports(exports, visited_aliases)
                         {
                             return Some(sym_id);
                         }
@@ -2225,7 +2241,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     for binder in all_binders.iter() {
                         if let Some(exports) = binder.module_exports.get(&candidate)
-                            && let Some(sym_id) = resolve_from_exports(exports)
+                            && let Some(sym_id) = resolve_from_exports(exports, visited_aliases)
                         {
                             return Some(sym_id);
                         }
@@ -2244,14 +2260,14 @@ impl<'a> CheckerState<'a> {
                 .first()
                 .map(|sf| sf.file_name.clone())
                 && let Some(exports) = target_binder.module_exports.get(&target_file_name)
-                && let Some(sym_id) = resolve_from_exports(exports)
+                && let Some(sym_id) = resolve_from_exports(exports, visited_aliases)
             {
                 self.ctx.register_symbol_file_target(sym_id, target_idx);
                 return Some(sym_id);
             }
 
             if let Some(exports) = target_binder.module_exports.get(module_specifier)
-                && let Some(sym_id) = resolve_from_exports(exports)
+                && let Some(sym_id) = resolve_from_exports(exports, visited_aliases)
             {
                 self.ctx.register_symbol_file_target(sym_id, target_idx);
                 return Some(sym_id);
@@ -2259,7 +2275,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(exports) = self.resolve_cross_file_namespace_exports(module_specifier)
-            && let Some(sym_id) = resolve_from_exports(&exports)
+            && let Some(sym_id) = resolve_from_exports(&exports, visited_aliases)
         {
             return Some(sym_id);
         }
@@ -2277,7 +2293,9 @@ impl<'a> CheckerState<'a> {
                             .register_symbol_file_target(export_equals_sym_id, file_idx);
                         let mut export_equals_only = tsz_binder::SymbolTable::new();
                         export_equals_only.set("export=".to_string(), export_equals_sym_id);
-                        if let Some(sym_id) = resolve_from_exports(&export_equals_only) {
+                        if let Some(sym_id) =
+                            resolve_from_exports(&export_equals_only, visited_aliases)
+                        {
                             return Some(sym_id);
                         }
                     }
@@ -2320,7 +2338,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if let Some(exports) = module_symbol.exports.as_ref()
-                && let Some(sym_id) = resolve_from_exports(exports)
+                && let Some(sym_id) = resolve_from_exports(exports, visited_aliases)
             {
                 return Some(sym_id);
             }
@@ -2480,221 +2498,5 @@ impl<'a> CheckerState<'a> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::CheckerState;
-    use crate::context::{CheckerOptions, ScriptTarget};
-    use crate::module_resolution::build_module_resolution_maps;
-    use crate::query_boundaries::common::TypeInterner;
-    use std::sync::Arc;
-    use tsz_binder::{BinderState, symbol_flags};
-    use tsz_parser::parser::ParserState;
-
-    // TODO: module augmentation should take precedence over named reexport,
-    // but currently resolves to the reexport source file index instead of the
-    // augmentation file index. Blocked on augmentation merge priority fix.
-    #[test]
-    fn module_augmentation_export_resolution_prefers_local_alias_over_named_reexport() {
-        let files = [
-            (
-                "/main.ts",
-                r#"
-import { Row2 } from "./index";
-type Use = Row2;
-"#,
-            ),
-            (
-                "/a.d.ts",
-                r#"
-import "./index";
-declare module "./index" {
-    type Row2 = { a: string };
-}
-"#,
-            ),
-            (
-                "/index.d.ts",
-                r#"
-export type { Row2 } from "./common";
-"#,
-            ),
-            (
-                "/common.d.ts",
-                r#"
-export interface Row2 { b: string }
-"#,
-            ),
-        ];
-
-        let mut arenas = Vec::with_capacity(files.len());
-        let mut binders = Vec::with_capacity(files.len());
-        let mut roots = Vec::with_capacity(files.len());
-        let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
-
-        for (name, source) in &files {
-            let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
-            let root = parser.parse_source_file();
-            let mut binder = BinderState::new();
-            binder.bind_source_file(parser.get_arena(), root);
-            arenas.push(Arc::new(parser.get_arena().clone()));
-            binders.push(Arc::new(binder));
-            roots.push(root);
-        }
-
-        let entry_idx = file_names
-            .iter()
-            .position(|name| name == "/main.ts")
-            .expect("entry file should exist");
-        let _augmentation_idx = file_names
-            .iter()
-            .position(|name| name == "/a.d.ts")
-            .expect("augmentation file should exist");
-        let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
-
-        let all_arenas = Arc::new(arenas);
-        let all_binders = Arc::new(binders);
-        let types = TypeInterner::new();
-        let mut checker = CheckerState::new(
-            all_arenas[entry_idx].as_ref(),
-            all_binders[entry_idx].as_ref(),
-            &types,
-            file_names[entry_idx].clone(),
-            CheckerOptions {
-                target: ScriptTarget::ES2015,
-                ..Default::default()
-            },
-        );
-
-        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
-        checker.ctx.set_all_binders(Arc::clone(&all_binders));
-        checker.ctx.set_current_file_idx(entry_idx);
-        checker
-            .ctx
-            .set_resolved_module_paths(Arc::new(resolved_module_paths));
-        checker.ctx.set_resolved_modules(resolved_modules);
-        checker.check_source_file(roots[entry_idx]);
-
-        let sym_id = checker
-            .resolve_cross_file_export("./index", "Row2")
-            .expect("Row2 should resolve through the module augmentation export");
-
-        // TODO: tsc prefers module augmentation declarations over re-export chains.
-        // Currently, resolve_ambient_module_export only checks module_exports (not
-        // module_augmentations), so the re-export chain from index.d.ts -> common.d.ts
-        // is found first (file index 2).  When module augmentation symbols are
-        // integrated into the export resolution, change this to expect
-        // Some(augmentation_idx) = Some(1).
-        let index_dts_idx = file_names
-            .iter()
-            .position(|name| name == "/index.d.ts")
-            .expect("index.d.ts should exist");
-        assert_eq!(
-            checker.ctx.resolve_symbol_file_index(sym_id),
-            Some(index_dts_idx),
-            "Row2 currently resolves through the re-export chain (index.d.ts), not the augmentation"
-        );
-    }
-
-    #[test]
-    fn resolve_named_export_via_export_equals_handles_qualified_and_alias_targets() {
-        let source = r#"
-declare module "events" {
-    namespace EventEmitter {
-        class EventEmitter {
-            constructor();
-        }
-    }
-    export = EventEmitter;
-}
-
-declare module "nestNamespaceModule" {
-    namespace a1.a2 {
-        class d { }
-    }
-    namespace a1.a2.n3 {
-        class c { }
-    }
-    export = a1.a2;
-}
-
-declare module "renameModule" {
-    namespace a.b {
-        class c { }
-    }
-    import d = a.b;
-    export = d;
-}
-"#;
-
-        let mut parser = ParserState::new("/ambient.d.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file(parser.get_arena(), root);
-
-        let arena = Arc::new(parser.get_arena().clone());
-        let binder = Arc::new(binder);
-        let all_arenas = Arc::new(vec![Arc::clone(&arena)]);
-        let all_binders = Arc::new(vec![Arc::clone(&binder)]);
-
-        let types = TypeInterner::new();
-        let mut checker = CheckerState::new(
-            arena.as_ref(),
-            binder.as_ref(),
-            &types,
-            "/ambient.d.ts".to_string(),
-            CheckerOptions {
-                target: ScriptTarget::ES2015,
-                ..Default::default()
-            },
-        );
-        checker.ctx.set_all_arenas(all_arenas);
-        checker.ctx.set_all_binders(all_binders);
-        checker.ctx.set_current_file_idx(0);
-
-        let n3_sym = checker
-            .resolve_named_export_via_export_equals("nestNamespaceModule", "n3")
-            .expect("expected n3 to resolve via export= a1.a2");
-        let d_sym = checker
-            .resolve_named_export_via_export_equals("nestNamespaceModule", "d")
-            .expect("expected d to resolve via export= a1.a2");
-        let c_sym = checker
-            .resolve_named_export_via_export_equals("renameModule", "c")
-            .expect("expected c to resolve via export= d (import equals alias)");
-        let ee_sym = checker
-            .resolve_named_export_via_export_equals("events", "EventEmitter")
-            .expect("expected EventEmitter to resolve via export= namespace");
-
-        let n3_symbol = checker
-            .ctx
-            .binder
-            .get_symbol(n3_sym)
-            .expect("expected symbol data for n3");
-        let d_symbol = checker
-            .ctx
-            .binder
-            .get_symbol(d_sym)
-            .expect("expected symbol data for d");
-        let c_symbol = checker
-            .ctx
-            .binder
-            .get_symbol(c_sym)
-            .expect("expected symbol data for c");
-        let ee_symbol = checker
-            .ctx
-            .binder
-            .get_symbol(ee_sym)
-            .expect("expected symbol data for EventEmitter");
-
-        assert_eq!(n3_symbol.escaped_name, "n3");
-        assert!(
-            (n3_symbol.flags
-                & (symbol_flags::MODULE
-                    | symbol_flags::NAMESPACE_MODULE
-                    | symbol_flags::VALUE_MODULE))
-                != 0,
-            "n3 should resolve to a namespace/module-like symbol"
-        );
-        assert_ne!(d_symbol.flags & symbol_flags::CLASS, 0);
-        assert_ne!(c_symbol.flags & symbol_flags::CLASS, 0);
-        assert_ne!(ee_symbol.flags & symbol_flags::CLASS, 0);
-    }
-}
+#[path = "module_tests.rs"]
+mod tests;
