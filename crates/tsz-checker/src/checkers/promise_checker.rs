@@ -675,6 +675,42 @@ impl<'a> CheckerState<'a> {
         true
     }
 
+    /// Whether a function with NO return statements at all should emit TS2355.
+    ///
+    /// TS2355: "A function whose declared type is neither 'undefined', 'void', nor 'any'
+    /// must return a value."
+    ///
+    /// This is stricter than `requires_return_value` (used for TS2366):
+    /// - `undefined | number` → true  (union is not purely void/undefined/any → TS2355)
+    /// - `string | undefined` → true  (same reason)
+    /// - `undefined` (pure) → false   (exempt)
+    /// - `void | T` → false           (void in union exempts)
+    ///
+    /// Note: TS2366 is suppressed for unions containing `undefined` (via `requires_return_value`),
+    /// but TS2355 still fires because the declared type as a whole is not void/undefined/any.
+    pub fn type_requires_return_ts2355(&self, return_type: TypeId) -> bool {
+        if return_type == TypeId::VOID
+            || return_type == TypeId::UNDEFINED
+            || return_type == TypeId::ANY
+            || return_type == TypeId::NEVER
+            || return_type == TypeId::UNKNOWN
+            || return_type == TypeId::ERROR
+        {
+            return false;
+        }
+
+        // `void` in a union suppresses TS2355 (the fallthrough path is void-compatible)
+        if let Some(members) = query::union_members(self.ctx.types, return_type) {
+            for member in &members {
+                if *member == TypeId::VOID {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
     /// Check if TS7030 (noImplicitReturns) should be skipped for this return type.
     ///
     /// TSC skips TS7030 for functions whose return type is or contains `void` or `any`.
