@@ -103,6 +103,9 @@ jobs:
       - name: Validate workspace metadata
         run: scripts/arch/check-workspace-metadata.sh
 
+      - name: Check crate root file policy
+        run: scripts/check-crate-root-files.sh
+
       - name: Run clippy (workspace crates - deny warnings)
         run: |
           cargo clippy \
