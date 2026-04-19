@@ -380,6 +380,16 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
+                    // Some ambient/module-resolution paths don't materialize a direct
+                    // exports table, but named imports can still be satisfied via
+                    // members of an `export =` target (e.g. `export = a.b`).
+                    if self
+                        .resolve_named_export_via_export_equals(module_name, import_name)
+                        .is_some()
+                    {
+                        continue;
+                    }
+
                     if let Some(renamed_as) = self.local_named_export_alias_for_module(
                         module_name,
                         import_name,
