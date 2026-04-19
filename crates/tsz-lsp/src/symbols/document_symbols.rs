@@ -716,16 +716,23 @@ impl<'a> DocumentSymbolProvider<'a> {
                         && let Some(clause_node) = self.arena.get(export_clause)
                         && self.is_declaration(clause_node.kind)
                     {
-                        // Collect the inner declaration and add "export" modifier
+                        // Collect the inner declaration and add the "export"
+                        // (and optional "default") modifier. Use
+                        // `append_modifier` to de-duplicate when the inner
+                        // declaration already reports its own `export` —
+                        // e.g. when a `VARIABLE_STATEMENT` with an `export`
+                        // modifier is nested under an EXPORT_DECLARATION
+                        // wrapper — so the emitted kindModifiers doesn't
+                        // end up as `"export,export"`.
                         let mut symbols = self.collect_symbols(export_clause, container_name);
                         for sym in &mut symbols {
                             let mut mods = String::from("export");
                             if is_default {
                                 append_modifier(&mut mods, "default");
                             }
-                            if !sym.kind_modifiers.is_empty() {
-                                mods.push(',');
-                                mods.push_str(&sym.kind_modifiers);
+                            for existing in sym.kind_modifiers.split(',').filter(|m| !m.is_empty())
+                            {
+                                append_modifier(&mut mods, existing);
                             }
                             sym.kind_modifiers = mods;
                         }
@@ -860,6 +867,12 @@ impl<'a> DocumentSymbolProvider<'a> {
 
 /// Helper to append a modifier to a comma-separated string.
 fn append_modifier(result: &mut String, modifier: &str) {
+    // tsc never emits the same modifier twice on a single
+    // kindModifiers entry. Skip duplicates so concatenation across
+    // nested AST shapes (e.g. `export var x`) stays stable.
+    if result.split(',').any(|existing| existing == modifier) {
+        return;
+    }
     if !result.is_empty() {
         result.push(',');
     }
