@@ -258,7 +258,21 @@ impl<'a> CheckerState<'a> {
         if let Some(resolved_sym_id) = self.ctx.binder.resolve_import_symbol(sym_id) {
             // Prevent infinite loops in re-export chains
             if !visited_aliases.contains(&resolved_sym_id) {
-                return self.resolve_alias_symbol(resolved_sym_id, visited_aliases);
+                let mut preferred_target = resolved_sym_id;
+                if let Some(module_name) = symbol.import_module.as_ref() {
+                    let export_name = symbol
+                        .import_name
+                        .as_deref()
+                        .unwrap_or(symbol.escaped_name.as_str());
+                    if export_name != "*"
+                        && self.symbol_is_namespace_only(resolved_sym_id)
+                        && let Some(member_sym_id) =
+                            self.resolve_named_export_via_export_equals(module_name, export_name)
+                    {
+                        preferred_target = member_sym_id;
+                    }
+                }
+                return self.resolve_alias_symbol(preferred_target, visited_aliases);
             }
         }
 
@@ -281,11 +295,18 @@ impl<'a> CheckerState<'a> {
             // a specific export, resolving the alias to that export instead
             // of the module namespace.
             if symbol.import_name.is_some() {
+                let export_equals_member =
+                    self.resolve_named_export_via_export_equals(module_name, export_name);
                 if let Some(target_sym_id) = self.resolve_cross_file_export_from_file(
                     module_name,
                     export_name,
                     Some(source_file_idx),
                 ) {
+                    let resolved_target = if self.symbol_is_namespace_only(target_sym_id) {
+                        export_equals_member.unwrap_or(target_sym_id)
+                    } else {
+                        target_sym_id
+                    };
                     if let Some(target_file_idx) = self.ctx.resolve_symbol_file_index(target_sym_id)
                     {
                         // Keep the alias itself pinned to the owning file so later
@@ -294,13 +315,18 @@ impl<'a> CheckerState<'a> {
                         self.ctx
                             .register_symbol_file_target(sym_id, target_file_idx);
                     }
-                    return Some(target_sym_id);
+                    return Some(resolved_target);
                 }
                 if let Some(exports) = self.ctx.binder.module_exports.get(module_name)
                     && let Some(target_sym_id) = exports.get(export_name)
                 {
+                    let resolved_target = if self.symbol_is_namespace_only(target_sym_id) {
+                        export_equals_member.unwrap_or(target_sym_id)
+                    } else {
+                        target_sym_id
+                    };
                     // Recursively resolve if the target is also an alias
-                    return self.resolve_alias_symbol(target_sym_id, visited_aliases);
+                    return self.resolve_alias_symbol(resolved_target, visited_aliases);
                 }
                 if let Some(all_binders) = &self.ctx.all_binders {
                     if let Some(file_indices) = self.ctx.files_for_module_specifier(module_name) {
@@ -309,7 +335,16 @@ impl<'a> CheckerState<'a> {
                                 && let Some(exports) = binder.module_exports.get(module_name)
                                 && let Some(target_sym_id) = exports.get(export_name)
                             {
-                                return self.resolve_alias_symbol(target_sym_id, visited_aliases);
+                                let resolved_target = if self.symbol_is_namespace_only(target_sym_id)
+                                {
+                                    export_equals_member.unwrap_or(target_sym_id)
+                                } else {
+                                    target_sym_id
+                                };
+                                return self.resolve_alias_symbol(
+                                    resolved_target,
+                                    visited_aliases,
+                                );
                             }
                         }
                     } else {
@@ -317,7 +352,16 @@ impl<'a> CheckerState<'a> {
                             if let Some(exports) = binder.module_exports.get(module_name)
                                 && let Some(target_sym_id) = exports.get(export_name)
                             {
-                                return self.resolve_alias_symbol(target_sym_id, visited_aliases);
+                                let resolved_target = if self.symbol_is_namespace_only(target_sym_id)
+                                {
+                                    export_equals_member.unwrap_or(target_sym_id)
+                                } else {
+                                    target_sym_id
+                                };
+                                return self.resolve_alias_symbol(
+                                    resolved_target,
+                                    visited_aliases,
+                                );
                             }
                         }
                     }
