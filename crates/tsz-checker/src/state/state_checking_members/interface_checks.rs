@@ -426,7 +426,7 @@ impl<'a> CheckerState<'a> {
             let sym_id = self.ctx.binder.get_node_symbol(stmt_idx);
             let def_id = sym_id.and_then(|sid| self.ctx.get_existing_def_id(sid));
             let def_variances = def_id.and_then(|did| {
-                tsz_solver::relations::variance::compute_type_param_variances_with_resolver(
+                crate::query_boundaries::variance::compute_type_param_variances_with_resolver(
                     db, resolver, did,
                 )
             });
@@ -437,7 +437,7 @@ impl<'a> CheckerState<'a> {
                     // Try direct body type computation first (more reliable for
                     // type aliases where the DefId body may not be resolved yet)
                     if let Some(body) = body_type {
-                        let v = tsz_solver::relations::variance::compute_variance_with_resolver(
+                        let v = crate::query_boundaries::variance::compute_variance_with_resolver(
                             db, resolver, body, info.atom,
                         );
                         if !v.is_independent() {
