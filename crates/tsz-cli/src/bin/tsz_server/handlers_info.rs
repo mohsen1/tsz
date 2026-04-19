@@ -1,3 +1,5 @@
+#![allow(clippy::match_same_arms)]
+
 //! Navigation, definition, and reference handlers for tsz-server.
 
 use super::{Server, TsServerRequest, TsServerResponse};

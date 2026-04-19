@@ -1,3 +1,11 @@
+#![allow(
+    clippy::match_same_arms,
+    clippy::collapsible_if,
+    clippy::doc_markdown,
+    clippy::missing_const_for_fn,
+    clippy::type_complexity
+)]
+
 //! Document Symbols implementation for LSP.
 //!
 //! Provides an outline/structure view of a TypeScript file showing all
