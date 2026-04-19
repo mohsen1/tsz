@@ -819,15 +819,41 @@ impl<'a> CheckerState<'a> {
                         })
                     })
                     .unwrap_or_else(|| self.export_symbol_has_no_value(export_sym_id));
-                let export_is_namespace_module = self
+                // A namespace symbol counts as providing runtime value only if
+                // it's actually instantiated (contains value declarations) or has
+                // the VALUE_MODULE-only marker without NAMESPACE_MODULE. The
+                // binder sets BOTH NAMESPACE_MODULE | VALUE_MODULE on every
+                // namespace declaration, so we must inspect declarations to
+                // distinguish a value-bearing namespace (`namespace X { class C{} }`)
+                // from a type-only one (`namespace X { interface I {} }`).
+                let export_symbol = self
                     .get_symbol_globally(export_sym_id)
-                    .or_else(|| self.get_cross_file_symbol(export_sym_id))
-                    .is_some_and(|symbol| {
-                        (symbol.flags
-                            & (tsz_binder::symbol_flags::NAMESPACE_MODULE
-                                | tsz_binder::symbol_flags::VALUE_MODULE))
-                            != 0
-                    });
+                    .or_else(|| self.get_cross_file_symbol(export_sym_id));
+                let export_is_namespace_module = export_symbol.is_some_and(|symbol| {
+                    let has_ns = (symbol.flags
+                        & (tsz_binder::symbol_flags::NAMESPACE_MODULE
+                            | tsz_binder::symbol_flags::VALUE_MODULE))
+                        != 0;
+                    if !has_ns {
+                        return false;
+                    }
+                    // Other VALUE bits (CLASS, FUNCTION, ENUM, etc. — not
+                    // VALUE_MODULE itself) imply a merged value declaration that
+                    // does provide runtime value.
+                    let has_concrete_value = symbol.flags
+                        & (tsz_binder::symbol_flags::VALUE
+                            & !tsz_binder::symbol_flags::VALUE_MODULE)
+                        != 0;
+                    if has_concrete_value {
+                        return true;
+                    }
+                    // Pure namespace: only counts as a value if at least one
+                    // declaration has runtime members.
+                    symbol
+                        .declarations
+                        .iter()
+                        .any(|&decl_idx| self.is_namespace_declaration_instantiated(decl_idx))
+                });
                 if name == "export="
                     || self.is_type_only_export_symbol(export_sym_id)
                     || target_export_is_type_only
