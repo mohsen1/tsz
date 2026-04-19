@@ -131,16 +131,13 @@ impl BinderState {
                 let Some(rest) = trimmed.strip_prefix("@import") else {
                     continue;
                 };
+                let has_attributes = rest.contains(" with ");
                 for (local_name, specifier, import_name) in Self::parse_jsdoc_import_tag(rest) {
                     if local_name.is_empty() || specifier.is_empty() {
                         continue;
                     }
                     self.file_import_sources.push(specifier.clone());
-                    // Namespace JSDoc imports (`* as NS`) must be visible to the
-                    // regular symbol resolver for qualified references like `NS.I`.
-                    // Default/named JSDoc imports already flow through the JSDoc typedef
-                    // path and creating parallel ALIAS symbols for those can recurse.
-                    if import_name != "*" {
+                    if has_attributes {
                         continue;
                     }
                     let sym_id =

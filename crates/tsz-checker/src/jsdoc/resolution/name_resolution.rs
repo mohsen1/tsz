@@ -1407,6 +1407,12 @@ impl<'a> CheckerState<'a> {
         if (symbol.flags & symbol_flags::ALIAS) != 0 {
             let mut visited_aliases = Vec::new();
             if let Some(target) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
+                if target == sym_id {
+                    // Some unresolved aliases (notably synthetic JSDoc @import aliases)
+                    // can legitimately resolve to themselves. Re-entering with the same
+                    // symbol would recurse forever and overflow the stack.
+                    return TypeId::ERROR;
+                }
                 return self.resolve_jsdoc_symbol_type(target);
             }
         }
