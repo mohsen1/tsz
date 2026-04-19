@@ -623,6 +623,21 @@ impl<'a> DocumentSymbolProvider<'a> {
                 }]
             }
 
+            // Class Static Block (`static { ... }`). tsc doesn't emit an
+            // entry for the block itself; instead the block's top-level
+            // variable declarations (and nested function/class/etc. forms
+            // that `collect_symbols` already recognizes) bubble up as
+            // siblings of the class's members.
+            k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
+                let mut symbols = Vec::new();
+                if let Some(block) = self.arena.get_block(node) {
+                    for &stmt in &block.statements.nodes {
+                        symbols.extend(self.collect_symbols(stmt, container_name));
+                    }
+                }
+                symbols
+            }
+
             // Get Accessor (Class Member)
             k if k == syntax_kind_ext::GET_ACCESSOR => {
                 if let Some(accessor) = self.arena.get_accessor(node) {
