@@ -1591,6 +1591,21 @@ fn package_runtime_specifier_from_target_path(package_path: &str) -> String {
     if let Some(base) = normalized.strip_suffix(".d.ts") {
         return base.to_string();
     }
+    // For TS/TSX source files under node_modules (symlinked packages), the
+    // runtime specifier is the extension-less form so downstream normalization
+    // can collapse `pkg/index` to `pkg`.
+    if let Some(base) = normalized.strip_suffix(".mts") {
+        return format!("{base}.mjs");
+    }
+    if let Some(base) = normalized.strip_suffix(".cts") {
+        return format!("{base}.cjs");
+    }
+    if let Some(base) = normalized
+        .strip_suffix(".ts")
+        .or_else(|| normalized.strip_suffix(".tsx"))
+    {
+        return base.to_string();
+    }
 
     normalized
 }
@@ -3081,7 +3096,7 @@ mod tests {
             ),
             vec![
                 "WoltLabSuite/Core/Component/Dialog".to_string(),
-                "@woltlab/wcf/ts/WoltLabSuite/Core/Component/Dialog.ts".to_string()
+                "@woltlab/wcf/ts/WoltLabSuite/Core/Component/Dialog".to_string()
             ]
         );
     }
