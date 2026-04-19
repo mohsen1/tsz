@@ -12081,9 +12081,7 @@ type T = typeof Alias.value;
     );
 }
 
-// TODO: Fix false TS2635 for typeof with type arguments on generic arrow functions.
 #[test]
-#[ignore]
 fn test_checker_typeof_with_type_arguments() {
     use crate::parser::ParserState;
     use tsz_solver::{SymbolRef, TypeData};
