@@ -788,7 +788,16 @@ impl<'a> CheckerState<'a> {
         // When clear_type_cache_recursive removes the RHS entry for contextual
         // re-checking, the result ends up only in request_node_types. Flow analysis
         // needs node_types to compute assignment-based narrowing (e.g., `d ?? (d = x ?? "x")`).
-        if right_raw != TypeId::ERROR && right_raw != TypeId::DELEGATE {
+        //
+        // `get_type_of_node_with_request` always returns a real `TypeId`
+        // (never `DELEGATE`); the assert is defence-in-depth in case that
+        // contract regresses.
+        debug_assert_ne!(
+            right_raw,
+            TypeId::DELEGATE,
+            "get_type_of_node_with_request must never return the DELEGATE sentinel"
+        );
+        if right_raw != TypeId::ERROR {
             self.ctx.node_types.or_insert(right_idx.0, right_raw);
         }
 
