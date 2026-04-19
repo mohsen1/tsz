@@ -891,10 +891,16 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Scan statements for `@extends`/`@augments` not on class declarations (TS8022).
+    ///
+    /// Each result is `(tag, Some((pos, len)))` when the orphan is the leading
+    /// JSDoc of a non-class statement (tsc reports these at the statement's
+    /// position), or `(tag, None)` when it is a fully-dangling JSDoc comment
+    /// not attached to any statement (tsc reports these at program level with
+    /// no file/position).
     pub(crate) fn find_orphaned_extends_tags_for_statements(
         &self,
         statements: &[NodeIndex],
-    ) -> Vec<(&'static str, u32, u32)> {
+    ) -> Vec<(&'static str, Option<(u32, u32)>)> {
         use tsz_parser::parser::syntax_kind_ext;
         let Some(sf) = self.ctx.arena.source_files.first() else {
             return Vec::new();
@@ -942,7 +948,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 (node.pos, node.end - node.pos)
             };
-            results.push((tag, pos, len));
+            results.push((tag, Some((pos, len))));
         }
         // Phase 2: Check for dangling JSDoc comments not attached to any statement
         use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
@@ -950,12 +956,11 @@ impl<'a> CheckerState<'a> {
             if !is_jsdoc_comment(comment, source_text) {
                 continue;
             }
-            if handled_comment_positions
-                .iter()
-                .any(|&stmt_pos| comment.end <= stmt_pos)
-            {
-                continue;
-            }
+            // Note: we intentionally do NOT skip comments simply because they
+            // appear before a handled class — tsc reports `@extends`/`@augments`
+            // as orphaned when another JSDoc comment is interposed between the
+            // tag and the class declaration (see extendsTag2). The
+            // is_leading_of_any_stmt check below is the sole gate.
             let content = get_jsdoc_content(comment, source_text);
             let tag = if Self::jsdoc_contains_tag(&content, "augments") {
                 "augments"
@@ -976,17 +981,9 @@ impl<'a> CheckerState<'a> {
             if is_leading_of_any_stmt {
                 continue;
             }
-            let needle = format!("@{tag}");
-            let (pos, len) = if let Some(offset) = source_text
-                .get(comment.pos as usize..comment.end as usize)
-                .and_then(|s| s.find(&needle))
-            {
-                let tag_pos = comment.pos + offset as u32;
-                (tag_pos, needle.len() as u32)
-            } else {
-                (comment.pos, comment.end - comment.pos)
-            };
-            results.push((tag, pos, len));
+            // Dangling JSDoc comment — tsc emits this as a program-level
+            // diagnostic (no source file / position).
+            results.push((tag, None));
         }
         results
     }
