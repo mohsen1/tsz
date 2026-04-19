@@ -1526,6 +1526,14 @@ impl<'a> DeclarationEmitter<'a> {
                             return None;
                         }
 
+                        // Check if the subpath falls inside a directory that is
+                        // mapped by a `typesVersions` entry in package.json.
+                        // e.g. `"typesVersions": {">=3.1.0-0": {"*": ["ts3.1/*"]}}`
+                        // means `ts3.1/index.d.ts` is accessible as the package root.
+                        if self.subpath_is_in_types_versions_dir(&package_root, &relative_path) {
+                            return None;
+                        }
+
                         let package_specifier = self
                             .package_specifier_for_node_modules_path(
                                 current_file_path,
@@ -1806,6 +1814,57 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        false
+    }
+
+    /// Returns `true` when `relative_path` (relative to the package root) falls
+    /// inside a directory that is targeted by a `typesVersions` mapping in the
+    /// package's `package.json`.  Types inside such directories are accessible
+    /// via the package specifier for compatible TypeScript versions, so TS2883
+    /// must not fire for them.
+    fn subpath_is_in_types_versions_dir(
+        &self,
+        package_root: &std::path::Path,
+        relative_path: &str,
+    ) -> bool {
+        let pkg_json_path = package_root.join("package.json");
+        let Ok(pkg_content) = std::fs::read_to_string(&pkg_json_path) else {
+            return false;
+        };
+        let Ok(pkg_json) = serde_json::from_str::<serde_json::Value>(&pkg_content) else {
+            return false;
+        };
+        let Some(types_versions) = pkg_json.get("typesVersions") else {
+            return false;
+        };
+        let Some(version_map) = types_versions.as_object() else {
+            return false;
+        };
+        for (_version, mappings) in version_map {
+            let Some(mappings) = mappings.as_object() else {
+                continue;
+            };
+            for (_pattern, targets) in mappings {
+                let Some(targets) = targets.as_array() else {
+                    continue;
+                };
+                for target in targets {
+                    let Some(target_str) = target.as_str() else {
+                        continue;
+                    };
+                    // Strip trailing "/*" or "*" to get the directory prefix.
+                    let dir_prefix = target_str.trim_end_matches('*').trim_end_matches('/');
+                    if dir_prefix.is_empty() {
+                        continue;
+                    }
+                    if relative_path == dir_prefix
+                        || relative_path.starts_with(&format!("{dir_prefix}/"))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
         false
     }
 
