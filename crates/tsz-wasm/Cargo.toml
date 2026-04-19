@@ -4,6 +4,7 @@ description = "WebAssembly bindings for the tsz TypeScript compiler"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+homepage.workspace = true
 license.workspace = true
 authors.workspace = true
 publish = false
