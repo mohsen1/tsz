@@ -1529,8 +1529,7 @@ fn format_keyof_type() {
 }
 
 #[test]
-#[ignore = "regressed pre-existing: keyof(T & U) currently distributes to `keyof T | keyof U` at the display layer; tracked separately"]
-fn format_keyof_intersection_operand_parenthesized() {
+fn format_keyof_intersection_distributes() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);
 
@@ -1549,7 +1548,7 @@ fn format_keyof_intersection_operand_parenthesized() {
     let intersection = db.intersection2(t, u);
     let keyof = db.keyof(intersection);
 
-    assert_eq!(fmt.format(keyof), "keyof (T & U)");
+    assert_eq!(fmt.format(keyof), "keyof T | keyof U");
 }
 
 #[test]
