@@ -547,9 +547,19 @@ impl<'a> CodeActionProvider<'a> {
             self.import_insertion_point(root, &candidate.module_specifier)?;
         let insert_at_file_start = insert_pos.line == 0 && insert_pos.character == 0;
         let has_leading_import = insert_at_file_start && self.first_statement_is_import(root);
+        // Match tsserver's behavior of picking the file's existing newline
+        // style (preferring the first observed sequence), falling back to
+        // CRLF when the source has no newlines (matches tsserver default).
+        let newline = if self.source.contains("\r\n") {
+            "\r\n"
+        } else if self.source.contains('\n') {
+            "\n"
+        } else {
+            "\r\n"
+        };
         let mut new_text = String::new();
         if needs_newline {
-            new_text.push('\n');
+            new_text.push_str(newline);
         }
 
         new_text.push_str("import ");
@@ -578,9 +588,10 @@ impl<'a> CodeActionProvider<'a> {
 
         new_text.push_str(" from \"");
         new_text.push_str(&candidate.module_specifier);
-        new_text.push_str("\";\n");
+        new_text.push_str("\";");
+        new_text.push_str(newline);
         if insert_at_file_start && !has_leading_import {
-            new_text.push('\n');
+            new_text.push_str(newline);
         }
 
         Some(vec![TextEdit {
