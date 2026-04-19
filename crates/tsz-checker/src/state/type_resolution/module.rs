@@ -2084,6 +2084,34 @@ impl<'a> CheckerState<'a> {
             }
             result
         };
+        let prefer_value_named_member = |member_id: tsz_binder::SymbolId| -> tsz_binder::SymbolId {
+            let Some(member_symbol) = lookup_symbol(member_id) else {
+                return member_id;
+            };
+            if (member_symbol.flags
+                & (symbol_flags::MODULE
+                    | symbol_flags::NAMESPACE_MODULE
+                    | symbol_flags::VALUE_MODULE))
+                == 0
+            {
+                return member_id;
+            }
+            for candidate_id in lookup_by_name(&member_symbol.escaped_name) {
+                let Some(candidate_symbol) = lookup_symbol(candidate_id) else {
+                    continue;
+                };
+                if (candidate_symbol.flags
+                    & (symbol_flags::CLASS
+                        | symbol_flags::FUNCTION
+                        | symbol_flags::VARIABLE
+                        | symbol_flags::ENUM))
+                    != 0
+                {
+                    return candidate_id;
+                }
+            }
+            member_id
+        };
 
         let resolve_from_exports =
             |exports: &tsz_binder::SymbolTable| -> Option<tsz_binder::SymbolId> {
@@ -2091,30 +2119,86 @@ impl<'a> CheckerState<'a> {
                 if export_name == "default" {
                     return Some(export_equals_sym);
                 }
-                let export_equals_symbol = lookup_symbol(export_equals_sym)?;
+                let mut candidate_symbol_ids = vec![export_equals_sym];
 
-                if let Some(sym_id) = symbol_export_named_member(export_equals_symbol, export_name)
+                // If `export =` points at an alias, follow the alias chain first.
+                // This is required for ambient patterns like:
+                //   namespace a.b { class C {} } export = a.b;
+                // where named imports should resolve via members on `a.b`.
+                if let Some(export_equals_symbol) = lookup_symbol(export_equals_sym)
+                    && (export_equals_symbol.flags & symbol_flags::ALIAS) != 0
                 {
-                    return Some(sym_id);
+                    let mut visited_aliases = Vec::new();
+                    if let Some(resolved_export_equals) =
+                        self.resolve_alias_symbol(export_equals_sym, &mut visited_aliases)
+                        && resolved_export_equals != export_equals_sym
+                    {
+                        candidate_symbol_ids.push(resolved_export_equals);
+                    }
+
+                    // For `export = alias` where alias is an import-equals qualified
+                    // name (`import x = a.b`), resolve the qualified target too.
+                    let mut decl_candidates = export_equals_symbol.declarations.clone();
+                    if export_equals_symbol.value_declaration.is_some()
+                        && !decl_candidates.contains(&export_equals_symbol.value_declaration)
+                    {
+                        decl_candidates.push(export_equals_symbol.value_declaration);
+                    }
+                    for decl_idx in decl_candidates {
+                        if !decl_idx.is_some() {
+                            continue;
+                        }
+                        if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                            && decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                            && let Some(import_decl) = self.ctx.arena.get_import_decl(decl_node)
+                        {
+                            let module_ref = import_decl.module_specifier;
+                            if let Some(module_ref_node) = self.ctx.arena.get(module_ref)
+                                && module_ref_node.kind != SyntaxKind::StringLiteral as u16
+                                && let Some(target_id) = self.resolve_qualified_symbol(module_ref)
+                            {
+                                candidate_symbol_ids.push(target_id);
+                            }
+                        }
+                    }
                 }
 
-                // Namespace-merge fallback (function/class + namespace split symbols).
-                let candidates = lookup_by_name(&export_equals_symbol.escaped_name);
-                for candidate_id in candidates {
-                    let Some(candidate_symbol) = lookup_symbol(candidate_id) else {
-                        continue;
-                    };
-                    if (candidate_symbol.flags
-                        & (symbol_flags::MODULE
-                            | symbol_flags::NAMESPACE_MODULE
-                            | symbol_flags::VALUE_MODULE))
-                        == 0
-                    {
+                let mut seen_symbol_ids = rustc_hash::FxHashSet::default();
+                for sym_id in candidate_symbol_ids {
+                    if !seen_symbol_ids.insert(sym_id) {
                         continue;
                     }
-                    if let Some(sym_id) = symbol_export_named_member(candidate_symbol, export_name)
+                    let Some(candidate_symbol) = lookup_symbol(sym_id) else {
+                        continue;
+                    };
+
+                    if let Some(member_id) = symbol_export_named_member(candidate_symbol, export_name)
                     {
-                        return Some(sym_id);
+                        return Some(prefer_value_named_member(member_id));
+                    }
+
+                    // Namespace-merge fallback (function/class + namespace split symbols).
+                    let merged_candidates = lookup_by_name(&candidate_symbol.escaped_name);
+                    for candidate_id in merged_candidates {
+                        if !seen_symbol_ids.insert(candidate_id) {
+                            continue;
+                        }
+                        let Some(merged_symbol) = lookup_symbol(candidate_id) else {
+                            continue;
+                        };
+                        if (merged_symbol.flags
+                            & (symbol_flags::MODULE
+                                | symbol_flags::NAMESPACE_MODULE
+                                | symbol_flags::VALUE_MODULE))
+                            == 0
+                        {
+                            continue;
+                        }
+                        if let Some(member_id) =
+                            symbol_export_named_member(merged_symbol, export_name)
+                        {
+                            return Some(prefer_value_named_member(member_id));
+                        }
                     }
                 }
 
@@ -2179,6 +2263,67 @@ impl<'a> CheckerState<'a> {
             return Some(sym_id);
         }
 
+        // Global ambient-module index fallback: module_specifier -> export name ->
+        // (file_idx, SymbolId). This catches declared modules that are indexed
+        // globally but not directly reachable through local module_exports maps.
+        if let Some(global_exports_index) = self.ctx.global_module_exports_index.as_ref() {
+            for candidate in module_specifier_candidates(module_specifier) {
+                if let Some(by_name) = global_exports_index.get(&candidate)
+                    && let Some(entries) = by_name.get("export=")
+                {
+                    for &(file_idx, export_equals_sym_id) in entries {
+                        self.ctx
+                            .register_symbol_file_target(export_equals_sym_id, file_idx);
+                        let mut export_equals_only = tsz_binder::SymbolTable::new();
+                        export_equals_only.set("export=".to_string(), export_equals_sym_id);
+                        if let Some(sym_id) = resolve_from_exports(&export_equals_only) {
+                            return Some(sym_id);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: ambient module declarations may not always be indexed in
+        // `module_exports` maps (especially in reduced/single-binder contexts).
+        // Probe module-like symbols by name and resolve through their own exports.
+        let mut ambient_module_symbol_ids = rustc_hash::FxHashSet::default();
+        for candidate in module_specifier_candidates(module_specifier) {
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(&candidate) {
+                ambient_module_symbol_ids.insert(sym_id);
+            }
+            for &sym_id in self.ctx.binder.get_symbols().find_all_by_name(&candidate) {
+                ambient_module_symbol_ids.insert(sym_id);
+            }
+            if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+                for binder in all_binders.iter() {
+                    if let Some(sym_id) = binder.file_locals.get(&candidate) {
+                        ambient_module_symbol_ids.insert(sym_id);
+                    }
+                    for &sym_id in binder.get_symbols().find_all_by_name(&candidate) {
+                        ambient_module_symbol_ids.insert(sym_id);
+                    }
+                }
+            }
+        }
+        for module_sym_id in ambient_module_symbol_ids {
+            let Some(module_symbol) = lookup_symbol(module_sym_id) else {
+                continue;
+            };
+            if (module_symbol.flags
+                & (symbol_flags::MODULE
+                    | symbol_flags::NAMESPACE_MODULE
+                    | symbol_flags::VALUE_MODULE))
+                == 0
+            {
+                continue;
+            }
+            if let Some(exports) = module_symbol.exports.as_ref()
+                && let Some(sym_id) = resolve_from_exports(exports)
+            {
+                return Some(sym_id);
+            }
+        }
         None
     }
 
@@ -2340,7 +2485,7 @@ mod tests {
     use crate::module_resolution::build_module_resolution_maps;
     use crate::query_boundaries::common::TypeInterner;
     use std::sync::Arc;
-    use tsz_binder::BinderState;
+    use tsz_binder::{BinderState, symbol_flags};
     use tsz_parser::parser::ParserState;
 
     // TODO: module augmentation should take precedence over named reexport,
@@ -2446,5 +2591,109 @@ export interface Row2 { b: string }
             Some(index_dts_idx),
             "Row2 currently resolves through the re-export chain (index.d.ts), not the augmentation"
         );
+    }
+
+    #[test]
+    fn resolve_named_export_via_export_equals_handles_qualified_and_alias_targets() {
+        let source = r#"
+declare module "events" {
+    namespace EventEmitter {
+        class EventEmitter {
+            constructor();
+        }
+    }
+    export = EventEmitter;
+}
+
+declare module "nestNamespaceModule" {
+    namespace a1.a2 {
+        class d { }
+    }
+    namespace a1.a2.n3 {
+        class c { }
+    }
+    export = a1.a2;
+}
+
+declare module "renameModule" {
+    namespace a.b {
+        class c { }
+    }
+    import d = a.b;
+    export = d;
+}
+"#;
+
+        let mut parser = ParserState::new("/ambient.d.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+        let all_arenas = Arc::new(vec![Arc::clone(&arena)]);
+        let all_binders = Arc::new(vec![Arc::clone(&binder)]);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "/ambient.d.ts".to_string(),
+            CheckerOptions {
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        checker.ctx.set_all_arenas(all_arenas);
+        checker.ctx.set_all_binders(all_binders);
+        checker.ctx.set_current_file_idx(0);
+
+        let n3_sym = checker
+            .resolve_named_export_via_export_equals("nestNamespaceModule", "n3")
+            .expect("expected n3 to resolve via export= a1.a2");
+        let d_sym = checker
+            .resolve_named_export_via_export_equals("nestNamespaceModule", "d")
+            .expect("expected d to resolve via export= a1.a2");
+        let c_sym = checker
+            .resolve_named_export_via_export_equals("renameModule", "c")
+            .expect("expected c to resolve via export= d (import equals alias)");
+        let ee_sym = checker
+            .resolve_named_export_via_export_equals("events", "EventEmitter")
+            .expect("expected EventEmitter to resolve via export= namespace");
+
+        let n3_symbol = checker
+            .ctx
+            .binder
+            .get_symbol(n3_sym)
+            .expect("expected symbol data for n3");
+        let d_symbol = checker
+            .ctx
+            .binder
+            .get_symbol(d_sym)
+            .expect("expected symbol data for d");
+        let c_symbol = checker
+            .ctx
+            .binder
+            .get_symbol(c_sym)
+            .expect("expected symbol data for c");
+        let ee_symbol = checker
+            .ctx
+            .binder
+            .get_symbol(ee_sym)
+            .expect("expected symbol data for EventEmitter");
+
+        assert_eq!(n3_symbol.escaped_name, "n3");
+        assert!(
+            (n3_symbol.flags
+                & (symbol_flags::MODULE
+                    | symbol_flags::NAMESPACE_MODULE
+                    | symbol_flags::VALUE_MODULE))
+                != 0,
+            "n3 should resolve to a namespace/module-like symbol"
+        );
+        assert_ne!(d_symbol.flags & symbol_flags::CLASS, 0);
+        assert_ne!(c_symbol.flags & symbol_flags::CLASS, 0);
+        assert_ne!(ee_symbol.flags & symbol_flags::CLASS, 0);
     }
 }

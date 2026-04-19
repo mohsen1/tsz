@@ -546,12 +546,8 @@ impl BinderState {
                         }
                         syntax_kind_ext::EXPORT_ASSIGNMENT => {
                             if let Some(assign) = arena.get_export_assignment(stmt_node)
-                                && let Some(target_name) =
-                                    Self::get_identifier_name(arena, assign.expression)
                                 && let Some(sym_id) = self
-                                    .current_scope
-                                    .get(target_name)
-                                    .or_else(|| self.file_locals.get(target_name))
+                                    .resolve_export_assignment_target_symbol(arena, assign.expression)
                             {
                                 if assign.is_export_equals {
                                     exported_symbols.push(("export=".to_string(), sym_id));
@@ -584,12 +580,10 @@ impl BinderState {
                                             if let Some(module_ref_node) = arena.get(module_ref)
                                                 && module_ref_node.kind
                                                     != SyntaxKind::StringLiteral as u16
-                                                && let Some(ref_name) =
-                                                    Self::get_identifier_name(arena, module_ref)
                                                 && let Some(resolved) = self
-                                                    .current_scope
-                                                    .get(ref_name)
-                                                    .or_else(|| self.file_locals.get(ref_name))
+                                                    .resolve_export_assignment_target_symbol(
+                                                        arena, module_ref,
+                                                    )
                                             {
                                                 target_sym_id = resolved;
                                             }
