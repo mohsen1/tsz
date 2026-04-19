@@ -457,6 +457,16 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_feature_specific_global_types(&mut self) {
         use crate::query_boundaries::capabilities::EnvironmentCapabilities;
 
+        // Under @noLib, the user has explicitly opted out of the default lib.
+        // tsc reports the core TS2318 set (Array/Boolean/Function/etc.) for
+        // the fundamental types the compiler always needs, but does NOT report
+        // feature-specific globals like TypedPropertyDescriptor even when the
+        // corresponding feature (decorators, generators, await, using) is used.
+        // The user is responsible for providing any types they need.
+        if self.ctx.capabilities.no_lib {
+            return;
+        }
+
         // Feature-specific global types checked via the capability boundary.
         // The mapping from type name → feature gate is centralized in
         // `EnvironmentCapabilities::gate_for_required_type()`.
