@@ -539,5 +539,5 @@ pub fn default_build_info_path(config_path: &Path, out_dir: Option<&Path>) -> Pa
 }
 
 #[cfg(test)]
-#[path = "incremental_tests.rs"]
+#[path = "../incremental_tests.rs"]
 mod tests;
