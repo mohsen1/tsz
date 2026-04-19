@@ -1480,8 +1480,15 @@ impl<'a> CheckerState<'a> {
                         if let Some(resolved_sym) = target_binder
                             .get_symbol(resolved_sym_id)
                             .or_else(|| self.ctx.binder.get_symbol(resolved_sym_id))
-                            && ((resolved_sym.flags & PURE_TYPE) != 0
-                                && (resolved_sym.flags & concrete_value) == 0)
+                            && (resolved_sym.flags & PURE_TYPE) != 0
+                            && (resolved_sym.flags & concrete_value) == 0
+                            // When the resolved symbol still has ALIAS flag (e.g.,
+                            // `import * as B` merged with `interface B`), the alias
+                            // side resolves to a namespace object that IS a value.
+                            // Don't conclude type-only here — let the recursive
+                            // is_export_type_only_in_file check below decide based
+                            // on the actual import target.
+                            && (resolved_sym.flags & symbol_flags::ALIAS) == 0
                         {
                             return true;
                         }
