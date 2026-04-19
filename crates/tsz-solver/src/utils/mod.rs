@@ -368,5 +368,5 @@ pub(crate) fn expand_tuple_rest(db: &dyn TypeDatabase, type_id: TypeId) -> Tuple
 }
 
 #[cfg(test)]
-#[path = "../tests/utils_tests.rs"]
+#[path = "../../tests/utils_tests.rs"]
 mod tests;
