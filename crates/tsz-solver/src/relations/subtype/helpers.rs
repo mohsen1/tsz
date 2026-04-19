@@ -8,7 +8,10 @@ use crate::def::resolver::TypeResolver;
 use crate::relations::subtype::{
     AnyPropagationMode, INTERSECTION_OBJECT_FAST_PATH_THRESHOLD, SubtypeChecker, SubtypeResult,
 };
-use crate::types::{ObjectFlags, ObjectShape, RelationCacheKey, TypeId, Visibility};
+use crate::types::{
+    CachedAnyMode, ObjectFlags, ObjectShape, RelationCacheConfig, RelationCacheKey, RelationFlags,
+    TypeId, Visibility,
+};
 use crate::visitor::{
     callable_shape_id, function_shape_id, index_access_parts, literal_string, object_shape_id,
     object_with_index_shape_id, type_param_info, union_list_id,
@@ -103,48 +106,65 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Returns false if any common property has non-overlapping types.
     /// Construct a `RelationCacheKey` for the current checker configuration.
     ///
-    /// This packs the Lawyer-layer flags into a compact cache key to ensure that
-    /// results computed under different rules (strict vs non-strict) don't contaminate each other.
-    pub(crate) const fn make_cache_key(&self, source: TypeId, target: TypeId) -> RelationCacheKey {
-        let mut flags: u16 = 0;
+    /// Produces a fully behavior-complete [`RelationCacheConfig`] so that
+    /// results computed under different rules (strict vs non-strict, sound
+    /// vs lax, with/without weak-type suppression, etc.) cannot
+    /// contaminate each other.
+    pub(crate) fn make_cache_key(&self, source: TypeId, target: TypeId) -> RelationCacheKey {
+        let mut flags = RelationFlags::empty();
         if self.strict_null_checks {
-            flags |= RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
+            flags |= RelationFlags::STRICT_NULL_CHECKS;
         }
         if self.strict_function_types {
-            flags |= RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES;
+            flags |= RelationFlags::STRICT_FUNCTION_TYPES;
         }
         if self.exact_optional_property_types {
-            flags |= RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES;
+            flags |= RelationFlags::EXACT_OPTIONAL_PROPERTY_TYPES;
         }
         if self.no_unchecked_indexed_access {
-            flags |= RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS;
+            flags |= RelationFlags::NO_UNCHECKED_INDEXED_ACCESS;
         }
         if self.disable_method_bivariance {
-            flags |= RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE;
+            flags |= RelationFlags::DISABLE_METHOD_BIVARIANCE;
         }
         if self.allow_void_return {
-            flags |= RelationCacheKey::FLAG_ALLOW_VOID_RETURN;
+            flags |= RelationFlags::ALLOW_VOID_RETURN;
         }
         if self.allow_bivariant_rest {
-            flags |= RelationCacheKey::FLAG_ALLOW_BIVARIANT_REST;
+            flags |= RelationFlags::ALLOW_BIVARIANT_REST;
         }
         if self.allow_bivariant_param_count {
-            flags |= RelationCacheKey::FLAG_ALLOW_BIVARIANT_PARAM_COUNT;
+            flags |= RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT;
         }
         if !self.erase_generics {
-            flags |= RelationCacheKey::FLAG_NO_ERASE_GENERICS;
+            flags |= RelationFlags::NO_ERASE_GENERICS;
+        }
+        if self.assume_related_on_cycle {
+            flags |= RelationFlags::ASSUME_RELATED_ON_CYCLE;
         }
 
         // CRITICAL: Calculate effective `any_mode` based on depth.
-        // If `any_propagation` is `TopLevelOnly` but `depth > 0`, the effective mode is "None".
-        // This ensures that top-level checks don't incorrectly hit cached results from nested checks.
+        // If `any_propagation` is `TopLevelOnly` but `depth > 0`, the
+        // effective mode is nested (any suppression disabled). This ensures
+        // that top-level checks don't incorrectly hit cached results from
+        // nested checks.
         let any_mode = match self.any_propagation {
-            AnyPropagationMode::All => 0,
-            AnyPropagationMode::TopLevelOnly if self.guard.depth() == 0 => 1,
-            AnyPropagationMode::TopLevelOnly => 2, // Disabled at depth > 0
+            AnyPropagationMode::All => CachedAnyMode::All,
+            AnyPropagationMode::TopLevelOnly if self.guard.depth() == 0 => {
+                CachedAnyMode::TopLevelOnlyAtTop
+            }
+            AnyPropagationMode::TopLevelOnly => CachedAnyMode::TopLevelOnlyNested,
         };
 
-        RelationCacheKey::subtype(source, target, flags, any_mode)
+        RelationCacheKey::for_subtype(source, target, RelationCacheConfig::new(flags, any_mode))
+    }
+
+    /// Test-only accessor that exposes the cache key this checker would use
+    /// for a given `(source, target)` pair. External crates should never call
+    /// this — use the query boundary helpers instead.
+    #[doc(hidden)]
+    pub fn debug_cache_key_for(&self, source: TypeId, target: TypeId) -> RelationCacheKey {
+        self.make_cache_key(source, target)
     }
 
     /// Check if `source` is a subtype of `target`.

@@ -12,7 +12,9 @@ use crate::relations::compat::{
     AssignabilityOverrideProvider, CompatChecker, NoopOverrideProvider,
 };
 use crate::relations::subtype::{AnyPropagationMode, NoopResolver, SubtypeChecker, TypeResolver};
-use crate::types::{RelationCacheKey, SymbolRef, TypeId};
+use crate::types::{
+    CachedAnyMode, RelationCacheConfig, RelationCacheKey, RelationFlags, SymbolRef, TypeId,
+};
 
 /// Relation categories supported by the unified query API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,13 +32,25 @@ pub enum RelationKind {
 }
 
 /// Policy knobs for relation checks.
+///
+/// A `RelationPolicy` is the checker-visible bundle that describes a relation
+/// query. Every field that affects whether the relation holds must also be
+/// encoded in the [`RelationCacheConfig`] produced by
+/// [`RelationPolicy::cache_config`]. Fields that are strictly diagnostic (they
+/// only affect error messages, not the boolean outcome) must be kept out of
+/// the cache config and documented as such here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RelationPolicy {
-    /// Packed relation flags (same layout as `RelationCacheKey.flags`).
+    /// Packed behavior-affecting boolean options (bits 0..=8).
+    ///
+    /// This mirrors the legacy `RelationCacheKey.flags` layout so that older
+    /// callers that still pass `u16` bitmasks interoperate without change.
     pub flags: u16,
     /// Enables additional strictness in the compatibility layer.
     pub strict_subtype_checking: bool,
-    /// Disables `any`-suppression in compatibility fast paths.
+    /// When true, `any` does NOT silence structural mismatches in the
+    /// Lawyer layer. This is an independent Sound-Mode toggle; it is NOT
+    /// derived from `strict_function_types`.
     pub strict_any_propagation: bool,
     /// Controls how `SubtypeChecker` treats `any`.
     pub any_propagation_mode: AnyPropagationMode,
@@ -73,9 +87,19 @@ impl Default for RelationPolicy {
 }
 
 impl RelationPolicy {
+    /// Construct a policy from the legacy packed `u16` bitmask.
+    ///
+    /// Only explicit bits in `flags` are applied. In particular,
+    /// `strict_any_propagation` and `any_propagation_mode` are NOT derived
+    /// from any other bit — callers that want strict-any semantics must opt
+    /// in explicitly via [`RelationPolicy::with_strict_any_propagation`] or
+    /// [`RelationPolicy::with_any_propagation_mode`].
+    ///
+    /// > Regression note: an earlier version mistakenly inferred
+    /// > `strict_any_propagation` from `FLAG_STRICT_FUNCTION_TYPES`, which
+    /// > silently coupled two independent compiler options. See the
+    /// > `strict_function_types_does_not_imply_strict_any` regression test.
     pub const fn from_flags(flags: u16) -> Self {
-        use crate::RelationCacheKey;
-        let strict_any = (flags & RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES) != 0;
         // erase_generics defaults to true unless the NO_ERASE_GENERICS flag is set.
         // This preserves backward compatibility while allowing specific paths
         // (implements/extends checking) to disable erasure.
@@ -83,12 +107,8 @@ impl RelationPolicy {
         Self {
             flags,
             strict_subtype_checking: false,
-            strict_any_propagation: strict_any,
-            any_propagation_mode: if strict_any {
-                AnyPropagationMode::TopLevelOnly
-            } else {
-                AnyPropagationMode::All
-            },
+            strict_any_propagation: false,
+            any_propagation_mode: AnyPropagationMode::All,
             assume_related_on_cycle: true,
             skip_weak_type_checks: false,
             erase_generics,
@@ -123,6 +143,44 @@ impl RelationPolicy {
     pub const fn with_skip_weak_type_checks(mut self, skip: bool) -> Self {
         self.skip_weak_type_checks = skip;
         self
+    }
+
+    /// Project this policy to the canonical cache-partitioning configuration.
+    ///
+    /// This is the single conversion point from the high-level `RelationPolicy`
+    /// bundle to the behavior-complete [`RelationCacheConfig`] used as the
+    /// `config` field of a [`RelationCacheKey`]. Every behavior-affecting field
+    /// on `RelationPolicy` must be reflected here.
+    pub const fn cache_config(self) -> RelationCacheConfig {
+        let mut bits = RelationFlags::from_bits_truncate(self.flags as u32);
+        if self.strict_subtype_checking {
+            bits = bits.union(RelationFlags::STRICT_SUBTYPE_CHECKING);
+        }
+        if self.strict_any_propagation {
+            bits = bits.union(RelationFlags::STRICT_ANY_PROPAGATION);
+        }
+        if self.skip_weak_type_checks {
+            bits = bits.union(RelationFlags::SKIP_WEAK_TYPE_CHECKS);
+        }
+        if self.assume_related_on_cycle {
+            bits = bits.union(RelationFlags::ASSUME_RELATED_ON_CYCLE);
+        }
+        // `erase_generics=false` maps to NO_ERASE_GENERICS bit. The legacy
+        // `flags` field may already carry this bit; merging here keeps the
+        // two representations coherent even if a caller sets only the typed
+        // field.
+        if !self.erase_generics {
+            bits = bits.union(RelationFlags::NO_ERASE_GENERICS);
+        }
+        let any_mode = match self.any_propagation_mode {
+            AnyPropagationMode::All => CachedAnyMode::All,
+            // A policy does not know the current recursion depth, so it
+            // encodes the configured mode as "top-level" from the policy's
+            // perspective. The `SubtypeChecker` refines this to
+            // `TopLevelOnlyNested` at depth > 0 when it builds its own key.
+            AnyPropagationMode::TopLevelOnly => CachedAnyMode::TopLevelOnlyAtTop,
+        };
+        RelationCacheConfig::new(bits, any_mode)
     }
 }
 

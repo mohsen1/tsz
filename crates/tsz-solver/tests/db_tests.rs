@@ -1,3 +1,4 @@
+use crate::caches::query_cache::subtype_cache_config_from_legacy_flags;
 use crate::{
     LiteralValue, ObjectFlags, PropertyInfo, QueryCache, QueryCacheStatistics, QueryDatabase,
     RelationCacheKey, RelationCacheProbe, TupleElement, TypeData, TypeDatabase, TypeId,
@@ -127,7 +128,11 @@ fn relation_cache_stats_track_hits_and_misses() {
 
     // Use non-trivial pair to avoid QueryCache fast-path (identity/top/bottom/error).
     let hello = interner.literal_string("hello");
-    let key = RelationCacheKey::subtype(hello, TypeId::STRING, 0, 0);
+    let key = RelationCacheKey::for_subtype(
+        hello,
+        TypeId::STRING,
+        subtype_cache_config_from_legacy_flags(0),
+    );
 
     assert_eq!(
         db.probe_subtype_cache(key),

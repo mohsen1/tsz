@@ -15,9 +15,10 @@ use crate::relations::subtype::TypeResolver;
 use crate::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
     FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
-    ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheKey, StringIntrinsicKind, SymbolRef,
-    TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplication, TypeApplicationId,
-    TypeData, TypeId, TypeListId, TypeParamInfo, Variance, Visibility,
+    ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheConfig, RelationCacheKey,
+    RelationFlags, StringIntrinsicKind, SymbolRef, TemplateLiteralId, TemplateSpan, TupleElement,
+    TupleListId, TypeApplication, TypeApplicationId, TypeData, TypeId, TypeListId, TypeParamInfo,
+    Variance, Visibility,
 };
 use dashmap::DashMap;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -30,6 +31,33 @@ type EvalCacheKey = (TypeId, bool);
 type ApplicationEvalCacheKey = (DefId, smallvec::SmallVec<[TypeId; 4]>, bool);
 type ElementAccessTypeCacheKey = (TypeId, TypeId, Option<u32>, bool);
 type PropertyAccessCacheKey = (TypeId, Atom, bool);
+
+/// Build a `RelationCacheConfig` from the legacy packed `u16` flags in a way
+/// that matches the defaults a fresh `SubtypeChecker::new().apply_flags(flags)`
+/// would produce.
+///
+/// `SubtypeChecker::new` defaults `assume_related_on_cycle = true` and
+/// `any_propagation = All`, and `apply_flags` does not touch either. Encoding
+/// those defaults into the cache key here ensures that the external
+/// `is_subtype_of_with_flags` write/read path and the internal
+/// `SubtypeChecker::make_cache_key` path address the same cache slot.
+pub const fn subtype_cache_config_from_legacy_flags(flags: u16) -> RelationCacheConfig {
+    let mut bits = RelationFlags::from_bits_truncate(flags as u32);
+    // Matches SubtypeChecker::new() default.
+    bits = bits.union(RelationFlags::ASSUME_RELATED_ON_CYCLE);
+    RelationCacheConfig::from_flags(bits)
+}
+
+/// Build a `RelationCacheConfig` from legacy packed `u16` flags that matches
+/// the effective defaults of `CompatChecker::new().apply_flags(flags)`, so
+/// the assignability write/read paths share a cache slot with the
+/// `CompatChecker`'s internal caching.
+pub const fn assignability_cache_config_from_legacy_flags(flags: u16) -> RelationCacheConfig {
+    let mut bits = RelationFlags::from_bits_truncate(flags as u32);
+    // Matches CompatChecker::new() / SubtypeChecker::new() defaults.
+    bits = bits.union(RelationFlags::ASSUME_RELATED_ON_CYCLE);
+    RelationCacheConfig::from_flags(bits)
+}
 
 /// Thread-safe shared query cache for cross-file type checking.
 ///
@@ -1206,7 +1234,11 @@ impl QueryDatabase for QueryCache<'_> {
             );
             query_id
         });
-        let key = RelationCacheKey::subtype(source, target, flags, 0);
+        let key = RelationCacheKey::for_subtype(
+            source,
+            target,
+            subtype_cache_config_from_legacy_flags(flags),
+        );
         let cached = self.subtype_cache.borrow().get(&key).copied();
 
         if let Some(result) = cached {
@@ -1284,8 +1316,17 @@ impl QueryDatabase for QueryCache<'_> {
             );
             query_id
         });
-        // Task A: Use passed flags instead of hardcoded 0,0
-        let key = RelationCacheKey::assignability(source, target, flags, 0);
+        // Task A: Use passed flags instead of hardcoded 0,0.
+        // The flags bitmask is the legacy `u16` protocol owned by the
+        // checker's `pack_relation_flags()`; convert it to a typed
+        // `RelationCacheConfig` that matches the effective defaults of a
+        // fresh `CompatChecker` so write-paths and read-paths share the
+        // same cache slot.
+        let key = RelationCacheKey::for_assignability(
+            source,
+            target,
+            assignability_cache_config_from_legacy_flags(flags),
+        );
 
         if let Some(result) = self.check_cache(&self.assignability_cache, key) {
             self.assignability_cache_hits
