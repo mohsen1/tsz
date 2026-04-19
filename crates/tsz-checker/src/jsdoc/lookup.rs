@@ -981,9 +981,24 @@ impl<'a> CheckerState<'a> {
             if is_leading_of_any_stmt {
                 continue;
             }
-            // Dangling JSDoc comment — tsc emits this as a program-level
-            // diagnostic (no source file / position).
-            results.push((tag, None));
+            // Dangling JSDoc comment. tsc distinguishes two cases:
+            //   * If there is any statement after the comment (even separated
+            //     by intervening JSDoc), tsc reports at program level with no
+            //     file/position — see `extendsTag2.ts`.
+            //   * If the comment is the last meaningful thing in the file, tsc
+            //     anchors the diagnostic at the position just after the
+            //     comment's closing `*/` — see `extendsTag4.ts`.
+            let any_stmt_after = statements.iter().any(|&stmt_idx| {
+                self.ctx
+                    .arena
+                    .get(stmt_idx)
+                    .is_some_and(|n| n.pos >= comment.end)
+            });
+            if any_stmt_after {
+                results.push((tag, None));
+            } else {
+                results.push((tag, Some((comment.end, 0))));
+            }
         }
         results
     }
