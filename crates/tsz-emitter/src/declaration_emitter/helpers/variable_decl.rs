@@ -188,11 +188,18 @@ impl<'a> DeclarationEmitter<'a> {
                     let mut ran_symbol_check = false;
                     if self.diagnostics.len() == diagnostics_before {
                         // If declaration emit can already spell the inferred type
-                        // through a directly nameable public surface (for example
-                        // `StyledComponent<"div">`), tsc does not look through
-                        // that alias and emit TS2883 for nested implementation
-                        // details like `NonReactStatics`.
-                        if !preferred_type_is_directly_nameable {
+                        // through an explicit import-type reference with a public
+                        // package path (e.g. `import("styled-components").StyledComponent<"div">`),
+                        // tsc does not look through that alias and emit TS2883 for
+                        // nested implementation details like `NonReactStatics`.
+                        //
+                        // However, a plain identifier like "MySpecialType" is NOT safe
+                        // to skip: the name alone doesn't prove the symbol is reachable
+                        // from a public path. We must run the portability check whenever
+                        // the type text is not an explicit `import("…")` form.
+                        let is_safe_import_type =
+                            directly_nameable_type_text.is_some_and(|t| t.starts_with("import(\""));
+                        if !preferred_type_is_directly_nameable || !is_safe_import_type {
                             ran_symbol_check = true;
                             self.check_non_portable_type_references(
                                 type_id,

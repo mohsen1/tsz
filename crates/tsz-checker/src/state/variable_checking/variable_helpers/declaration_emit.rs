@@ -271,7 +271,6 @@ impl<'a> CheckerState<'a> {
         inferred_type: TypeId,
     ) -> Option<(String, String)> {
         let referenced_types = collect_referenced_types(self.ctx.types, inferred_type);
-
         for &type_id in &referenced_types {
             if let Some(def_id) = lazy_def_id(self.ctx.types, type_id)
                 && let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id)
