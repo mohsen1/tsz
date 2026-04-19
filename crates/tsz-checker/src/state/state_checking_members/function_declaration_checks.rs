@@ -1088,9 +1088,15 @@ impl<'a> CheckerState<'a> {
         // have no `return` statement (they `yield`).
         let needs_unknown_empty_body_scan =
             check_explicit_return_paths && check_return_type == TypeId::UNKNOWN && !is_generator;
+        // TS2355 for `undefined | T` unions: requires_return is false (to skip TS2366),
+        // but we still need flow analysis to check falls_through for the stricter TS2355.
+        let needs_ts2355_undefined_union_scan = check_explicit_return_paths
+            && !is_generator
+            && self.type_requires_return_ts2355(check_return_type);
         let need_return_flow_scan = (check_explicit_return_paths && requires_return)
             || check_no_implicit_returns
-            || needs_unknown_empty_body_scan;
+            || needs_unknown_empty_body_scan
+            || needs_ts2355_undefined_union_scan;
         let (has_return, falls_through) = if need_return_flow_scan {
             (
                 self.body_has_return_with_value(func.body),
@@ -1171,6 +1177,32 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
                 );
             }
+        }
+        // TS2355 for `undefined | T` return types with no returns at all.
+        // `requires_return_value` returns false for unions containing `undefined` (for TS2366),
+        // but TS2355 has stricter rules: `undefined | number` as a whole is not void/undefined/any
+        // so it still requires an explicit return. In the else-if chain so it's mutually exclusive
+        // with TS7030.
+        else if check_explicit_return_paths
+            && !requires_return
+            && !has_return
+            && falls_through
+            && !is_generator
+            && self.type_requires_return_ts2355(check_return_type)
+        {
+            let error_node = if has_type_annotation {
+                func.type_annotation
+            } else if func.name.is_some() {
+                func.name
+            } else {
+                func_idx
+            };
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node(
+                error_node,
+                "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
+                diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
+            );
         } else if check_explicit_return_paths
             && check_return_type == TypeId::UNKNOWN
             && has_type_annotation

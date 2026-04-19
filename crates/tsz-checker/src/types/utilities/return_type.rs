@@ -548,8 +548,42 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR; // Return error to avoid further issues
             }
 
+            // `return;` statements set saw_empty but push nothing to return_types.
+            // When contextually typed as `() => undefined | T`, use `undefined` so the
+            // function matches. When the contextual return type doesn't accept `undefined`
+            // (e.g., `number`), fall through to the void/contextual check below.
+            if saw_empty {
+                if let Some(ctx) = return_context {
+                    // Only narrow to `undefined` when the contextual return type is a
+                    // specific undefined-compatible type (not `any`/`unknown`/`void`).
+                    // `any`/`unknown` accept everything — don't change inference for them.
+                    if ctx != TypeId::VOID
+                        && ctx != TypeId::ANY
+                        && ctx != TypeId::UNKNOWN
+                        && self.is_assignable_to(TypeId::UNDEFINED, ctx)
+                    {
+                        return TypeId::UNDEFINED;
+                    }
+                } else {
+                    return TypeId::UNDEFINED;
+                }
+            }
+
             return if !may_not_fall_through || self.function_body_falls_through(body_idx) {
-                TypeId::VOID
+                // When contextual return type expects `undefined` (not void/any/unknown),
+                // use `undefined` so `const f: () => undefined = () => {}` doesn't produce TS2322.
+                // tsc applies contextual typing to infer the return type of such lambdas.
+                // Exclude `any`/`unknown` — they accept everything and shouldn't change inference.
+                if let Some(ctx) = return_context
+                    && ctx != TypeId::VOID
+                    && ctx != TypeId::ANY
+                    && ctx != TypeId::UNKNOWN
+                    && self.is_assignable_to(TypeId::UNDEFINED, ctx)
+                {
+                    TypeId::UNDEFINED
+                } else {
+                    TypeId::VOID
+                }
             } else {
                 TypeId::NEVER
             };
