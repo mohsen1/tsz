@@ -61,6 +61,19 @@ pub enum SymbolKind {
     CallSignature = 30,
     ConstructSignature = 31,
     IndexSignature = 32,
+    // A function declaration that was promoted to a class through
+    // expando / prototype assignments. Its nav entry is labeled
+    // `constructor` but the underlying node is still a
+    // FunctionDeclaration — tsc sorts it by that kind rather than
+    // treating it as nameless the way a real Constructor member is.
+    SynthesizedConstructor = 33,
+    // Unknown kind — rendered as an empty ScriptElementKind string.
+    // tsc returns `ScriptElementKind.unknown ("")` for some nav
+    // entries (expando property assignments where the RHS isn't a
+    // function, certain JS patterns). Keep the name field populated
+    // and let the navbar/navtree serializer omit the kind field when
+    // it's falsy, matching the fourslash harness JSON compare.
+    Unknown = 34,
 }
 
 impl SymbolKind {
@@ -87,6 +100,8 @@ impl SymbolKind {
             Self::CallSignature => "call",
             Self::ConstructSignature => "construct",
             Self::IndexSignature => "index",
+            Self::SynthesizedConstructor => "constructor",
+            Self::Unknown => "",
         }
     }
 }
@@ -215,6 +230,13 @@ impl<'a> DocumentSymbolProvider<'a> {
                     for &stmt in &sf.statements.nodes {
                         symbols.extend(self.collect_symbols(stmt, container_name));
                     }
+                    // JS expando / prototype assignments: patterns like
+                    // `A.prototype.x = fn`, `A.y = fn`, and
+                    // `Object.defineProperty(A, 'p', …)` turn a plain
+                    // function / var declaration into a class-shaped
+                    // entry with the assigned names as its members.
+                    // Match tsc's navigation-bar behavior for JS files.
+                    self.apply_expando_assignments(&sf.statements.nodes, &mut symbols);
                 }
                 symbols
             }
@@ -1331,6 +1353,487 @@ impl<'a> DocumentSymbolProvider<'a> {
     /// that object's members as if they were direct children of the
     /// enclosing function — this mirrors tsc's treatment of factory
     /// functions (`function F() { return { a, b } }`).
+    /// Scan top-level expression statements for JS "expando" patterns
+    /// (`X.prototype.Y = fn`, `X.Y = fn`) and `Object.defineProperty(X,
+    /// 'Y', …)` calls. Each assignment attaches a member to the nav
+    /// entry named `X`, promoting it to a class and synthesizing a
+    /// `constructor` child so the navtree matches tsc's JS-mode
+    /// behavior.
+    fn apply_expando_assignments(&self, statements: &[NodeIndex], symbols: &mut [DocumentSymbol]) {
+        // Group expando members by owner name. `(owner → Vec<(member_name,
+        // prototype?, method?, fn_body?)>)`. We also track whether any
+        // assignment for that owner came through `.prototype` — that
+        // drives whether a synthetic constructor is injected.
+        // Kind override for a prototype-object method shorthand. tsc
+        // uses ScriptElementKind.method for `X.prototype = { m() {} }`
+        // and ScriptElementKind.function for `X.prototype.m = function(){}`.
+        #[derive(Clone, Copy, Debug)]
+        enum MemberKindHint {
+            None,
+            Method,
+        }
+        #[derive(Default)]
+        struct Expando {
+            // (name, is_function_like, body_block_idx for children,
+            // statement index for source-position sort,
+            // descriptor_idx for `Object.defineProperty` cases so the
+            // descriptor's `get`/`set` properties surface as children,
+            // member_via_prototype — whether *this specific* member
+            // was assigned through `.prototype.y` so we distinguish
+            // `X.prototype.y = 0` (kind: property) from `X.y = 0`
+            // (kind: "" unknown),
+            // kind_hint — `Method` when the member came from an
+            // object-literal shorthand method (`{ m() {} }` in
+            // `X.prototype = {…}`), so it renders as `method` instead
+            // of `function`.)
+            members: Vec<(
+                String,
+                bool,
+                NodeIndex,
+                NodeIndex,
+                NodeIndex,
+                bool,
+                MemberKindHint,
+            )>,
+            via_prototype: bool,
+        }
+        let mut groups: std::collections::BTreeMap<String, Expando> =
+            std::collections::BTreeMap::new();
+
+        for &stmt_idx in statements {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(exp_stmt) = self.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let expr_idx = exp_stmt.expression;
+            let Some(expr_node) = self.arena.get(expr_idx) else {
+                continue;
+            };
+            if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                let Some(bin) = self.arena.get_binary_expr(expr_node) else {
+                    continue;
+                };
+                if bin.operator_token != SyntaxKind::EqualsToken as u16 {
+                    continue;
+                }
+                // Special case: `X.prototype = { a, b() {}, … }` — treat
+                // each property of the RHS object literal as a prototype
+                // member (same as `X.prototype.a = …` for each).
+                if let Some(owner) = self.parse_prototype_assignment(bin.left) {
+                    let rhs = self.arena.get(bin.right);
+                    if let Some(rhs_node) = rhs
+                        && rhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        && let Some(obj) = self.arena.get_literal_expr(rhs_node)
+                    {
+                        let entry = groups.entry(owner.clone()).or_default();
+                        entry.via_prototype = true;
+                        for &prop_idx in &obj.elements.nodes {
+                            let Some(prop_node) = self.arena.get(prop_idx) else {
+                                continue;
+                            };
+                            let (name_idx, init_idx, is_shorthand_method) = match prop_node.kind {
+                                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                                    let Some(prop) = self.arena.get_property_assignment(prop_node)
+                                    else {
+                                        continue;
+                                    };
+                                    (prop.name, prop.initializer, false)
+                                }
+                                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                                    let Some(m) = self.arena.get_method_decl(prop_node) else {
+                                        continue;
+                                    };
+                                    (m.name, NodeIndex::NONE, true)
+                                }
+                                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                                    let Some(s) = self.arena.get_shorthand_property(prop_node)
+                                    else {
+                                        continue;
+                                    };
+                                    (s.name, NodeIndex::NONE, false)
+                                }
+                                _ => continue,
+                            };
+                            let Some(member_name) = self.get_name(name_idx) else {
+                                continue;
+                            };
+                            let is_fn =
+                                is_shorthand_method || self.is_function_like_expression(init_idx);
+                            let body = if is_fn {
+                                if is_shorthand_method {
+                                    self.arena
+                                        .get_method_decl_at(prop_idx)
+                                        .map_or(NodeIndex::NONE, |m| m.body)
+                                } else {
+                                    self.arena
+                                        .get(init_idx)
+                                        .and_then(|n| self.arena.get_function(n))
+                                        .map_or(NodeIndex::NONE, |f| f.body)
+                                }
+                            } else {
+                                NodeIndex::NONE
+                            };
+                            let hint = if is_shorthand_method {
+                                MemberKindHint::Method
+                            } else {
+                                MemberKindHint::None
+                            };
+                            entry.members.push((
+                                member_name,
+                                is_fn,
+                                body,
+                                stmt_idx,
+                                NodeIndex::NONE,
+                                true,
+                                hint,
+                            ));
+                        }
+                        continue;
+                    }
+                }
+                if let Some((owner, name, via_prototype)) = self.parse_expando_lhs(bin.left) {
+                    let is_fn = self.is_function_like_expression(bin.right);
+                    let body = if is_fn {
+                        self.arena
+                            .get(bin.right)
+                            .and_then(|n| self.arena.get_function(n))
+                            .map_or(NodeIndex::NONE, |f| f.body)
+                    } else {
+                        NodeIndex::NONE
+                    };
+                    let entry = groups.entry(owner).or_default();
+                    entry.members.push((
+                        name,
+                        is_fn,
+                        body,
+                        stmt_idx,
+                        NodeIndex::NONE,
+                        via_prototype,
+                        MemberKindHint::None,
+                    ));
+                    if via_prototype {
+                        entry.via_prototype = true;
+                    }
+                }
+            } else if expr_node.kind == syntax_kind_ext::CALL_EXPRESSION {
+                // `Object.defineProperty(X, 'y', descriptor)` /
+                // `Object.defineProperty(X.prototype, 'y', descriptor)` —
+                // descriptor's own property members (e.g. `get`/`set`)
+                // surface as the navbar entry's children. is_fn=false
+                // gives it `Unknown` kind so tsc's omit-empty-kind
+                // behavior kicks in.
+                if let Some((owner, name, via_prototype, descriptor)) =
+                    self.parse_define_property(expr_idx)
+                {
+                    let entry = groups.entry(owner).or_default();
+                    entry.members.push((
+                        name,
+                        false,
+                        NodeIndex::NONE,
+                        stmt_idx,
+                        descriptor,
+                        via_prototype,
+                        MemberKindHint::None,
+                    ));
+                    if via_prototype {
+                        entry.via_prototype = true;
+                    }
+                }
+            }
+        }
+
+        if groups.is_empty() {
+            return;
+        }
+
+        for sym in symbols.iter_mut() {
+            let Some(expando) = groups.get(&sym.name) else {
+                continue;
+            };
+            // Only promote var / function entries — actual `class X {}`
+            // declarations keep their own structure.
+            let promote = matches!(
+                sym.kind,
+                SymbolKind::Function | SymbolKind::Variable | SymbolKind::Constant
+            );
+            if !promote {
+                continue;
+            }
+            let was_function = matches!(sym.kind, SymbolKind::Function);
+            sym.kind = SymbolKind::Class;
+            // Add synthetic constructor when the underlying declaration
+            // was a function (callable as `new X()`) or we've seen a
+            // `.prototype.*` write against a var. Mirrors tsc's
+            // promoted-class output which always shows a constructor.
+            let has_ctor = sym.children.iter().any(|c| c.name == "constructor");
+            if (was_function || expando.via_prototype) && !has_ctor {
+                sym.children.insert(
+                    0,
+                    DocumentSymbol {
+                        name: "constructor".to_string(),
+                        detail: None,
+                        // Always use SynthesizedConstructor for expando-
+                        // promoted classes. The presence of this kind
+                        // is the signal `sort_symbols_deep` uses to
+                        // switch its sort to source-position order for
+                        // this container's children (matches tsc's
+                        // behavior for expando nav nodes that tryGetName
+                        // can't name).
+                        kind: SymbolKind::SynthesizedConstructor,
+                        kind_modifiers: String::new(),
+                        range: sym.range,
+                        selection_range: sym.selection_range,
+                        container_name: sym.container_name.clone(),
+                        children: vec![],
+                    },
+                );
+            }
+            for (name, is_fn, body, stmt_idx, descriptor, member_via_proto, kind_hint) in
+                &expando.members
+            {
+                let children = if !body.is_none() {
+                    self.collect_children_from_block(*body, Some(&sym.name))
+                } else if !descriptor.is_none() {
+                    // defineProperty descriptor — walk its literal
+                    // members so `get` / `set` show up as methods.
+                    self.collect_object_literal_members(*descriptor, Some(&sym.name))
+                } else {
+                    Vec::new()
+                };
+                let kind = match kind_hint {
+                    MemberKindHint::Method => SymbolKind::Method,
+                    MemberKindHint::None => {
+                        if *is_fn {
+                            SymbolKind::Function
+                        } else if !descriptor.is_none() {
+                            // `Object.defineProperty(X, 'y', …)` has no
+                            // inferable kind at tsc — the entry renders
+                            // with no kind field.
+                            SymbolKind::Unknown
+                        } else if *member_via_proto {
+                            // `X.prototype.y = 0` is treated as a
+                            // prototype property assignment →
+                            // ScriptElementKind.property.
+                            SymbolKind::Property
+                        } else {
+                            // `X.y = 0` (static, non-function) — tsc
+                            // omits the kind field entirely.
+                            SymbolKind::Unknown
+                        }
+                    }
+                };
+                // Use the original statement's range so the
+                // expando-child sort (by source position) orders these
+                // relative to the synthesized constructor in the same
+                // order they appear in source.
+                let range = node_range(self.arena, self.line_map, self.source_text, *stmt_idx);
+                sym.children.push(DocumentSymbol {
+                    name: name.clone(),
+                    detail: None,
+                    kind,
+                    kind_modifiers: String::new(),
+                    range,
+                    selection_range: range,
+                    container_name: Some(sym.name.clone()),
+                    children,
+                });
+            }
+        }
+    }
+
+    /// Parse the LHS of an assignment as an expando access chain:
+    ///   `X.Y` → (X, Y, false)
+    ///   `X.prototype.Y` → (X, Y, true)
+    ///   `X[Symbol.something]` → (X, "[Symbol.something]", false)
+    /// Returns `None` if the shape isn't a simple dotted/bracketed
+    /// access rooted at an identifier.
+    /// Match the LHS of an assignment as `X.prototype` (or
+    /// `X["prototype"]`). Returns `X`'s name on success. This is the
+    /// whole-object prototype form (`X.prototype = {...}`), not the
+    /// per-member form handled by `parse_expando_lhs`.
+    fn parse_prototype_assignment(&self, lhs: NodeIndex) -> Option<String> {
+        let node = self.arena.get(lhs)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+        let access = self.arena.get_access_expr(node)?;
+        let member = if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            self.get_name(access.name_or_argument)?
+        } else {
+            let arg = self.arena.get(access.name_or_argument)?;
+            if arg.kind != SyntaxKind::StringLiteral as u16 {
+                return None;
+            }
+            self.arena.get_literal(arg)?.text.clone()
+        };
+        if member != "prototype" {
+            return None;
+        }
+        let root = self.arena.get(access.expression)?;
+        if root.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        self.get_name(access.expression)
+    }
+
+    fn parse_expando_lhs(&self, lhs: NodeIndex) -> Option<(String, String, bool)> {
+        let node = self.arena.get(lhs)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+        let access = self.arena.get_access_expr(node)?;
+        // The rhs (name_or_argument) can be a name (property access) or
+        // an expression (element access). Stringify with get_name so
+        // computed accesses like `f[Symbol.iterator]` surface a
+        // `[Symbol.iterator]` text just like computed property names do.
+        let member_name = if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            self.get_name(access.name_or_argument)?
+        } else {
+            // Element access: for string-literal keys (`X["a"]`) keep
+            // the quoted source form (tsc's navbar uses the literal
+            // text with quotes). For computed accesses (e.g.
+            // `f[Symbol.iterator]`) emit the `[expr]` bracket form.
+            let arg = self.arena.get(access.name_or_argument)?;
+            if arg.kind == SyntaxKind::StringLiteral as u16 {
+                let start = arg.pos as usize;
+                let end = arg.end as usize;
+                if start > end || end > self.source_text.len() {
+                    return None;
+                }
+                self.source_text[start..end].trim().to_string()
+            } else {
+                let start = arg.pos as usize;
+                let end = arg.end as usize;
+                if start > end || end > self.source_text.len() {
+                    return None;
+                }
+                format!("[{}]", self.source_text[start..end].trim())
+            }
+        };
+
+        // Inner expression: `X` (identifier), `X.prototype`, or
+        // `X["prototype"]`.
+        let inner = access.expression;
+        let inner_node = self.arena.get(inner)?;
+        if inner_node.kind == SyntaxKind::Identifier as u16 {
+            let owner = self.get_name(inner)?;
+            return Some((owner, member_name, false));
+        }
+        if inner_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || inner_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            let inner_access = self.arena.get_access_expr(inner_node)?;
+            // Inner member must be the string "prototype" — either the
+            // identifier `prototype` or a `["prototype"]` literal.
+            let proto = if inner_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                self.get_name(inner_access.name_or_argument)?
+            } else {
+                let arg = self.arena.get(inner_access.name_or_argument)?;
+                if arg.kind != SyntaxKind::StringLiteral as u16 {
+                    return None;
+                }
+                self.arena.get_literal(arg)?.text.clone()
+            };
+            if proto != "prototype" {
+                return None;
+            }
+            let root = self.arena.get(inner_access.expression)?;
+            if root.kind != SyntaxKind::Identifier as u16 {
+                return None;
+            }
+            let owner = self.get_name(inner_access.expression)?;
+            return Some((owner, member_name, true));
+        }
+        None
+    }
+
+    /// Detect `Object.defineProperty(X, 'y', descriptor)` — returns
+    /// `(X_name, y_name, via_prototype, descriptor_idx)`. Returns None
+    /// for any non-matching call shape.
+    fn parse_define_property(
+        &self,
+        call_idx: NodeIndex,
+    ) -> Option<(String, String, bool, NodeIndex)> {
+        let call_node = self.arena.get(call_idx)?;
+        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(call_node)?;
+        // Callee must be `Object.defineProperty`.
+        let callee = self.arena.get(call.expression)?;
+        if callee.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let callee_access = self.arena.get_access_expr(callee)?;
+        let callee_name = self.get_name(callee_access.name_or_argument)?;
+        if callee_name != "defineProperty" {
+            return None;
+        }
+        let root = self.arena.get(callee_access.expression)?;
+        if root.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let root_name = self.get_name(callee_access.expression)?;
+        if root_name != "Object" {
+            return None;
+        }
+        // Need at least two args: target, name-literal.
+        let args = call.arguments.as_ref()?;
+        if args.nodes.len() < 2 {
+            return None;
+        }
+        let target_idx = args.nodes[0];
+        let name_idx = args.nodes[1];
+        let name_node = self.arena.get(name_idx)?;
+        if name_node.kind != SyntaxKind::StringLiteral as u16 {
+            return None;
+        }
+        let member = self.arena.get_literal(name_node)?.text.clone();
+        let descriptor = args.nodes.get(2).copied().unwrap_or(NodeIndex::NONE);
+        // Target: either `X` (identifier) or `X.prototype`.
+        let target = self.arena.get(target_idx)?;
+        if target.kind == SyntaxKind::Identifier as u16 {
+            let owner = self.get_name(target_idx)?;
+            return Some((owner, member, false, descriptor));
+        }
+        if target.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(target)?;
+            let proto_name = self.get_name(access.name_or_argument)?;
+            if proto_name != "prototype" {
+                return None;
+            }
+            let root = self.arena.get(access.expression)?;
+            if root.kind != SyntaxKind::Identifier as u16 {
+                return None;
+            }
+            let owner = self.get_name(access.expression)?;
+            return Some((owner, member, true, descriptor));
+        }
+        None
+    }
+
+    /// Check whether an expression is a function-like value
+    /// (`function () {}`, `function name() {}`, or `(a) => {}`).
+    fn is_function_like_expression(&self, expr: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(expr) else {
+            return false;
+        };
+        matches!(
+            node.kind,
+            k if k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION
+        )
+    }
+
     fn collect_returned_object_members(
         &self,
         block_idx: NodeIndex,
