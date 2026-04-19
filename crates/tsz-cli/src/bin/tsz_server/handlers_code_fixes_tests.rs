@@ -39,6 +39,7 @@ fn make_server() -> Server {
         include_completions_with_class_member_snippets: false,
         new_line_character: None,
         plugin_configs: FxHashMap::default(),
+        native_ts_worker: None,
     }
 }
 
