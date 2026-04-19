@@ -11,15 +11,15 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::Path;
 use std::sync::Arc;
+use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
 use tsz_binder::state::LibContext as BinderLibContext;
-use tsz_binder::BinderState;
 use tsz_checker::context::LibContext as CheckerLibContext;
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::module_resolution::build_module_resolution_maps;
 use tsz_checker::state::CheckerState;
-use tsz_common::checker_options::JsxMode;
 use tsz_common::ModuleKind;
+use tsz_common::checker_options::JsxMode;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
