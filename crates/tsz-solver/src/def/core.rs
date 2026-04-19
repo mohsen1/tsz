@@ -1054,10 +1054,8 @@ impl DefinitionStore {
                     .and_then(|d| Some((d.file_id?, d.span?.0)));
                 let new_pos = self.get(def_id).and_then(|d| Some((d.file_id?, d.span?.0)));
                 match (existing_pos, new_pos) {
-                    (Some((ef, ep)), Some((nf, np))) => {
-                        if (nf, np) < (ef, ep) {
-                            e.insert(def_id);
-                        }
+                    (Some((ef, ep)), Some((nf, np))) if (nf, np) < (ef, ep) => {
+                        e.insert(def_id);
                     }
                     (None, Some(_)) => {
                         e.insert(def_id);
