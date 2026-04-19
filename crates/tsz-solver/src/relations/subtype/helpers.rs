@@ -131,6 +131,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if self.allow_bivariant_param_count {
             flags |= RelationCacheKey::FLAG_ALLOW_BIVARIANT_PARAM_COUNT;
         }
+        if !self.erase_generics {
+            flags |= RelationCacheKey::FLAG_NO_ERASE_GENERICS;
+        }
 
         // CRITICAL: Calculate effective `any_mode` based on depth.
         // If `any_propagation` is `TopLevelOnly` but `depth > 0`, the effective mode is "None".
