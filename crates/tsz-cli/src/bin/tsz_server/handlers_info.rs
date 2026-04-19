@@ -51,6 +51,8 @@ fn symbol_kind_to_tsserver(
         SymbolKind::TypeParameter => "type parameter",
         SymbolKind::Struct => "type",
         SymbolKind::Alias => "alias",
+        SymbolKind::Getter => "getter",
+        SymbolKind::Setter => "setter",
         _ => "unknown",
     }
 }
@@ -1896,28 +1898,42 @@ impl Server {
             let mut symbols = provider.get_document_symbols(root);
             sort_symbols_deep(&mut symbols);
 
-            /// Check if a symbol should appear as its own entry in the primary
-            /// navigation bar menu (matching TypeScript's shouldAppearInPrimaryNavBarMenu).
-            const fn should_appear_in_primary_navbar(
+            /// Check if a symbol should appear as its own entry in the
+            /// primary navigation bar menu. Mirrors tsc's
+            /// `shouldAppearInPrimaryNavBarMenu` /
+            /// `isTopLevelFunctionDeclaration`: leaf functions only promote
+            /// when their parent is SourceFile / ModuleBlock / Method /
+            /// Constructor — not SetAccessor / GetAccessor, which is why
+            /// `function f() {}` inside a setter stays collapsed.
+            fn should_appear_in_primary_navbar(
                 sym: &tsz::lsp::symbols::document_symbols::DocumentSymbol,
+                parent_kind: Option<tsz::lsp::symbols::document_symbols::SymbolKind>,
             ) -> bool {
                 use tsz::lsp::symbols::document_symbols::SymbolKind;
-                // Items with children always appear
                 if !sym.children.is_empty() {
                     return true;
                 }
-                // Container-like declarations always appear
-                matches!(
-                    sym.kind,
+                match sym.kind {
                     SymbolKind::Class
-                        | SymbolKind::Enum
-                        | SymbolKind::Interface
-                        | SymbolKind::Module
-                        | SymbolKind::Namespace
-                        | SymbolKind::File
-                        | SymbolKind::Struct // type alias
-                        | SymbolKind::Function
-                )
+                    | SymbolKind::Enum
+                    | SymbolKind::Interface
+                    | SymbolKind::Module
+                    | SymbolKind::Namespace
+                    | SymbolKind::File
+                    | SymbolKind::Struct => true,
+                    SymbolKind::Function => matches!(
+                        parent_kind,
+                        None // root (source file)
+                            | Some(
+                                SymbolKind::File
+                                    | SymbolKind::Module
+                                    | SymbolKind::Namespace
+                                    | SymbolKind::Method
+                                    | SymbolKind::Constructor
+                            )
+                    ),
+                    _ => false,
+                }
             }
 
             fn navbar_child_item(
@@ -1995,7 +2011,7 @@ impl Server {
                 items.push(parent_item);
                 // Only recurse into children that should appear in the primary navbar
                 for child in &sym.children {
-                    if should_appear_in_primary_navbar(child) {
+                    if should_appear_in_primary_navbar(child, Some(sym.kind)) {
                         symbol_to_navbar_item(child, indent + 1, items);
                     }
                 }
@@ -2029,9 +2045,12 @@ impl Server {
                 root["childItems"] = serde_json::json!(child_items);
             }
             items.push(root);
-            // Only add top-level symbols that qualify as primary navbar items
+            // Only add top-level symbols that qualify as primary navbar
+            // items. `parent_kind = None` corresponds to the source file
+            // root — tsc treats SourceFile as a valid "top-level" parent
+            // for promoting leaf functions.
             for sym in &symbols {
-                if should_appear_in_primary_navbar(sym) {
+                if should_appear_in_primary_navbar(sym, None) {
                     symbol_to_navbar_item(sym, 1, &mut items);
                 }
             }

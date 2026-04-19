@@ -310,17 +310,15 @@ fn test_get_set_accessors() {
     assert_eq!(symbols.len(), 1);
     assert_eq!(symbols[0].children.len(), 2);
 
-    // Get accessor
+    // Get accessor — tsc exposes getters/setters via ScriptElementKind
+    // "getter"/"setter" (not "property"), which we model with dedicated
+    // SymbolKind variants.
     assert_eq!(symbols[0].children[0].name, "val");
-    assert_eq!(symbols[0].children[0].kind, SymbolKind::Property);
-    assert_eq!(symbols[0].children[0].detail, Some("getter".to_string()));
-    assert!(symbols[0].children[0].kind_modifiers.contains("getter"));
+    assert_eq!(symbols[0].children[0].kind, SymbolKind::Getter);
 
     // Set accessor
     assert_eq!(symbols[0].children[1].name, "val");
-    assert_eq!(symbols[0].children[1].kind, SymbolKind::Property);
-    assert_eq!(symbols[0].children[1].detail, Some("setter".to_string()));
-    assert!(symbols[0].children[1].kind_modifiers.contains("setter"));
+    assert_eq!(symbols[0].children[1].kind, SymbolKind::Setter);
 }
 
 #[test]

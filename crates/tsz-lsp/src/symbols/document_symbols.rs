@@ -48,10 +48,13 @@ pub enum SymbolKind {
     Event = 24,
     Operator = 25,
     TypeParameter = 26,
-    // Non-LSP kinds used internally for tsserver parity (`alias` does not
-    // have a 1:1 LSP mapping — clients that surface these via LSP should
-    // treat it as a variable/module).
+    // Non-LSP kinds used internally for tsserver parity (the LSP `SymbolKind`
+    // enum has no getter/setter/alias distinction — clients that surface
+    // these via LSP should treat Alias as a variable/module and
+    // Getter/Setter as a property).
     Alias = 27,
+    Getter = 28,
+    Setter = 29,
 }
 
 impl SymbolKind {
@@ -73,6 +76,8 @@ impl SymbolKind {
             Self::TypeParameter => "type parameter",
             Self::Struct => "type",
             Self::Alias => "alias",
+            Self::Getter => "getter",
+            Self::Setter => "setter",
         }
     }
 }
@@ -618,18 +623,18 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
                     let selection_range =
                         node_range(self.arena, self.line_map, self.source_text, name_node);
-                    let mut modifiers = self.get_kind_modifiers_from_list(&accessor.modifiers);
-                    append_modifier(&mut modifiers, "getter");
+                    let modifiers = self.get_kind_modifiers_from_list(&accessor.modifiers);
+                    let children = self.collect_children_from_block(accessor.body, Some(&name));
 
                     vec![DocumentSymbol {
                         name,
-                        detail: Some("getter".to_string()),
-                        kind: SymbolKind::Property,
+                        detail: None,
+                        kind: SymbolKind::Getter,
                         kind_modifiers: modifiers,
                         range,
                         selection_range,
                         container_name: container_name.map(std::string::ToString::to_string),
-                        children: vec![],
+                        children,
                     }]
                 } else {
                     vec![]
@@ -646,18 +651,18 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
                     let selection_range =
                         node_range(self.arena, self.line_map, self.source_text, name_node);
-                    let mut modifiers = self.get_kind_modifiers_from_list(&accessor.modifiers);
-                    append_modifier(&mut modifiers, "setter");
+                    let modifiers = self.get_kind_modifiers_from_list(&accessor.modifiers);
+                    let children = self.collect_children_from_block(accessor.body, Some(&name));
 
                     vec![DocumentSymbol {
                         name,
-                        detail: Some("setter".to_string()),
-                        kind: SymbolKind::Property,
+                        detail: None,
+                        kind: SymbolKind::Setter,
                         kind_modifiers: modifiers,
                         range,
                         selection_range,
                         container_name: container_name.map(std::string::ToString::to_string),
-                        children: vec![],
+                        children,
                     }]
                 } else {
                     vec![]
@@ -853,10 +858,21 @@ impl<'a> DocumentSymbolProvider<'a> {
             && let Some(block) = self.arena.get_block(node)
         {
             for &stmt in &block.statements.nodes {
-                // Only collect declarations (functions, classes) - not variables
+                // Collect declaration-ish statements that tsc includes in
+                // the outline for a block body: functions, classes,
+                // interfaces, enums, and type aliases. Variable
+                // declarations inside function/constructor/method bodies
+                // are deliberately omitted — tsc doesn't surface them.
                 if let Some(stmt_node) = self.arena.get(stmt)
-                    && (stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        || stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION)
+                    && matches!(
+                        stmt_node.kind,
+                        k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                            || k == syntax_kind_ext::CLASS_DECLARATION
+                            || k == syntax_kind_ext::INTERFACE_DECLARATION
+                            || k == syntax_kind_ext::ENUM_DECLARATION
+                            || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                            || k == syntax_kind_ext::MODULE_DECLARATION
+                    )
                 {
                     symbols.extend(self.collect_symbols(stmt, container_name));
                 }
