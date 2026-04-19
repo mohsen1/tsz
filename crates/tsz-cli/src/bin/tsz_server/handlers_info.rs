@@ -55,6 +55,26 @@ fn symbol_kind_to_tsserver(
     }
 }
 
+/// Sort a navtree/navbar symbol slice in-place, recursively sorting each
+/// node's children. Mirrors TypeScript's `compareChildren`: primary key is
+/// case-insensitive name, tiebreaker is source position. tsc sorts nav
+/// items regardless of declaration order, so tsz has to match or every
+/// declaration-order-dependent test drifts.
+fn sort_symbols_deep(symbols: &mut [tsz::lsp::symbols::document_symbols::DocumentSymbol]) {
+    symbols.sort_by(|a, b| {
+        let na = a.name.to_lowercase();
+        let nb = b.name.to_lowercase();
+        match na.cmp(&nb) {
+            std::cmp::Ordering::Equal => (a.range.start.line, a.range.start.character)
+                .cmp(&(b.range.start.line, b.range.start.character)),
+            other => other,
+        }
+    });
+    for sym in symbols.iter_mut() {
+        sort_symbols_deep(&mut sym.children);
+    }
+}
+
 impl Server {
     fn build_project_for_file(&self, file_name: &str) -> Option<Project> {
         let mut files = self.open_files.clone();
@@ -1763,7 +1783,8 @@ impl Server {
             let is_external_module = binder.is_external_module;
             let line_map = LineMap::build(&source_text);
             let provider = DocumentSymbolProvider::new(&arena, &line_map, &source_text);
-            let symbols = provider.get_document_symbols(root);
+            let mut symbols = provider.get_document_symbols(root);
+            sort_symbols_deep(&mut symbols);
 
             fn symbol_to_navtree(
                 sym: &tsz::lsp::symbols::document_symbols::DocumentSymbol,
@@ -1872,7 +1893,8 @@ impl Server {
             let is_external_module = binder.is_external_module;
             let line_map = LineMap::build(&source_text);
             let provider = DocumentSymbolProvider::new(&arena, &line_map, &source_text);
-            let symbols = provider.get_document_symbols(root);
+            let mut symbols = provider.get_document_symbols(root);
+            sort_symbols_deep(&mut symbols);
 
             /// Check if a symbol should appear as its own entry in the primary
             /// navigation bar menu (matching TypeScript's shouldAppearInPrimaryNavBarMenu).
