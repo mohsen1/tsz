@@ -356,6 +356,28 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
          */
         openFile(fileName, content, scriptKindName) {
             super.openFile(fileName, content, scriptKindName);
+            // `LanguageServiceAdapterHost`'s base `openFile` is a no-op, so
+            // an overriding `content` passed by `goTo.file(name, content)`
+            // never reaches the scriptInfo. Apply it ourselves so that the
+            // native LS (which reads through `getScriptSnapshot` →
+            // `scriptInfo.content`) also sees the updated buffer — otherwise
+            // tsz-server and native disagree on what the file contains.
+            if (typeof content === "string") {
+                const existingScriptInfo = this.getScriptInfo(fileName);
+                if (existingScriptInfo) {
+                    if (typeof existingScriptInfo.updateContent === "function") {
+                        existingScriptInfo.updateContent(content);
+                    } else {
+                        existingScriptInfo.content = content;
+                        if (typeof existingScriptInfo.version === "number") {
+                            existingScriptInfo.version++;
+                        }
+                        existingScriptInfo.lineMap = undefined;
+                    }
+                } else if (typeof this.addScript === "function") {
+                    this.addScript(fileName, content, /*isRootFile*/ false);
+                }
+            }
             if (this._client) {
                 const isProjectJsonFile = (filePath) =>
                     filePath.endsWith("/package.json")
@@ -376,13 +398,21 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
                 }
 
                 const openKnownFile = (path, fileContent, kindName) => {
-                    if (this._openedFiles.has(path)) return;
                     let contentToSend = fileContent;
                     if (contentToSend == null) {
+                        if (this._openedFiles.has(path)) return;
                         const scriptInfo = this.getScriptInfo(path);
                         if (scriptInfo) contentToSend = scriptInfo.content;
                     }
                     if (contentToSend == null) return;
+                    // When explicit content is supplied (e.g.
+                    // `goTo.file(name, overridingContent)`), always push the
+                    // update to tsz-server even if the path is already open —
+                    // otherwise tsz keeps the stale snapshot and
+                    // completion/diagnostics on it disagree with tsc.
+                    if (this._openedFiles.has(path)) {
+                        this._client.closeFile(path);
+                    }
                     this._client.openFile(path, contentToSend, kindName);
                     this._openedFiles.add(path);
                 };
