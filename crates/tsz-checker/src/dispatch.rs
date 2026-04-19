@@ -1630,6 +1630,31 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // Check closing element for TS7026 (tsc emits for both opening and closing tags)
                     self.checker
                         .check_jsx_closing_element_for_implicit_any(jsx.closing_element);
+                    // tsc also re-checks the closing tag's name identifier, so an
+                    // unresolved component name emits TS2304 at both the opening
+                    // and closing positions. Route the closing tag_name through
+                    // type resolution so the standard identifier-lookup path
+                    // produces the diagnostic.
+                    if let Some(closing_node) = self.checker.ctx.arena.get(jsx.closing_element)
+                        && let Some(closing_data) =
+                            self.checker.ctx.arena.get_jsx_closing(closing_node)
+                    {
+                        let tag_name_idx = closing_data.tag_name;
+                        if let Some(tag_name_node) = self.checker.ctx.arena.get(tag_name_idx)
+                            && tag_name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                            && let Some(ident) =
+                                self.checker.ctx.arena.get_identifier(tag_name_node)
+                            && ident
+                                .escaped_text
+                                .chars()
+                                .next()
+                                .is_some_and(|c| c.is_ascii_uppercase())
+                        {
+                            let _ = self
+                                .checker
+                                .get_type_of_node_with_request(tag_name_idx, request);
+                        }
+                    }
                     self.checker.get_type_of_jsx_opening_element_with_children(
                         jsx.opening_element,
                         request,
