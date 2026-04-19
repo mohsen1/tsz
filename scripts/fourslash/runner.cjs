@@ -27,6 +27,8 @@
  * Options:
  *   --tsz-server=PATH     Path to tsz-server binary (required)
  *   --max=N               Maximum number of tests to run
+ *   --offset=N            Skip first N tests (applied after --shard)
+ *   --shard=I/N           Run shard I of N; tests interleaved by index
  *   --filter=PATTERN      Only run tests matching pattern (substring)
  *   --test-dir=DIR        Test directory relative to TypeScript root
  *   --verbose             Show detailed output for each test
@@ -61,6 +63,8 @@ function parseArgs() {
         tszServerBinary: null,
         max: 0,
         offset: 0,
+        shardId: -1,
+        shardTotal: 0,
         filter: "",
         testDir: "tests/cases/fourslash",
         verbose: false,
@@ -79,6 +83,19 @@ function parseArgs() {
             opts.max = parseInt(arg.substring("--max=".length), 10);
         } else if (arg.startsWith("--offset=")) {
             opts.offset = parseInt(arg.substring("--offset=".length), 10);
+        } else if (arg.startsWith("--shard=")) {
+            const spec = arg.substring("--shard=".length);
+            const m = /^(\d+)\/(\d+)$/.exec(spec);
+            if (!m) {
+                console.error(`Error: --shard expects I/N (got: ${spec})`);
+                process.exit(2);
+            }
+            opts.shardId = parseInt(m[1], 10);
+            opts.shardTotal = parseInt(m[2], 10);
+            if (opts.shardTotal < 1 || opts.shardId < 0 || opts.shardId >= opts.shardTotal) {
+                console.error(`Error: --shard=${spec} out of range`);
+                process.exit(2);
+            }
         } else if (arg.startsWith("--filter=")) {
             opts.filter = arg.substring("--filter=".length);
         } else if (arg.startsWith("--test-dir=")) {
@@ -1823,7 +1840,14 @@ async function main() {
     // Discover tests
     const testFiles = discoverTests(opts.testDir, opts.filter);
     const totalAvailable = testFiles.length;
-    let testsToRun = opts.offset > 0 ? testFiles.slice(opts.offset) : testFiles;
+    let testsToRun = testFiles;
+    // --shard=I/N interleaves by index so heavy-test clusters spread evenly
+    // across shards. Applied before --offset/--max so those still trim within
+    // the shard if explicitly passed.
+    if (opts.shardTotal > 0) {
+        testsToRun = testFiles.filter((_, idx) => idx % opts.shardTotal === opts.shardId);
+    }
+    if (opts.offset > 0) testsToRun = testsToRun.slice(opts.offset);
     if (opts.max > 0) testsToRun = testsToRun.slice(0, opts.max);
 
     const mode = opts.sequential ? "sequential" : `parallel (${Math.min(opts.workers, testsToRun.length)} workers)`;
