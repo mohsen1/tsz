@@ -457,6 +457,15 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Under `--noLib`, tsc suppresses TS2304 for well-known lib type
+        // names (PromiseLike, ArrayLike, Document, etc.) that aren't in the
+        // "core global" set reported via TS2318. Without the libs we can't
+        // verify the name exists — but the user opted into noLib, so
+        // cascading TS2304 for every type-position reference is noise.
+        if self.ctx.compiler_options.no_lib && self.is_well_known_lib_type_name(name) {
+            return;
+        }
+
         let _ = self.resolve_type_name_or_report(name, idx);
     }
 
