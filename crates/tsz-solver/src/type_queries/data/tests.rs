@@ -744,7 +744,6 @@ fn deeply_any_for_array_of_string() {
 }
 
 #[test]
-#[ignore = "tuple_list resolution returns empty for dynamically created tuples in test context"]
 fn deeply_any_for_tuple_of_any() {
     let interner = TypeInterner::new();
     let tuple = interner.tuple(vec![
