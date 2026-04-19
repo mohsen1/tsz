@@ -362,8 +362,11 @@ impl<'a> Printer<'a> {
         // Use source text scan: search for the identifier as a binding in the body.
         // This catches parameters, local vars, nested functions/classes at any depth.
         if let Some(text) = self.source_text {
-            let body_text =
-                crate::safe_slice::slice(text, body_node.pos as usize, body_node.end as usize);
+            let body_text = crate::safe_slice::slice_or_empty(
+                text,
+                body_node.pos as usize,
+                body_node.end as usize,
+            );
             return Self::text_has_binding_named(body_text, ns_name);
         }
         false
