@@ -151,6 +151,7 @@ pub struct CodeActionProvider<'a> {
     pub(super) file_name: String,
     pub(super) source: &'a str,
     pub(super) organize_imports_ignore_case: bool,
+    pub(super) new_line_override: Option<String>,
 }
 
 impl<'a> CodeActionProvider<'a> {
@@ -169,11 +170,20 @@ impl<'a> CodeActionProvider<'a> {
             file_name,
             source,
             organize_imports_ignore_case: true,
+            new_line_override: None,
         }
     }
 
     pub const fn with_organize_imports_ignore_case(mut self, ignore_case: bool) -> Self {
         self.organize_imports_ignore_case = ignore_case;
+        self
+    }
+
+    /// Override the newline character used by inserted import edits. When
+    /// unset, the provider picks between CRLF/LF by inspecting the source
+    /// text (defaulting to CRLF when the source has no newlines).
+    pub fn with_new_line_override(mut self, new_line: Option<String>) -> Self {
+        self.new_line_override = new_line;
         self
     }
 
