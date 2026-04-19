@@ -53,6 +53,9 @@ fn symbol_kind_to_tsserver(
         SymbolKind::Alias => "alias",
         SymbolKind::Getter => "getter",
         SymbolKind::Setter => "setter",
+        SymbolKind::CallSignature => "call",
+        SymbolKind::ConstructSignature => "construct",
+        SymbolKind::IndexSignature => "index",
         _ => "unknown",
     }
 }
@@ -70,7 +73,13 @@ fn symbol_kind_to_tsserver(
 fn sort_symbols_deep(symbols: &mut [tsz::lsp::symbols::document_symbols::DocumentSymbol]) {
     use tsz::lsp::symbols::document_symbols::SymbolKind;
     fn sort_key(sym: &tsz::lsp::symbols::document_symbols::DocumentSymbol) -> Option<String> {
-        if sym.name.starts_with('[') {
+        // Mirror tsc's `tryGetName`: anything without a normal declaration
+        // name compares as "nameless" (sorts ahead of named siblings and
+        // falls back to kind ordinal among itself). Covers computed
+        // property names (`[x]`, `["foo"]`, `[1]`) and interface-type
+        // signatures (`()` call, `new()` construct, `[]` index).
+        let nameless = sym.name.starts_with('[') || sym.name == "()" || sym.name == "new()";
+        if nameless {
             None
         } else {
             Some(sym.name.to_lowercase())
@@ -108,6 +117,9 @@ fn sort_symbols_deep(symbols: &mut [tsz::lsp::symbols::document_symbols::Documen
             SymbolKind::Alias => 280, // ImportSpecifier / NamespaceImport
             SymbolKind::TypeParameter => 170,
             SymbolKind::Key => 172,
+            SymbolKind::CallSignature => 180,
+            SymbolKind::ConstructSignature => 181,
+            SymbolKind::IndexSignature => 182,
         }
     }
     symbols.sort_by(|a, b| {
@@ -123,8 +135,15 @@ fn sort_symbols_deep(symbols: &mut [tsz::lsp::symbols::document_symbols::Documen
             // alone can't distinguish two `[computed]` class methods).
             (None, Some(_)) => std::cmp::Ordering::Less,
             (Some(_), None) => std::cmp::Ordering::Greater,
-            (None, None) => (a.range.start.line, a.range.start.character)
-                .cmp(&(b.range.start.line, b.range.start.character)),
+            // Nameless against nameless: tsc's tiebreaker is kind
+            // ordinal (call < construct < index). Same-kind pairs
+            // (e.g. two computed-name methods) fall back to source
+            // position.
+            (None, None) => match kind_rank(a.kind).cmp(&kind_rank(b.kind)) {
+                std::cmp::Ordering::Equal => (a.range.start.line, a.range.start.character)
+                    .cmp(&(b.range.start.line, b.range.start.character)),
+                other => other,
+            },
         }
     });
     for sym in symbols.iter_mut() {
