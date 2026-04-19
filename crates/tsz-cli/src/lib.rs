@@ -17,7 +17,7 @@ pub mod trace;
 pub mod tracing_config;
 pub mod watch;
 pub use commands::build;
-pub mod help;
+pub use commands::help;
 
 #[cfg(test)]
 #[path = "../tests/args_tests.rs"]
