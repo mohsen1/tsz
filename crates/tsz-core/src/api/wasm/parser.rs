@@ -7,7 +7,7 @@ use crate::CheckerState;
 use crate::ScriptTarget;
 use crate::WasmTransformContext;
 use crate::api::wasm::code_actions::{default_code_action_context, parse_code_action_context};
-use crate::api::wasm::compiler_options::CompilerOptions;
+use crate::api::wasm::compiler_options::{CompilerOptions, parse_compiler_options_json};
 use crate::binder::BinderState;
 use crate::checker;
 use crate::checker::context::LibContext;
@@ -86,17 +86,11 @@ impl Parser {
     /// ```
     #[wasm_bindgen(js_name = setCompilerOptions)]
     pub fn set_compiler_options(&mut self, options_json: &str) -> Result<(), JsValue> {
-        match serde_json::from_str::<CompilerOptions>(options_json) {
-            Ok(options) => {
-                self.compiler_options = options;
-                // Invalidate type cache when compiler options change
-                self.type_cache = None;
-                Ok(())
-            }
-            Err(e) => Err(JsValue::from_str(&format!(
-                "Failed to parse compiler options: {e}"
-            ))),
-        }
+        let options = parse_compiler_options_json(options_json)?;
+        self.compiler_options = options;
+        // Invalidate type cache when compiler options change
+        self.type_cache = None;
+        Ok(())
     }
 
     /// Add a lib file (e.g., lib.es5.d.ts) for global type resolution.
