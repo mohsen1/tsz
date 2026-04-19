@@ -43,6 +43,12 @@ fn has_polymorphic_this_return_mismatch(
     if source_returns.is_empty() || target_returns.is_empty() {
         return false;
     }
+    // Only apply this fast mismatch rule for single-signature comparisons.
+    // Overload sets need full compatibility checks (including trailing overload
+    // matching) and this shortcut would produce false TS2430s.
+    if source_returns.len() != 1 || target_returns.len() != 1 {
+        return false;
+    }
 
     let source_has_polymorphic_this = source_returns
         .iter()
@@ -162,14 +168,14 @@ pub(crate) fn should_report_member_type_mismatch(
     node_idx: NodeIndex,
 ) -> bool {
     let source = checker.narrow_this_from_enclosing_typeof_guard(node_idx, source);
+    if has_polymorphic_this_return_mismatch(checker, source, target) {
+        return true;
+    }
     if checker.should_suppress_assignability_diagnostic(source, target) {
         return false;
     }
     if checker.should_suppress_assignability_for_parse_recovery(node_idx, node_idx) {
         return false;
-    }
-    if has_polymorphic_this_return_mismatch(checker, source, target) {
-        return true;
     }
     if checker.is_assignable_to_no_erase_generics(source, target) {
         return false;
@@ -213,14 +219,14 @@ pub(crate) fn should_report_own_member_type_mismatch(
     node_idx: NodeIndex,
 ) -> bool {
     let source = checker.narrow_this_from_enclosing_typeof_guard(node_idx, source);
+    if has_polymorphic_this_return_mismatch(checker, source, target) {
+        return true;
+    }
     if checker.should_suppress_member_assignability(source, target) {
         return false;
     }
     if checker.should_suppress_assignability_for_parse_recovery(node_idx, node_idx) {
         return false;
-    }
-    if has_polymorphic_this_return_mismatch(checker, source, target) {
-        return true;
     }
     if checker.is_assignable_to_no_erase_generics(source, target) {
         return false;
@@ -432,6 +438,9 @@ pub(crate) fn should_report_property_type_mismatch(
     node_idx: NodeIndex,
 ) -> bool {
     let narrowed_source = checker.narrow_this_from_enclosing_typeof_guard(node_idx, source);
+    if has_polymorphic_this_return_mismatch(checker, narrowed_source, target) {
+        return true;
+    }
     // TS2430 property compatibility is still a member-compatibility check, even
     // though it uses regular assignability instead of no-erase-generics. Using
     // the broader TS2322 suppression here hides real interface-extends failures
@@ -441,9 +450,6 @@ pub(crate) fn should_report_property_type_mismatch(
     }
     if checker.should_suppress_assignability_for_parse_recovery(node_idx, node_idx) {
         return false;
-    }
-    if has_polymorphic_this_return_mismatch(checker, narrowed_source, target) {
-        return true;
     }
 
     let request = {
