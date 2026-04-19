@@ -1144,14 +1144,25 @@ impl<'a> CheckerState<'a> {
         }
         // Cross-arena DefId equality alone is not strong enough here: imported
         // aliases can reuse a Lazy(DefId) shape that collides with boxed lib
-        // DefIds, which falsely classifies constraints like `Key` as `Function`.
-        // Guard the fallback by requiring the rendered type name to actually be
-        // `Function`.
-        if self.format_type(type_id) != "Function" {
+        // DefIds, which falsely classifies unrelated constraints as `Function`.
+        // Only accept the boxed-def fallback when the resolved symbol itself is
+        // the lib `Function` symbol.
+        if !query::is_boxed_function_def(db, type_id) {
             return false;
         }
-        // Check if the type is Lazy(DefId) with a known Function boxed DefId
-        query::is_boxed_function_def(db, type_id)
+
+        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id) else {
+            return false;
+        };
+        if !self.ctx.symbol_is_from_lib(sym_id) {
+            return false;
+        }
+
+        let lib_binders = self.get_lib_binders();
+        self.ctx
+            .binder
+            .get_symbol_with_libs(sym_id, &lib_binders)
+            .is_some_and(|symbol| symbol.escaped_name == "Function")
     }
 
     /// Check if a type parameter has a callable constraint (e.g., `F extends Function`).

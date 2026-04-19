@@ -1,4 +1,4 @@
-use crate::core::*;
+use super::super::core::*;
 
 #[test]
 fn test_unannotated_async_generator_method_infers_yield_type_in_return() {

@@ -1,4 +1,4 @@
-use crate::core::*;
+use super::super::core::*;
 
 #[test]
 fn test_static_private_accessor_not_visible_on_derived_constructor_type() {

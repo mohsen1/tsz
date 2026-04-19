@@ -1,4 +1,4 @@
-use crate::core::*;
+use super::super::core::*;
 
 #[test]
 fn test_generic_filtering_mapped_callbacks_use_widened_round2_context() {

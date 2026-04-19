@@ -151,6 +151,7 @@ impl PropertyAccessResult {
 /// enabling proper resolution of Lazy types and type aliases.
 pub struct PropertyAccessEvaluator<'a> {
     pub(crate) db: &'a dyn QueryDatabase,
+    resolver: Option<&'a dyn TypeResolver>,
     pub(crate) no_unchecked_indexed_access: bool,
     /// Unified recursion guard for cycle detection and depth limiting.
     pub(crate) guard: RefCell<crate::recursion::RecursionGuard<TypeId>>,
@@ -179,6 +180,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
     pub fn new(db: &'a dyn QueryDatabase) -> Self {
         PropertyAccessEvaluator {
             db,
+            resolver: None,
             no_unchecked_indexed_access: false,
             guard: RefCell::new(crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::PropertyAccess,
@@ -189,9 +191,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
     }
 
-    pub fn with_resolver(db: &'a dyn QueryDatabase, _resolver: &dyn TypeResolver) -> Self {
-        // Note: resolver parameter is currently unused but kept for API compatibility
-        Self::new(db)
+    pub fn with_resolver(db: &'a dyn QueryDatabase, resolver: &'a dyn TypeResolver) -> Self {
+        let mut evaluator = Self::new(db);
+        evaluator.resolver = Some(resolver);
+        evaluator
     }
 
     pub const fn set_no_unchecked_indexed_access(&mut self, enabled: bool) {
@@ -215,6 +218,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
         self.db.as_type_database()
     }
 
+    fn resolver(&self) -> &dyn TypeResolver {
+        self.resolver.unwrap_or_else(|| self.db.as_type_resolver())
+    }
+
     pub(crate) fn bind_object_receiver_this(&self, receiver: TypeId, type_id: TypeId) -> TypeId {
         if self.skip_this_binding.get() {
             return type_id;
@@ -234,8 +241,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 if let Some(sym_id) = shape.symbol {
                     let symbol_ref = crate::SymbolRef(sym_id.0);
                     return self
-                        .db
-                        .as_type_resolver()
+                        .resolver()
                         .symbol_to_def_id(symbol_ref)
                         .map(|def_id| self.interner().lazy(def_id))
                         .unwrap_or_else(|| self.interner().reference(symbol_ref));
@@ -923,7 +929,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 };
 
                 // Resolve the lazy type using the resolver
-                if let Some(resolved) = self.db.resolve_lazy(def_id, self.interner()) {
+                if let Some(resolved) = self.resolver().resolve_lazy(def_id, self.interner()) {
                     let resolved = if crate::contains_this_type(self.interner(), resolved) {
                         crate::substitute_this_type(self.interner(), resolved, obj_type)
                     } else {

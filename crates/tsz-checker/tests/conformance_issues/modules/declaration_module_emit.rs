@@ -1,4 +1,4 @@
-use crate::core::*;
+use super::super::core::*;
 
 #[test]
 fn test_named_default_import_from_export_equals_class_uses_default_import_rules() {

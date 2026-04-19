@@ -1,4 +1,4 @@
-use crate::core::*;
+use super::super::core::*;
 
 #[test]
 fn test_js_property_type_annotation_suppresses_downstream_semantic_checks() {

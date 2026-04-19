@@ -187,6 +187,35 @@ pub(crate) fn dedup_decl_arenas<'a>(
     out
 }
 
+fn entity_name_text_in_arena(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+    let node = arena.get(idx)?;
+
+    if node.kind == SyntaxKind::Identifier as u16 {
+        return arena
+            .get_identifier(node)
+            .map(|ident| ident.escaped_text.clone());
+    }
+
+    if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+        let qn = arena.get_qualified_name(node)?;
+        let left = entity_name_text_in_arena(arena, qn.left)?;
+        let right = entity_name_text_in_arena(arena, qn.right)?;
+        return Some(format!("{left}.{right}"));
+    }
+
+    if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        && let Some(access) = arena.get_access_expr(node)
+    {
+        let left = entity_name_text_in_arena(arena, access.expression)?;
+        let right = arena
+            .get(access.name_or_argument)
+            .and_then(|right_node| arena.get_identifier(right_node))?;
+        return Some(format!("{left}.{}", right.escaped_text));
+    }
+
+    None
+}
+
 /// Resolve a `NodeIndex` directly to a `DefId` via the merged binder.
 ///
 /// This is the stable one-step helper for lib lowering: it combines
@@ -443,6 +472,37 @@ impl<'a> CheckerState<'a> {
     // Section 45: Symbol Resolution Utilities
     // ----------------------------------------
 
+    fn resolve_lib_symbol_by_name(&self, name: &str) -> Option<tsz_binder::SymbolId> {
+        let lib_binders = self.get_lib_binders();
+        self.ctx.binder.file_locals.get(name).or_else(|| {
+            self.ctx
+                .binder
+                .get_global_type_with_libs(name, &lib_binders)
+        })
+    }
+
+    fn resolve_lib_symbol_by_entity_name(&self, name: &str) -> Option<tsz_binder::SymbolId> {
+        let normalized = name.strip_prefix("globalThis.").unwrap_or(name);
+        self.resolve_lib_symbol_by_name(normalized).or_else(|| {
+            normalized
+                .rsplit('.')
+                .next()
+                .filter(|tail| *tail != normalized)
+                .and_then(|tail| self.resolve_lib_symbol_by_name(tail))
+        })
+    }
+
+    fn resolve_lib_type_by_entity_name(&mut self, name: &str) -> Option<TypeId> {
+        let normalized = name.strip_prefix("globalThis.").unwrap_or(name);
+        self.resolve_lib_type_by_name(normalized).or_else(|| {
+            normalized
+                .rsplit('.')
+                .next()
+                .filter(|tail| *tail != normalized)
+                .and_then(|tail| self.resolve_lib_type_by_name(tail))
+        })
+    }
+
     /// Resolve a library type by name from lib.d.ts and other library contexts.
     ///
     /// This function resolves types from library definition files like lib.d.ts,
@@ -507,7 +567,7 @@ impl<'a> CheckerState<'a> {
         let lib_contexts = self.ctx.lib_contexts.clone();
 
         // Look up the symbol and its declarations
-        let Some(sym_id) = self.ctx.binder.file_locals.get(name) else {
+        let Some(sym_id) = self.resolve_lib_symbol_by_entity_name(name) else {
             self.ctx.lib_heritage_in_progress.remove(name);
             self.ctx.leave_recursion();
             return derived_type;
@@ -611,7 +671,7 @@ impl<'a> CheckerState<'a> {
                             (type_idx, None)
                         };
 
-                    if let Some(base_name) = arena.get_identifier_text(expr_idx) {
+                    if let Some(base_name) = entity_name_text_in_arena(arena, expr_idx) {
                         let type_arg_indices = type_arguments
                             .map(|args| args.nodes.clone())
                             .unwrap_or_default();
@@ -627,10 +687,10 @@ impl<'a> CheckerState<'a> {
 
         // Now resolve each base type and merge, applying type argument substitution
         for base in &bases {
-            if let Some(mut base_type) = self.resolve_lib_type_by_name(&base.name) {
+            if let Some(mut base_type) = self.resolve_lib_type_by_entity_name(&base.name) {
                 // If there are type arguments, resolve them and substitute
                 if !base.type_arg_indices.is_empty() {
-                    let base_sym = self.ctx.binder.file_locals.get(&base.name);
+                    let base_sym = self.resolve_lib_symbol_by_entity_name(&base.name);
                     if let Some(base_sym_id) = base_sym {
                         let base_params = self.get_type_params_for_symbol(base_sym_id);
                         if !base_params.is_empty() {
@@ -701,17 +761,17 @@ impl<'a> CheckerState<'a> {
         // Handle type references (e.g., other interface names or type params)
         if node.kind == syntax_kind_ext::TYPE_REFERENCE
             && let Some(type_ref) = arena.get_type_ref(node)
-            && let Some(name) = arena.get_identifier_text(type_ref.type_name)
+            && let Some(name) = entity_name_text_in_arena(arena, type_ref.type_name)
         {
-            if let Some(ty) = keyword_name_to_type_id(name) {
+            if let Some(ty) = keyword_name_to_type_id(&name) {
                 return ty;
             }
-            return self.resolve_heritage_type_arg_by_name(name);
+            return self.resolve_heritage_type_arg_by_name(&name);
         }
 
         // For identifiers, try resolving the name
-        if let Some(name) = arena.get_identifier_text(node_idx) {
-            return self.resolve_heritage_type_arg_by_name(name);
+        if let Some(name) = entity_name_text_in_arena(arena, node_idx) {
+            return self.resolve_heritage_type_arg_by_name(&name);
         }
 
         TypeId::UNKNOWN

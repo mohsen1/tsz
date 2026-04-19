@@ -1,4 +1,4 @@
-use crate::core::*;
+use super::super::core::*;
 
 #[test]
 fn test_imported_declaration_file_with_top_level_declare_global_emits_ts2669() {

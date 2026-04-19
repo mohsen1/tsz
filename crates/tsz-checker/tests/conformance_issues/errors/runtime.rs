@@ -1,4 +1,4 @@
-use crate::core::*;
+use super::super::core::*;
 
 #[test]
 fn test_named_interface_assignment_to_number_index_target_reports_missing_index_signature() {

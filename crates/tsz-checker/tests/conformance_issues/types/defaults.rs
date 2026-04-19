@@ -1,4 +1,4 @@
-use crate::core::*;
+use super::super::core::*;
 
 #[test]
 fn test_constructor_only_object_signatures_with_mixed_subtype_direction_do_not_overlap() {

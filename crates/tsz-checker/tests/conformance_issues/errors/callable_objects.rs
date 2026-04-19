@@ -1,4 +1,4 @@
-use crate::core::*;
+use super::super::core::*;
 
 #[test]
 fn test_argument_count_mismatch_preserves_call_return_for_follow_on_property_access() {

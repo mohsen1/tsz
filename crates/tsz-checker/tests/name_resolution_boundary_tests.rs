@@ -747,6 +747,40 @@ fn phase2_unresolved_new_target_reports_ts2304_not_ts2693() {
     );
 }
 
+#[test]
+fn new_target_is_allowed_in_constructor_body() {
+    let diags = check(
+        r#"
+class C {
+    constructor() {
+        new.target;
+    }
+}
+"#,
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 17013),
+        "Did not expect TS17013 for new.target inside a constructor, got: {diags:?}"
+    );
+}
+
+#[test]
+fn new_target_in_method_reports_ts17013() {
+    let diags = check(
+        r#"
+class C {
+    method() {
+        new.target;
+    }
+}
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 17013),
+        "Expected TS17013 for new.target inside a method, got: {diags:?}"
+    );
+}
+
 /// Heritage clause with unresolved name routes through boundary for suggestions
 #[test]
 fn phase2_heritage_unresolved_routes_through_boundary() {
