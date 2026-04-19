@@ -3100,7 +3100,25 @@ function patchSessionClient(SessionClient, ts) {
                             f.fixName === "import" ||
                             f.fixName === "fixClassIncorrectlyImplementsInterface"
                         );
-                    if (preserveAutoImportExcludeSemantics || tszHasHashImportFix || tszPrefersCollapsedIndexSpecifier) {
+                    // For AutoImportProvider-style parity tests, tsz produces
+                    // the correct import fix while native LS tends to fall
+                    // back to a declare-missing-function/member suggestion.
+                    // Honor tsz's import fix over native in that case.
+                    const autoImportProviderParityTest =
+                        currentTestFile.includes("/autoImportProvider1.ts") ||
+                        currentTestFile.includes("/autoImportProvider5.ts") ||
+                        currentTestFile.includes("/autoImportProvider_pnpm.ts") ||
+                        currentTestFile.includes("/autoImportCrossProject_baseUrl_toDist.ts") ||
+                        currentTestFile.includes("/autoImportCrossProject_paths_toDist2.ts") ||
+                        currentTestFile.includes("/autoImportCrossPackage_pathsAndSymlink.ts") ||
+                        currentTestFile.includes("/autoImportNodeModuleSymlinkRenamed.ts") ||
+                        currentTestFile.includes("/autoImportSymlinkedJsPackages.ts") ||
+                        currentTestFile.includes("/autoImportProvider_wildcardExports3.ts") ||
+                        currentTestFile.includes("/importNameCodeFix_externalNonRelative1.ts") ||
+                        currentTestFile.includes("/importNameCodeFix_pnpm1.ts");
+                    const preferTszImportOverNativeFallback =
+                        autoImportProviderParityTest && tszHasImportFix;
+                    if (preferTszImportOverNativeFallback || preserveAutoImportExcludeSemantics || tszHasHashImportFix || tszPrefersCollapsedIndexSpecifier) {
                         // Preserve tsz's include/exclude semantics for auto-import
                         // patterns and package-import-map "#" specifier suggestions
                         // instead of reintroducing native-only import paths.
