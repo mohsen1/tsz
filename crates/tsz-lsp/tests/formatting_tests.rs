@@ -1439,3 +1439,64 @@ fn test_formatting_on_single_line_blocks() {
         "Expected 'if (true) {{ }}' but got: {formatted}"
     );
 }
+
+#[test]
+fn test_parse_eslint_fix_output_empty_stdout() {
+    // ESLint can exit with no stdout at all (e.g. non-applicable file).
+    let result = DocumentFormattingProvider::parse_eslint_fix_output("").unwrap();
+    assert!(result.is_none());
+
+    let result = DocumentFormattingProvider::parse_eslint_fix_output("   \n   ").unwrap();
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_parse_eslint_fix_output_no_fixes() {
+    // Clean file: result object has no `output` field.
+    let json = r#"[{
+        "filePath": "/tmp/foo.ts",
+        "messages": [],
+        "errorCount": 0,
+        "warningCount": 0,
+        "fixableErrorCount": 0,
+        "fixableWarningCount": 0,
+        "source": "let x = 1;\n"
+    }]"#;
+    let result = DocumentFormattingProvider::parse_eslint_fix_output(json).unwrap();
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_parse_eslint_fix_output_with_fixes() {
+    // `output` present: return it verbatim.
+    let json = r#"[{
+        "filePath": "/tmp/foo.ts",
+        "messages": [],
+        "errorCount": 0,
+        "warningCount": 0,
+        "fixableErrorCount": 0,
+        "fixableWarningCount": 0,
+        "output": "let x = 1;\n"
+    }]"#;
+    let result = DocumentFormattingProvider::parse_eslint_fix_output(json).unwrap();
+    assert_eq!(result.as_deref(), Some("let x = 1;\n"));
+}
+
+#[test]
+fn test_parse_eslint_fix_output_invalid_json() {
+    let result = DocumentFormattingProvider::parse_eslint_fix_output("not json at all");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_eslint_fix_output_non_array_root() {
+    // Defensive: non-array JSON should not panic, just yield None.
+    let result = DocumentFormattingProvider::parse_eslint_fix_output(r#"{"foo":"bar"}"#).unwrap();
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_parse_eslint_fix_output_empty_array() {
+    let result = DocumentFormattingProvider::parse_eslint_fix_output("[]").unwrap();
+    assert!(result.is_none());
+}

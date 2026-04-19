@@ -194,37 +194,92 @@ impl DocumentFormattingProvider {
         Self::compute_line_edits(source_text, &formatted)
     }
 
-    /// Format using eslint with --fix.
+    /// Format using eslint with stdin-based `--fix-dry-run`.
+    ///
+    /// Pipes the in-memory document buffer into `ESLint` via stdin so that
+    /// formatting operates on the current editor buffer rather than whatever
+    /// happens to be on disk. This matches the LSP contract that unsaved
+    /// changes are the source of truth, and avoids the stale-disk/new-buffer
+    /// diff mismatch the previous `--fix --fix-to-stdout <file>` invocation
+    /// produced.
     #[cfg(not(target_arch = "wasm32"))]
     fn format_with_eslint(
         file_path: &str,
         source_text: &str,
         _options: &FormattingOptions,
     ) -> Result<Vec<TextEdit>, String> {
-        let output = Command::new("eslint")
-            .arg("--fix")
-            .arg("--fix-to-stdout")
+        let path = Path::new(file_path);
+
+        let child = Command::new("eslint")
+            .arg("--fix-dry-run")
+            .arg("--stdin")
+            .arg("--stdin-filename")
             .arg(file_path)
+            .arg("--format")
+            .arg("json")
+            .current_dir(path.parent().unwrap_or_else(|| Path::new(".")))
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| format!("Failed to spawn eslint: {e}"))?;
 
-        let result = output
+        child
+            .stdin
+            .as_ref()
+            .ok_or("Failed to open eslint stdin")?
+            .write_all(source_text.as_bytes())
+            .map_err(|e| format!("Failed to write to eslint stdin: {e}"))?;
+
+        let result = child
             .wait_with_output()
             .map_err(|e| format!("Failed to read eslint output: {e}"))?;
 
-        if !result.status.success() {
+        // Exit code 0 = no problems, 1 = lint problems (fixable or not),
+        // 2 = internal/configuration error. With `--fix-dry-run` we still
+        // want to read stdout for codes 0 and 1.
+        if result.status.code().is_some_and(|c| c >= 2) {
             let stderr = String::from_utf8_lossy(&result.stderr);
-            if result.stdout.is_empty() {
-                return Err(format!("ESLint failed: {stderr}"));
-            }
+            return Err(format!("ESLint failed: {stderr}"));
         }
 
-        let formatted = String::from_utf8_lossy(&result.stdout).to_string();
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        match Self::parse_eslint_fix_output(&stdout) {
+            Ok(Some(formatted)) => Self::compute_line_edits(source_text, &formatted),
+            Ok(None) => Ok(vec![]),
+            Err(err) => {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                tracing::debug!(error = %err, stderr = %stderr, "eslint JSON parse failed");
+                Err(err)
+            }
+        }
+    }
 
-        Self::compute_line_edits(source_text, &formatted)
+    /// Parse `ESLint` `--format=json` output and return the `output` field
+    /// from the first result, if any fixes were produced.
+    ///
+    /// Returns:
+    /// - `Ok(Some(text))` when `ESLint` emitted a fixed version of the source.
+    /// - `Ok(None)` when `ESLint` produced no fixes (empty stdout or no
+    ///   `output` key on the result object).
+    /// - `Err(msg)` when stdout is non-empty but not valid JSON.
+    pub fn parse_eslint_fix_output(stdout: &str) -> Result<Option<String>, String> {
+        let trimmed = stdout.trim();
+        if trimmed.is_empty() {
+            return Ok(None);
+        }
+
+        let parsed: serde_json::Value = serde_json::from_str(trimmed)
+            .map_err(|e| format!("Failed to parse eslint JSON output: {e}"))?;
+
+        let output = parsed
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|result| result.get("output"))
+            .and_then(serde_json::Value::as_str)
+            .map(ToString::to_string);
+
+        Ok(output)
     }
 
     /// Compute per-line text edits between original and formatted text.
