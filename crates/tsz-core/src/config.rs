@@ -3745,13 +3745,15 @@ fn build_lib_map_from_embedded() -> FxHashMap<&'static str, &'static str> {
 /// Without caching, `build_lib_map` was called once per lib being resolved,
 /// each time re-reading the directory and calling `realpath` on every `.d.ts`
 /// file (~110 files). This dominated total compilation time (>90% on macOS).
+///
+/// This is intentionally immutable after first initialization to avoid mutable
+/// process-wide cache state in config loading paths.
 type LibMapEntry = (PathBuf, FxHashMap<String, PathBuf>);
-static LIB_MAP_CACHE: std::sync::Mutex<Option<LibMapEntry>> = std::sync::Mutex::new(None);
+static LIB_MAP_CACHE: std::sync::OnceLock<LibMapEntry> = std::sync::OnceLock::new();
 
 fn build_lib_map(lib_dir: &Path) -> Result<FxHashMap<String, PathBuf>> {
     // Fast path: return cached map if lib_dir matches
-    if let Ok(guard) = LIB_MAP_CACHE.lock()
-        && let Some((ref cached_dir, ref cached_map)) = *guard
+    if let Some((cached_dir, cached_map)) = LIB_MAP_CACHE.get()
         && cached_dir == lib_dir
     {
         return Ok(cached_map.clone());
@@ -3759,10 +3761,9 @@ fn build_lib_map(lib_dir: &Path) -> Result<FxHashMap<String, PathBuf>> {
 
     let map = build_lib_map_uncached(lib_dir)?;
 
-    // Cache the result for future calls with the same lib_dir
-    if let Ok(mut guard) = LIB_MAP_CACHE.lock() {
-        *guard = Some((lib_dir.to_path_buf(), map.clone()));
-    }
+    // Cache first successful result. If another directory seeded the cache
+    // earlier, we still return the freshly computed map for this call.
+    let _ = LIB_MAP_CACHE.set((lib_dir.to_path_buf(), map.clone()));
 
     Ok(map)
 }

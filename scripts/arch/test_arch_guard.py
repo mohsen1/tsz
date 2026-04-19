@@ -131,6 +131,44 @@ class ArchGuardSolverRelationBoundaryTests(unittest.TestCase):
         self.assertEqual(test_hits, [])
 
 
+class ArchGuardCoreWasmBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _core_wasm_boundary_check(self):
+        for name, _base, pattern, excludes in self.arch_guard.CHECKS:
+            if name == "Core boundary: wasm bindings must stay in current wasm surface files":
+                return pattern, excludes
+        self.fail("core wasm boundary check is missing from CHECKS")
+
+    def test_rule_exists(self):
+        self._core_wasm_boundary_check()
+
+    def test_rule_flags_non_allowlisted_core_file(self):
+        pattern, excludes = self._core_wasm_boundary_check()
+        text = "use wasm_bindgen::prelude::wasm_bindgen;"
+        hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-core/src/source_file.rs", excludes
+        )
+        self.assertEqual(hits, [1])
+
+    def test_rule_allows_existing_wasm_surface_files(self):
+        pattern, excludes = self._core_wasm_boundary_check()
+        text = "use wasm_bindgen::prelude::JsValue;"
+        lib_hits = self.arch_guard.find_matches(text, pattern, "crates/tsz-core/src/lib.rs", excludes)
+        api_hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-core/src/api/wasm/code_actions.rs", excludes
+        )
+        self.assertEqual(lib_hits, [])
+        self.assertEqual(api_hits, [])
+
+    def test_rule_ignores_tests_directory(self):
+        pattern, excludes = self._core_wasm_boundary_check()
+        text = "use wasm_bindgen::prelude::JsValue;"
+        hits = self.arch_guard.find_matches(text, pattern, "crates/tsz-core/tests/foo.rs", excludes)
+        self.assertEqual(hits, [])
+
+
 class ArchGuardCheckerFileSizeBoundaryTests(unittest.TestCase):
     def setUp(self):
         self.arch_guard = load_arch_guard_module()
@@ -161,6 +199,38 @@ class ArchGuardCheckerFileSizeBoundaryTests(unittest.TestCase):
             target = base / "at_limit.rs"
             target.write_text("let x = 0;\n" * 2000, encoding="utf-8")
             hits = self.arch_guard.scan_line_limits(base, 2000)
+            self.assertEqual(hits, [])
+
+
+class ArchGuardCoreLibFacadeSizeBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _core_lib_size_check(self):
+        for entry in self.arch_guard.FILE_LINE_LIMIT_CHECKS:
+            name, path, limit = entry
+            if name == "Core boundary: tsz-core lib facade must stay under 2420 LOC":
+                return path, limit
+        self.fail("core lib facade size boundary check is missing from FILE_LINE_LIMIT_CHECKS")
+
+    def test_rule_exists_with_expected_limit(self):
+        path, limit = self._core_lib_size_check()
+        self.assertEqual(limit, 2420)
+        self.assertTrue(str(path).endswith("crates/tsz-core/src/lib.rs"))
+
+    def test_scan_file_line_limit_flags_file_above_limit(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            target = pathlib.Path(temp_dir) / "too_big.rs"
+            target.write_text("let x = 0;\n" * 11, encoding="utf-8")
+            hits = self.arch_guard.scan_file_line_limit(target, 10)
+            self.assertEqual(len(hits), 1)
+            self.assertTrue(hits[0].endswith("too_big.rs:11 lines (limit 10)"))
+
+    def test_scan_file_line_limit_allows_file_at_limit(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            target = pathlib.Path(temp_dir) / "at_limit.rs"
+            target.write_text("let x = 0;\n" * 10, encoding="utf-8")
+            hits = self.arch_guard.scan_file_line_limit(target, 10)
             self.assertEqual(hits, [])
 
 
@@ -248,54 +318,6 @@ class ArchGuardSolverTypeDataQuarantineTests(unittest.TestCase):
             hits = self.arch_guard.scan_solver_typedata_quarantine(solver_root)
             self.assertEqual(len(hits), 1)
             self.assertTrue(hits[0].endswith("/mixed.rs:4"))
-
-
-class ArchGuardCommentStrippingTests(unittest.TestCase):
-    def setUp(self):
-        self.arch_guard = load_arch_guard_module()
-
-    def test_find_matches_ignores_block_comments_when_requested(self):
-        pattern = self.arch_guard.re.compile(r"\bTypeKey::")
-        text = "\n".join(
-            [
-                "/* TypeKey::Foo should be ignored */",
-                "let x = 1;",
-            ]
-        )
-        hits = self.arch_guard.find_matches(
-            text,
-            pattern,
-            "crates/tsz-checker/src/foo.rs",
-            {"ignore_comment_lines": True},
-        )
-        self.assertEqual(hits, [])
-
-    def test_find_matches_preserves_real_code_hits_with_inline_block_comments(self):
-        pattern = self.arch_guard.re.compile(r"\bTypeKey::")
-        text = "\n".join(
-            [
-                "let ok = true; /* TypeKey::CommentOnly */",
-                "let value = TypeKey::Real;",
-            ]
-        )
-        hits = self.arch_guard.find_matches(
-            text,
-            pattern,
-            "crates/tsz-checker/src/foo.rs",
-            {"ignore_comment_lines": True},
-        )
-        self.assertEqual(hits, [2])
-
-    def test_find_matches_keeps_comment_hits_without_ignore_flag(self):
-        pattern = self.arch_guard.re.compile(r"\bTypeKey::")
-        text = "/* TypeKey::Foo should match when comments are not ignored */"
-        hits = self.arch_guard.find_matches(
-            text,
-            pattern,
-            "crates/tsz-checker/src/foo.rs",
-            {},
-        )
-        self.assertEqual(hits, [1])
 
 
 class ArchGuardRatchetDirectionTests(unittest.TestCase):

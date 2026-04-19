@@ -162,19 +162,22 @@ impl<'a> DocumentSymbolProvider<'a> {
         let mut result = String::new();
         for &mod_idx in &mod_list.nodes {
             if let Some(mod_node) = self.arena.get(mod_idx) {
+                // Mirror tsc's `getNodeModifiers` output. `const`,
+                // `readonly`, `async`, and `override` are not
+                // ScriptElementKindModifier values — they affect the
+                // declaration's kind or its signature but don't appear as
+                // kindModifier strings. Including them here pollutes
+                // navtree output (e.g. `const enum E` gained a spurious
+                // `kindModifiers: "const"` and diverged from tsc).
                 let modifier_str = match mod_node.kind {
                     k if k == SyntaxKind::ExportKeyword as u16 => Some("export"),
                     k if k == SyntaxKind::DeclareKeyword as u16 => Some("declare"),
                     k if k == SyntaxKind::AbstractKeyword as u16 => Some("abstract"),
                     k if k == SyntaxKind::StaticKeyword as u16 => Some("static"),
-                    k if k == SyntaxKind::AsyncKeyword as u16 => Some("async"),
                     k if k == SyntaxKind::DefaultKeyword as u16 => Some("default"),
-                    k if k == SyntaxKind::ConstKeyword as u16 => Some("const"),
-                    k if k == SyntaxKind::ReadonlyKeyword as u16 => Some("readonly"),
                     k if k == SyntaxKind::PublicKeyword as u16 => Some("public"),
                     k if k == SyntaxKind::PrivateKeyword as u16 => Some("private"),
                     k if k == SyntaxKind::ProtectedKeyword as u16 => Some("protected"),
-                    k if k == SyntaxKind::OverrideKeyword as u16 => Some("override"),
                     _ => None,
                 };
                 if let Some(s) = modifier_str {
@@ -460,13 +463,16 @@ impl<'a> DocumentSymbolProvider<'a> {
                 }
             }
 
-            // Enum Member
+            // Enum Member — tsc only surfaces members whose name is a
+            // plain identifier or string/numeric literal. Computed names
+            // like `[Symbol.isRegExp]` are dropped from the navtree; emit
+            // nothing instead of a `<member>` placeholder to match.
             k if k == syntax_kind_ext::ENUM_MEMBER => {
                 if let Some(member) = self.arena.get_enum_member(node) {
                     let name_node = member.name;
-                    let name = self
-                        .get_name(name_node)
-                        .unwrap_or_else(|| "<member>".to_string());
+                    let Some(name) = self.get_name(name_node) else {
+                        return vec![];
+                    };
 
                     let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
                     let selection_range =
@@ -497,6 +503,10 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let selection_range =
                         node_range(self.arena, self.line_map, self.source_text, method.name);
                     let modifiers = self.get_kind_modifiers_from_list(&method.modifiers);
+                    // Walk the method body like we do for functions and
+                    // constructors — tsc surfaces locally-declared
+                    // classes/functions/interfaces/enums/type aliases.
+                    let children = self.collect_children_from_block(method.body, Some(&name));
 
                     vec![DocumentSymbol {
                         name,
@@ -506,7 +516,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         range,
                         selection_range,
                         container_name: container_name.map(std::string::ToString::to_string),
-                        children: vec![],
+                        children,
                     }]
                 } else {
                     vec![]
@@ -1088,10 +1098,38 @@ impl<'a> DocumentSymbolProvider<'a> {
                     .arena
                     .get_identifier(node)
                     .map(|id| id.escaped_text.clone());
+            } else if node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                // Private identifiers keep their `#` prefix in navbar
+                // output (`#foo`). The scanner's token value may or may
+                // not already include the `#` — normalize by prepending
+                // when missing.
+                return self.arena.get_identifier(node).map(|id| {
+                    if id.escaped_text.starts_with('#') {
+                        id.escaped_text.clone()
+                    } else {
+                        format!("#{}", id.escaped_text)
+                    }
+                });
             } else if node.kind == SyntaxKind::StringLiteral as u16
                 || node.kind == SyntaxKind::NumericLiteral as u16
             {
                 return self.arena.get_literal(node).map(|l| l.text.clone());
+            } else if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                // `["bar"]` / `[key]` on a class/interface/object member.
+                // tsc uses the source-text form verbatim (including the
+                // surrounding brackets) as the nav item's `text`. The
+                // parser records `end` as the position after the next
+                // token (so `["bar"]:` or `["bar"] ` creeps in). Cut at
+                // the last `]` to keep just the bracket form.
+                let start = node.pos as usize;
+                let end = node.end as usize;
+                if start <= end && end <= self.source_text.len() {
+                    let slice = &self.source_text[start..end];
+                    if let Some(close) = slice.rfind(']') {
+                        return Some(slice[..=close].to_string());
+                    }
+                    return Some(slice.to_string());
+                }
             }
         }
         None
