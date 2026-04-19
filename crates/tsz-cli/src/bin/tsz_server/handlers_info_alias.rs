@@ -1560,7 +1560,7 @@ impl Server {
 }
 
 /// Long-running Node.js subprocess that delegates to the real `tsc`
-/// LanguageService. The first request pays the TypeScript-module load
+/// `LanguageService`. The first request pays the TypeScript-module load
 /// cost; subsequent requests reuse the loaded runtime, turning ~1–2 s
 /// per-operation cold starts into tens of milliseconds.
 pub(crate) struct NativeTsWorker {
