@@ -14,6 +14,7 @@
 
 use crate::context::{is_declaration_file_name, is_js_file_name};
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1153,7 +1154,7 @@ impl<'a> CheckerState<'a> {
         let mut current_sym = self.resolve_jsdoc_import_member(&module_specifier, first_member)?;
         for segment in segments {
             let lib_binders = self.get_lib_binders();
-            let mut visited_aliases = Vec::new();
+            let mut visited_aliases = AliasCycleTracker::new();
             current_sym = self
                 .resolve_alias_symbol(current_sym, &mut visited_aliases)
                 .unwrap_or(current_sym);
@@ -1221,7 +1222,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let mut visited_aliases = Vec::new();
+            let mut visited_aliases = AliasCycleTracker::new();
             current_sym = self
                 .resolve_alias_symbol(current_sym, &mut visited_aliases)
                 .unwrap_or(current_sym);
@@ -1254,7 +1255,7 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some(ref module_specifier) = symbol.import_module {
-                let mut visited_aliases = Vec::new();
+                let mut visited_aliases = AliasCycleTracker::new();
                 if let Some(member_sym) = self.resolve_reexported_member_symbol(
                     module_specifier,
                     segment,
@@ -1288,7 +1289,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let mut visited_aliases = Vec::new();
+        let mut visited_aliases = AliasCycleTracker::new();
         Some(
             self.resolve_alias_symbol(current_sym, &mut visited_aliases)
                 .unwrap_or(current_sym),
@@ -1380,7 +1381,7 @@ impl<'a> CheckerState<'a> {
                 self.resolve_named_export_via_export_equals(&module_specifier, &export_name)
             })
             .or_else(|| {
-                let mut visited_aliases = Vec::new();
+                let mut visited_aliases = AliasCycleTracker::new();
                 self.resolve_reexported_member_symbol(
                     &module_specifier,
                     &export_name,
@@ -1405,7 +1406,7 @@ impl<'a> CheckerState<'a> {
         };
 
         if (symbol.flags & symbol_flags::ALIAS) != 0 {
-            let mut visited_aliases = Vec::new();
+            let mut visited_aliases = AliasCycleTracker::new();
             if let Some(target) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
                 if target == sym_id {
                     // Some unresolved aliases (notably synthetic JSDoc @import aliases)

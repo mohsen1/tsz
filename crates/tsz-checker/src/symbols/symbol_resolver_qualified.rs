@@ -16,6 +16,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 use super::symbol_resolver::TypeSymbolResolution;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 
 // =============================================================================
 // Qualified Name & Cross-File Resolution Methods
@@ -45,7 +46,7 @@ impl<'a> CheckerState<'a> {
     /// Handles both simple identifiers and qualified names (e.g., `A.B.C`).
     /// Also resolves through alias symbols (imports).
     pub(crate) fn resolve_qualified_symbol(&self, idx: NodeIndex) -> Option<SymbolId> {
-        let mut visited_aliases = Vec::new();
+        let mut visited_aliases = AliasCycleTracker::new();
         self.resolve_qualified_symbol_inner(idx, &mut visited_aliases, 0)
     }
 
@@ -54,7 +55,7 @@ impl<'a> CheckerState<'a> {
         &self,
         idx: NodeIndex,
     ) -> TypeSymbolResolution {
-        let mut visited_aliases = Vec::new();
+        let mut visited_aliases = AliasCycleTracker::new();
         self.resolve_qualified_symbol_inner_in_type_position(idx, &mut visited_aliases, 0)
     }
 
@@ -62,7 +63,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_qualified_symbol_inner_in_type_position(
         &self,
         idx: NodeIndex,
-        visited_aliases: &mut Vec<SymbolId>,
+        visited_aliases: &mut AliasCycleTracker,
         depth: usize,
     ) -> TypeSymbolResolution {
         // Prevent stack overflow from deeply nested qualified names
@@ -852,7 +853,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_qualified_symbol_inner(
         &self,
         idx: NodeIndex,
-        visited_aliases: &mut Vec<SymbolId>,
+        visited_aliases: &mut AliasCycleTracker,
         depth: usize,
     ) -> Option<SymbolId> {
         // Prevent stack overflow from deeply nested qualified names
@@ -1056,7 +1057,7 @@ impl<'a> CheckerState<'a> {
         &self,
         alias_sym: SymbolId,
         member_name: &str,
-        visited_aliases: &mut Vec<SymbolId>,
+        visited_aliases: &mut AliasCycleTracker,
     ) -> Option<SymbolId> {
         let symbol = self.ctx.binder.get_symbol(alias_sym)?;
         if symbol.flags & symbol_flags::ALIAS == 0 {
@@ -1145,7 +1146,7 @@ impl<'a> CheckerState<'a> {
         &self,
         module_specifier: &str,
         member_name: &str,
-        visited_aliases: &mut Vec<SymbolId>,
+        visited_aliases: &mut AliasCycleTracker,
     ) -> Option<SymbolId> {
         let mut visited_modules = rustc_hash::FxHashSet::default();
         self.resolve_reexported_member_symbol_inner(
@@ -1161,7 +1162,7 @@ impl<'a> CheckerState<'a> {
         binder: &tsz_binder::BinderState,
         exports_table: &tsz_binder::SymbolTable,
         member_name: &str,
-        visited_aliases: &mut Vec<SymbolId>,
+        visited_aliases: &mut AliasCycleTracker,
     ) -> Option<SymbolId> {
         let can_resolve_aliases = std::ptr::eq(binder, self.ctx.binder);
 
@@ -1266,7 +1267,7 @@ impl<'a> CheckerState<'a> {
         &self,
         module_specifier: &str,
         member_name: &str,
-        visited_aliases: &mut Vec<SymbolId>,
+        visited_aliases: &mut AliasCycleTracker,
     ) -> Option<SymbolId> {
         if let Some(augmentation) = self
             .get_module_augmentation_declarations(module_specifier, member_name)
@@ -1296,7 +1297,7 @@ impl<'a> CheckerState<'a> {
         &self,
         module_specifier: &str,
         member_name: &str,
-        visited_aliases: &mut Vec<SymbolId>,
+        visited_aliases: &mut AliasCycleTracker,
         visited_modules: &mut rustc_hash::FxHashSet<(String, String)>,
     ) -> Option<SymbolId> {
         // Cycle detection: check if we've already visited this (module, member) pair

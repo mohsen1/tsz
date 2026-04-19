@@ -9,6 +9,7 @@ use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tracing::trace;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -92,7 +93,7 @@ impl<'a> CheckerState<'a> {
             .get_symbol(export_equals_sym)
             .is_some_and(|symbol| (symbol.flags & tsz_binder::symbol_flags::ALIAS) != 0)
             .then(|| {
-                let mut visited_aliases = Vec::new();
+                let mut visited_aliases = AliasCycleTracker::new();
                 self.resolve_alias_symbol(export_equals_sym, &mut visited_aliases)
             })
             .flatten()

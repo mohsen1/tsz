@@ -1,6 +1,7 @@
 use crate::context::TypingRequest;
 use crate::query_boundaries::common::{object_shape_for_type, union_members};
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
@@ -128,7 +129,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if symbol.flags & tsz_binder::symbol_flags::ALIAS != 0 {
-            let mut visited = Vec::new();
+            let mut visited = AliasCycleTracker::new();
             if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited)
                 && target_sym_id != sym_id
             {
@@ -1482,7 +1483,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         if flags & symbol_flags::ALIAS != 0 {
-            let mut visited = Vec::new();
+            let mut visited = AliasCycleTracker::new();
             if let Some(target) = self.resolve_alias_symbol(sym_id, &mut visited) {
                 let target_sym = self
                     .get_cross_file_symbol(target)

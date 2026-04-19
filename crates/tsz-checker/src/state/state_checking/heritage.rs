@@ -2,6 +2,7 @@
 
 use crate::query_boundaries::class_type as class_query;
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -14,7 +15,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<tsz_binder::SymbolId> {
         use tsz_binder::symbol_flags;
 
-        let mut visited_aliases = Vec::new();
+        let mut visited_aliases = AliasCycleTracker::new();
         let sym_to_check = self
             .resolve_alias_symbol(sym_id, &mut visited_aliases)
             .unwrap_or(sym_id);
@@ -69,7 +70,7 @@ impl<'a> CheckerState<'a> {
         heritage_sym: tsz_binder::SymbolId,
         fallback: &str,
     ) -> String {
-        let mut visited_aliases = Vec::new();
+        let mut visited_aliases = AliasCycleTracker::new();
         self.resolve_alias_symbol(heritage_sym, &mut visited_aliases)
             .and_then(|target| {
                 self.get_symbol_globally(target)
@@ -444,7 +445,7 @@ impl<'a> CheckerState<'a> {
                     // the is_extends_clause block.
                     if !is_extends_clause {
                         use tsz_binder::symbol_flags;
-                        let mut visited_aliases = Vec::new();
+                        let mut visited_aliases = AliasCycleTracker::new();
                         let resolved_sym =
                             self.resolve_alias_symbol(heritage_sym, &mut visited_aliases);
                         let sym_to_check = resolved_sym.unwrap_or(heritage_sym);
@@ -467,7 +468,7 @@ impl<'a> CheckerState<'a> {
                         use tsz_binder::symbol_flags;
 
                         // Note: Must resolve type aliases before checking flags and getting type
-                        let mut visited_aliases = Vec::new();
+                        let mut visited_aliases = AliasCycleTracker::new();
                         let resolved_sym =
                             self.resolve_alias_symbol(heritage_sym, &mut visited_aliases);
                         let sym_to_check = resolved_sym.unwrap_or(heritage_sym);

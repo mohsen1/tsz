@@ -4,6 +4,7 @@
 use crate::query_boundaries::common::SourceLocation;
 use crate::query_boundaries::state::type_environment as query;
 use crate::state::{CheckerState, EnumKind, MAX_INSTANTIATION_DEPTH};
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::FxHashSet;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
@@ -1329,7 +1330,7 @@ impl<'a> CheckerState<'a> {
         if let Some(symbol) = self.get_symbol_globally(sym_id)
             && symbol.flags & symbol_flags::ALIAS != 0
         {
-            let mut visited_aliases = Vec::new();
+            let mut visited_aliases = AliasCycleTracker::new();
             if let Some(target) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
                 sym_id = target;
             }

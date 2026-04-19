@@ -5,6 +5,7 @@ use crate::context::TypingRequest;
 use crate::query_boundaries::common::lazy_def_id;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::FxHashSet;
 use tracing::trace;
 use tsz_binder::{SymbolId, symbol_flags};
@@ -361,7 +362,7 @@ impl<'a> CheckerState<'a> {
                         .is_some_and(|s| (s.flags & symbol_flags::TYPE_PARAMETER) != 0)
                     {
                         if let Some(file_sym) = self.ctx.binder.file_locals.get(&left_name) {
-                            let mut visited = Vec::new();
+                            let mut visited = AliasCycleTracker::new();
                             let resolved = self
                                 .resolve_alias_symbol(file_sym, &mut visited)
                                 .unwrap_or(file_sym);

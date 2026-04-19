@@ -2,6 +2,7 @@
 
 use crate::query_boundaries::checkers::promise as query;
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
@@ -291,9 +292,11 @@ impl<'a> CheckerState<'a> {
             }
 
             // Try to get the type argument from the base symbol
-            if let Some(result) =
-                self.promise_like_type_argument_from_base(base, &args, &mut Vec::new())
-            {
+            if let Some(result) = self.promise_like_type_argument_from_base(
+                base,
+                &args,
+                &mut AliasCycleTracker::new(),
+            ) {
                 return Some(result);
             }
 
@@ -388,11 +391,11 @@ impl<'a> CheckerState<'a> {
     /// - Direct Promise/PromiseLike types
     /// - Type aliases to Promise types
     /// - Classes that extend Promise
-    pub fn promise_like_type_argument_from_base(
+    pub(crate) fn promise_like_type_argument_from_base(
         &mut self,
         base: TypeId,
         args: &[TypeId],
-        visited_aliases: &mut Vec<SymbolId>,
+        visited_aliases: &mut AliasCycleTracker,
     ) -> Option<TypeId> {
         // Handle Lazy variant properly
         let sym_id = match query::classify_promise_type(self.ctx.types, base) {
@@ -448,11 +451,11 @@ impl<'a> CheckerState<'a> {
     ///
     /// For example, given `type MyPromise<T> = Promise<T>`, this extracts
     /// the type argument from `MyPromise`<U>.
-    pub fn promise_like_type_argument_from_alias(
+    pub(crate) fn promise_like_type_argument_from_alias(
         &mut self,
         sym_id: SymbolId,
         args: &[TypeId],
-        visited_aliases: &mut Vec<SymbolId>,
+        visited_aliases: &mut AliasCycleTracker,
     ) -> Option<TypeId> {
         if visited_aliases.contains(&sym_id) {
             return None;
@@ -538,11 +541,11 @@ impl<'a> CheckerState<'a> {
     ///
     /// For example, given `class MyPromise<T> extends Promise<T>`, this extracts
     /// the type argument from `MyPromise`<U>.
-    pub fn promise_like_type_argument_from_class(
+    pub(crate) fn promise_like_type_argument_from_class(
         &mut self,
         sym_id: SymbolId,
         args: &[TypeId],
-        visited_aliases: &mut Vec<SymbolId>,
+        visited_aliases: &mut AliasCycleTracker,
     ) -> Option<TypeId> {
         if visited_aliases.contains(&sym_id) {
             return None;

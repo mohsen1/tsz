@@ -6,6 +6,7 @@
 
 use super::duplicate_identifiers::{DuplicateDeclarationOrigin, OuterDeclResult};
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::FxHashSet;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -813,7 +814,7 @@ impl<'a> CheckerState<'a> {
         // Duplicate checking for module-augmentation export surfaces should compare against
         // the underlying exported declaration kind, not the alias wrapper node.
         let resolved_sym_id = self
-            .resolve_alias_symbol(sym_id, &mut Vec::new())
+            .resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
             .unwrap_or(sym_id);
         self.ctx
             .binder
@@ -1633,7 +1634,7 @@ impl<'a> CheckerState<'a> {
         let remote_decl_idx = jsx_sym_id
             .map(|sym_id| {
                 let resolved_sym_id = self
-                    .resolve_alias_symbol(sym_id, &mut Vec::new())
+                    .resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
                     .unwrap_or(sym_id);
                 self.get_cross_file_symbol(resolved_sym_id)
                     .and_then(|sym| sym.declarations.first().copied())

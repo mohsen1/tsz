@@ -3,6 +3,7 @@
 
 use crate::import::core::ModuleNotFoundSite;
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -406,7 +407,7 @@ impl<'a> CheckerState<'a> {
             };
 
             if let Some(target_sym_id) = target_sym_id_opt {
-                let mut visited = Vec::new();
+                let mut visited = AliasCycleTracker::new();
                 if let Some(resolved_id) = self.resolve_alias_symbol(target_sym_id, &mut visited)
                     && let Some(resolved_sym) = self
                         .ctx
@@ -987,7 +988,7 @@ impl<'a> CheckerState<'a> {
                     // cross-file require imports), treat as having NAMESPACE meaning
                     // to avoid false positives — the alias target is a module.
                     let sym_flags = if (raw_flags & tsz_binder::symbol_flags::ALIAS) != 0 {
-                        let mut visited = Vec::new();
+                        let mut visited = AliasCycleTracker::new();
                         match self.resolve_alias_symbol(sym_id, &mut visited) {
                             Some(resolved_id) if resolved_id != sym_id => self
                                 .ctx
@@ -1154,7 +1155,7 @@ impl<'a> CheckerState<'a> {
 
             // Resolve the left symbol to get the namespace, then look up the right member
             // WITHOUT following alias resolution — check the raw member symbol.
-            let mut visited = Vec::new();
+            let mut visited = AliasCycleTracker::new();
             let left_sym = self.resolve_qualified_symbol_inner(qn.left, &mut visited, 0)?;
             let left_sym_resolved = self
                 .resolve_alias_symbol(left_sym, &mut visited)
@@ -1191,7 +1192,7 @@ impl<'a> CheckerState<'a> {
                     return Some(kind);
                 }
                 // Check all visited aliases in the chain
-                for &alias_id in &visited {
+                for alias_id in &visited {
                     if let Some(kind) = self.check_symbol_type_only_kind(alias_id) {
                         return Some(kind);
                     }
@@ -1204,14 +1205,14 @@ impl<'a> CheckerState<'a> {
             if let Some(orig) = orig_left_symbol
                 && let Some(ref module_specifier) = orig.import_module
             {
-                let mut reexport_visited = Vec::new();
+                let mut reexport_visited = AliasCycleTracker::new();
                 if let Some(resolved) = self.resolve_reexported_member_symbol(
                     module_specifier,
                     right_name,
                     &mut reexport_visited,
                 ) {
                     // Check visited aliases from resolution chain
-                    for &alias_id in &reexport_visited {
+                    for alias_id in &reexport_visited {
                         if let Some(kind) = self.check_symbol_type_only_kind(alias_id) {
                             return Some(kind);
                         }
@@ -1222,14 +1223,14 @@ impl<'a> CheckerState<'a> {
 
             // Ultimate fallback: use resolve_qualified_symbol and check the result
             // This handles cases where the member is found through complex resolution
-            let mut resolve_visited = Vec::new();
+            let mut resolve_visited = AliasCycleTracker::new();
             if let Some(resolved) =
                 self.resolve_qualified_symbol_inner(idx, &mut resolve_visited, 0)
             {
                 if let Some(kind) = self.check_symbol_type_only_kind(resolved) {
                     return Some(kind);
                 }
-                for &alias_id in &resolve_visited {
+                for alias_id in &resolve_visited {
                     if let Some(kind) = self.check_symbol_type_only_kind(alias_id) {
                         return Some(kind);
                     }
@@ -1283,9 +1284,9 @@ impl<'a> CheckerState<'a> {
         if symbol.flags & tsz_binder::symbol_flags::ALIAS != 0 {
             // Collect all symbols to check: the current symbol plus anything it aliases to
             let mut syms_to_check = vec![sym_id];
-            let mut visited_resolve = Vec::new();
+            let mut visited_resolve = AliasCycleTracker::new();
             if let Some(resolved) = self.resolve_alias_symbol(sym_id, &mut visited_resolve) {
-                syms_to_check.extend(visited_resolve);
+                syms_to_check.extend(&visited_resolve);
                 syms_to_check.push(resolved);
             }
             for check_sym_id in syms_to_check {
@@ -1451,10 +1452,10 @@ impl<'a> CheckerState<'a> {
     /// Determine the type-only kind by tracing through alias chains.
     fn determine_type_only_kind_from_alias(&self, sym_id: tsz_binder::SymbolId) -> TypeOnlyKind {
         let lib_binders = self.get_lib_binders();
-        let mut visited = Vec::new();
+        let mut visited = AliasCycleTracker::new();
         if let Some(target) = self.resolve_alias_symbol(sym_id, &mut visited) {
             // Check the alias chain for type-only symbols
-            for &alias_id in &visited {
+            for alias_id in &visited {
                 if let Some(alias_sym) =
                     self.ctx.binder.get_symbol_with_libs(alias_id, &lib_binders)
                     && alias_sym.is_type_only

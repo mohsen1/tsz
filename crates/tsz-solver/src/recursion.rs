@@ -403,6 +403,11 @@ impl<K: Hash + Eq + Copy> RecursionGuard<K> {
         self.visiting.iter().any(predicate)
     }
 
+    /// Iterate over currently-visiting keys.  Order is unspecified.
+    pub fn visiting_iter(&self) -> impl Iterator<Item = &K> {
+        self.visiting.iter()
+    }
+
     /// Current recursion depth (number of active entries on the stack).
     #[inline]
     pub const fn depth(&self) -> u32 {

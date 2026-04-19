@@ -4,6 +4,7 @@
 //! the 2000-line checker file limit.
 
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
@@ -756,7 +757,7 @@ impl<'a> CheckerState<'a> {
             {
                 // Follow aliases (imported namespaces)
                 let resolved_sym_id = self
-                    .resolve_alias_symbol(lhs_sym_id, &mut Vec::new())
+                    .resolve_alias_symbol(lhs_sym_id, &mut AliasCycleTracker::new())
                     .unwrap_or(lhs_sym_id);
                 let Some(resolved_symbol) = self.ctx.binder.get_symbol(resolved_sym_id) else {
                     return false;
@@ -782,7 +783,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         let resolved_sym_id = self
-            .resolve_alias_symbol(sym_id, &mut Vec::new())
+            .resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
             .unwrap_or(sym_id);
         let Some(symbol) = self.ctx.binder.get_symbol(resolved_sym_id) else {
             return false;
@@ -844,7 +845,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         let resolved_sym_id = self
-            .resolve_alias_symbol(sym_id, &mut Vec::new())
+            .resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
             .unwrap_or(sym_id);
         let Some(symbol) = self.ctx.binder.get_symbol(resolved_sym_id) else {
             return false;

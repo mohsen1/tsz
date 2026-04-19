@@ -6,6 +6,7 @@
 use crate::module_resolution::module_specifier_candidates;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
@@ -1266,7 +1267,7 @@ impl<'a> CheckerState<'a> {
                     .or_else(|| binder.resolve_identifier(arena, assign.expression))
             {
                 let resolved_target = {
-                    let mut visited = Vec::new();
+                    let mut visited = AliasCycleTracker::new();
                     self.resolve_alias_symbol(target_sym_id, &mut visited)
                         .unwrap_or(target_sym_id)
                 };
@@ -2031,7 +2032,7 @@ impl<'a> CheckerState<'a> {
         module_specifier: &str,
         export_name: &str,
     ) -> Option<tsz_binder::SymbolId> {
-        let mut visited = Vec::new();
+        let mut visited = AliasCycleTracker::new();
         self.resolve_named_export_via_export_equals_tracked(
             module_specifier,
             export_name,
@@ -2048,7 +2049,7 @@ impl<'a> CheckerState<'a> {
         &self,
         module_specifier: &str,
         export_name: &str,
-        visited_aliases: &mut Vec<tsz_binder::SymbolId>,
+        visited_aliases: &mut AliasCycleTracker,
     ) -> Option<tsz_binder::SymbolId> {
         let symbol_export_named_member =
             |symbol: &tsz_binder::Symbol, member_name: &str| -> Option<tsz_binder::SymbolId> {
@@ -2133,7 +2134,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let resolve_from_exports = |exports: &tsz_binder::SymbolTable,
-                                    visited_aliases: &mut Vec<tsz_binder::SymbolId>|
+                                    visited_aliases: &mut AliasCycleTracker|
          -> Option<tsz_binder::SymbolId> {
             let export_equals_sym = exports.get("export=")?;
             if export_name == "default" {

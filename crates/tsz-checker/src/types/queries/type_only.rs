@@ -5,6 +5,7 @@
 //! to decide when to emit TS2708 and related diagnostics.
 
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::flags::node_flags;
@@ -225,7 +226,7 @@ impl<'a> CheckerState<'a> {
             export_equals_binder.get_symbol_with_libs(export_equals_sym, &lib_binders)
             && (export_sym.flags & symbol_flags::ALIAS) != 0
         {
-            let mut visited_aliases = Vec::new();
+            let mut visited_aliases = AliasCycleTracker::new();
             match self.resolve_alias_symbol(export_equals_sym, &mut visited_aliases) {
                 Some(resolved) => resolved,
                 None => return false,
@@ -334,7 +335,7 @@ impl<'a> CheckerState<'a> {
             export_equals_binder.get_symbol_with_libs(export_equals_sym, &lib_binders)
             && (export_sym.flags & symbol_flags::ALIAS) != 0
         {
-            let mut visited_aliases = Vec::new();
+            let mut visited_aliases = AliasCycleTracker::new();
             match self.resolve_alias_symbol(export_equals_sym, &mut visited_aliases) {
                 Some(resolved) => resolved,
                 // If we can't resolve the alias (e.g., cross-binder `import X = C`
@@ -433,7 +434,7 @@ impl<'a> CheckerState<'a> {
         // Follow the alias chain to find the actual namespace import symbol.
         // For `import types from './c'` → `export { types as default }` →
         // `import * as types from './b'`, we need the final namespace import.
-        let mut ns_visited = Vec::new();
+        let mut ns_visited = AliasCycleTracker::new();
         let resolved_ns = self
             .resolve_alias_symbol(ns_sym_id, &mut ns_visited)
             .unwrap_or(ns_sym_id);
@@ -442,10 +443,7 @@ impl<'a> CheckerState<'a> {
 
         // Check all symbols in the alias chain (including the resolved one)
         // to find one with an import_module pointing to the target module.
-        let candidates = ns_visited
-            .iter()
-            .copied()
-            .chain(std::iter::once(resolved_ns));
+        let candidates = ns_visited.iter().chain(std::iter::once(resolved_ns));
         for sym_id in candidates {
             let Some(sym) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
                 continue;
@@ -577,7 +575,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.binder.get_symbol(member_id)
                     && member_symbol.flags & symbol_flags::ALIAS != 0
                 {
-                    let mut visited_aliases = Vec::new();
+                    let mut visited_aliases = AliasCycleTracker::new();
                     self.resolve_alias_symbol(member_id, &mut visited_aliases)
                         .unwrap_or(member_id)
                 } else {
@@ -725,7 +723,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let mut visited = Vec::new();
+        let mut visited = AliasCycleTracker::new();
         let target = match self.resolve_alias_symbol(sym_id, &mut visited) {
             Some(target) => target,
             None => return false,
@@ -733,7 +731,7 @@ impl<'a> CheckerState<'a> {
 
         // If any intermediate alias in the chain was marked type-only
         // (e.g. `export type { A }`), then the resolved symbol is type-only.
-        for &alias_sym_id in &visited {
+        for alias_sym_id in &visited {
             if let Some(alias_sym) = self
                 .ctx
                 .binder
@@ -775,7 +773,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let mut visited = Vec::new();
+        let mut visited = AliasCycleTracker::new();
         let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited) else {
             return false;
         };
@@ -979,7 +977,7 @@ impl<'a> CheckerState<'a> {
                 // Resolve through alias chain to get the original symbol's flags.
                 // Import aliases (e.g., `import { Foo }`) carry MODULE flags but not CLASS,
                 // even when the original symbol is a class+namespace merge.
-                let mut visited = Vec::new();
+                let mut visited = AliasCycleTracker::new();
                 let resolved_id = self
                     .resolve_alias_symbol(sym_id, &mut visited)
                     .unwrap_or(sym_id);
@@ -1281,10 +1279,10 @@ impl<'a> CheckerState<'a> {
             }
             // Follow the alias: if export= points to a type-only import, propagate
             if eq_sym.flags & symbol_flags::ALIAS != 0 {
-                let mut visited = Vec::new();
+                let mut visited = AliasCycleTracker::new();
                 if let Some(resolved) = self.resolve_alias_symbol(export_eq_sym_id, &mut visited) {
                     // Check any intermediate alias in the chain
-                    for &alias_id in &visited {
+                    for alias_id in &visited {
                         if let Some(alias_sym) =
                             self.ctx.binder.get_symbol_with_libs(alias_id, &lib_binders)
                             && alias_sym.is_type_only
@@ -1463,11 +1461,11 @@ impl<'a> CheckerState<'a> {
                     | symbol_flags::CLASS
                     | symbol_flags::ENUM;
                 if sym.flags & symbol_flags::ALIAS != 0 && sym.flags & concrete_value == 0 {
-                    let mut visited_aliases = Vec::new();
+                    let mut visited_aliases = AliasCycleTracker::new();
                     if let Some(resolved_sym_id) =
                         self.resolve_alias_symbol(sym_id, &mut visited_aliases)
                     {
-                        for alias_id in visited_aliases {
+                        for alias_id in &visited_aliases {
                             if target_binder
                                 .get_symbol(alias_id)
                                 .or_else(|| self.ctx.binder.get_symbol(alias_id))

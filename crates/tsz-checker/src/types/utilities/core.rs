@@ -3,6 +3,7 @@
 
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind};
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, node::PropertyDeclData};
@@ -1625,7 +1626,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let mut visited = Vec::new();
+        let mut visited = AliasCycleTracker::new();
         let target = match self.resolve_alias_symbol(sym_id, &mut visited) {
             Some(target) => target,
             None => return false,

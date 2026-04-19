@@ -3,6 +3,7 @@
 
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -153,7 +154,7 @@ impl<'a> CheckerState<'a> {
                             // e.g., `export type { A as B }` → `let d: B` reports 'A<T>', not 'B<T>'.
                             // Resolve through aliases to get the target symbol's name.
                             let resolved_name = {
-                                let mut visited_aliases = Vec::new();
+                                let mut visited_aliases = AliasCycleTracker::new();
                                 self.resolve_alias_symbol(sym_id, &mut visited_aliases)
                                     .and_then(|target| {
                                         self.get_symbol_globally(target)
@@ -422,7 +423,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn symbol_is_namespace_only(&self, sym_id: SymbolId) -> bool {
-        let mut visited = Vec::new();
+        let mut visited = AliasCycleTracker::new();
         self.symbol_is_namespace_only_tracked(sym_id, &mut visited)
     }
 
@@ -435,7 +436,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn symbol_is_namespace_only_tracked(
         &self,
         sym_id: SymbolId,
-        visited_aliases: &mut Vec<SymbolId>,
+        visited_aliases: &mut AliasCycleTracker,
     ) -> bool {
         let lib_binders = self.get_lib_binders();
         if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {

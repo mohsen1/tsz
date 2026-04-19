@@ -7,6 +7,7 @@
 use crate::context::is_declaration_file_name;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -1816,7 +1817,7 @@ impl<'a> CheckerState<'a> {
 
                         let mut import_has_value = false;
                         let mut import_has_type = false;
-                        let mut visited = Vec::new();
+                        let mut visited = AliasCycleTracker::new();
                         if let Some(resolved_id) = self.resolve_alias_symbol(sym_id, &mut visited)
                             // When resolve_alias_symbol returns the SAME symbol, it
                             // means resolution failed (e.g. unresolved external module).

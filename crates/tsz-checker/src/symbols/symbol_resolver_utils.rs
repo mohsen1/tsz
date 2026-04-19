@@ -2,6 +2,7 @@
 //! test option parsing, and access class resolution.
 
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tracing::trace;
 use tsz_binder::symbol_flags::CLASS;
 use tsz_binder::{SymbolId, symbol_flags};
@@ -270,7 +271,7 @@ impl<'a> CheckerState<'a> {
                             .insert(idx, None);
                         return None;
                     }
-                    let mut visited_aliases = Vec::new();
+                    let mut visited_aliases = AliasCycleTracker::new();
                     if let Some(member_sym) = self.resolve_reexported_member_symbol(
                         module_specifier,
                         &name,
@@ -287,7 +288,7 @@ impl<'a> CheckerState<'a> {
 
             // Try resolving the alias to get the actual symbol (for non-require aliases
             // like `import X = SomeNamespace`)
-            let mut visited_aliases = Vec::new();
+            let mut visited_aliases = AliasCycleTracker::new();
             if let Some(resolved_sym) =
                 self.resolve_alias_symbol(left_sym_raw, &mut visited_aliases)
                 && resolved_sym != left_sym_raw
@@ -576,7 +577,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_require_call_symbol(
         &self,
         idx: NodeIndex,
-        _visited_aliases: Option<&mut Vec<SymbolId>>,
+        _visited_aliases: Option<&mut AliasCycleTracker>,
     ) -> Option<SymbolId> {
         // For require() calls, we don't resolve to a single symbol.
         // Instead, compute_type_of_symbol handles this by creating a module namespace type.
@@ -798,7 +799,7 @@ impl<'a> CheckerState<'a> {
                 self.report_name_resolution_failure(&req, &failure);
                 return true;
             }
-            let mut visited_aliases = Vec::new();
+            let mut visited_aliases = AliasCycleTracker::new();
             if self
                 .resolve_reexported_member_symbol(
                     module_specifier,
