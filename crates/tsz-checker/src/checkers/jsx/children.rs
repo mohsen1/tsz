@@ -117,6 +117,23 @@ impl<'a> CheckerState<'a> {
                     children_type,
                     synthesized_children_type,
                 ) {
+                    // Zero-parameter callbacks can be treated as context-insensitive
+                    // and otherwise "absorb" the contextual return type, which
+                    // suppresses valid children return-type mismatches. Recheck
+                    // their raw (non-contextual) type before accepting.
+                    if let Some(raw_zero_param_child_type) =
+                        self.raw_single_jsx_zero_param_callback_type(attributes_idx)
+                        && !matches!(raw_zero_param_child_type, TypeId::ANY | TypeId::ERROR)
+                        && !self.is_assignable_to(raw_zero_param_child_type, children_type)
+                    {
+                        self.check_jsx_single_child_assignable(
+                            attributes_idx,
+                            children_type,
+                            raw_zero_param_child_type,
+                            tag_name_idx,
+                            &children_type_str,
+                        );
+                    }
                     return;
                 }
 
@@ -332,6 +349,40 @@ impl<'a> CheckerState<'a> {
         }
 
         self.is_assignable_to(actual_child_type, children_type)
+    }
+
+    fn raw_single_jsx_zero_param_callback_type(
+        &mut self,
+        attributes_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let child_idx = self
+            .get_jsx_body_child_nodes(attributes_idx)?
+            .into_iter()
+            .next()?;
+        let child_node = self.ctx.arena.get(child_idx)?;
+        if child_node.kind != syntax_kind_ext::JSX_EXPRESSION {
+            return None;
+        }
+        let expr_idx = self
+            .ctx
+            .arena
+            .get_jsx_expression(child_node)?
+            .expression
+            .into_option()?;
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+        if !matches!(
+            expr_node.kind,
+            syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
+        ) {
+            return None;
+        }
+        let func = self.ctx.arena.get_function(expr_node)?;
+        if !func.parameters.nodes.is_empty() {
+            return None;
+        }
+
+        self.invalidate_function_like_for_contextual_retry(expr_idx);
+        Some(self.compute_type_of_node_with_request(expr_idx, &crate::context::TypingRequest::NONE))
     }
 
     pub(super) fn get_jsx_children_prop_type(&mut self, props_type: TypeId) -> Option<TypeId> {
