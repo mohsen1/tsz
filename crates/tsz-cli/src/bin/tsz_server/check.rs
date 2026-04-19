@@ -944,6 +944,7 @@ impl Server {
                 .strict_builtin_iterator_return
                 .unwrap_or(options.strict),
             erasable_syntax_only: false,
+            no_fallthrough_cases_in_switch: options.no_fallthrough_cases_in_switch,
         }
     }
 }

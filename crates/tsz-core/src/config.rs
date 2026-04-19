@@ -329,6 +329,9 @@ pub struct CompilerOptions {
     /// Do not report errors on unused labels
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub allow_unused_labels: Option<bool>,
+    /// Report errors for fallthrough cases in switch statements
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub no_fallthrough_cases_in_switch: Option<bool>,
     /// Check side-effect imports for module resolution errors
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_unchecked_side_effect_imports: Option<bool>,
@@ -946,6 +949,10 @@ pub fn resolve_compiler_options(
 
     if let Some(erasable) = options.erasable_syntax_only {
         resolved.checker.erasable_syntax_only = erasable;
+    }
+
+    if let Some(no_fallthrough) = options.no_fallthrough_cases_in_switch {
+        resolved.checker.no_fallthrough_cases_in_switch = no_fallthrough;
     }
 
     if let Some(ref custom_conditions) = options.custom_conditions {
