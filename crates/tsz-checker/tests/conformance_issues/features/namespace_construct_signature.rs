@@ -1,4 +1,4 @@
-use crate::core::*;
+use super::super::core::*;
 
 #[test]
 fn test_create_element_inference_keeps_namespace_local_construct_signature() {

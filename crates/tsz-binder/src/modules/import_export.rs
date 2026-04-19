@@ -325,20 +325,31 @@ impl BinderState {
                 // so it isn't flagged as an unused local (TS6133).
                 self.mark_exported_symbols(arena, export.export_clause);
 
+                let default_exports_pure_type =
+                    arena.get(export.export_clause).is_some_and(|clause_node| {
+                        clause_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                            || clause_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    });
+                let default_is_type_only = export_type_only || default_exports_pure_type;
+                let default_flags = if default_exports_pure_type {
+                    symbol_flags::ALIAS
+                } else {
+                    symbol_flags::ALIAS | symbol_flags::EXPORT_VALUE
+                };
+
                 // Synthesize a "default" export symbol for cross-file import resolution.
                 // This enables `import X from './file'` to resolve the default export.
-                let default_sym_id = self.symbols.alloc(
-                    symbol_flags::ALIAS | symbol_flags::EXPORT_VALUE,
-                    "default".to_string(),
-                );
+                let default_sym_id = self.symbols.alloc(default_flags, "default".to_string());
                 if let Some(default_sym) = self.symbols.get_mut(default_sym_id) {
                     let span = arena
                         .get(export.export_clause)
                         .map(|node| (node.pos, node.end));
                     default_sym.is_exported = true;
-                    default_sym.is_type_only = export_type_only;
+                    default_sym.is_type_only = default_is_type_only;
                     default_sym.add_declaration(export.export_clause, span);
-                    default_sym.set_value_declaration(export.export_clause, span);
+                    if !default_is_type_only {
+                        default_sym.set_value_declaration(export.export_clause, span);
+                    }
                 }
                 // Add to current scope so it's captured as a module export
                 self.current_scope
@@ -519,8 +530,10 @@ impl BinderState {
                                                 clone_sym.is_type_only = true;
                                                 clone_sym.is_exported = true;
                                             }
+                                            self.current_scope.set(exp.to_string(), clone_id);
                                             self.file_locals.set(exp.to_string(), clone_id);
                                         } else if orig != exp {
+                                            self.current_scope.set(exp.to_string(), sym_id);
                                             self.file_locals.set(exp.to_string(), sym_id);
                                         }
                                     }

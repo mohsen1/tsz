@@ -1,4 +1,4 @@
-use crate::core::*;
+use super::super::core::*;
 
 #[test]
 fn test_ts2536_still_emitted_for_concrete_invalid_index() {

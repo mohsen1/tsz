@@ -178,6 +178,10 @@ impl<'a> CheckerState<'a> {
         self.ctx.is_unreachable = prev_unreachable;
         self.ctx.has_reported_unreachable = prev_reported;
 
+        if self.is_js_file() && self.ctx.should_resolve_jsdoc() {
+            self.recheck_checked_js_import_diagnostics(&sf.statements.nodes);
+        }
+
         // Re-check closures that deferred TS7006 during type env building.
         // These closures had skip_implicit_any=true because is_checking_statements
         // was false. Now that all statements have been checked (giving closures a
@@ -646,5 +650,31 @@ impl<'a> CheckerState<'a> {
         request: &TypingRequest,
     ) {
         StatementChecker::check_with_request(stmt_idx, self, request);
+    }
+
+    fn recheck_checked_js_import_diagnostics(&mut self, statements: &[NodeIndex]) {
+        for &stmt_idx in statements {
+            let Some(node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+                continue;
+            }
+
+            let Some(import) = self.ctx.arena.get_import_decl(node).cloned() else {
+                continue;
+            };
+            let Some(spec_node) = self.ctx.arena.get(import.module_specifier) else {
+                continue;
+            };
+            let Some(literal) = self.ctx.arena.get_literal(spec_node) else {
+                continue;
+            };
+            if !self.module_exists_cross_file(&literal.text) {
+                continue;
+            }
+
+            self.check_imported_members(&import, &literal.text);
+        }
     }
 }

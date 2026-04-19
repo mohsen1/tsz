@@ -1,4 +1,4 @@
-use crate::core::*;
+use super::super::core::*;
 
 #[test]
 fn test_destructuring_fallback_literals_do_not_emit_false_assignability_errors() {

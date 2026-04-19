@@ -50,6 +50,21 @@ impl<'a> CheckerState<'a> {
             Some(sym_id)
         };
 
+        if let Some(exports) = self
+            .resolve_effective_module_exports_with_mode(module_specifier, resolution_mode_override)
+            && let Some(sym_id) = exports.get(member_name)
+            && self
+                .get_cross_file_symbol(sym_id)
+                .or_else(|| target_binder.get_symbol(sym_id))
+                .is_some()
+        {
+            if self.ctx.resolve_symbol_file_index(sym_id).is_none() {
+                self.ctx
+                    .register_symbol_file_target(sym_id, target_file_idx);
+            }
+            return Some(sym_id);
+        }
+
         if let Some((sym_id, _)) =
             target_binder.resolve_import_with_reexports_type_only(&target_file_name, member_name)
         {
@@ -155,12 +170,12 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn import_type_namespace_name(&self, module_specifier: &str) -> String {
+    fn import_type_display_name(&self, module_specifier: &str) -> String {
         let stripped = module_specifier
             .strip_prefix("./")
             .or_else(|| module_specifier.strip_prefix("../"))
             .unwrap_or(module_specifier);
-        let display_name = stripped
+        stripped
             .strip_suffix(".d.ts")
             .or_else(|| stripped.strip_suffix(".d.tsx"))
             .or_else(|| stripped.strip_suffix(".d.mts"))
@@ -173,8 +188,142 @@ impl<'a> CheckerState<'a> {
             .or_else(|| stripped.strip_suffix(".jsx"))
             .or_else(|| stripped.strip_suffix(".mjs"))
             .or_else(|| stripped.strip_suffix(".cjs"))
-            .unwrap_or(stripped);
+            .unwrap_or(stripped)
+            .to_string()
+    }
+
+    fn import_type_namespace_name(&self, module_specifier: &str) -> String {
+        let display_name = self.import_type_display_name(module_specifier);
         format!("\"{display_name}\".export=")
+    }
+
+    fn import_type_namespace_name_with_segments(
+        &self,
+        module_specifier: &str,
+        segments: &[String],
+    ) -> String {
+        let display_name = self.import_type_display_name(module_specifier);
+        if segments.is_empty() {
+            format!("\"{display_name}\".export=")
+        } else {
+            format!("\"{display_name}\".{}.export=", segments.join("."))
+        }
+    }
+
+    fn resolve_import_type_member_via_export_equals_type(
+        &mut self,
+        module_specifier: &str,
+        member_name: &str,
+    ) -> Option<TypeId> {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
+        let exports_table = self.resolve_effective_module_exports(module_specifier)?;
+        let export_equals_sym = exports_table.get("export=")?;
+        let export_type = self.get_type_of_symbol(export_equals_sym);
+        if export_type == TypeId::ERROR || export_type == TypeId::ANY {
+            return None;
+        }
+        if member_name == "default" {
+            return Some(export_type);
+        }
+
+        match self.resolve_property_access_with_env(export_type, member_name) {
+            PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn import_type_missing_member_context(
+        &mut self,
+        module_specifier: &str,
+        type_name_idx: NodeIndex,
+        resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
+    ) -> Option<(String, String)> {
+        let segments = self.import_type_member_segments(type_name_idx)?;
+        let first_segment = segments.first()?.clone();
+        let mut current_sym = match self.resolve_ts_import_type_member_symbol(
+            module_specifier,
+            &first_segment,
+            resolution_mode_override,
+        ) {
+            Some(sym_id) => sym_id,
+            None => {
+                let mut resolved_segments = Vec::new();
+                let mut current_type = match self.resolve_import_type_member_via_export_equals_type(
+                    module_specifier,
+                    &first_segment,
+                ) {
+                    Some(type_id) => {
+                        resolved_segments.push(first_segment.clone());
+                        type_id
+                    }
+                    None => {
+                        return Some((
+                            self.import_type_namespace_name(module_specifier),
+                            first_segment,
+                        ));
+                    }
+                };
+
+                for segment in segments.iter().skip(1) {
+                    let next_type =
+                        match self.resolve_property_access_with_env(current_type, segment) {
+                            crate::query_boundaries::common::PropertyAccessResult::Success {
+                                type_id,
+                                ..
+                            } => type_id,
+                            _ => {
+                                return Some((
+                                    self.import_type_namespace_name_with_segments(
+                                        module_specifier,
+                                        &resolved_segments,
+                                    ),
+                                    segment.clone(),
+                                ));
+                            }
+                        };
+                    current_type = next_type;
+                    resolved_segments.push(segment.clone());
+                }
+
+                return None;
+            }
+        };
+
+        let mut resolved_segments = vec![first_segment];
+        for segment in segments.iter().skip(1) {
+            let Some(symbol) = self
+                .get_cross_file_symbol(current_sym)
+                .or_else(|| self.ctx.binder.get_symbol(current_sym))
+            else {
+                break;
+            };
+
+            if let Some(next_sym) = symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(segment))
+                .or_else(|| {
+                    symbol
+                        .members
+                        .as_ref()
+                        .and_then(|members| members.get(segment))
+                })
+            {
+                current_sym = next_sym;
+                resolved_segments.push(segment.clone());
+            } else {
+                return Some((
+                    self.import_type_namespace_name_with_segments(
+                        module_specifier,
+                        &resolved_segments,
+                    ),
+                    segment.clone(),
+                ));
+            }
+        }
+
+        None
     }
 
     fn import_type_missing_member_node(&self, idx: NodeIndex) -> NodeIndex {
@@ -516,7 +665,10 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         };
         let resolution_mode_override = self.get_import_type_resolution_mode_override(call_idx);
-        let is_bare_import_type = call_idx == type_name_idx;
+        let member_segments = self.import_type_member_segments(type_name_idx);
+        let is_bare_import_type = member_segments
+            .as_ref()
+            .is_some_and(|segments| segments.is_empty());
         let has_import_type_options = self.ctx.arena.get(call_idx).is_some_and(|call_node| {
             self.ctx
                 .arena
@@ -618,7 +770,33 @@ impl<'a> CheckerState<'a> {
             TypeId::ERROR
         };
         let report_unresolved_imports = self.ctx.report_unresolved_imports;
-        let member_segments = self.import_type_member_segments(type_name_idx);
+        let has_named_member_segments = member_segments
+            .as_ref()
+            .is_some_and(|segments| !segments.is_empty());
+        let report_missing_import_type_member = |checker: &mut Self| {
+            let Some(member_segments) = member_segments.as_ref() else {
+                return TypeId::ERROR;
+            };
+            let Some(first_segment) = member_segments.first() else {
+                return TypeId::ERROR;
+            };
+
+            let (namespace_name, member_name) = checker
+                .import_type_missing_member_context(
+                    &module_name,
+                    type_name_idx,
+                    resolution_mode_override,
+                )
+                .unwrap_or_else(|| {
+                    (
+                        checker.import_type_namespace_name(&module_name),
+                        first_segment.clone(),
+                    )
+                });
+            let member_idx = checker.import_type_missing_member_node(type_name_idx);
+            checker.error_namespace_no_export(&namespace_name, &member_name, member_idx);
+            TypeId::ERROR
+        };
 
         if let Some(resolved) = self.resolve_import_type_reference(
             &module_name,
@@ -659,13 +837,8 @@ impl<'a> CheckerState<'a> {
             {
                 return TypeId::ERROR;
             }
-            if let Some(member_segments) = member_segments.as_ref()
-                && let Some(first_segment) = member_segments.first()
-            {
-                let namespace_name = self.import_type_namespace_name(&module_name);
-                let member_idx = self.import_type_missing_member_node(type_name_idx);
-                self.error_namespace_no_export(&namespace_name, first_segment, member_idx);
-                return TypeId::ERROR;
+            if has_named_member_segments {
+                return report_missing_import_type_member(self);
             }
             return if is_bare_import_type
                 && !bare_import_type_refers_to_type
@@ -701,13 +874,8 @@ impl<'a> CheckerState<'a> {
             {
                 return TypeId::ERROR;
             }
-            if let Some(member_segments) = member_segments.as_ref()
-                && let Some(first_segment) = member_segments.first()
-            {
-                let namespace_name = self.import_type_namespace_name(&module_name);
-                let member_idx = self.import_type_missing_member_node(type_name_idx);
-                self.error_namespace_no_export(&namespace_name, first_segment, member_idx);
-                return TypeId::ERROR;
+            if has_named_member_segments {
+                return report_missing_import_type_member(self);
             }
             return if is_bare_import_type
                 && !bare_import_type_refers_to_type
@@ -760,13 +928,8 @@ impl<'a> CheckerState<'a> {
             {
                 return TypeId::ERROR;
             }
-            if let Some(member_segments) = member_segments.as_ref()
-                && let Some(first_segment) = member_segments.first()
-            {
-                let namespace_name = self.import_type_namespace_name(&module_name);
-                let member_idx = self.import_type_missing_member_node(type_name_idx);
-                self.error_namespace_no_export(&namespace_name, first_segment, member_idx);
-                return TypeId::ERROR;
+            if has_named_member_segments {
+                return report_missing_import_type_member(self);
             }
             return if is_bare_import_type
                 && !bare_import_type_refers_to_type
@@ -863,13 +1026,8 @@ impl<'a> CheckerState<'a> {
                 {
                     return TypeId::ERROR;
                 }
-                if let Some(member_segments) = member_segments.as_ref()
-                    && let Some(first_segment) = member_segments.first()
-                {
-                    let namespace_name = self.import_type_namespace_name(&module_name);
-                    let member_idx = self.import_type_missing_member_node(type_name_idx);
-                    self.error_namespace_no_export(&namespace_name, first_segment, member_idx);
-                    return TypeId::ERROR;
+                if has_named_member_segments {
+                    return report_missing_import_type_member(self);
                 }
                 return if is_bare_import_type
                     && !bare_import_type_refers_to_type

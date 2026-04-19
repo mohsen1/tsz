@@ -59,6 +59,36 @@ fn dedup_call_signatures_keep_last(sigs: &mut Vec<tsz_solver::CallSignature>) {
 }
 
 impl<'a> CheckerState<'a> {
+    fn resolve_interface_heritage_symbol_by_name(
+        &self,
+        name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        let normalized = name.strip_prefix("globalThis.").unwrap_or(name);
+        let lib_binders = self.get_lib_binders();
+        self.ctx
+            .binder
+            .file_locals
+            .get(normalized)
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .get_global_type_with_libs(normalized, &lib_binders)
+            })
+            .or_else(|| {
+                normalized
+                    .rsplit('.')
+                    .next()
+                    .filter(|tail| *tail != normalized)
+                    .and_then(|tail| {
+                        self.ctx.binder.file_locals.get(tail).or_else(|| {
+                            self.ctx
+                                .binder
+                                .get_global_type_with_libs(tail, &lib_binders)
+                        })
+                    })
+            })
+    }
+
     /// Get the type of an interface declaration.
     ///
     /// This function builds the interface type by:
@@ -658,10 +688,31 @@ impl<'a> CheckerState<'a> {
                         (type_idx, None)
                     };
 
-                    let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx) else {
+                    let base_name = self
+                        .entity_name_text(expr_idx)
+                        .or_else(|| self.expression_text(expr_idx));
+                    let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx).or_else(|| {
+                        base_name
+                            .as_deref()
+                            .and_then(|name| self.resolve_interface_heritage_symbol_by_name(name))
+                    }) else {
                         continue;
                     };
-                    let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym_id) else {
+                    let Some((
+                        base_symbol_declarations,
+                        base_symbol_value_declaration,
+                        base_symbol_name,
+                    )) = self
+                        .get_cross_file_symbol(base_sym_id)
+                        .or_else(|| self.ctx.binder.get_symbol(base_sym_id))
+                        .map(|symbol| {
+                            (
+                                symbol.declarations.clone(),
+                                symbol.value_declaration,
+                                symbol.escaped_name.clone(),
+                            )
+                        })
+                    else {
                         continue;
                     };
 
@@ -681,7 +732,7 @@ impl<'a> CheckerState<'a> {
                     let mut base_type = None;
 
                     // Try class instance type first (needs special handling)
-                    for &base_decl_idx in &base_symbol.declarations {
+                    for &base_decl_idx in &base_symbol_declarations {
                         let Some(base_node) = self.ctx.arena.get(base_decl_idx) else {
                             continue;
                         };
@@ -691,8 +742,8 @@ impl<'a> CheckerState<'a> {
                             break;
                         }
                     }
-                    if base_type.is_none() && base_symbol.value_declaration.is_some() {
-                        let base_decl_idx = base_symbol.value_declaration;
+                    if base_type.is_none() && base_symbol_value_declaration.is_some() {
+                        let base_decl_idx = base_symbol_value_declaration;
                         if let Some(base_node) = self.ctx.arena.get(base_decl_idx)
                             && let Some(base_class) = self.ctx.arena.get_class(base_node)
                         {
@@ -712,8 +763,7 @@ impl<'a> CheckerState<'a> {
                             // IteratorObject <-> Iterator in esnext.iterator.d.ts),
                             // try resolving via lib type resolution which has
                             // dedicated cycle-breaking logic.
-                            if let Some(lib_type) =
-                                self.resolve_lib_type_by_name(&base_symbol.escaped_name)
+                            if let Some(lib_type) = self.resolve_lib_type_by_name(&base_symbol_name)
                                 && lib_type != TypeId::ERROR
                                 && lib_type != TypeId::UNKNOWN
                             {
@@ -766,7 +816,7 @@ impl<'a> CheckerState<'a> {
                         TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
                     base_type = instantiate_type(self.ctx.types, base_type, &substitution);
                     let is_builtin_array_heritage =
-                        matches!(base_symbol.escaped_name.as_str(), "Array" | "ReadonlyArray");
+                        matches!(base_symbol_name.as_str(), "Array" | "ReadonlyArray");
                     let requires_self = !is_builtin_array_heritage
                         && current_sym.is_some_and(|current_sym| {
                             has_structural_self_arg

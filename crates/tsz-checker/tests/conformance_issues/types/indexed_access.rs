@@ -1,4 +1,4 @@
-use crate::core::*;
+use super::super::core::*;
 
 #[test]
 fn test_indexed_access_constrained_type_param_no_ts2536() {
@@ -258,37 +258,6 @@ const first = xs.firstOrUndefined();
         diagnostics.is_empty(),
         "Expected no diagnostics for Array global augmentation merged with lib declarations.\nActual diagnostics: {diagnostics:#?}"
     );
-}
-
-/// Helper to compile with `report_unresolved_imports` enabled (for import-related tests)
-fn compile_imports_and_get_diagnostics(
-    source: &str,
-    options: CheckerOptions,
-) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-    checker.ctx.report_unresolved_imports = true;
-
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
-        .collect()
 }
 
 /// Issue: Flow analysis applies narrowing from invalid assignments

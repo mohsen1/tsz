@@ -1,4 +1,4 @@
-use crate::core::*;
+use super::super::core::*;
 
 #[test]
 fn test_export_assignment_of_export_namespace_with_default_no_ts2349() {

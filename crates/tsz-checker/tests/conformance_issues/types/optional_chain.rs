@@ -1,4 +1,4 @@
-use crate::core::*;
+use super::super::core::*;
 
 #[test]
 fn test_assert_optional_chain_discriminant_narrows_base_union_member() {

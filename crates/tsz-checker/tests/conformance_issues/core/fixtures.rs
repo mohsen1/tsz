@@ -1,4 +1,4 @@
-use crate::core::*;
+use super::*;
 
 #[test]
 fn test_const_alias_expando_element_reads_do_not_emit_ts7053_in_declaration_mode() {

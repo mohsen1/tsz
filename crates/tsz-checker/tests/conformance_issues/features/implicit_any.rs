@@ -1,4 +1,4 @@
-use crate::core::*;
+use super::super::core::*;
 
 #[test]
 fn test_ts7022_not_emitted_for_destructured_parameter_with_concrete_default_source() {

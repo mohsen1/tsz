@@ -1749,6 +1749,27 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             }
             // MetaProperty: `new.target` (import.meta is parsed as PROPERTY_ACCESS_EXPRESSION)
             k if k == syntax_kind_ext::META_PROPERTY => {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                use tsz_parser::parser::syntax_kind_ext::{
+                    CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION,
+                };
+
+                let invalid_context = match self.checker.find_enclosing_non_arrow_function(idx) {
+                    Some(owner_idx) => self.checker.ctx.arena.get(owner_idx).is_none_or(|owner| {
+                        !matches!(
+                            owner.kind,
+                            CONSTRUCTOR | FUNCTION_DECLARATION | FUNCTION_EXPRESSION
+                        )
+                    }),
+                    None => true,
+                };
+                if invalid_context {
+                    self.checker.error_at_node(
+                        idx,
+                        diagnostic_messages::META_PROPERTY_IS_ONLY_ALLOWED_IN_THE_BODY_OF_A_FUNCTION_DECLARATION_FUNCTION_EXP,
+                        diagnostic_codes::META_PROPERTY_IS_ONLY_ALLOWED_IN_THE_BODY_OF_A_FUNCTION_DECLARATION_FUNCTION_EXP,
+                    );
+                }
                 // new.target returns the constructor function or undefined.
                 // Return any as a safe fallback.
                 TypeId::ANY

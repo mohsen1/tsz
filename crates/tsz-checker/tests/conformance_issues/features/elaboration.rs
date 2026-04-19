@@ -1,4 +1,4 @@
-use crate::core::*;
+use super::super::core::*;
 
 #[test]
 fn test_ts2403_param_var_redeclaration_inferred_type_constructor() {

@@ -1,4 +1,4 @@
-use crate::core::*;
+use super::super::core::*;
 
 #[test]
 fn test_type_alias_type_param_shadows_global_return_type_utility() {

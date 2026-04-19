@@ -1,4 +1,4 @@
-use crate::core::*;
+use super::super::core::*;
 
 #[test]
 fn test_ts2536_with_lib_mismatched_keyof_source() {

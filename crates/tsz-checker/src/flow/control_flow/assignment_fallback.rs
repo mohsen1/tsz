@@ -18,6 +18,10 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{CallSignature, CallableShape, ParamInfo, PropertyInfo, TypeId};
 
 impl<'a> FlowAnalyzer<'a> {
+    fn is_builtin_promise_like_name(name: &str) -> bool {
+        name == "Promise" || name == "PromiseLike"
+    }
+
     pub(super) fn assigned_type_for_await_rhs(
         &self,
         rhs: NodeIndex,
@@ -650,18 +654,14 @@ impl<'a> FlowAnalyzer<'a> {
         };
 
         if let Some(ident) = self.arena.get_identifier(name_node) {
-            return self.is_promise_like_name(ident.escaped_text.as_str());
+            return Self::is_builtin_promise_like_name(ident.escaped_text.as_str());
         }
 
         self.arena
             .get_qualified_name(name_node)
             .and_then(|qualified| self.arena.get(qualified.right))
             .and_then(|node| self.arena.get_identifier(node))
-            .is_some_and(|ident| self.is_promise_like_name(ident.escaped_text.as_str()))
-    }
-
-    fn is_promise_like_name(&self, name: &str) -> bool {
-        matches!(name, "Promise" | "PromiseLike") || name.contains("Promise")
+            .is_some_and(|ident| Self::is_builtin_promise_like_name(ident.escaped_text.as_str()))
     }
 
     fn call_return_type_from_type(&self, ty: TypeId) -> Option<TypeId> {
