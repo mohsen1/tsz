@@ -501,9 +501,17 @@ impl<'a> CheckerState<'a> {
         // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.)
         let module_key = module_name.to_string();
         if let Some(error) = self.ctx.get_resolution_error(module_name) {
-            // Extract error values before mutable borrow
-            let error_code = error.code;
-            let error_message = error.message.clone();
+            // Keep dynamic import diagnostics aligned with the centralized
+            // module-not-found upgrader so Node built-ins (e.g. node:path)
+            // can surface as TS2580/TS2591 instead of raw TS2307.
+            let (error_message, error_code) = {
+                let (msg, code) = self.module_not_found_diagnostic(module_name);
+                if code != error.code {
+                    (msg, code)
+                } else {
+                    (error.message.clone(), error.code)
+                }
+            };
             if error_code == 6504 {
                 self.error_program_level(error_message, error_code);
                 return;
