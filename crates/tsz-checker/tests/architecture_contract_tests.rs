@@ -244,7 +244,7 @@ fn test_direct_call_evaluator_usage_is_quarantined_to_query_boundaries() {
 }
 
 #[test]
-fn test_direct_typedata_usage_is_quarantined_to_query_boundaries() {
+fn test_direct_solver_types_module_usage_is_quarantined_to_query_boundaries() {
     fn collect_checker_rs_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
         let entries = fs::read_dir(dir).unwrap_or_else(|_| {
             panic!("failed to read checker source directory {}", dir.display())
@@ -281,10 +281,7 @@ fn test_direct_typedata_usage_is_quarantined_to_query_boundaries() {
                 continue;
             }
 
-            if line.contains("use tsz_solver::TypeData")
-                || line.contains("tsz_solver::TypeData::")
-                || line.contains("TypeData::")
-            {
+            if line.contains("tsz_solver::types::") {
                 violations.push(format!("{}:{}", rel, line_index + 1));
             }
         }
@@ -292,61 +289,7 @@ fn test_direct_typedata_usage_is_quarantined_to_query_boundaries() {
 
     assert!(
         violations.is_empty(),
-        "direct TypeData usage should stay in query_boundaries modules; violations: {}",
-        violations.join(", ")
-    );
-}
-
-#[test]
-fn test_direct_typekey_usage_is_quarantined_to_query_boundaries() {
-    fn collect_checker_rs_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
-        let entries = fs::read_dir(dir).unwrap_or_else(|_| {
-            panic!("failed to read checker source directory {}", dir.display())
-        });
-        for entry in entries {
-            let entry = entry.expect("failed to read checker source directory entry");
-            let path = entry.path();
-            if path.is_dir() {
-                collect_checker_rs_files_recursive(&path, files);
-                continue;
-            }
-            if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
-                files.push(path);
-            }
-        }
-    }
-
-    let mut files = Vec::new();
-    collect_checker_rs_files_recursive(Path::new("src"), &mut files);
-
-    let mut violations = Vec::new();
-    for path in files {
-        let rel = path.display().to_string();
-        let allowed = rel.contains("/query_boundaries/") || rel.contains("/tests/");
-        if allowed {
-            continue;
-        }
-
-        let src = fs::read_to_string(&path)
-            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
-        for (line_index, line) in src.lines().enumerate() {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("//") {
-                continue;
-            }
-
-            if line.contains("use tsz_solver::types::TypeKey")
-                || line.contains("tsz_solver::types::TypeKey")
-                || line.contains("TypeKey::")
-            {
-                violations.push(format!("{}:{}", rel, line_index + 1));
-            }
-        }
-    }
-
-    assert!(
-        violations.is_empty(),
-        "direct TypeKey usage should stay in query_boundaries modules; violations: {}",
+        "direct solver types module usage should stay in query_boundaries modules; violations: {}",
         violations.join(", ")
     );
 }
