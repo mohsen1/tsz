@@ -306,8 +306,14 @@ CHECKS = [
             "exclude_files": {
                 # Transitional baseline: core lib exports the wasm API today.
                 "crates/tsz-core/src/lib.rs",
-                # Explicit wasm API module.
+                # Explicit wasm API module surface.
                 "crates/tsz-core/src/api/wasm/code_actions.rs",
+                "crates/tsz-core/src/api/wasm/compiler_options.rs",
+                "crates/tsz-core/src/api/wasm/core_utils.rs",
+                "crates/tsz-core/src/api/wasm/parser.rs",
+                "crates/tsz-core/src/api/wasm/program.rs",
+                "crates/tsz-core/src/api/wasm/program_results.rs",
+                "crates/tsz-core/src/api/wasm/transforms.rs",
             },
             "ignore_comment_lines": True,
         },

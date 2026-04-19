@@ -1333,13 +1333,10 @@ fn clean_module_text(text: &str) -> String {
             // multi-line string) — drop both.
             '\\' if matches!(chars.peek(), Some('\r' | '\n' | '\u{2028}' | '\u{2029}')) => {
                 // consume the paired line terminator (handling \r\n too)
-                match chars.next() {
-                    Some('\r') => {
-                        if matches!(chars.peek(), Some('\n')) {
-                            chars.next();
-                        }
-                    }
-                    _ => {}
+                if let Some('\r') = chars.next()
+                    && matches!(chars.peek(), Some('\n'))
+                {
+                    chars.next();
                 }
             }
             // Bare line terminators are removed.
