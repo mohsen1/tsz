@@ -505,13 +505,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // This ensures TS2416 is correctly emitted for incompatible overrides.
                 target_instantiated.type_params.clear();
             } else {
-                // Default: erase target type params to their constraints so non-generic
-                // functions can match generic targets structurally (e.g., for comparable
-                // relation, overload resolution, and general type compatibility).
-                let target_canonical =
-                    erase_type_params_to_constraints(&target_instantiated.type_params);
-                target_instantiated =
-                    self.instantiate_function_shape(&target_instantiated, &target_canonical);
+                if !source_instantiated.is_constructor && !target_instantiated.is_constructor {
+                    // For single call-signature assignability, tsc keeps target type
+                    // parameters visible (does not erase to constraints) so concrete
+                    // source signatures don't spuriously satisfy "for all T" targets.
+                    target_instantiated.type_params.clear();
+                } else {
+                    // Keep constructor behavior unchanged: erase target type params to
+                    // their constraints so constructor compatibility continues to follow
+                    // existing assignability/comparable rules.
+                    let target_canonical =
+                        erase_type_params_to_constraints(&target_instantiated.type_params);
+                    target_instantiated =
+                        self.instantiate_function_shape(&target_instantiated, &target_canonical);
+                }
             }
         }
 
