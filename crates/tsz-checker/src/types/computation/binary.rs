@@ -2129,6 +2129,11 @@ impl<'a> CheckerState<'a> {
                     func_ty,
                     &mut |src, tgt| self.is_assignable_to(src, tgt),
                 );
+            } else if self.ctx.compiler_options.no_lib {
+                // Under `--noLib`, the global `Function` type is deliberately
+                // absent. tsc suppresses TS2359 in that regime rather than
+                // cascading on every `instanceof X`; mirror that.
+                is_valid_rhs = true;
             } else if eval_right == TypeId::ANY
                 || eval_right == TypeId::UNKNOWN
                 || eval_right == TypeId::FUNCTION
