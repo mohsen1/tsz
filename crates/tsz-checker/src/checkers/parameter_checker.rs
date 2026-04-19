@@ -1209,11 +1209,21 @@ impl<'a> CheckerState<'a> {
                     let readonly_any_array = factory.readonly_type(any_array);
 
                     if !self.is_assignable_to(declared_type, readonly_any_array) {
-                        self.error_at_node(
-                            param.type_annotation,
-                            "A rest parameter must be of an array type.",
-                            diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
-                        );
+                        // tsc anchors TS2370 at the parameter (including the
+                        // `...` token) rather than at its type annotation or
+                        // name.  Use the param node's start position with the
+                        // span up to the end of the name for parity.
+                        if let Some(pn) = self.ctx.arena.get(param_idx)
+                            && let Some(name_node) = self.ctx.arena.get(param.name)
+                        {
+                            let length = name_node.end.saturating_sub(pn.pos);
+                            self.error_at_position(
+                                pn.pos,
+                                length,
+                                "A rest parameter must be of an array type.",
+                                diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
+                            );
+                        }
                     }
                 }
             } else if param.initializer.is_some() {
