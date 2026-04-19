@@ -1402,12 +1402,14 @@ fn test_contextual_instantiation_generic_function_to_callable_target() {
     assert!(checker.check_subtype(source, target).is_true());
 }
 
-/// Non-generic construct signature source should be assignable to generic
-/// construct signature target via type parameter erasure to constraints.
-/// Models: `new() => MyClass` <: `new<T extends MyInterface>() => T`
-/// when tsc erases T to `MyInterface` for comparison.
+/// Non-generic construct signature source is NOT assignable to a generic
+/// construct signature target. `new() => MyClass` is not <: `new<T>() => T`
+/// because T is universally quantified — the generic constructor returns *any*
+/// T satisfying its constraint, so the concrete `new() => MyClass` cannot
+/// satisfy "for all T". Kernel intentionally keeps T opaque (no erasure to
+/// constraints) to prevent spurious acceptance — see e7a5fce5e0.
 #[test]
-fn test_nongeneric_construct_sig_assignable_to_generic_target() {
+fn test_nongeneric_construct_sig_not_assignable_to_generic_target() {
     let interner = TypeInterner::new();
 
     // Create a concrete return type to represent `MyClass` (implements MyInterface)
@@ -1463,13 +1465,13 @@ fn test_nongeneric_construct_sig_assignable_to_generic_target() {
         ..Default::default()
     });
 
-    // Non-generic source should be assignable to generic target
-    // because T gets erased to its constraint { value: number }
-    // This requires erase_generics=true (used for base type structural checks).
+    // Non-generic source is NOT assignable to generic target:
+    // the target's T is kept as an opaque type parameter (not erased to its
+    // constraint) so concrete types cannot spuriously satisfy universal targets.
     let mut checker = SubtypeChecker::new(&interner);
     checker.strict_function_types = false;
     checker.erase_generics = true;
-    assert!(checker.check_subtype(source, target).is_true());
+    assert!(!checker.check_subtype(source, target).is_true());
 }
 
 /// Regression test for genericFunctionCallSignatureReturnTypeMismatch.ts (TS2322)

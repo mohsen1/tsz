@@ -383,6 +383,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // Fall through to structural check for unsound any parameters
         }
 
+        // Call-only and construct-only parameter types are not interchangeable.
+        // Without this guard, constructor bivariance can incorrectly accept
+        // higher-order mismatches by finding compatibility in one direction.
+        let (s_has_call, s_has_construct) = self.callable_modality_flags_for_type(source_type);
+        let (t_has_call, t_has_construct) = self.callable_modality_flags_for_type(target_type);
+        let s_call_only = s_has_call && !s_has_construct;
+        let s_construct_only = s_has_construct && !s_has_call;
+        let t_call_only = t_has_call && !t_has_construct;
+        let t_construct_only = t_has_construct && !t_has_call;
+        if (s_call_only && t_construct_only) || (s_construct_only && t_call_only) {
+            return false;
+        }
+
         // Methods are bivariant regardless of strict_function_types setting
         // UNLESS disable_method_bivariance is set.
         // NOTE: North Star V1.2 prioritizes soundness. Bivariance is enabled for methods

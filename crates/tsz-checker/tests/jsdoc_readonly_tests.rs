@@ -86,11 +86,12 @@ function b() {}
     );
 }
 
-/// @extends between two classes is NOT orphaned (tsc considers it attached
-/// to the following class, even when separated by an intermediate JSDoc
-/// comment or blank lines).
+/// @extends separated from its class by another JSDoc block → TS8022.
+/// tsc treats the interposed `/** @constructor */` block as interrupting
+/// the @extends tag's attachment, making it orphaned. Confirmed via
+/// conformance/jsdoc/extendsTag2.ts fingerprint (code 8022, file="").
 #[test]
-fn test_jsdoc_extends_before_class_not_orphaned() {
+fn test_jsdoc_extends_interposed_jsdoc_emits_ts8022() {
     let source = r#"
 class A {
     constructor() {}
@@ -105,10 +106,9 @@ class B extends A {
 "#;
     let diagnostics = check_js_source_diagnostics(source);
     let ts8022 = diagnostics.iter().filter(|d| d.code == 8022).count();
-    assert_eq!(
-        ts8022,
-        0,
-        "Expected no TS8022 for @extends before class, got: {:?}",
+    assert!(
+        ts8022 >= 1,
+        "Expected TS8022 for @extends separated from class by interposed JSDoc, got: {:?}",
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
