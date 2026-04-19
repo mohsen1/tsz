@@ -493,8 +493,7 @@ fn test_instantiated_generic_same_enum_discriminant_intersection_preserves_keyof
 }
 
 #[test]
-#[ignore = "cannot safely reduce Enum+Lazy at interner level: Lazy may be interface/class, not enum"]
-fn test_enum_member_intersection_with_other_member_lazy_ref_reduces_to_never() {
+fn test_enum_member_intersection_with_other_member_lazy_ref_stays_unreduced() {
     let interner = TypeInterner::new();
 
     let enum_member_a = interner.intern(TypeData::Enum(
@@ -504,15 +503,15 @@ fn test_enum_member_intersection_with_other_member_lazy_ref_reduces_to_never() {
     let impossible = interner.intersection2(enum_member_a, interner.lazy(crate::def::DefId(401)));
     let compatible = interner.intersection2(enum_member_a, interner.lazy(crate::def::DefId(400)));
 
-    assert_eq!(
+    assert_ne!(
         impossible,
         TypeId::NEVER,
-        "distinct enum-member refs should reduce to never"
+        "distinct enum-member and lazy refs must stay conservative at interner level"
     );
     assert_ne!(
         compatible,
         TypeId::NEVER,
-        "same enum-member ref should remain compatible"
+        "same enum-member ref should remain non-never"
     );
 }
 
