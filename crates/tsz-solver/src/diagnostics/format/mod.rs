@@ -705,6 +705,15 @@ impl<'a> TypeFormatter<'a> {
                     return self.format(app.base);
                 }
 
+                // If the application's base resolved to an error type,
+                // rendering `error<args>` produces unreadable cascades in
+                // diagnostics (e.g. `error<error<error<...>>>`). Collapse to
+                // the bare "error" token — the caller's parent diagnostic
+                // already signals the underlying failure.
+                if app.base == TypeId::ERROR || matches!(base_key, Some(TypeData::Error)) {
+                    return Cow::Borrowed("error");
+                }
+
                 // Special handling for Application(Lazy(def_id), args)
                 // Format as "TypeName<Args>" instead of "Lazy(def_id)<Args>"
                 let base_str: Cow<'_, str> = if let Some(TypeData::Lazy(def_id)) = base_key {
