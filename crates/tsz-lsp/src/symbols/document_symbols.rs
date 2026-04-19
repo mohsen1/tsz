@@ -460,13 +460,16 @@ impl<'a> DocumentSymbolProvider<'a> {
                 }
             }
 
-            // Enum Member
+            // Enum Member — tsc only surfaces members whose name is a
+            // plain identifier or string/numeric literal. Computed names
+            // like `[Symbol.isRegExp]` are dropped from the navtree; emit
+            // nothing instead of a `<member>` placeholder to match.
             k if k == syntax_kind_ext::ENUM_MEMBER => {
                 if let Some(member) = self.arena.get_enum_member(node) {
                     let name_node = member.name;
-                    let name = self
-                        .get_name(name_node)
-                        .unwrap_or_else(|| "<member>".to_string());
+                    let Some(name) = self.get_name(name_node) else {
+                        return vec![];
+                    };
 
                     let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
                     let selection_range =
@@ -497,6 +500,10 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let selection_range =
                         node_range(self.arena, self.line_map, self.source_text, method.name);
                     let modifiers = self.get_kind_modifiers_from_list(&method.modifiers);
+                    // Walk the method body like we do for functions and
+                    // constructors — tsc surfaces locally-declared
+                    // classes/functions/interfaces/enums/type aliases.
+                    let children = self.collect_children_from_block(method.body, Some(&name));
 
                     vec![DocumentSymbol {
                         name,
@@ -506,7 +513,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         range,
                         selection_range,
                         container_name: container_name.map(std::string::ToString::to_string),
-                        children: vec![],
+                        children,
                     }]
                 } else {
                     vec![]
@@ -1088,6 +1095,18 @@ impl<'a> DocumentSymbolProvider<'a> {
                     .arena
                     .get_identifier(node)
                     .map(|id| id.escaped_text.clone());
+            } else if node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                // Private identifiers keep their `#` prefix in navbar
+                // output (`#foo`). The scanner's token value may or may
+                // not already include the `#` — normalize by prepending
+                // when missing.
+                return self.arena.get_identifier(node).map(|id| {
+                    if id.escaped_text.starts_with('#') {
+                        id.escaped_text.clone()
+                    } else {
+                        format!("#{}", id.escaped_text)
+                    }
+                });
             } else if node.kind == SyntaxKind::StringLiteral as u16
                 || node.kind == SyntaxKind::NumericLiteral as u16
             {
