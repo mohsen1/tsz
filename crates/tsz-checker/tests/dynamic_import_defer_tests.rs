@@ -96,14 +96,19 @@ import.defer("./a.js");
     checker.ctx.set_current_file_idx(1);
     checker.ctx.report_unresolved_imports = true;
 
+    // Mirror what `build_module_resolution_maps` produces: both the
+    // extension-stripped canonical form and the extension-bearing form are
+    // registered, since users legitimately write either.
     let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
     resolved_module_paths.insert((1, "./a".to_string()), 0);
+    resolved_module_paths.insert((1, "./a.js".to_string()), 0);
     checker
         .ctx
         .set_resolved_module_paths(Arc::new(resolved_module_paths));
 
     let mut resolved_modules: FxHashSet<String> = FxHashSet::default();
     resolved_modules.insert("./a".to_string());
+    resolved_modules.insert("./a.js".to_string());
     checker.ctx.set_resolved_modules(resolved_modules);
 
     checker.check_source_file(root_b);

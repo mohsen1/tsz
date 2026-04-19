@@ -1,31 +1,60 @@
 //! Module resolution utilities for multi-file type checking.
 //!
-//! This module provides shared utilities for building cross-file module
-//! resolution context. Used by both the CLI and the tsz-server.
-//!
-//! Supports the following import forms:
+//! This module owns the cross-file specifier → file-index mapping consumed by
+//! the checker, binder integration, and server. It supports the following
+//! surface forms:
 //! - ES imports: `import { x } from "./module"`
 //! - Require: `const x = require("./module")`
 //! - Import equals: `import x = require("./module")`
 //! - Dynamic import: `const x = await import("./module")`
 //! - Re-exports: `export { x } from "./module"`
+//! - Triple-slash reference directives: `/// <reference path="./module.ts" />`
 //!
-//! All of these ultimately resolve against the same specifier-to-file mapping
-//! built by `build_module_resolution_maps`.
+//! # Pipeline
+//!
+//! ```text
+//! raw specifier string ──▶ normalize_import_specifier ──▶ CanonicalSpecifier
+//! project file list    ──▶ build_target_index          ──▶ TargetIndex
+//! (source, canonical, index) ─▶ resolve_from_source    ──▶ Option<file_idx>
+//! ```
+//!
+//! `build_module_resolution_maps` materializes the cross product (source
+//! file × target entry) into a flat `(src_idx, specifier) → tgt_idx` map for
+//! legacy consumers, but the expensive alias fan-out that previously generated
+//! quoted / backslash / extension-stripped / chain variants is gone. Each
+//! target now registers a small, deliberate set of *canonical* specifier
+//! strings (see `register_canonical_forms` below for the exact list and
+//! justifications).
 
-use rustc_hash::FxHashMap;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::Path;
 
-/// TypeScript file extensions in resolution priority order.
-/// `.d.ts` must be checked before `.ts` to avoid `.d` being left as a stem artifact.
+// ---------------------------------------------------------------------------
+// Extension tables
+// ---------------------------------------------------------------------------
+
+/// TypeScript/JavaScript file extensions in resolution priority order.
+///
+/// `.d.ts` (and friends) must appear before `.ts` so that stripping does not
+/// leave a `.d` artifact in the stem.
 const TS_EXTENSIONS: &[&str] = &[
     ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs",
     ".cjs",
 ];
 
-/// Strip a known TypeScript/JavaScript extension from a file path string.
-/// Returns the path without the extension, or the original string if no known extension matched.
+/// Tails that mark a file as an *arbitrary-extension declaration file*: a file
+/// named `<base>.d.<ext>.ts` where `<ext>` is itself a known TS/JS/JSON
+/// extension. These files are addressable through their paired implementation
+/// specifier (`./file.ts` → `./file.d.ts.ts`) but NOT through the stripped form
+/// (`./file.d.ts`), because that form would collide with genuine declaration
+/// imports the user wrote.
+const ARBITRARY_EXT_TAILS: &[&str] = &[
+    ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".d.js", ".d.jsx", ".d.mjs", ".d.cjs", ".d.json",
+];
+
+/// Strip a known TS/JS extension from the end of `path`. Returns `path`
+/// unchanged if no known extension is present. Always returns a borrow of the
+/// input — no allocation.
 fn strip_ts_extension(path: &str) -> &str {
     for ext in TS_EXTENSIONS {
         if let Some(stripped) = path.strip_suffix(ext) {
@@ -35,225 +64,508 @@ fn strip_ts_extension(path: &str) -> &str {
     path
 }
 
-/// Returns true when the file name matches the arbitrary-extension declaration
-/// pattern `<base>.d.<ext>.ts` where `<ext>` is a known TypeScript or JavaScript
-/// extension. These files are addressable only via their corresponding
-/// implementation specifier (e.g. `./file.d.ts.ts` is reached through `./file.ts`,
-/// not `./file.d.ts`). Registering the stripped form would create a phantom
-/// specifier that collides with declaration imports the user actually wrote.
-fn is_arbitrary_extension_declaration_file(name: &str) -> bool {
-    let Some(without_ts) = name.strip_suffix(".ts") else {
+/// Detect `<base>.d.<ext>.ts` files. These are treated specially (see the
+/// `ARBITRARY_EXT_TAILS` documentation).
+fn is_arbitrary_extension_declaration_file(file_name: &str) -> bool {
+    let Some(without_ts) = file_name.strip_suffix(".ts") else {
         return false;
     };
-    // Allow only literal-`.<ext>` matches so `<base>.d.<ext>` is well-formed.
-    const ARBITRARY_EXT_TAILS: &[&str] = &[
-        ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".d.js", ".d.jsx", ".d.mjs", ".d.cjs", ".d.json",
-    ];
     ARBITRARY_EXT_TAILS
         .iter()
         .any(|tail| without_ts.ends_with(tail))
 }
 
-fn relative_directory_chain_alias(specifier: &str) -> Option<String> {
-    let trimmed = specifier.trim_end_matches(['/', '\\']);
-    if trimmed.is_empty() || trimmed == specifier {
-        return None;
-    }
+// ---------------------------------------------------------------------------
+// CanonicalSpecifier
+// ---------------------------------------------------------------------------
 
-    let normalized = trimmed.replace('\\', "/");
-    if normalized
-        .split('/')
-        .all(|segment| segment == "." || segment == "..")
-    {
-        return Some(normalized);
-    }
-
-    None
+/// Classification of a parsed module specifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpecifierKind {
+    /// Starts with `./` or is exactly `.`.
+    Relative,
+    /// Starts with `../` or is exactly `..`.
+    Parent,
+    /// Starts with `/` — an absolute project-root-style path.
+    Absolute,
+    /// Anything else (`lodash`, `@scope/pkg`, ...).
+    Bare,
 }
 
-fn relative_directory_chain_with_separator(specifier: &str) -> Option<String> {
-    let normalized = specifier.replace('\\', "/");
-    let trimmed = normalized.trim_end_matches('/');
-    if trimmed.is_empty() || trimmed != normalized {
-        return None;
-    }
-
-    if trimmed
-        .split('/')
-        .all(|segment| segment == "." || segment == "..")
-    {
-        return Some(format!("{trimmed}/"));
-    }
-
-    None
-}
-
-/// Compute a relative path from `from_dir` to `to_path`, returning a string
-/// suitable for use as a module specifier (with `./` or `../` prefix).
+/// Canonical representation of an import specifier after trimming, quote
+/// removal, and separator normalization.
 ///
-/// Returns `None` if a relative path cannot be computed (e.g., different drive roots on Windows).
-fn relative_specifier(from_dir: &Path, to_path: &Path) -> Option<String> {
-    // Try the simple case: target is inside from_dir
-    if let Ok(rel) = to_path.strip_prefix(from_dir) {
-        let rel_str = rel.to_string_lossy();
-        let without_ext = strip_ts_extension(&rel_str);
-        return Some(format!("./{without_ext}"));
-    }
+/// Invariants enforced by `normalize_import_specifier`:
+/// - `text` is non-empty.
+/// - `text` has no surrounding whitespace.
+/// - `text` has no surrounding matching `'…'` or `"…"` quotes.
+/// - `text` contains forward slashes only (backslashes are converted).
+/// - For non-pure-dot-chain specifiers, any single trailing `/` is stripped.
+///   Pure dot chains (`.`, `./`, `..`, `../`, `../..`, `../../`, …) keep the
+///   exact form the user wrote, because `.` and `./` are *both* valid
+///   directory-index specifiers and the resolution map registers whichever
+///   form applies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CanonicalSpecifier {
+    /// Normalized specifier text. See type-level invariants.
+    pub text: String,
+    /// What kind of specifier this is.
+    pub kind: SpecifierKind,
+    /// True if the specifier should be resolved against a directory index
+    /// (`./foo/`, `.`, `./`, `..`, `../`, `../..`, `../../`, …).
+    pub is_directory_hint: bool,
+}
 
-    // Walk up from from_dir to find a common ancestor
-    let mut up_count = 0;
-    let mut ancestor = from_dir;
-    loop {
-        match ancestor.parent() {
-            Some(parent) => {
-                up_count += 1;
-                if let Ok(rel) = to_path.strip_prefix(parent) {
-                    let rel_str = rel.to_string_lossy();
-                    let without_ext = strip_ts_extension(&rel_str);
-                    let prefix = "../".repeat(up_count);
-                    return Some(format!("{prefix}{without_ext}"));
-                }
-                ancestor = parent;
-            }
-            None => return None,
+/// Strip at most one pair of matching surrounding quotes. Only matching pairs
+/// are removed; lopsided quotes are left intact to preserve diagnostic fidelity.
+fn strip_surrounding_quotes(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    if bytes.len() >= 2 {
+        let first = bytes[0];
+        let last = bytes[bytes.len() - 1];
+        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+            return &s[1..s.len() - 1];
         }
     }
+    s
 }
 
-/// Build module resolution maps from a list of file paths.
+/// True when every `/`-separated segment of `s` is either `.` or `..`.
+/// Returns false for the empty string.
+fn is_pure_dot_chain(s: &str) -> bool {
+    !s.is_empty()
+        && s.split('/')
+            .all(|segment| segment == "." || segment == "..")
+}
+
+/// Normalize a raw import specifier string into a `CanonicalSpecifier`.
 ///
-/// Returns:
-/// - `resolved_module_paths`: Maps (`source_file_idx`, specifier) -> `target_file_idx`
-/// - `resolved_modules`: Set of all valid module specifiers
+/// Returns `None` for specifiers that cannot be used: empty after trimming,
+/// or quotes-only. Does NOT reject bare/absolute specifiers — they are
+/// classified and returned so callers can apply their own policy.
+pub fn normalize_import_specifier(specifier: &str) -> Option<CanonicalSpecifier> {
+    let trimmed = specifier.trim();
+    let unquoted = strip_surrounding_quotes(trimmed);
+    if unquoted.is_empty() {
+        return None;
+    }
+
+    // Normalize path separators. Cheap fast-path when there is no backslash.
+    let slashed: String = if unquoted.contains('\\') {
+        unquoted.replace('\\', "/")
+    } else {
+        unquoted.to_string()
+    };
+
+    let kind = if slashed == "." || slashed.starts_with("./") {
+        SpecifierKind::Relative
+    } else if slashed == ".." || slashed.starts_with("../") {
+        SpecifierKind::Parent
+    } else if slashed.starts_with('/') {
+        SpecifierKind::Absolute
+    } else {
+        SpecifierKind::Bare
+    };
+
+    // A pure dot chain is something like "." / "./" / ".." / "../" / "../.."
+    // etc. We keep these exactly as written — both `.` and `./` are legitimate
+    // specifiers for the current-directory index and the map registers both.
+    let core_without_trailing = slashed.trim_end_matches('/');
+    let dot_chain = is_pure_dot_chain(core_without_trailing);
+    let has_trailing_slash = slashed.len() > 1 && slashed.ends_with('/');
+
+    let text = if dot_chain {
+        slashed
+    } else if has_trailing_slash {
+        let mut s = slashed;
+        s.pop();
+        s
+    } else {
+        slashed
+    };
+
+    Some(CanonicalSpecifier {
+        text,
+        kind,
+        is_directory_hint: has_trailing_slash || dot_chain,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// TargetIndex
+// ---------------------------------------------------------------------------
+
+/// A single target file after index extraction.
+#[derive(Debug)]
+struct IndexedTarget<'a> {
+    /// Index of the file in the original `file_names` slice.
+    tgt_idx: usize,
+    /// The absolute file path (as a `Path`, borrowing the input string).
+    abs_path: &'a Path,
+    /// If this is a `dir/index.<ext>` file, the directory it is the index for.
+    /// `None` otherwise. Declaration files and arbitrary-extension
+    /// declaration files are handled here by simply not being recorded.
+    index_dir: Option<&'a Path>,
+}
+
+/// Indexed view of the project's target files. Built once per compilation
+/// from the file list, then reused for every source file's specifier fan-out.
 ///
-/// This handles relative imports between files in the same project.
-/// For example, if we have files `/tmp/test/main.ts` and `/tmp/test/types.ts`,
-/// then from `main.ts`, the specifier `./types` will resolve to `types.ts`.
+/// This replaces the previous implementation, which re-derived per-target
+/// metadata inside the inner loop of an O(n²) source × target scan.
+#[derive(Debug)]
+pub struct TargetIndex<'a> {
+    targets: Vec<IndexedTarget<'a>>,
+}
+
+impl<'a> TargetIndex<'a> {
+    /// Number of usable (non-skipped) target entries in the index.
+    pub fn len(&self) -> usize {
+        self.targets.len()
+    }
+
+    /// True when the index holds no targets.
+    pub fn is_empty(&self) -> bool {
+        self.targets.is_empty()
+    }
+}
+
+/// Build a `TargetIndex` from a list of project file paths. The returned index
+/// borrows from `file_names` for zero-copy access to path components.
+pub fn build_target_index(file_names: &[String]) -> TargetIndex<'_> {
+    let mut targets = Vec::with_capacity(file_names.len());
+    for (idx, name) in file_names.iter().enumerate() {
+        let abs_path = Path::new(name.as_str());
+        let file_name = abs_path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+
+        // Skip files like `foo.d.ts.ts`. They are addressable only through the
+        // implementation specifier `./foo.ts`, which in the canonical map is
+        // produced when some other regular target happens to align. Registering
+        // `./foo.d.ts` here would shadow real declaration-file imports.
+        if is_arbitrary_extension_declaration_file(file_name) {
+            continue;
+        }
+
+        // Detect directory-index targets: `<dir>/index.<ext>` files contribute
+        // an additional directory-shaped specifier (`./<dir>`).
+        let stem = strip_ts_extension(name.as_str());
+        let index_dir = stem.strip_suffix("/index").map(Path::new);
+
+        targets.push(IndexedTarget {
+            tgt_idx: idx,
+            abs_path,
+            index_dir,
+        });
+    }
+    TargetIndex { targets }
+}
+
+// ---------------------------------------------------------------------------
+// Relative specifier derivation
+// ---------------------------------------------------------------------------
+
+/// Compute a canonical `./…`-style relative specifier from `from_dir` to
+/// `to_file`. Returns `None` if the two paths have no common ancestor (e.g.
+/// different drive roots on Windows).
 ///
-/// Also handles:
-/// - Nested paths: `./lib/utils` resolving to `lib/utils.ts`
-/// - Parent directory: `../sibling` resolving to `../sibling.ts`
-/// - Index files: `./dir` resolving to `dir/index.ts`
-/// - Declaration files: `./types` resolving to `types.d.ts`
-/// - All TS/JS extensions: `.ts`, `.tsx`, `.d.ts`, `.js`, `.jsx`, `.mts`, `.cts`, etc.
+/// The returned string:
+/// - always starts with `./` or `../`,
+/// - has its known TS/JS extension stripped,
+/// - uses `/` separators.
+fn relative_specifier_for_file(from_dir: &Path, to_file: &Path) -> Option<String> {
+    let (prefix, rel_str) = walk_relative(from_dir, to_file)?;
+    let stem = strip_ts_extension(&rel_str);
+    Some(format!("{prefix}{stem}"))
+}
+
+/// Both canonical spellings of a relative file specifier: with and without the
+/// known TS/JS extension. Users legitimately write both (`./foo`,
+/// `./foo.js`) and both must resolve to the same target.
+struct RelativeFileSpecifier {
+    /// Always present. `./foo` — canonical form with extension stripped.
+    stem: String,
+    /// Present only when the file has a recognized extension: `./foo.js`.
+    with_extension: Option<String>,
+}
+
+/// Compute both relative forms in a single walk of the directory path chain.
+fn relative_file_specifier(from_dir: &Path, to_file: &Path) -> Option<RelativeFileSpecifier> {
+    let (prefix, rel_str) = walk_relative(from_dir, to_file)?;
+    let stripped = strip_ts_extension(&rel_str);
+    let stem = format!("{prefix}{stripped}");
+    let with_extension = if stripped.len() == rel_str.len() {
+        None
+    } else {
+        Some(format!("{prefix}{rel_str}"))
+    };
+    Some(RelativeFileSpecifier {
+        stem,
+        with_extension,
+    })
+}
+
+/// Walk from `from_dir` up toward the filesystem root until `to_file` lies
+/// inside the current ancestor, returning the `../…/` prefix that reaches
+/// that ancestor and the residual relative path. Used by both file-target and
+/// directory-target specifier derivation.
+fn walk_relative(from_dir: &Path, to_path: &Path) -> Option<(String, String)> {
+    if let Ok(rel) = to_path.strip_prefix(from_dir) {
+        return Some(("./".to_string(), rel.to_string_lossy().into_owned()));
+    }
+    let mut up = 0usize;
+    let mut ancestor = from_dir;
+    loop {
+        let parent = ancestor.parent()?;
+        up += 1;
+        if let Ok(rel) = to_path.strip_prefix(parent) {
+            let mut prefix = String::with_capacity(3 * up);
+            for _ in 0..up {
+                prefix.push_str("../");
+            }
+            return Some((prefix, rel.to_string_lossy().into_owned()));
+        }
+        ancestor = parent;
+    }
+}
+
+/// A directory specifier pair. `primary` is always the canonical form; `alt`
+/// is only populated for pure-dot-chain specifiers (`.`, `..`, `../..`, …)
+/// where the trailing-slash form is also a legitimate spelling.
+struct DirectorySpecifier {
+    primary: String,
+    alt: Option<String>,
+}
+
+/// Compute canonical directory specifier(s) from `from_dir` to `to_dir`.
+///
+/// For index files (`to_dir/index.<ext>`), callers use this to derive the
+/// directory-shaped specifier the user would write in their import.
+fn directory_specifier(from_dir: &Path, to_dir: &Path) -> Option<DirectorySpecifier> {
+    let (prefix, rel_str) = walk_relative(from_dir, to_dir)?;
+    if rel_str.is_empty() {
+        // The target directory IS (an ancestor of) `from_dir`. Either
+        // same-directory (`./`) or pure-dot-chain ancestor (`../`, `../../`).
+        // Both the dot-only form (`.`, `..`, `../..`) and the trailing-slash
+        // form (`./`, `../`, `../../`) are valid spellings of the same
+        // directory-index specifier; register both.
+        let primary = if prefix == "./" {
+            ".".to_string()
+        } else {
+            // prefix is "../", "../../", ... — drop the trailing slash.
+            let mut s = prefix.clone();
+            s.pop();
+            s
+        };
+        return Some(DirectorySpecifier {
+            primary,
+            alt: Some(prefix),
+        });
+    }
+    Some(DirectorySpecifier {
+        primary: format!("{prefix}{rel_str}"),
+        alt: None,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Resolve a single specifier against the index
+// ---------------------------------------------------------------------------
+
+/// Resolve `specifier` as imported from `source_file` against the precomputed
+/// `TargetIndex`.
+///
+/// Intentionally unused by the legacy map today — it exists as the natural
+/// "do one lookup" API for callers that want to skip the precomputed map.
+/// Callers that already use `build_module_resolution_maps` do not need this.
+pub fn resolve_from_source(
+    source_file: &str,
+    specifier: &CanonicalSpecifier,
+    index: &TargetIndex<'_>,
+) -> Option<usize> {
+    // Only project-local paths are resolvable here. Bare/absolute specifiers
+    // are classified but not matched against the in-memory target set.
+    if !matches!(
+        specifier.kind,
+        SpecifierKind::Relative | SpecifierKind::Parent
+    ) {
+        return None;
+    }
+
+    let src_dir = Path::new(source_file).parent()?;
+
+    for target in &index.targets {
+        if let Some(rel) = relative_file_specifier(src_dir, target.abs_path)
+            && (rel.stem == specifier.text
+                || rel.with_extension.as_deref() == Some(specifier.text.as_str()))
+        {
+            return Some(target.tgt_idx);
+        }
+        if let Some(idx_dir) = target.index_dir
+            && let Some(dir) = directory_specifier(src_dir, idx_dir)
+            && (dir.primary == specifier.text
+                || dir.alt.as_deref() == Some(specifier.text.as_str()))
+        {
+            return Some(target.tgt_idx);
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// build_module_resolution_maps
+// ---------------------------------------------------------------------------
+
+/// Build the flat `(source_file_idx, specifier) → target_file_idx` map and
+/// the set of all recognized specifier strings.
+///
+/// This is the legacy entrypoint consumed by the checker, CLI, server, and a
+/// large number of integration tests. Behavior-compatible with the previous
+/// implementation for intentional cases; accidental cases (quoted-key
+/// variants, extension-stripped variants) are no longer registered.
+///
+/// See `register_canonical_forms` for the exact set of strings registered per
+/// target.
 pub fn build_module_resolution_maps(
     file_names: &[String],
 ) -> (FxHashMap<(usize, String), usize>, FxHashSet<String>) {
-    let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
-    let mut resolved_modules: FxHashSet<String> = FxHashSet::default();
+    let mut map: FxHashMap<(usize, String), usize> = FxHashMap::default();
+    let mut modules: FxHashSet<String> = FxHashSet::default();
 
-    // Build a map from extensionless path -> file index for index file resolution
-    let mut stem_to_idx: FxHashMap<String, usize> = FxHashMap::default();
-    for (idx, name) in file_names.iter().enumerate() {
-        let without_ext = strip_ts_extension(name);
-        stem_to_idx.insert(without_ext.to_string(), idx);
-    }
+    let index = build_target_index(file_names);
 
     for (src_idx, src_name) in file_names.iter().enumerate() {
-        let src_path = Path::new(src_name);
-        let Some(src_dir) = src_path.parent() else {
+        let Some(src_dir) = Path::new(src_name.as_str()).parent() else {
             continue;
         };
-
-        for (tgt_idx, tgt_name) in file_names.iter().enumerate() {
-            let tgt_path = Path::new(tgt_name);
-
-            // Arbitrary-extension declaration files (`<base>.d.<ext>.ts`) are only
-            // addressable via the implementation extension (e.g. `./file.ts` resolving
-            // to `./file.d.ts.ts`). Skip them in the cross-file specifier map so the
-            // stripped phantom specifier (`./file.d.ts`) does not shadow real
-            // declaration-file imports the user wrote.
-            let tgt_file_name = tgt_path.file_name().and_then(|f| f.to_str()).unwrap_or("");
-            if is_arbitrary_extension_declaration_file(tgt_file_name) {
-                continue;
-            }
-
-            // Compute the relative specifier from source directory to target file
-            if let Some(specifier) = relative_specifier(src_dir, tgt_path) {
-                // Register the specifier with ./ or ../ prefix
-                resolved_module_paths.insert((src_idx, specifier.clone()), tgt_idx);
-                resolved_modules.insert(specifier.clone());
-
-                // Also register without ./ prefix for bare relative specifiers
-                // (e.g., "types" in addition to "./types")
-                if let Some(bare) = specifier.strip_prefix("./") {
-                    resolved_module_paths.insert((src_idx, bare.to_string()), tgt_idx);
-                    resolved_modules.insert(bare.to_string());
-                }
-            }
-
-            // Index file resolution: if target is `dir/index.ts`, also register `./dir`
-            let tgt_stem = strip_ts_extension(tgt_name);
-            if let Some(dir_path) = tgt_stem.strip_suffix("/index") {
-                let dir_as_path = Path::new(dir_path);
-                if let Some(dir_specifier) = relative_specifier(src_dir, dir_as_path) {
-                    resolved_module_paths.insert((src_idx, dir_specifier.clone()), tgt_idx);
-                    resolved_modules.insert(dir_specifier.clone());
-
-                    if let Some(alias) = relative_directory_chain_alias(&dir_specifier) {
-                        resolved_module_paths.insert((src_idx, alias.clone()), tgt_idx);
-                        resolved_modules.insert(alias);
-                    }
-
-                    if let Some(bare) = dir_specifier.strip_prefix("./") {
-                        resolved_module_paths.insert((src_idx, bare.to_string()), tgt_idx);
-                        resolved_modules.insert(bare.to_string());
-                    }
-                }
-            }
+        for target in &index.targets {
+            register_canonical_forms(src_idx, src_dir, target, &mut map, &mut modules);
         }
     }
 
-    (resolved_module_paths, resolved_modules)
+    (map, modules)
 }
 
-/// Build canonical lookup keys for a module specifier.
+/// Register exactly the canonical specifier forms that a user might legitimately
+/// write to name `target` from a source file rooted at `src_dir`.
 ///
-/// Invariant: every cross-module map lookup in checker code should go through
-/// this function to avoid divergent quoting/slash normalization behavior.
-pub fn module_specifier_candidates(specifier: &str) -> Vec<String> {
-    let mut candidates = Vec::with_capacity(5);
-    let mut push_unique = |value: String| {
-        if !candidates.contains(&value) {
-            candidates.push(value);
+/// The registered forms are:
+/// 1. The extension-stripped relative file specifier
+///    (`./foo`, `./lib/utils`, `../lib/utils`).
+/// 2. The extension-bearing relative file specifier (`./foo.js`,
+///    `./types.d.ts`). Users legitimately write the extension — especially in
+///    `require(...)`, triple-slash references, and JS/CJS sources — and both
+///    forms must point at the same target.
+/// 3. The same-directory bare alias (`foo`) — *only* for same-directory
+///    targets. This is a narrow backward-compat hook: tsc proper treats bare
+///    specifiers as package imports, but historically this resolver has
+///    allowed naked same-dir file names and downstream checker tests depend on
+///    it. Nested bare aliases (`lib/utils`) are intentionally NOT registered;
+///    they semantically collide with real package sub-paths and no test
+///    requires them.
+/// 4. For `dir/index.<ext>` targets, the directory-shaped specifier(s): a
+///    single form for ordinary directories (`./lib`), plus the trailing-slash
+///    alternate for pure dot-chain directories (`.` + `./`, `..` + `../`,
+///    `../..` + `../../`, …).
+/// 5. The same-directory bare alias for a directory-shaped specifier
+///    (`./lib` ↔ `lib`), following the same rule as point 3.
+fn register_canonical_forms(
+    src_idx: usize,
+    src_dir: &Path,
+    target: &IndexedTarget<'_>,
+    map: &mut FxHashMap<(usize, String), usize>,
+    modules: &mut FxHashSet<String>,
+) {
+    if let Some(rel) = relative_file_specifier(src_dir, target.abs_path) {
+        insert(map, modules, src_idx, rel.stem.clone(), target.tgt_idx);
+        if let Some(bare) = same_directory_bare_alias(&rel.stem) {
+            insert(map, modules, src_idx, bare, target.tgt_idx);
         }
+        if let Some(with_ext) = rel.with_extension {
+            insert(map, modules, src_idx, with_ext, target.tgt_idx);
+        }
+    }
+
+    if let Some(idx_dir) = target.index_dir
+        && let Some(dir_spec) = directory_specifier(src_dir, idx_dir)
+    {
+        insert(
+            map,
+            modules,
+            src_idx,
+            dir_spec.primary.clone(),
+            target.tgt_idx,
+        );
+        if let Some(alt) = dir_spec.alt {
+            insert(map, modules, src_idx, alt, target.tgt_idx);
+        }
+        if let Some(bare) = same_directory_bare_alias(&dir_spec.primary) {
+            insert(map, modules, src_idx, bare, target.tgt_idx);
+        }
+    }
+}
+
+/// Return a bare alias for a specifier of the form `./<name>` where `<name>`
+/// does not contain `/`. Returns `None` for nested (`./a/b`), parent (`../a`),
+/// dot-chain (`.`, `./`), or already-bare inputs.
+fn same_directory_bare_alias(spec: &str) -> Option<String> {
+    let rest = spec.strip_prefix("./")?;
+    if rest.is_empty() || rest.contains('/') {
+        return None;
+    }
+    Some(rest.to_string())
+}
+
+fn insert(
+    map: &mut FxHashMap<(usize, String), usize>,
+    modules: &mut FxHashSet<String>,
+    src_idx: usize,
+    spec: String,
+    tgt_idx: usize,
+) {
+    map.insert((src_idx, spec.clone()), tgt_idx);
+    modules.insert(spec);
+}
+
+// ---------------------------------------------------------------------------
+// Public specifier-lookup shim
+// ---------------------------------------------------------------------------
+
+/// Build lookup keys for a module specifier.
+///
+/// This is a thin compatibility shim. New code should prefer
+/// `normalize_import_specifier` plus a single lookup against the canonical
+/// map. The returned vector contains at most three entries:
+///
+/// 1. The canonical form (trimmed, unquoted, forward-slash, trailing-slash
+///    stripped for non-dot-chain specifiers).
+/// 2. The raw input, only when it differs from the canonical form. This
+///    covers lookups against maps keyed on the un-normalized user string
+///    (e.g. `binder.module_exports`, where keys can be raw file paths).
+/// 3. The extension-stripped stem, only when the canonical has a recognized
+///    TS/JS extension whose removal yields a different string. TS genuinely
+///    allows `./foo.js` to resolve to `./foo.d.ts`, and some call sites
+///    populate their map with stem-only keys; this single fallback covers
+///    them without reintroducing the old alias explosion.
+///
+/// No quoted / backslash / chain / dot-chain-variant / index / bare fan-out
+/// is produced.
+pub fn module_specifier_candidates(specifier: &str) -> Vec<String> {
+    let Some(canonical) = normalize_import_specifier(specifier) else {
+        // Quotes-only or empty input: the raw string is the only key the
+        // caller could realistically match on.
+        return vec![specifier.to_string()];
     };
 
-    push_unique(specifier.to_string());
-
-    let trimmed = specifier.trim().trim_matches('"').trim_matches('\'');
-    if trimmed != specifier {
-        push_unique(trimmed.to_string());
+    let mut out = Vec::with_capacity(3);
+    out.push(canonical.text.clone());
+    if canonical.text != specifier {
+        out.push(specifier.to_string());
     }
-    if !trimmed.is_empty() {
-        push_unique(format!("\"{trimmed}\""));
-        push_unique(format!("'{trimmed}'"));
-        if trimmed.contains('\\') {
-            push_unique(trimmed.replace('\\', "/"));
-        }
-        if let Some(alias) = relative_directory_chain_alias(trimmed) {
-            push_unique(alias.clone());
-            push_unique(format!("\"{alias}\""));
-            push_unique(format!("'{alias}'"));
-        }
-        if let Some(alias) = relative_directory_chain_with_separator(trimmed) {
-            push_unique(alias.clone());
-            push_unique(format!("\"{alias}\""));
-            push_unique(format!("'{alias}'"));
-        }
-
-        let without_ext = strip_ts_extension(trimmed);
-        if without_ext != trimmed {
-            push_unique(without_ext.to_string());
-            push_unique(format!("\"{without_ext}\""));
-            push_unique(format!("'{without_ext}'"));
-            if without_ext.contains('\\') {
-                push_unique(without_ext.replace('\\', "/"));
-            }
-        }
+    let stem = strip_ts_extension(&canonical.text);
+    if stem.len() != canonical.text.len() && !out.iter().any(|s| s == stem) {
+        out.push(stem.to_string());
     }
-
-    candidates
+    out
 }
 
 #[cfg(test)]
