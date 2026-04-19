@@ -21,11 +21,13 @@ pub(crate) use tsz_solver::PendingDiagnostic;
 pub(crate) use tsz_solver::PendingDiagnosticBuilder;
 pub(crate) use tsz_solver::SourceLocation;
 pub(crate) use tsz_solver::TypeFormatter;
+#[allow(unused_imports)]
 pub(crate) use tsz_solver::TypeInstantiator;
 #[allow(unused_imports)]
 pub(crate) use tsz_solver::TypeInterner;
 
 pub(crate) use tsz_solver::AssignabilityChecker;
+#[allow(unused_imports)]
 pub(crate) use tsz_solver::BinaryOpEvaluator;
 pub(crate) use tsz_solver::IndexKind;
 pub(crate) use tsz_solver::IndexSignatureResolver;
@@ -1477,16 +1479,11 @@ pub(crate) fn union_contains_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bo
     tsz_solver::type_queries::union_contains_tuple(db, type_id)
 }
 
-pub(crate) use tsz_solver::type_queries::ArrayLikeKind;
-pub(crate) use tsz_solver::type_queries::BodyArgPreservation;
-pub(crate) use tsz_solver::type_queries::ConstructorCheckKind;
-pub(crate) use tsz_solver::type_queries::IdentityMappedInfo;
-pub(crate) use tsz_solver::type_queries::IndexKeyKind;
-pub(crate) use tsz_solver::type_queries::LazyTypeKind;
-pub(crate) use tsz_solver::type_queries::MappedSourceKind;
-pub(crate) use tsz_solver::type_queries::PromiseTypeKind;
-pub(crate) use tsz_solver::type_queries::TypeQueryKind;
-pub(crate) use tsz_solver::type_queries::UnionMembersKind;
+#[allow(unused_imports)]
+pub(crate) use tsz_solver::type_queries::{
+    ArrayLikeKind, BodyArgPreservation, ConstructorCheckKind, IdentityMappedInfo, IndexKeyKind,
+    LazyTypeKind, MappedSourceKind, PromiseTypeKind, TypeQueryKind, UnionMembersKind,
+};
 
 pub(crate) fn get_construct_return_type_union(
     db: &dyn TypeDatabase,

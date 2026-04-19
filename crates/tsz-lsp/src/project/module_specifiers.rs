@@ -866,7 +866,7 @@ impl Project {
     fn rebase_path_options(
         mut options: serde_json::Map<String, serde_json::Value>,
         base_dir: &Path,
-        config_dir: &Path,
+        _config_dir: &Path,
     ) -> serde_json::Map<String, serde_json::Value> {
         let rebase_text = |text: &str| -> Option<String> {
             if text.starts_with("${configDir}") || text.starts_with('/') {
@@ -1320,7 +1320,9 @@ impl Project {
         // specifier computation, but remember the pnpm-real path so we can
         // still find `package.json` at the original location below.
         let pnpm_inner_marker = "/node_modules/.pnpm/";
-        let (normalized, pnpm_real_prefix) = if let Some(pnpm_start) = original.find(pnpm_inner_marker) {
+        let (normalized, pnpm_real_prefix) = if let Some(pnpm_start) =
+            original.find(pnpm_inner_marker)
+        {
             let after = &original[pnpm_start + pnpm_inner_marker.len()..];
             if let Some(inner) = after.find("/node_modules/") {
                 let shifted = pnpm_start + pnpm_inner_marker.len() + inner + "/node_modules/".len();
@@ -1332,10 +1334,10 @@ impl Project {
                 );
                 (rewritten, Some(real_prefix))
             } else {
-                (original.clone(), None)
+                (original, None)
             }
         } else {
-            (original.clone(), None)
+            (original, None)
         };
         let marker = "/node_modules/";
         let marker_idx = normalized.find(marker)?;

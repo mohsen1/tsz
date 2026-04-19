@@ -5,7 +5,7 @@
 
 use super::{FlowAnalyzer, PropertyKey};
 use crate::query_boundaries::flow_analysis::{
-    enum_member_domain, evaluate_application_type, fallback_compound_assignment_result,
+    array_type, enum_member_domain, evaluate_application_type, fallback_compound_assignment_result,
     get_array_element_type, get_lazy_def_id, is_assignable, is_assignable_with_env,
     is_compound_assignment_operator, map_compound_assignment_to_binary, tuple_elements_for_type,
     union_members_for_type, widen_literal_to_primitive,
@@ -214,7 +214,6 @@ impl<'a> FlowAnalyzer<'a> {
                     if self.is_access_reference(target) {
                         return None;
                     }
-                    use crate::query_boundaries::common::BinaryOpEvaluator;
                     use crate::query_boundaries::type_computation::core::BinaryOpResult;
 
                     // When node_types is not available, use heuristics for flow narrowing
@@ -314,7 +313,7 @@ impl<'a> FlowAnalyzer<'a> {
                 return self.assigned_type_respecting_access_read_surface(
                     assignment_node,
                     target,
-                    self.interner.array(TypeId::ANY),
+                    array_type(self.interner, TypeId::ANY),
                 );
             }
 
@@ -335,7 +334,7 @@ impl<'a> FlowAnalyzer<'a> {
                 return self.assigned_type_respecting_access_read_surface(
                     assignment_node,
                     target,
-                    self.interner.array(TypeId::ANY),
+                    array_type(self.interner, TypeId::ANY),
                 );
             }
 

@@ -3841,7 +3841,7 @@ fn test_direct_interner_type_construction_ceiling() {
     // This number must only shrink as calls are migrated to query_boundaries.
     const CEILING: usize = 0;
     assert!(
-        total_count <= CEILING,
+        total_count == CEILING,
         "Direct interner type-construction calls outside query_boundaries have increased \
          to {total_count} (ceiling: {CEILING}). Use query_boundaries helpers \
          (e.g., flow_analysis::union_types, ::array_type, ::tuple_type, ::intersection_types). \
@@ -4269,7 +4269,7 @@ fn test_direct_widening_calls_ceiling() {
 
     const CEILING: usize = 0;
     assert!(
-        count <= CEILING,
+        count == CEILING,
         "Direct tsz_solver::widening::widen_type calls have grown to {count} (ceiling: {CEILING}). \
          Use query_boundaries::common::widen_type or self.widen_literal_type() instead.\n\
          Locations:\n{}",
@@ -4516,7 +4516,7 @@ fn test_direct_binary_op_evaluator_construction_ceiling() {
 
     const CEILING: usize = 0;
     assert!(
-        count <= CEILING,
+        count == CEILING,
         "BinaryOpEvaluator::new() usage ceiling exceeded: found {count} (ceiling: {CEILING}). \
          Use query_boundaries::common::new_binary_op_evaluator() instead.\n\
          Locations:\n{}",
@@ -4621,7 +4621,7 @@ fn test_direct_type_instantiator_construction_ceiling() {
 
     const CEILING: usize = 0;
     assert!(
-        count <= CEILING,
+        count == CEILING,
         "TypeInstantiator::new() usage ceiling exceeded: found {count} (ceiling: {CEILING}). \
          Use query_boundaries/common::instantiate_type or create a new boundary wrapper.\n\
          Locations:\n{}",

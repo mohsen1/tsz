@@ -3,7 +3,6 @@
 //! arithmetic, comparison, logical, assignment, nullish coalescing, and comma.
 
 use crate::context::TypingRequest;
-use crate::query_boundaries::common::BinaryOpEvaluator;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -511,7 +510,6 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         request: &TypingRequest,
     ) -> TypeId {
-        use crate::query_boundaries::common::BinaryOpEvaluator;
         use crate::query_boundaries::type_computation::core::BinaryOpResult;
         use tsz_scanner::SyntaxKind;
         let factory = self.ctx.types.factory();
