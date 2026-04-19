@@ -1286,6 +1286,9 @@ fn test_checker_sources_forbid_solver_internal_imports_typekey_usage_and_raw_int
 
         line.contains("tsz_solver::types::")
             || line.contains("use tsz_solver::TypeData")
+            || line.contains("use tsz_solver::TypeKey")
+            || line.contains("tsz_solver::TypeKey::")
+            || line.contains("TypeKey::")
             || (line.contains("use ") && contains_type_data_ident(line))
             || line.contains("intern(TypeData::")
             || line.contains("intern(tsz_solver::TypeData::")
@@ -1321,7 +1324,7 @@ fn test_checker_sources_forbid_solver_internal_imports_typekey_usage_and_raw_int
 
     assert!(
         violations.is_empty(),
-        "checker source files must not import solver internals, import TypeData, or call raw interner APIs directly; violations: {}",
+        "checker source files must not import solver internals, import TypeData/TypeKey, or call raw interner APIs directly; violations: {}",
         violations.join(", ")
     );
 }
