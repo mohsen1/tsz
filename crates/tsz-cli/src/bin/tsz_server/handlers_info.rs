@@ -106,9 +106,14 @@ fn sort_symbols_deep(symbols: &mut [tsz::lsp::symbols::document_symbols::Documen
         // Mirror tsc's `tryGetName`: anything without a normal declaration
         // name compares as "nameless" (sorts ahead of named siblings and
         // falls back to kind ordinal among itself). Covers computed
-        // property names (`[x]`, `["foo"]`, `[1]`) and interface-type
-        // signatures (`()` call, `new()` construct, `[]` index).
-        let nameless = sym.name.starts_with('[') || sym.name == "()" || sym.name == "new()";
+        // property names (`[x]`, `["foo"]`, `[1]`), interface-type
+        // signatures (`()` call, `new()` construct, `[]` index), and
+        // constructors (tsc's `tryGetName` returns undefined for
+        // Constructor since it has no declaration name).
+        let nameless = sym.name.starts_with('[')
+            || sym.name == "()"
+            || sym.name == "new()"
+            || matches!(sym.kind, SymbolKind::Constructor);
         if nameless {
             None
         } else {
