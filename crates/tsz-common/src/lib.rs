@@ -38,6 +38,8 @@ pub mod comments;
 pub mod diagnostics;
 
 // Compiler options for type checking (shared by solver and checker)
-pub mod checker_options;
+pub mod options;
+// Back-compat alias while we migrate to domain-folder layout.
 pub use checker_options::CheckerOptions;
+pub use options::checker as checker_options;
 pub mod numeric;
