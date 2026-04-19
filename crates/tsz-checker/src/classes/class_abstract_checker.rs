@@ -345,6 +345,22 @@ impl<'a> CheckerState<'a> {
             .filter(|params| !params.is_empty())
             .unwrap_or_else(|| self.get_type_params_for_symbol(sym_id));
         if type_params.is_empty() {
+            // When the target symbol's type parameters cannot be resolved
+            // (e.g. cross-file class like React.Component), still honor
+            // explicit type arguments the user wrote — tsc shows them.
+            if let Some(type_arguments) = type_arguments
+                && !type_arguments.nodes.is_empty()
+            {
+                let arg_strs: Vec<String> = type_arguments
+                    .nodes
+                    .iter()
+                    .map(|&arg_idx| {
+                        let arg_ty = self.get_type_from_type_node(arg_idx);
+                        self.format_type(arg_ty)
+                    })
+                    .collect();
+                return Some(format!("{}<{}>", name, arg_strs.join(", ")));
+            }
             return Some(name);
         }
 
@@ -377,6 +393,42 @@ impl<'a> CheckerState<'a> {
                 .collect::<Vec<_>>()
                 .join(", ")
         ))
+    }
+
+    /// Build the display name for a base class resolved only via its instance
+    /// type (no symbol available). When the user supplied explicit type
+    /// arguments in the heritage clause, tsc renders them verbatim (e.g.
+    /// `Component<U, {}>` rather than `Component`). Without explicit args we
+    /// fall back to whatever the type printer produces.
+    pub(crate) fn format_heritage_instance_display(
+        &mut self,
+        instance_type: TypeId,
+        _h_expr_idx: tsz_parser::parser::base::NodeIndex,
+        type_arguments: Option<&tsz_parser::parser::base::NodeList>,
+    ) -> String {
+        let base_str = self.format_type(instance_type);
+        if let Some(type_arguments) = type_arguments
+            && !type_arguments.nodes.is_empty()
+        {
+            // Strip any trailing type args already present so we can reapply
+            // the user-supplied ones for tsc parity.
+            let bare_name: String = match base_str.find('<') {
+                Some(lt) => base_str[..lt].to_string(),
+                None => base_str.clone(),
+            };
+            if !bare_name.is_empty() {
+                let arg_strs: Vec<String> = type_arguments
+                    .nodes
+                    .iter()
+                    .map(|&arg_idx| {
+                        let arg_ty = self.get_type_from_type_node(arg_idx);
+                        self.format_type(arg_ty)
+                    })
+                    .collect();
+                return format!("{}<{}>", bare_name, arg_strs.join(", "));
+            }
+        }
+        base_str
     }
 
     fn class_type_params_for_symbol(
