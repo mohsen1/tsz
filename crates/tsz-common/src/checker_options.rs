@@ -160,6 +160,8 @@ pub struct CheckerOptions {
     /// Disallows parameter properties, enums, namespaces, import=, export=, and
     /// angle-bracket type assertions. Reports TS1294.
     pub erasable_syntax_only: bool,
+    /// When true, report errors for fallthrough cases in switch statements (TS7029).
+    pub no_fallthrough_cases_in_switch: bool,
 }
 
 /// JSX emit mode controlling how JSX is transformed.
@@ -243,6 +245,7 @@ impl Default for CheckerOptions {
             preserve_const_enums: false,
             strict_builtin_iterator_return: true,
             erasable_syntax_only: false,
+            no_fallthrough_cases_in_switch: false,
         }
     }
 }

@@ -333,6 +333,12 @@ pub trait StatementCheckCallbacks {
     /// Decrements `switch_depth`.
     fn leave_switch_statement(&mut self);
 
+    /// Whether `noFallthroughCasesInSwitch` is enabled.
+    fn no_fallthrough_cases_in_switch(&self) -> bool;
+
+    /// Report TS7029 "Fallthrough case in switch." at the given clause node.
+    fn report_fallthrough_case(&mut self, clause_idx: NodeIndex);
+
     /// Save current iteration/switch context and reset it.
     /// Used when entering a function body (function creates new context).
     /// Returns the saved (`iteration_depth`, `switch_depth`, `had_outer_loop`).
@@ -811,52 +817,76 @@ impl StatementChecker {
                         // Track if there's a default clause (for exhaustiveness checking)
                         let mut has_default = false;
 
+                        // Collect clause data for fallthrough analysis
+                        let clause_data_vec: Vec<_> = clauses
+                            .iter()
+                            .filter_map(|&clause_idx| {
+                                let arena = state.arena();
+                                let clause_node = arena.get(clause_idx)?;
+                                let clause = arena.get_case_clause(clause_node)?;
+                                Some((
+                                    clause_idx,
+                                    clause.expression,
+                                    clause.statements.nodes.clone(),
+                                ))
+                            })
+                            .collect();
+
+                        let num_clauses = clause_data_vec.len();
+                        let check_fallthrough = state.no_fallthrough_cases_in_switch();
+
                         // Enter switch context for break validation
                         state.enter_switch_statement();
 
-                        for clause_idx in clauses {
-                            // Extract clause data
-                            let clause_data = {
-                                let arena = state.arena();
-                                if let Some(clause_node) = arena.get(clause_idx) {
-                                    arena
-                                        .get_case_clause(clause_node)
-                                        .map(|c| (c.expression, c.statements.nodes.clone()))
-                                } else {
-                                    None
+                        for (i, (clause_idx, clause_expr, clause_stmts)) in
+                            clause_data_vec.iter().enumerate()
+                        {
+                            // Check if this is a default clause (expression is NONE)
+                            if clause_expr.is_none() {
+                                has_default = true;
+                            } else {
+                                // Check case expression with switch type as contextual type.
+                                // This enables excess property checking (TS2353) for object
+                                // literal case expressions, matching tsc behavior.
+                                let case_type = state.get_type_of_case_expression_with_request(
+                                    *clause_expr,
+                                    switch_type,
+                                    request,
+                                );
+                                state.check_switch_case_comparable(
+                                    switch_type,
+                                    case_type,
+                                    expression,
+                                    *clause_expr,
+                                );
+                            }
+                            let prev_unreachable = state.is_unreachable();
+                            let prev_reported = state.has_reported_unreachable();
+                            let mut clause_falls_through = true;
+                            for inner_stmt_idx in clause_stmts {
+                                state.check_statement_with_request(*inner_stmt_idx, request);
+                                if !state.statement_falls_through(*inner_stmt_idx) {
+                                    state.set_unreachable(true);
+                                    clause_falls_through = false;
                                 }
-                            };
+                            }
+                            state.set_unreachable(prev_unreachable);
+                            state.set_reported_unreachable(prev_reported);
 
-                            if let Some((clause_expr, clause_stmts)) = clause_data {
-                                // Check if this is a default clause (expression is NONE)
-                                if clause_expr.is_none() {
-                                    has_default = true;
-                                } else {
-                                    // Check case expression with switch type as contextual type.
-                                    // This enables excess property checking (TS2353) for object
-                                    // literal case expressions, matching tsc behavior.
-                                    let case_type = state.get_type_of_case_expression_with_request(
-                                        clause_expr,
-                                        switch_type,
-                                        request,
-                                    );
-                                    state.check_switch_case_comparable(
-                                        switch_type,
-                                        case_type,
-                                        expression,
-                                        clause_expr,
-                                    );
+                            // TS7029: Fallthrough case in switch
+                            if check_fallthrough
+                                && clause_falls_through
+                                && !clause_stmts.is_empty()
+                                && i < num_clauses - 1
+                            {
+                                // Check that the next clause has statements (empty
+                                // case grouping like `case 1: case 2: break;` is ok)
+                                let next_has_stmts = clause_data_vec
+                                    .get(i + 1)
+                                    .is_some_and(|(_, _, stmts)| !stmts.is_empty());
+                                if next_has_stmts {
+                                    state.report_fallthrough_case(*clause_idx);
                                 }
-                                let prev_unreachable = state.is_unreachable();
-                                let prev_reported = state.has_reported_unreachable();
-                                for inner_stmt_idx in &clause_stmts {
-                                    state.check_statement_with_request(*inner_stmt_idx, request);
-                                    if !state.statement_falls_through(*inner_stmt_idx) {
-                                        state.set_unreachable(true);
-                                    }
-                                }
-                                state.set_unreachable(prev_unreachable);
-                                state.set_reported_unreachable(prev_reported);
                             }
                         }
 
