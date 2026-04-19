@@ -183,7 +183,7 @@ pub enum JsxMode {
 }
 
 #[cfg(test)]
-#[path = "../tests/checker_options_tests.rs"]
+#[path = "../../tests/checker_options_tests.rs"]
 mod tests;
 
 impl Default for CheckerOptions {
