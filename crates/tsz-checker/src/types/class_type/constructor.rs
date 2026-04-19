@@ -160,6 +160,7 @@ impl<'a> CheckerState<'a> {
         apply_module_augmentations: bool,
     ) -> TypeId {
         let current_sym = self.ctx.binder.get_node_symbol(class_idx);
+        let had_instance_cache = self.ctx.class_instance_type_cache.contains_key(&class_idx);
         if apply_module_augmentations
             && request.is_empty()
             && let Some(&cached) = self.ctx.class_constructor_type_cache.get(&class_idx)
@@ -252,6 +253,18 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .class_constructor_type_cache
                 .insert(class_idx, result);
+        }
+
+        // During constructor resolution, `get_class_instance_type_inner` can
+        // intentionally fall back to `any` for method return inference to break
+        // constructor/instance cycles. If this constructor query is the first
+        // touch for the class, that provisional instance type can get cached and
+        // leak into later property reads (e.g., `instance.method` -> `(...args) => any`).
+        // Once constructor resolution is complete, refresh the instance cache in
+        // normal mode so downstream reads observe the stabilized instance shape.
+        if apply_module_augmentations && did_insert && !had_instance_cache {
+            self.ctx.class_instance_type_cache.remove(&class_idx);
+            let _ = self.get_class_instance_type(class_idx, class);
         }
 
         // Register constructor type -> DefId(ClassConstructor) so the formatter
