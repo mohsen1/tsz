@@ -250,6 +250,54 @@ class ArchGuardSolverTypeDataQuarantineTests(unittest.TestCase):
             self.assertTrue(hits[0].endswith("/mixed.rs:4"))
 
 
+class ArchGuardCommentStrippingTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def test_find_matches_ignores_block_comments_when_requested(self):
+        pattern = self.arch_guard.re.compile(r"\bTypeKey::")
+        text = "\n".join(
+            [
+                "/* TypeKey::Foo should be ignored */",
+                "let x = 1;",
+            ]
+        )
+        hits = self.arch_guard.find_matches(
+            text,
+            pattern,
+            "crates/tsz-checker/src/foo.rs",
+            {"ignore_comment_lines": True},
+        )
+        self.assertEqual(hits, [])
+
+    def test_find_matches_preserves_real_code_hits_with_inline_block_comments(self):
+        pattern = self.arch_guard.re.compile(r"\bTypeKey::")
+        text = "\n".join(
+            [
+                "let ok = true; /* TypeKey::CommentOnly */",
+                "let value = TypeKey::Real;",
+            ]
+        )
+        hits = self.arch_guard.find_matches(
+            text,
+            pattern,
+            "crates/tsz-checker/src/foo.rs",
+            {"ignore_comment_lines": True},
+        )
+        self.assertEqual(hits, [2])
+
+    def test_find_matches_keeps_comment_hits_without_ignore_flag(self):
+        pattern = self.arch_guard.re.compile(r"\bTypeKey::")
+        text = "/* TypeKey::Foo should match when comments are not ignored */"
+        hits = self.arch_guard.find_matches(
+            text,
+            pattern,
+            "crates/tsz-checker/src/foo.rs",
+            {},
+        )
+        self.assertEqual(hits, [1])
+
+
 class ArchGuardRatchetDirectionTests(unittest.TestCase):
     """Ensure the exclusion lists can only shrink, never grow."""
 
