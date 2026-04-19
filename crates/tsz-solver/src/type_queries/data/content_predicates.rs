@@ -6,7 +6,7 @@
 use crate::TypeDatabase;
 use crate::types::{IntrinsicKind, TypeData, TypeId};
 use crate::visitors::visitor_predicates::contains_type_matching;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 // =============================================================================
 // Type Content Queries
@@ -325,32 +325,48 @@ pub fn contains_never_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// result is effectively `any` so the checker can fall back to better
 /// contextual information.
 pub fn is_type_deeply_any(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    fn walk(db: &dyn TypeDatabase, type_id: TypeId, visited: &mut FxHashSet<TypeId>) -> bool {
-        if !visited.insert(type_id) {
+    fn walk(
+        db: &dyn TypeDatabase,
+        type_id: TypeId,
+        visiting: &mut FxHashSet<TypeId>,
+        memo: &mut FxHashMap<TypeId, bool>,
+    ) -> bool {
+        if let Some(&cached) = memo.get(&type_id) {
+            return cached;
+        }
+        if !visiting.insert(type_id) {
+            // Cycle while evaluating "all leaves are any" is conservatively false.
             return false;
         }
-        if type_id == TypeId::ANY {
-            return true;
-        }
-        match db.lookup(type_id) {
-            Some(TypeData::Array(elem)) => walk(db, elem, visited),
+        let result = if type_id == TypeId::ANY {
+            true
+        } else {
+            match db.lookup(type_id) {
+                Some(TypeData::Array(elem)) => walk(db, elem, visiting, memo),
             Some(TypeData::Tuple(list_id)) => {
                 let elems = db.tuple_list(list_id);
-                elems.iter().all(|e| walk(db, e.type_id, visited))
+                elems
+                    .iter()
+                    .all(|e| walk(db, e.type_id, visiting, memo))
             }
             Some(TypeData::Union(list_id)) => {
                 let members = db.type_list(list_id);
-                !members.is_empty() && members.iter().all(|&m| walk(db, m, visited))
+                !members.is_empty() && members.iter().all(|&m| walk(db, m, visiting, memo))
             }
             Some(TypeData::Intersection(list_id)) => {
                 let members = db.type_list(list_id);
-                !members.is_empty() && members.iter().all(|&m| walk(db, m, visited))
+                !members.is_empty() && members.iter().all(|&m| walk(db, m, visiting, memo))
             }
-            _ => false,
-        }
+                _ => false,
+            }
+        };
+        visiting.remove(&type_id);
+        memo.insert(type_id, result);
+        result
     }
-    let mut visited = FxHashSet::default();
-    walk(db, type_id, &mut visited)
+    let mut visiting = FxHashSet::default();
+    let mut memo = FxHashMap::default();
+    walk(db, type_id, &mut visiting, &mut memo)
 }
 
 /// Check whether a type (or any union/intersection/readonly/noinfer wrapper)
