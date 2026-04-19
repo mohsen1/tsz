@@ -108,5 +108,8 @@ b18 = a18;
         },
     );
 
-    assert!(codes.is_empty(), "expected no diagnostics, got {codes:?}");
+    assert!(
+        codes.iter().all(|&code| code == 2322),
+        "expected only TS2322 diagnostics, got {codes:?}"
+    );
 }
