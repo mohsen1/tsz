@@ -1210,6 +1210,51 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // JS files: if the function has no AST parameters but its body references
+        // `arguments`, synthesize a call signature from JSDoc `@param` tags so that
+        // calls are checked against the declared JSDoc parameter types.
+        // Mirrors tsc's `getSignatureFromDeclaration` JSDoc fallback.
+        if parameters.nodes.is_empty()
+            && params.is_empty()
+            && self.is_js_file()
+            && let Some(ref jsdoc) = func_jsdoc
+            && !jsdoc.contains("@callback")
+            && self.body_has_arguments_reference(body)
+        {
+            let function_has_name = self.function_has_effective_name(idx);
+            let comment_pos = self.get_jsdoc_comment_pos_for_function(idx);
+            for (pname, _) in Self::extract_jsdoc_param_names(jsdoc) {
+                if pname == "this" {
+                    continue;
+                }
+                let is_rest = Self::jsdoc_param_is_rest(jsdoc, &pname);
+                // tsc only promotes {...T} → T[] when the function has an
+                // effective name; anonymous expressions leave the type as T
+                // and TS8029 is emitted by check_jsdoc_param_tag_names.
+                if is_rest && !function_has_name {
+                    continue;
+                }
+                let is_optional = Self::is_jsdoc_param_optional_by_brackets(jsdoc, &pname)
+                    || Self::extract_jsdoc_param_type_string(jsdoc, &pname)
+                        .is_some_and(|t| t.trim().ends_with('='));
+                let Some(type_id) =
+                    self.resolve_jsdoc_param_type_with_pos(jsdoc, &pname, comment_pos)
+                else {
+                    continue;
+                };
+                // `resolve_jsdoc_param_type_with_pos` already strips the `...` prefix
+                // and returns the element type. For rest params we store the element
+                // type and set `rest: true`, matching the AST-param JSDoc path.
+                let name = self.ctx.types.intern_string(&pname);
+                params.push(ParamInfo {
+                    name: Some(name),
+                    type_id,
+                    optional: is_optional,
+                    rest: is_rest,
+                });
+            }
+        }
+
         // Record that we've checked this closure for implicit-any diagnostics so
         // later re-entrant passes do not re-emit TS7006/TS7031. Do this after the
         // full parameter walk so sibling parameters in the same closure are all checked.
