@@ -112,7 +112,8 @@ impl Server {
                 file_path.to_string(),
                 &content,
             )
-            .with_organize_imports_ignore_case(organize_imports_ignore_case);
+            .with_organize_imports_ignore_case(organize_imports_ignore_case)
+            .with_new_line_override(self.new_line_character.clone());
             let unknown_conversion_content = Self::apply_unknown_conversion_fallback(&content);
             let missing_async_content = Self::apply_missing_async_fallback(&content);
             let add_parameter_names_content =
@@ -3381,7 +3382,8 @@ impl Server {
                 file_path.to_string(),
                 &content,
             )
-            .with_organize_imports_ignore_case(organize_imports_ignore_case);
+            .with_organize_imports_ignore_case(organize_imports_ignore_case)
+            .with_new_line_override(self.new_line_character.clone());
 
             let mut diagnostics = self.get_semantic_diagnostics_full(file_path, &content);
             diagnostics.extend(

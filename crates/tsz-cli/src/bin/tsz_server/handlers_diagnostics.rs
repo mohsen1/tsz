@@ -94,6 +94,16 @@ impl Server {
             .get("includeCompletionsWithClassMemberSnippets")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
+        if let Some(format_options) = request
+            .arguments
+            .get("formatOptions")
+            .and_then(serde_json::Value::as_object)
+            && let Some(new_line) = format_options
+                .get("newLineCharacter")
+                .and_then(serde_json::Value::as_str)
+        {
+            self.new_line_character = Some(new_line.to_string());
+        }
 
         // Accept configuration; selected completion preferences are wired.
         TsServerResponse {

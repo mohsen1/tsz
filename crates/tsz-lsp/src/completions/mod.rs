@@ -180,6 +180,14 @@ pub struct CompletionItem {
     /// Contains the file name and label so the server can look up documentation on demand.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<CompletionItemData>,
+    /// Whether this auto-import source corresponds to a package listed in
+    /// the project's package.json dependencies (tsserver:
+    /// `isPackageJsonImport`). Serialized as `true` when set; omitted otherwise.
+    #[serde(
+        rename = "isPackageJsonImport",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub is_package_json_import: Option<bool>,
 }
 
 /// Data attached to a completion item for lazy resolve.
@@ -225,6 +233,7 @@ impl CompletionItem {
             replacement_span: None,
             additional_text_edits: None,
             data: None,
+            is_package_json_import: None,
         }
     }
 
@@ -261,6 +270,13 @@ impl CompletionItem {
     /// Mark this completion as requiring an additional action (e.g. auto-import).
     pub const fn with_has_action(mut self) -> Self {
         self.has_action = true;
+        self
+    }
+
+    /// Mark this completion as corresponding to a package listed in the
+    /// project's `package.json` dependencies.
+    pub const fn with_is_package_json_import(mut self) -> Self {
+        self.is_package_json_import = Some(true);
         self
     }
 

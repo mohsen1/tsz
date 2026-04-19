@@ -960,6 +960,7 @@ impl Project {
     pub(crate) fn completion_from_import_candidate(
         &self,
         candidate: &ImportCandidate,
+        from_file: &str,
     ) -> CompletionItem {
         let detail = self.auto_import_detail(candidate);
         let documentation = self.auto_import_documentation(candidate);
@@ -974,6 +975,12 @@ impl Project {
             .with_kind_modifiers("export".to_string());
         if let Some(doc) = documentation {
             item = item.with_documentation(doc);
+        }
+        if let Some(package_name) = Self::module_specifier_package_name(&candidate.module_specifier)
+            && let Some(allowed) = self.allowed_dependency_package_names(from_file)
+            && allowed.contains(package_name)
+        {
+            item = item.with_is_package_json_import();
         }
         item
     }

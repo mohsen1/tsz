@@ -545,6 +545,9 @@ pub(crate) struct Server {
     pub(crate) auto_import_specifier_exclude_regexes: Vec<String>,
     /// Completion preference: include class member snippet completions.
     pub(crate) include_completions_with_class_member_snippets: bool,
+    /// Newline character preference from `configure` formatOptions. Used by
+    /// import edits to respect `format.setOption("newLineCharacter", ...)`.
+    pub(crate) new_line_character: Option<String>,
     /// Compiler option propagated by `compilerOptionsForInferredProjects`.
     pub(crate) allow_importing_ts_extensions: bool,
     /// Full inferred compiler options propagated by `compilerOptionsForInferredProjects`.
@@ -626,6 +629,7 @@ impl Server {
             auto_import_file_exclude_patterns: Vec::new(),
             auto_import_specifier_exclude_regexes: Vec::new(),
             include_completions_with_class_member_snippets: true,
+            new_line_character: None,
             allow_importing_ts_extensions: false,
             inferred_check_options: CheckOptions::default(),
             inferred_projectinfo_options: None,
