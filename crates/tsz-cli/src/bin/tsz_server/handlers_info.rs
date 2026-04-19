@@ -60,6 +60,36 @@ fn symbol_kind_to_tsserver(
     }
 }
 
+/// Mirror tsc's `escapeString(s, '"')` — replace control characters
+/// and backslash/double-quote with their JS escape sequences, and
+/// encode non-printable high chars as `\uNNNN`. Used on the filename
+/// stem before wrapping it in double quotes for external-module
+/// navbar/navtree root entries, so a filename like `my fil<TAB>e`
+/// renders as `"my fil\te"` rather than embedding a literal tab.
+fn escape_string_double_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\x08' => out.push_str("\\b"),
+            '\x0c' => out.push_str("\\f"),
+            '\x0b' => out.push_str("\\v"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            '\u{0085}' => out.push_str("\\u0085"),
+            c if (c as u32) < 0x20 => {
+                out.push_str(&format!("\\u{:04X}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// Sort a navtree/navbar symbol slice in-place, recursively sorting each
 /// node's children. Mirrors TypeScript's `compareChildren`: primary key
 /// is case-insensitive name, tiebreaker is source position.
@@ -1921,7 +1951,14 @@ impl Server {
                     .and_then(|stem| stem.to_str())
                     .unwrap_or("")
                     .to_string();
-                (format!("\"{basename}\""), "module")
+                // tsc's `getItemName` wraps the filename-derived module
+                // name with `escapeString` (double-quote style) before
+                // quoting. Mirrors that so control characters render as
+                // their escape sequences (\t, \n, \\…).
+                (
+                    format!("\"{}\"", escape_string_double_quote(&basename)),
+                    "module",
+                )
             } else {
                 ("<global>".to_string(), "script")
             };
@@ -2105,7 +2142,10 @@ impl Server {
                     .and_then(|stem| stem.to_str())
                     .unwrap_or("")
                     .to_string();
-                (format!("\"{basename}\""), "module")
+                (
+                    format!("\"{}\"", escape_string_double_quote(&basename)),
+                    "module",
+                )
             } else {
                 ("<global>".to_string(), "script")
             };
