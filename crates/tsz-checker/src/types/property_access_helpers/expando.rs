@@ -351,13 +351,14 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let element_type = tsz_solver::type_queries::get_array_element_type(
-            self.ctx.types,
-            object_type,
-        )
-        .or_else(|| {
-            tsz_solver::type_queries::get_tuple_element_type_union(self.ctx.types, object_type)
-        })?;
+        let element_type =
+            crate::query_boundaries::common::array_element_type(self.ctx.types, object_type)
+                .or_else(|| {
+                    crate::query_boundaries::common::get_tuple_element_type_union(
+                        self.ctx.types,
+                        object_type,
+                    )
+                })?;
 
         let iterator_base = self
             .resolve_entity_name_text_to_def_id_for_lowering("ArrayIterator")
@@ -505,7 +506,7 @@ impl<'a> CheckerState<'a> {
         object_expr_idx: NodeIndex,
         object_type: TypeId,
     ) -> bool {
-        use tsz_solver::visitor::is_function_type;
+        use crate::query_boundaries::property_access::is_function_type;
 
         let prototype_root_expr = self.ctx.arena.get(object_expr_idx).and_then(|node| {
             if node.kind != tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
@@ -842,7 +843,7 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         if !self.is_js_file()
             || !self.ctx.compiler_options.check_js
-            || !tsz_solver::visitor::is_object_like_type(self.ctx.types, object_type)
+            || !crate::query_boundaries::common::is_object_like_type(self.ctx.types, object_type)
         {
             return false;
         }

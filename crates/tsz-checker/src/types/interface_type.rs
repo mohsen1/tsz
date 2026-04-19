@@ -9,6 +9,7 @@
 //! - Index signature handling
 //! - Type parameter instantiation for generic bases
 
+use crate::query_boundaries::common::is_template_literal_type;
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
@@ -17,7 +18,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
-use tsz_solver::visitor::is_template_literal_type;
 
 // =============================================================================
 // Interface Type Resolution
@@ -880,8 +880,8 @@ impl<'a> CheckerState<'a> {
     }
 
     fn merge_interface_types_impl(&mut self, derived: TypeId, base: TypeId) -> TypeId {
+        use crate::query_boundaries::common::{InterfaceMergeKind, classify_for_interface_merge};
         use tracing::trace;
-        use tsz_solver::type_queries::{InterfaceMergeKind, classify_for_interface_merge};
         use tsz_solver::{CallableShape, ObjectShape};
 
         // Bail out if type resolution fuel is exhausted to prevent
@@ -1117,7 +1117,7 @@ impl<'a> CheckerState<'a> {
             // - Assignability: array/tuple sources can be checked against the tuple base.
             // Track the result so the checker can also suppress false NoCommonProperties failures.
             (_, InterfaceMergeKind::Other)
-                if tsz_solver::type_queries::is_array_or_tuple_type(
+                if crate::query_boundaries::common::is_array_or_tuple_type(
                     self.ctx.types,
                     base_resolved,
                 ) && derived != TypeId::ANY =>
@@ -1131,7 +1131,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn resolve_type_for_interface_merge(&mut self, type_id: TypeId) -> TypeId {
-        if tsz_solver::type_queries::needs_evaluation_for_merge(self.ctx.types, type_id) {
+        if crate::query_boundaries::common::needs_evaluation_for_merge(self.ctx.types, type_id) {
             // Use the solver evaluator without ensure_relation_input_ready.
             // evaluate_type_with_env triggers lazy ref resolution which can cause
             // explosive type creation on augmented module interfaces (react + emotion).
@@ -1164,12 +1164,12 @@ impl<'a> CheckerState<'a> {
     fn merge_with_intersection(
         &mut self,
         derived: TypeId,
-        _derived_kind: tsz_solver::type_queries::InterfaceMergeKind,
+        _derived_kind: crate::query_boundaries::common::InterfaceMergeKind,
         base: TypeId,
-        base_kind: tsz_solver::type_queries::InterfaceMergeKind,
+        base_kind: crate::query_boundaries::common::InterfaceMergeKind,
     ) -> TypeId {
         use crate::query_boundaries::common::intersection_members;
-        use tsz_solver::type_queries::{InterfaceMergeKind, classify_for_interface_merge};
+        use crate::query_boundaries::common::{InterfaceMergeKind, classify_for_interface_merge};
 
         let factory = self.ctx.types.factory();
 

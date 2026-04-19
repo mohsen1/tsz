@@ -132,7 +132,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn enum_symbol_from_full_enum_type(&self, type_id: TypeId) -> Option<SymbolId> {
-        let def_id = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, type_id)?;
+        let def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)?;
         let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         ((symbol.flags & symbol_flags::ENUM) != 0
@@ -141,7 +141,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn enum_symbol_from_enumish_type(&self, type_id: TypeId) -> Option<SymbolId> {
-        let def_id = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, type_id)?;
+        let def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)?;
         let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if (symbol.flags & symbol_flags::ENUM_MEMBER) != 0 {
@@ -154,7 +154,8 @@ impl<'a> CheckerState<'a> {
         let enum_type =
             crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, type_id)
                 .filter(|constraint| {
-                    tsz_solver::type_queries::get_enum_def_id(self.ctx.types, *constraint).is_some()
+                    crate::query_boundaries::common::enum_def_id(self.ctx.types, *constraint)
+                        .is_some()
                 })
                 .unwrap_or(type_id);
         let sym_id = self.enum_symbol_from_enumish_type(enum_type)?;

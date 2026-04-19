@@ -594,9 +594,10 @@ impl<'a> CheckerState<'a> {
             rustc_hash::FxHashSet::default();
         let mut class_member_type_map: rustc_hash::FxHashMap<String, TypeId> =
             rustc_hash::FxHashMap::default();
-        if let Some(shape) =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, class_instance_type)
-        {
+        if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+            self.ctx.types,
+            class_instance_type,
+        ) {
             for prop in &shape.properties {
                 let name = self.ctx.types.resolve_atom(prop.name);
                 class_member_names.insert(name.clone());
@@ -676,9 +677,10 @@ impl<'a> CheckerState<'a> {
             let mut incompatible_members: Vec<(String, String, String)> = Vec::new();
             let mut interface_has_index_signature = false;
 
-            if let Some(shape) =
-                tsz_solver::type_queries::get_object_shape(self.ctx.types, interface_type)
-            {
+            if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                self.ctx.types,
+                interface_type,
+            ) {
                 if shape.string_index.is_some() || shape.number_index.is_some() {
                     interface_has_index_signature = true;
                 }

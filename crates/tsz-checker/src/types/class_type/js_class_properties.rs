@@ -543,7 +543,7 @@ impl CheckerState<'_> {
                                 .is_some_and(|lit| lit.elements.nodes.is_empty())
                     });
                 if rhs_is_direct_empty_array
-                    && tsz_solver::type_queries::get_array_element_type(self.ctx.types, rhs_type)
+                    && crate::query_boundaries::common::array_element_type(self.ctx.types, rhs_type)
                         == Some(TypeId::NEVER)
                 {
                     rhs_type = self.ctx.types.factory().array(TypeId::ANY);
@@ -552,7 +552,7 @@ impl CheckerState<'_> {
                 if rhs_type == TypeId::NULL || rhs_type == TypeId::UNDEFINED {
                     provisional_open = true;
                 } else if rhs_type == TypeId::ANY
-                    || tsz_solver::type_queries::get_array_element_type(self.ctx.types, rhs_type)
+                    || crate::query_boundaries::common::array_element_type(self.ctx.types, rhs_type)
                         == Some(TypeId::ANY)
                 {
                     // RHS evaluates to `any` or `any[]` — check if it came from
@@ -633,8 +633,10 @@ impl CheckerState<'_> {
                         && (type_id == TypeId::NULL || type_id == TypeId::UNDEFINED))
                 {
                     Some("any")
-                } else if tsz_solver::type_queries::get_array_element_type(self.ctx.types, type_id)
-                    == Some(TypeId::ANY)
+                } else if crate::query_boundaries::common::array_element_type(
+                    self.ctx.types,
+                    type_id,
+                ) == Some(TypeId::ANY)
                 {
                     Some("any[]")
                 } else {
@@ -708,7 +710,7 @@ impl CheckerState<'_> {
             let still_implicit = properties.get(&name_atom).is_some_and(|property| {
                 property.write_type == TypeId::ANY
                     || property.type_id == TypeId::ANY
-                    || tsz_solver::type_queries::get_array_element_type(
+                    || crate::query_boundaries::common::array_element_type(
                         self.ctx.types,
                         property.type_id,
                     ) == Some(TypeId::ANY)

@@ -901,7 +901,7 @@ impl<'a> CheckerState<'a> {
         {
             ((*shape).clone(), shape.properties.len())
         } else if let Some(function_shape) =
-            crate::query_boundaries::type_computation::complex::get_function_shape(
+            crate::query_boundaries::type_computation::complex::function_shape_for_type(
                 self.ctx.types,
                 base_type,
             )

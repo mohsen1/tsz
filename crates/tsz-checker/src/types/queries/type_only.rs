@@ -542,7 +542,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         property_name: &str,
     ) -> bool {
-        use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
+        use crate::query_boundaries::common::{NamespaceMemberKind, classify_namespace_member};
 
         match classify_namespace_member(self.ctx.types, object_type) {
             // Handle Lazy types (direct namespace/module references)
@@ -612,7 +612,7 @@ impl<'a> CheckerState<'a> {
             // For merged symbols, the namespace exports are stored as properties on the Callable
             NamespaceMemberKind::Callable(_) => {
                 // Check if the property exists in the callable's properties
-                if let Some(prop) = tsz_solver::type_queries::find_property_in_type_by_str(
+                if let Some(prop) = crate::query_boundaries::common::find_property_by_str(
                     self.ctx.types,
                     object_type,
                     property_name,
@@ -959,7 +959,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn is_namespace_value_type(&self, object_type: TypeId) -> bool {
-        use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
+        use crate::query_boundaries::common::{NamespaceMemberKind, classify_namespace_member};
 
         // Check if a symbol is a pure namespace/enum (not merged with a class).
         // Class+namespace merges should be treated as class constructors, not namespaces,
@@ -1026,7 +1026,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         property_name: &str,
     ) -> Option<TypeId> {
-        use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
+        use crate::query_boundaries::common::{NamespaceMemberKind, classify_namespace_member};
 
         let sym_id = match classify_namespace_member(self.ctx.types, object_type) {
             NamespaceMemberKind::TypeQuery(sym_ref) => SymbolId(sym_ref.0),
@@ -1166,7 +1166,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         expression: NodeIndex,
     ) -> bool {
-        use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
+        use crate::query_boundaries::common::{NamespaceMemberKind, classify_namespace_member};
 
         // Only applies to enum types
         if !matches!(

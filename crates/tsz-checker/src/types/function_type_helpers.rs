@@ -84,7 +84,7 @@ impl<'a> CheckerState<'a> {
         &self,
         expected: TypeId,
     ) -> Option<Vec<TypeParamInfo>> {
-        tsz_solver::type_queries::extract_contextual_type_params(self.ctx.types, expected)
+        crate::query_boundaries::common::extract_contextual_type_params(self.ctx.types, expected)
     }
 
     pub(crate) fn push_contextual_type_parameter_infos(
@@ -387,9 +387,9 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> TypeId {
-        use tsz_solver::type_queries::get_function_shape;
+        use crate::query_boundaries::common::function_shape_for_type;
 
-        let Some(shape) = get_function_shape(self.ctx.types, type_id) else {
+        let Some(shape) = function_shape_for_type(self.ctx.types, type_id) else {
             return type_id;
         };
 

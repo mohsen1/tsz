@@ -253,7 +253,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if let Some(shape) =
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, member)
+                    crate::query_boundaries::common::object_shape_for_type(self.ctx.types, member)
                 {
                     shape.properties.iter().all(|prop| {
                         if prop.optional {
@@ -372,7 +372,7 @@ impl<'a> CheckerState<'a> {
 
         // String index signature → any attribute name is valid.
         let has_string_index =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, props_type)
                 .is_some_and(|shape| shape.string_index.is_some());
 
         // Suppress excess-property errors when props has unresolved type params.
@@ -502,7 +502,7 @@ impl<'a> CheckerState<'a> {
                         } else {
                             attr_data.initializer
                         };
-                        tsz_solver::widening::widen_type(
+                        crate::query_boundaries::common::widen_type(
                             self.ctx.types,
                             self.compute_type_of_node(value_idx),
                         )
@@ -781,16 +781,17 @@ impl<'a> CheckerState<'a> {
                             syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
                         )
                     {
-                        let has_function_context = tsz_solver::type_queries::get_function_shape(
-                            self.ctx.types,
-                            expected_context_type,
-                        )
-                        .is_some()
-                            || tsz_solver::type_queries::get_call_signatures(
+                        let has_function_context =
+                            crate::query_boundaries::common::function_shape_for_type(
                                 self.ctx.types,
                                 expected_context_type,
                             )
-                            .is_some_and(|sigs| !sigs.is_empty());
+                            .is_some()
+                                || crate::query_boundaries::common::call_signatures_for_type(
+                                    self.ctx.types,
+                                    expected_context_type,
+                                )
+                                .is_some_and(|sigs| !sigs.is_empty());
                         if !has_function_context {
                             if let Some(entry) = provided_attrs.last_mut() {
                                 entry.1 = TypeId::ANY;
@@ -945,9 +946,10 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Extract spread props for TS2741 tracking.
-                if let Some(spread_shape) =
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, spread_type)
-                {
+                if let Some(spread_shape) = crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    spread_type,
+                ) {
                     for prop in &spread_shape.properties {
                         let prop_name = self.ctx.types.resolve_atom(prop.name);
                         provided_attrs.push((prop_name.to_string(), prop.type_id));
@@ -1028,8 +1030,10 @@ impl<'a> CheckerState<'a> {
 
                 // Check if TS2710 will be emitted: spread has children property AND there are body children
                 let spread_has_children = if let Some(spread_shape) =
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, spread_type)
-                {
+                    crate::query_boundaries::common::object_shape_for_type(
+                        self.ctx.types,
+                        spread_type,
+                    ) {
                     spread_shape.properties.iter().any(|p| {
                         let name = self.ctx.types.resolve_atom(p.name);
                         name == "children"
@@ -1056,9 +1060,10 @@ impl<'a> CheckerState<'a> {
                 // Record this spread's property names for later iterations.
                 let resolved_spread = self.evaluate_type_with_env(spread_type);
                 let resolved_spread = self.resolve_type_for_property_access(resolved_spread);
-                if let Some(shape) =
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_spread)
-                {
+                if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    resolved_spread,
+                ) {
                     for prop in &shape.properties {
                         earlier_spread_props
                             .insert(self.ctx.types.resolve_atom(prop.name).to_string());
@@ -1564,8 +1569,10 @@ impl<'a> CheckerState<'a> {
             // Check 2: All required properties in the member are provided.
             // Children are now included in provided_names via synthesis above.
             let all_required_present = if let Some(shape) =
-                tsz_solver::type_queries::get_object_shape(self.ctx.types, member_resolved)
-            {
+                crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    member_resolved,
+                ) {
                 shape.properties.iter().all(|prop| {
                     if prop.optional {
                         return true;

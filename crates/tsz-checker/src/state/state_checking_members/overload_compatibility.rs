@@ -22,7 +22,9 @@ impl<'a> CheckerState<'a> {
         &self,
         type_id: tsz_solver::TypeId,
     ) -> Option<usize> {
-        if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id) {
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
+        {
             return Some(
                 shape
                     .params
@@ -32,16 +34,15 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        tsz_solver::type_queries::get_construct_signatures(self.ctx.types, type_id).and_then(
-            |sigs| {
+        crate::query_boundaries::common::construct_signatures_for_type(self.ctx.types, type_id)
+            .and_then(|sigs| {
                 sigs.first().map(|sig| {
                     sig.params
                         .iter()
                         .filter(|param| param.is_required())
                         .count()
                 })
-            },
-        )
+            })
     }
 
     fn jsdoc_overload_tag_span(
@@ -822,8 +823,8 @@ impl<'a> CheckerState<'a> {
         overload_type: tsz_solver::TypeId,
     ) -> bool {
         let constructors_only =
-            tsz_solver::type_queries::is_constructor_like_type(self.ctx.types, impl_type)
-                && tsz_solver::type_queries::is_constructor_like_type(
+            crate::query_boundaries::common::is_constructor_like_type(self.ctx.types, impl_type)
+                && crate::query_boundaries::common::is_constructor_like_type(
                     self.ctx.types,
                     overload_type,
                 );

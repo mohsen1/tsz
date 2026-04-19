@@ -618,7 +618,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<bool> {
         use crate::query_boundaries::common::TypeResolver;
         let target = self.evaluate_type_for_assignability(target);
-        let target_def_id = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, target)?;
+        let target_def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, target)?;
         if !self.ctx.is_numeric_enum(target_def_id) {
             return None;
         }
@@ -626,7 +626,7 @@ impl<'a> CheckerState<'a> {
         let source_literal = self.literal_type_from_initializer(source_idx);
         let source_is_number_like = source == TypeId::NUMBER
             || source_literal.is_some_and(|lit| {
-                tsz_solver::type_queries::extended::is_number_literal(self.ctx.types, lit)
+                crate::query_boundaries::common::is_number_literal(self.ctx.types, lit)
             });
         if !source_is_number_like {
             return None;
@@ -814,8 +814,8 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 target,
             )
-            && tsz_solver::type_queries::is_callable_type(self.ctx.types, source)
-            && tsz_solver::type_queries::is_callable_type(self.ctx.types, target)
+            && crate::query_boundaries::common::is_callable_type(self.ctx.types, source)
+            && crate::query_boundaries::common::is_callable_type(self.ctx.types, target)
             && !self.callable_has_own_generic_signatures(source)
             && self.ctx.types.is_assignable_to(target, source)
             && self.callable_params_contain_type_param_intersection(source)
@@ -1503,7 +1503,7 @@ impl<'a> CheckerState<'a> {
 
         // Check call signatures first
         if let Some(return_type) =
-            tsz_solver::type_queries::get_return_type(self.ctx.types, resolved_source)
+            crate::query_boundaries::common::return_type_for_type(self.ctx.types, resolved_source)
             && return_type != TypeId::VOID
             && return_type != TypeId::UNDEFINED
             && return_type != TypeId::NEVER
@@ -1514,9 +1514,10 @@ impl<'a> CheckerState<'a> {
 
         // Check construct signatures — use get_construct_signatures directly
         // which handles Callable types and intersections.
-        if let Some(sigs) =
-            tsz_solver::type_queries::get_construct_signatures(self.ctx.types, resolved_source)
-            && let Some(first_sig) = sigs.first()
+        if let Some(sigs) = crate::query_boundaries::common::construct_signatures_for_type(
+            self.ctx.types,
+            resolved_source,
+        ) && let Some(first_sig) = sigs.first()
         {
             let construct_return = first_sig.return_type;
             if construct_return != TypeId::VOID

@@ -44,7 +44,7 @@ impl<'a> CheckerState<'a> {
         let rest_param_type = self.contextual_rest_parameter_source_type(rest_param.type_id);
 
         if let Some(tuple_elements) =
-            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, rest_param_type)
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, rest_param_type)
         {
             // Variadic tuples (rest element followed by tail elements, e.g.
             // `[...((n: number) => void)[], (x: any) => void]`) require
@@ -73,7 +73,7 @@ impl<'a> CheckerState<'a> {
             let mut element_types = Vec::new();
             for member in members {
                 let Some(tuple_elements) =
-                    tsz_solver::type_queries::get_tuple_elements(self.ctx.types, member)
+                    crate::query_boundaries::common::tuple_elements(self.ctx.types, member)
                 else {
                     continue;
                 };
@@ -92,7 +92,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        tsz_solver::type_queries::get_array_element_type(self.ctx.types, rest_param_type)
+        crate::query_boundaries::common::array_element_type(self.ctx.types, rest_param_type)
     }
 
     fn contextual_rest_parameter_source_type(&mut self, rest_param_type: TypeId) -> TypeId {
@@ -616,7 +616,9 @@ impl<'a> CheckerState<'a> {
         // Collect function shapes from all members, flattening unions.
         let mut shapes: Vec<std::sync::Arc<FunctionShape>> = Vec::new();
         for &ty in types {
-            if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, ty) {
+            if let Some(shape) =
+                crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
+            {
                 shapes.push(shape);
             } else if let Some(members) =
                 crate::query_boundaries::common::union_members(self.ctx.types, ty)
@@ -624,9 +626,10 @@ impl<'a> CheckerState<'a> {
                 // Flatten union members: collect function shapes from each.
                 let mut found_any = false;
                 for &member in &members {
-                    if let Some(shape) =
-                        tsz_solver::type_queries::get_function_shape(self.ctx.types, member)
-                    {
+                    if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(
+                        self.ctx.types,
+                        member,
+                    ) {
                         shapes.push(shape);
                         found_any = true;
                     }
@@ -851,11 +854,11 @@ impl<'a> CheckerState<'a> {
         }
 
         fn is_tuple_like_rest_param(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
-            tsz_solver::type_queries::get_tuple_elements(db, ty).is_some()
+            crate::query_boundaries::common::tuple_elements(db, ty).is_some()
                 || crate::query_boundaries::common::union_members(db, ty).is_some_and(|members| {
                     !members.is_empty()
                         && members.iter().all(|member| {
-                            tsz_solver::type_queries::get_tuple_elements(db, *member).is_some()
+                            crate::query_boundaries::common::tuple_elements(db, *member).is_some()
                         })
                 })
         }
@@ -1132,10 +1135,10 @@ impl<'a> CheckerState<'a> {
         }
 
         let has_tuple_shape =
-            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, source_type).is_some()
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, source_type).is_some()
                 || state_query::union_members(self.ctx.types, source_type).is_some_and(|members| {
                     members.iter().all(|&member| {
-                        tsz_solver::type_queries::get_tuple_elements(self.ctx.types, member)
+                        crate::query_boundaries::common::tuple_elements(self.ctx.types, member)
                             .is_some()
                     })
                 });
@@ -1218,10 +1221,9 @@ impl<'a> CheckerState<'a> {
     /// initializers (`let x = E.A`) to the parent enum type (`E`), not the
     /// specific member.
     pub(crate) fn widen_initializer_type_for_mutable_binding(&mut self, type_id: TypeId) -> TypeId {
-        use tsz_solver::type_queries;
-
         // Check if this is an enum member type that should widen to parent enum
-        if let Some(def_id) = type_queries::get_enum_def_id(self.ctx.types, type_id) {
+        if let Some(def_id) = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)
+        {
             // Check if this DefId is an enum member (has a parent enum)
             let parent_def_id = self
                 .ctx
@@ -1254,10 +1256,9 @@ impl<'a> CheckerState<'a> {
     /// literal types (e.g., `2` stays `2`, not `number`). This is used in operator
     /// error messages where tsc preserves literal types but widens enum members.
     pub(crate) fn widen_enum_member_type(&mut self, type_id: TypeId) -> TypeId {
-        use tsz_solver::type_queries;
-
         // Check if this is an enum member type that should widen to parent enum
-        if let Some(def_id) = type_queries::get_enum_def_id(self.ctx.types, type_id) {
+        if let Some(def_id) = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)
+        {
             let parent_def_id = self
                 .ctx
                 .type_env
@@ -1289,9 +1290,8 @@ impl<'a> CheckerState<'a> {
     /// Enum member types (e.g., `Colors.Red`) should widen to the parent enum type
     /// when assigned to mutable bindings, even if they're not "fresh" literals.
     pub(crate) fn is_enum_member_type_for_widening(&self, type_id: TypeId) -> bool {
-        use tsz_solver::type_queries;
-
-        if let Some(def_id) = type_queries::get_enum_def_id(self.ctx.types, type_id) {
+        if let Some(def_id) = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)
+        {
             // Check if this DefId has a parent (meaning it's a member, not the enum itself)
             return self
                 .ctx
@@ -2118,8 +2118,11 @@ impl<'a> CheckerState<'a> {
         let check_type = if let Some(constraint) =
             crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, object_type)
         {
-            if tsz_solver::visitor::is_type_parameter(self.ctx.types, index_type)
-                || tsz_solver::visitor::contains_type_parameters(self.ctx.types, constraint)
+            if crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type)
+                || crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    constraint,
+                )
             {
                 // Constraint is generic or index is generic — can't determine
                 // indexability until instantiation. Don't report TS7053.

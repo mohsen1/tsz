@@ -856,7 +856,8 @@ impl<'a> CheckerState<'a> {
             }
 
             if check_assignability {
-                let widened_left = tsz_solver::widening::widen_type(self.ctx.types, left_type);
+                let widened_left =
+                    crate::query_boundaries::common::widen_type(self.ctx.types, left_type);
                 if widened_left != left_type
                     && let Some(right_node) = self.ctx.arena.get(right_idx)
                 {
@@ -1229,9 +1230,10 @@ impl<'a> CheckerState<'a> {
                 } = raw
                 {
                     // Check if this is a callable with ThisType return
-                    if let Some(callable) =
-                        tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id)
-                    {
+                    if let Some(callable) = crate::query_boundaries::common::callable_shape_for_type(
+                        self.ctx.types,
+                        type_id,
+                    ) {
                         for sig in &callable.call_signatures {
                             if tsz_solver::is_this_type(self.ctx.types, sig.return_type) {
                                 return true;
@@ -1246,7 +1248,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn check_tuple_destructuring_bounds(&mut self, left_idx: NodeIndex, right_type: TypeId) {
-        let rhs = tsz_solver::type_queries::unwrap_readonly(self.ctx.types, right_type);
+        let rhs = crate::query_boundaries::common::unwrap_readonly(self.ctx.types, right_type);
 
         let Some(left_node) = self.ctx.arena.get(left_idx) else {
             return;
@@ -1257,7 +1259,7 @@ impl<'a> CheckerState<'a> {
 
         // Single tuple case
         if let Some(tuple_elements) =
-            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, rhs)
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, rhs)
         {
             let has_rest_tail = tuple_elements.last().is_some_and(|element| element.rest);
             if has_rest_tail {
@@ -1317,9 +1319,9 @@ impl<'a> CheckerState<'a> {
 
                 let all_out_of_bounds = !members.is_empty()
                     && members.iter().all(|&m| {
-                        let m = tsz_solver::type_queries::unwrap_readonly(self.ctx.types, m);
+                        let m = crate::query_boundaries::common::unwrap_readonly(self.ctx.types, m);
                         if let Some(elems) =
-                            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, m)
+                            crate::query_boundaries::common::tuple_elements(self.ctx.types, m)
                         {
                             let has_rest = elems.iter().any(|e| e.rest);
                             !has_rest && index >= elems.len()
@@ -1541,7 +1543,7 @@ impl<'a> CheckerState<'a> {
         // constructor types (which only have construct/new signatures). TSC anchors
         // class assignments (`x = C;`) at the LHS, not the RHS.
         if target_type == TypeId::VOID
-            && tsz_solver::type_queries::has_call_signatures(self.ctx.types, source_type)
+            && crate::query_boundaries::common::has_call_signatures(self.ctx.types, source_type)
             && self.is_identifier_rhs(right_idx)
         {
             let _ = self.check_assignable_or_report_at_exact_anchor(
@@ -1598,11 +1600,11 @@ impl<'a> CheckerState<'a> {
             .resolve_identifier_symbol(access.expression)
             .and_then(|sym_id| self.assignment_target_declared_type(sym_id))
             .filter(|declared| {
-                tsz_solver::visitor::is_type_parameter(self.ctx.types, *declared)
-                    || tsz_solver::visitor::is_this_type(self.ctx.types, *declared)
+                crate::query_boundaries::common::is_type_parameter(self.ctx.types, *declared)
+                    || crate::query_boundaries::common::is_this_type(self.ctx.types, *declared)
             })
             .unwrap_or_else(|| self.get_type_of_node(access.expression));
-        if !tsz_solver::visitor::is_type_parameter(self.ctx.types, object_type) {
+        if !crate::query_boundaries::common::is_type_parameter(self.ctx.types, object_type) {
             return None;
         }
 

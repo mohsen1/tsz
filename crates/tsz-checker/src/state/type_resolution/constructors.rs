@@ -416,10 +416,10 @@ impl<'a> CheckerState<'a> {
                 &substitution,
             );
             // Check if the resolved default still references any unsupplied type param.
-            if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, resolved) {
+            if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, resolved) {
                 // Check specifically for unsupplied param names
                 for &name in &unsupplied_names {
-                    if tsz_solver::visitor::contains_type_parameter_named(
+                    if crate::query_boundaries::common::contains_type_parameter_named(
                         self.ctx.types.as_type_database(),
                         resolved,
                         name,
@@ -1162,7 +1162,8 @@ impl<'a> CheckerState<'a> {
             // to a different TypeId being checked).
             if let Some(&scope_type_id) = self.ctx.type_parameter_scope.get(name) {
                 let db = self.ctx.types.as_type_database();
-                let base = tsz_solver::type_queries::get_base_constraint_of_type(db, scope_type_id);
+                let base =
+                    crate::query_boundaries::common::get_base_constraint_of_type(db, scope_type_id);
                 if base != scope_type_id && base != TypeId::UNKNOWN {
                     return true;
                 }

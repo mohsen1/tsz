@@ -187,7 +187,7 @@ impl<'a> CheckerState<'a> {
         // For patterns like `v[k]` where `v: T extends Record<K, number>`, the
         // type is `IndexAccess(T, K)` which must be evaluated iteratively via the
         // full TypeEnvironment resolver to eventually reach the concrete type `number`.
-        if tsz_solver::type_queries::get_index_access_types(self.ctx.types, result).is_some() {
+        if crate::query_boundaries::common::index_access_types(self.ctx.types, result).is_some() {
             let mut current = result;
             for _ in 0..3 {
                 let evaluated = self.evaluate_type_with_env(current);
@@ -195,7 +195,7 @@ impl<'a> CheckerState<'a> {
                     break;
                 }
                 current = evaluated;
-                if tsz_solver::type_queries::get_index_access_types(self.ctx.types, current)
+                if crate::query_boundaries::common::index_access_types(self.ctx.types, current)
                     .is_none()
                 {
                     break;
@@ -393,8 +393,8 @@ impl<'a> CheckerState<'a> {
         request: &TypingRequest,
     ) -> TypeId {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::query_boundaries::common::{LiteralTypeKind, classify_literal_type};
         use tsz_scanner::SyntaxKind;
-        use tsz_solver::type_queries::{LiteralTypeKind, classify_literal_type};
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
@@ -482,7 +482,8 @@ impl<'a> CheckerState<'a> {
 
                 // TS2469: unary +/- on symbol types
                 {
-                    let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                    let evaluator =
+                        crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                     if evaluator.is_symbol_like(operand_type) {
                         let op_str = if k == SyntaxKind::PlusToken as u16 {
                             "+"
@@ -512,7 +513,8 @@ impl<'a> CheckerState<'a> {
                     && operand_type != TypeId::ANY
                     && operand_type != TypeId::ERROR
                 {
-                    let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                    let evaluator =
+                        crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                     if evaluator.is_bigint_like(operand_type)
                         && let Some(operand_node) = self.ctx.arena.get(unary.operand)
                     {
@@ -566,7 +568,8 @@ impl<'a> CheckerState<'a> {
 
                 // Return bigint for bigint operands, number otherwise.
                 {
-                    let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                    let evaluator =
+                        crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                     let resolved = self.evaluate_type_with_env(operand_type);
                     if evaluator.is_bigint_like(resolved) {
                         TypeId::BIGINT
@@ -584,7 +587,8 @@ impl<'a> CheckerState<'a> {
 
                 // TS2469: unary ~ on symbol types
                 {
-                    let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                    let evaluator =
+                        crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                     if evaluator.is_symbol_like(operand_type)
                         && let Some(operand_node) = self.ctx.arena.get(unary.operand)
                     {
@@ -603,7 +607,8 @@ impl<'a> CheckerState<'a> {
 
                 // Return bigint for bigint operands, number otherwise.
                 {
-                    let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                    let evaluator =
+                        crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                     let resolved = self.evaluate_type_with_env(operand_type);
                     if evaluator.is_bigint_like(resolved) {
                         TypeId::BIGINT
@@ -636,7 +641,8 @@ impl<'a> CheckerState<'a> {
 
                 {
                     use crate::query_boundaries::common::BinaryOpEvaluator;
-                    let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+                    let evaluator =
+                        crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                     let (non_nullish, nullish_cause) = self.split_nullish_type(operand_type);
                     let nullish_can_flow_to_number = non_nullish.is_none_or(|ty| {
                         let evaluated = self.evaluate_type_with_env(ty);
@@ -677,7 +683,8 @@ impl<'a> CheckerState<'a> {
                 // Determine the result type: bigint for bigint operands, number otherwise.
                 // tsc returns the same numeric type as the operand for ++/--.
                 let result_type = {
-                    let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                    let evaluator =
+                        crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                     let resolved = self.evaluate_type_with_env(operand_type);
                     if evaluator.is_bigint_like(resolved) {
                         TypeId::BIGINT
@@ -872,7 +879,7 @@ impl<'a> CheckerState<'a> {
                                         self.is_property_optional(object_type, &prop_name);
                                     let optional_via_undefined =
                                         !self.ctx.compiler_options.exact_optional_property_types
-                                            && tsz_solver::type_queries::type_includes_undefined(
+                                            && crate::query_boundaries::class_type::type_includes_undefined(
                                                 self.ctx.types,
                                                 prop_type,
                                             );
@@ -974,7 +981,8 @@ impl<'a> CheckerState<'a> {
             // Constraint-resolved type parameters (e.g. `<S extends symbol>`)
             // are also caught via the solver's BinaryOpEvaluator helper.
             {
-                let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                let evaluator =
+                    crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                 use tsz_solver::TypeId as SolverTypeId;
                 let resolve_tp = |t: SolverTypeId| -> SolverTypeId {
                     crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, t)
@@ -1545,40 +1553,42 @@ impl<'a> CheckerState<'a> {
                         )
                     }));
 
-            let has_concrete_non_expando_override = if self.is_js_file()
-                && self.ctx.compiler_options.check_js
-            {
-                let preferred_cross_file_override = if let Some(root_ident) =
-                    self.ctx.arena.get(access.expression)
-                    && root_ident.kind == SyntaxKind::Identifier as u16
-                    && let Some(ident) = self.ctx.arena.get_identifier(root_ident)
-                    && let Some(preferred_cross_file_type) =
-                        self.cross_file_global_value_type_by_name(&ident.escaped_text, false)
-                {
-                    preferred_cross_file_type != TypeId::ANY
-                        && preferred_cross_file_type != TypeId::UNKNOWN
-                        && !tsz_solver::visitor::is_function_type(
-                            self.ctx.types,
-                            preferred_cross_file_type,
-                        )
+            let has_concrete_non_expando_override =
+                if self.is_js_file() && self.ctx.compiler_options.check_js {
+                    let preferred_cross_file_override = if let Some(root_ident) =
+                        self.ctx.arena.get(access.expression)
+                        && root_ident.kind == SyntaxKind::Identifier as u16
+                        && let Some(ident) = self.ctx.arena.get_identifier(root_ident)
+                        && let Some(preferred_cross_file_type) =
+                            self.cross_file_global_value_type_by_name(&ident.escaped_text, false)
+                    {
+                        preferred_cross_file_type != TypeId::ANY
+                            && preferred_cross_file_type != TypeId::UNKNOWN
+                            && !crate::query_boundaries::common::is_function_type(
+                                self.ctx.types,
+                                preferred_cross_file_type,
+                            )
+                    } else {
+                        false
+                    };
+
+                    let merged_value_override = if let Some(merged_value_type) =
+                        self.merged_value_type_for_symbol_if_available(obj_sym)
+                    {
+                        merged_value_type != TypeId::ANY
+                            && merged_value_type != TypeId::UNKNOWN
+                            && !crate::query_boundaries::common::is_function_type(
+                                self.ctx.types,
+                                merged_value_type,
+                            )
+                    } else {
+                        false
+                    };
+
+                    preferred_cross_file_override || merged_value_override
                 } else {
                     false
                 };
-
-                let merged_value_override = if let Some(merged_value_type) =
-                    self.merged_value_type_for_symbol_if_available(obj_sym)
-                {
-                    merged_value_type != TypeId::ANY
-                        && merged_value_type != TypeId::UNKNOWN
-                        && !tsz_solver::visitor::is_function_type(self.ctx.types, merged_value_type)
-                } else {
-                    false
-                };
-
-                preferred_cross_file_override || merged_value_override
-            } else {
-                false
-            };
 
             if apply_expando_pattern && !has_concrete_non_expando_override {
                 // Checked-JS function symbols use expando writes regardless of any

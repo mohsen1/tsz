@@ -17,8 +17,10 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         use crate::query_boundaries::common::PropertyAccessResult;
 
-        let sigs =
-            tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)?;
+        let sigs = crate::query_boundaries::common::construct_signatures_for_type(
+            self.ctx.types,
+            component_type,
+        )?;
         let generic: Vec<_> = sigs
             .iter()
             .filter(|sig| !sig.type_params.is_empty())
@@ -97,10 +99,12 @@ impl<'a> CheckerState<'a> {
         _element_idx: NodeIndex,
         component_type: TypeId,
     ) -> Option<tsz_solver::FunctionShape> {
-        let call_sig =
-            tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)?
-                .first()?
-                .clone();
+        let call_sig = crate::query_boundaries::common::construct_signatures_for_type(
+            self.ctx.types,
+            component_type,
+        )?
+        .first()?
+        .clone();
         let mut function_shape = tsz_solver::FunctionShape {
             type_params: call_sig.type_params,
             params: call_sig.params,
@@ -433,7 +437,10 @@ impl<'a> CheckerState<'a> {
             // treat it as an intrinsic element. tsc allows `<Tag>` where Tag has a string
             // type without emitting TS2604.
             if (self.is_jsx_string_tag_type(resolved_component_type)
-                || tsz_solver::type_queries::is_keyof_type(self.ctx.types, resolved_component_type))
+                || crate::query_boundaries::common::is_keyof_type(
+                    self.ctx.types,
+                    resolved_component_type,
+                ))
                 && !tried_specific_intrinsic_lookup
             {
                 let needs_dynamic_intrinsic_props_check =
@@ -442,8 +449,11 @@ impl<'a> CheckerState<'a> {
                             self.ctx.types,
                             resolved_component_type,
                         )
-                        || tsz_solver::type_queries::is_keyof_type(self.ctx.types, component_type)
-                        || tsz_solver::type_queries::is_keyof_type(
+                        || crate::query_boundaries::common::is_keyof_type(
+                            self.ctx.types,
+                            component_type,
+                        )
+                        || crate::query_boundaries::common::is_keyof_type(
                             self.ctx.types,
                             resolved_component_type,
                         );
@@ -743,12 +753,12 @@ impl<'a> CheckerState<'a> {
                                         attr_request.contextual_type.is_some_and(|ctx_type| {
                                             let ctx_type =
                                                 self.resolve_type_for_property_access(ctx_type);
-                                            tsz_solver::type_queries::get_function_shape(
+                                            crate::query_boundaries::common::function_shape_for_type(
                                                 self.ctx.types,
                                                 ctx_type,
                                             )
                                             .is_some()
-                                                || tsz_solver::type_queries::get_call_signatures(
+                                                || crate::query_boundaries::common::call_signatures_for_type(
                                                     self.ctx.types,
                                                     ctx_type,
                                                 )
@@ -1272,7 +1282,8 @@ impl<'a> CheckerState<'a> {
             return "children".to_string();
         }
 
-        let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, evaluated)
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, evaluated)
         else {
             return "children".to_string();
         };

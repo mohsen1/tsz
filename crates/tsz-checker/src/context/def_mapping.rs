@@ -655,11 +655,9 @@ impl<'a> CheckerContext<'a> {
     /// }
     /// ```
     pub fn resolve_type_to_symbol_id(&self, type_id: TypeId) -> Option<SymbolId> {
-        use tsz_solver::type_queries;
-
         // 0. Direct TypeQuery(typeof X) resolves to X's value symbol.
-        if let tsz_solver::type_queries::TypeQueryKind::TypeQuery(sym_ref) =
-            tsz_solver::type_queries::classify_type_query(self.types, type_id)
+        if let crate::query_boundaries::common::TypeQueryKind::TypeQuery(sym_ref) =
+            crate::query_boundaries::common::classify_type_query(self.types, type_id)
         {
             return Some(SymbolId(sym_ref.0));
         }
@@ -669,12 +667,12 @@ impl<'a> CheckerContext<'a> {
         // DefId→SymbolId mappings when the same symbol gets a new DefId (e.g., lib
         // types like Promise referenced multiple times). The DefinitionStore retains
         // the symbol_id even after the per-context map entry is removed.
-        if let Some(def_id) = type_queries::get_lazy_def_id(self.types, type_id) {
+        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.types, type_id) {
             return self.def_to_symbol_id_with_fallback(def_id);
         }
 
         // 2. Try to get DefId from Enum type
-        if let Some(def_id) = type_queries::get_enum_def_id(self.types, type_id) {
+        if let Some(def_id) = crate::query_boundaries::common::enum_def_id(self.types, type_id) {
             return self.def_to_symbol_id(def_id);
         }
 

@@ -72,10 +72,9 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::symbol_flags;
         use tsz_scanner::SyntaxKind;
 
-        let sym_id = self
-            .ctx
-            .resolve_type_to_symbol_id(type_id)
-            .or_else(|| tsz_solver::type_queries::get_type_shape_symbol(self.ctx.types, type_id));
+        let sym_id = self.ctx.resolve_type_to_symbol_id(type_id).or_else(|| {
+            crate::query_boundaries::common::type_shape_symbol(self.ctx.types, type_id)
+        });
         let Some(sym_id) = sym_id else {
             return false;
         };
@@ -131,7 +130,7 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<String> {
         // For enum types, the solver can't access binder exports.
         // Collect enum member names directly from the binder's symbol exports.
-        if let Some(def_id) = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, type_id)
+        if let Some(def_id) = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)
             && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             && let Some(exports) = symbol.exports.as_ref()
@@ -185,19 +184,21 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::common::IntrinsicKind;
         use crate::query_boundaries::common::TypeResolver;
 
-        let kind = if tsz_solver::type_queries::is_string_type(self.ctx.types, type_id)
-            || tsz_solver::type_queries::is_string_literal(self.ctx.types, type_id)
-        {
+        let kind = if crate::query_boundaries::common::is_string_type(self.ctx.types, type_id)
+            || crate::query_boundaries::checkers::iterable::is_string_literal_type(
+                self.ctx.types,
+                type_id,
+            ) {
             IntrinsicKind::String
-        } else if tsz_solver::type_queries::is_number_type(self.ctx.types, type_id)
-            || tsz_solver::type_queries::is_number_literal(self.ctx.types, type_id)
+        } else if crate::query_boundaries::common::is_number_type(self.ctx.types, type_id)
+            || crate::query_boundaries::common::is_number_literal(self.ctx.types, type_id)
         {
             IntrinsicKind::Number
-        } else if tsz_solver::type_queries::is_boolean_type(self.ctx.types, type_id) {
+        } else if crate::query_boundaries::common::is_boolean_type(self.ctx.types, type_id) {
             IntrinsicKind::Boolean
-        } else if tsz_solver::type_queries::is_bigint_type(self.ctx.types, type_id) {
+        } else if crate::query_boundaries::common::is_bigint_type(self.ctx.types, type_id) {
             IntrinsicKind::Bigint
-        } else if tsz_solver::type_queries::is_symbol_type(self.ctx.types, type_id) {
+        } else if crate::query_boundaries::common::is_symbol_type(self.ctx.types, type_id) {
             IntrinsicKind::Symbol
         } else {
             return None;
@@ -209,7 +210,7 @@ impl<'a> CheckerState<'a> {
     /// Resolve the binder SymbolId for a namespace/module type.
     /// Uses `classify_namespace_member` to find the symbol backing the type.
     fn resolve_namespace_symbol_for_type(&self, type_id: TypeId) -> Option<tsz_binder::SymbolId> {
-        use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
+        use crate::query_boundaries::common::{NamespaceMemberKind, classify_namespace_member};
 
         match classify_namespace_member(self.ctx.types, type_id) {
             NamespaceMemberKind::Lazy(def_id) => self.ctx.def_to_symbol_id(def_id),
@@ -566,25 +567,28 @@ impl<'a> CheckerState<'a> {
 
     /// Try to resolve the symbol name for a type.
     fn get_type_symbol_name(&mut self, type_id: TypeId) -> Option<String> {
-        use tsz_solver::type_queries;
-
         if tsz_solver::is_array_type(self.ctx.types, type_id) {
             return Some("Array".to_string());
         }
-        if type_id == TypeId::STRING || type_queries::is_string_literal(self.ctx.types, type_id) {
+        if type_id == TypeId::STRING
+            || crate::query_boundaries::common::is_string_literal(self.ctx.types, type_id)
+        {
             return Some("String".to_string());
         }
-        if type_id == TypeId::NUMBER || type_queries::is_number_literal(self.ctx.types, type_id) {
+        if type_id == TypeId::NUMBER
+            || crate::query_boundaries::common::is_number_literal(self.ctx.types, type_id)
+        {
             return Some("Number".to_string());
         }
-        if let Some(base) = type_queries::get_application_base(self.ctx.types, type_id) {
+        if let Some(base) =
+            crate::query_boundaries::common::get_application_base(self.ctx.types, type_id)
+        {
             return self.get_type_symbol_name(base);
         }
 
-        let sym_id = self
-            .ctx
-            .resolve_type_to_symbol_id(type_id)
-            .or_else(|| type_queries::get_type_shape_symbol(self.ctx.types, type_id));
+        let sym_id = self.ctx.resolve_type_to_symbol_id(type_id).or_else(|| {
+            crate::query_boundaries::common::type_shape_symbol(self.ctx.types, type_id)
+        });
         if let Some(sym_id) = sym_id {
             let lib_binders = self.get_lib_binders();
             if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)

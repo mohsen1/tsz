@@ -103,26 +103,26 @@ pub(super) fn is_object_prototype_method_for_array_target(name: impl AsRef<str>)
 /// or if it's directly a callable/function type.
 fn is_callable_application_type(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
     // Check if it's an application of a callable type
-    if let Some(app) = tsz_solver::type_queries::get_type_application(db, type_id) {
-        tsz_solver::type_queries::get_callable_shape(db, app.base).is_some()
-            || tsz_solver::type_queries::get_function_shape(db, app.base).is_some()
+    if let Some(app) = crate::query_boundaries::common::type_application(db, type_id) {
+        crate::query_boundaries::common::callable_shape_for_type(db, app.base).is_some()
+            || crate::query_boundaries::common::function_shape_for_type(db, app.base).is_some()
     } else {
         // Also check if it's directly a callable/function type
-        tsz_solver::type_queries::get_callable_shape(db, type_id).is_some()
-            || tsz_solver::type_queries::get_function_shape(db, type_id).is_some()
+        crate::query_boundaries::common::callable_shape_for_type(db, type_id).is_some()
+            || crate::query_boundaries::common::function_shape_for_type(db, type_id).is_some()
     }
 }
 
 /// Check if a callable/function type has its own signature-level type parameters.
 fn has_own_signature_type_params(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
-    if let Some(shape) = tsz_solver::type_queries::get_callable_shape(db, type_id) {
+    if let Some(shape) = crate::query_boundaries::common::callable_shape_for_type(db, type_id) {
         return shape
             .call_signatures
             .iter()
             .chain(shape.construct_signatures.iter())
             .any(|sig| !sig.type_params.is_empty());
     }
-    if let Some(shape) = tsz_solver::type_queries::get_function_shape(db, type_id) {
+    if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(db, type_id) {
         return !shape.type_params.is_empty();
     }
     false
@@ -149,11 +149,12 @@ impl<'a> CheckerState<'a> {
         let target_eval = self.evaluate_type_for_assignability(target);
         let source_eval = self.evaluate_type_for_assignability(source);
         let Some(target_shape) =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, target_eval)
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target_eval)
         else {
             return false;
         };
-        let source_shape = tsz_solver::type_queries::get_object_shape(self.ctx.types, source_eval);
+        let source_shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source_eval);
         for target_prop in &target_shape.properties {
             if !target_prop.optional {
                 continue;
@@ -164,7 +165,10 @@ impl<'a> CheckerState<'a> {
                 .and_then(|s| s.properties.iter().find(|p| p.name == target_prop.name))
                 .map(|p| p.type_id);
             if let Some(src_type) = source_prop_type
-                && tsz_solver::type_queries::type_includes_undefined(self.ctx.types, src_type)
+                && crate::query_boundaries::class_type::type_includes_undefined(
+                    self.ctx.types,
+                    src_type,
+                )
             {
                 return true;
             }
@@ -192,7 +196,7 @@ impl<'a> CheckerState<'a> {
         ty: TypeId,
         name: tsz_common::interner::Atom,
     ) -> Option<tsz_solver::PropertyInfo> {
-        tsz_solver::type_queries::get_object_shape(self.ctx.types, ty)
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)
             .and_then(|shape| {
                 shape
                     .properties
@@ -201,13 +205,14 @@ impl<'a> CheckerState<'a> {
                     .cloned()
             })
             .or_else(|| {
-                tsz_solver::type_queries::get_callable_shape(self.ctx.types, ty).and_then(|shape| {
-                    shape
-                        .properties
-                        .iter()
-                        .find(|candidate| candidate.name == name)
-                        .cloned()
-                })
+                crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty)
+                    .and_then(|shape| {
+                        shape
+                            .properties
+                            .iter()
+                            .find(|candidate| candidate.name == name)
+                            .cloned()
+                    })
             })
     }
 
@@ -376,11 +381,14 @@ impl<'a> CheckerState<'a> {
             })
         };
 
-        tsz_solver::type_queries::get_object_shape(self.ctx.types, target_type)
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target_type)
             .and_then(|shape| find_missing(&shape.properties))
             .or_else(|| {
-                tsz_solver::type_queries::get_callable_shape(self.ctx.types, target_type)
-                    .and_then(|shape| find_missing(&shape.properties))
+                crate::query_boundaries::common::callable_shape_for_type(
+                    self.ctx.types,
+                    target_type,
+                )
+                .and_then(|shape| find_missing(&shape.properties))
             })
     }
 
@@ -655,13 +663,16 @@ impl<'a> CheckerState<'a> {
         }
 
         let has_callable_shape = |this: &mut Self, ty: TypeId| {
-            tsz_solver::type_queries::get_function_shape(this.ctx.types, ty).is_some()
+            crate::query_boundaries::common::function_shape_for_type(this.ctx.types, ty).is_some()
                 || crate::query_boundaries::common::callable_shape_for_type(this.ctx.types, ty)
                     .is_some()
                 || {
                     let evaluated = this.evaluate_type_with_env(ty);
-                    tsz_solver::type_queries::get_function_shape(this.ctx.types, evaluated)
-                        .is_some()
+                    crate::query_boundaries::common::function_shape_for_type(
+                        this.ctx.types,
+                        evaluated,
+                    )
+                    .is_some()
                         || crate::query_boundaries::common::callable_shape_for_type(
                             this.ctx.types,
                             evaluated,
@@ -985,9 +996,9 @@ impl<'a> CheckerState<'a> {
         source_display: String,
     ) -> String {
         let target_is_constructor_like =
-            tsz_solver::type_queries::get_function_shape(self.ctx.types, target)
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, target)
                 .is_some_and(|shape| shape.is_constructor)
-                || tsz_solver::type_queries::get_callable_shape(self.ctx.types, target)
+                || crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, target)
                     .is_some_and(|shape| !shape.construct_signatures.is_empty());
 
         if self.is_literal_sensitive_assignment_target(target)
@@ -1013,7 +1024,7 @@ impl<'a> CheckerState<'a> {
         let is_intersection_source = [source, self.evaluate_type_for_assignability(source)]
             .into_iter()
             .any(|candidate| {
-                tsz_solver::type_queries::is_intersection_type(self.ctx.types, candidate)
+                crate::query_boundaries::common::is_intersection_type(self.ctx.types, candidate)
                     && self.ctx.types.get_display_properties(candidate).is_some()
             });
         if is_intersection_source && self.target_has_literal_typed_properties(target) {
@@ -1040,7 +1051,8 @@ impl<'a> CheckerState<'a> {
         // but these are parameter literals that should be preserved, not object property
         // literals that should be widened. Skip rewriting for callable types.
         let is_callable_type =
-            tsz_solver::type_queries::get_callable_shape(self.ctx.types, target).is_some();
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, target)
+                .is_some();
         if target_display.contains("=>")
             || is_callable_type
             || !Self::display_has_member_literals_assignability(&target_display)
@@ -1088,13 +1100,16 @@ impl<'a> CheckerState<'a> {
     /// `"hello" | "world"`, but widens to `string` when the target expects `boolean`.
     fn target_has_literal_typed_properties(&mut self, target: TypeId) -> bool {
         let target = self.evaluate_type_for_assignability(target);
-        let shape =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, target).or_else(|| {
+        let shape = crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target)
+            .or_else(|| {
                 // For intersection/union targets, check members.
                 crate::query_boundaries::common::intersection_members(self.ctx.types, target)
                     .and_then(|members| {
                         members.iter().find_map(|&m| {
-                            tsz_solver::type_queries::get_object_shape(self.ctx.types, m)
+                            crate::query_boundaries::common::object_shape_for_type(
+                                self.ctx.types,
+                                m,
+                            )
                         })
                     })
             });

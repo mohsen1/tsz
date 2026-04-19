@@ -171,11 +171,12 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<String> {
         let mut missing: Vec<String> = Vec::new();
         let type_ids_to_check =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, instance_type)
+            crate::query_boundaries::common::intersection_members(self.ctx.types, instance_type)
                 .unwrap_or_else(|| vec![instance_type]);
 
         for type_id in type_ids_to_check {
-            let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, type_id)
+            let Some(shape) =
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
             else {
                 continue;
             };
@@ -222,12 +223,13 @@ impl<'a> CheckerState<'a> {
         let mut seen = rustc_hash::FxHashSet::default();
 
         if let Some(members) =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, instance_type)
+            crate::query_boundaries::common::intersection_members(self.ctx.types, instance_type)
         {
             for &member_id in members.iter() {
-                if let Some(shape) =
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, member_id)
-                    && let Some(sym_id) = shape.symbol
+                if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    member_id,
+                ) && let Some(sym_id) = shape.symbol
                     && seen.insert(sym_id)
                     && let Some(symbol) = self.get_symbol_globally(sym_id)
                     && !symbol.escaped_name.is_empty()
@@ -237,7 +239,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
         } else if let Some(shape) =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, instance_type)
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, instance_type)
         {
             if let Some(sym_id) = shape.symbol
                 && seen.insert(sym_id)

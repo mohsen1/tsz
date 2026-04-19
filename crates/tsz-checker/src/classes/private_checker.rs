@@ -20,7 +20,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns `Some(brand_name)` if the type has a private brand.
     pub(crate) fn get_private_brand(&self, type_id: TypeId) -> Option<String> {
-        tsz_solver::type_queries::get_private_brand_name(self.ctx.types, type_id)
+        crate::query_boundaries::common::get_private_brand_name(self.ctx.types, type_id)
     }
 
     // =========================================================================
@@ -51,7 +51,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns `Some(private_field_name)` if found, None otherwise.
     pub(crate) fn get_private_field_name_from_brand(&self, type_id: TypeId) -> Option<String> {
-        tsz_solver::type_queries::get_private_field_name(self.ctx.types, type_id)
+        crate::query_boundaries::common::get_private_field_name(self.ctx.types, type_id)
     }
 
     // =========================================================================
@@ -78,14 +78,15 @@ impl<'a> CheckerState<'a> {
         }
 
         let shared_nominal_member = |type_id: TypeId| {
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, type_id).and_then(|shape| {
-                shape.properties.iter().find_map(|prop| {
-                    let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
-                    (!prop_name.starts_with("__private_brand_")
-                        && prop.visibility != tsz_solver::Visibility::Public)
-                        .then(|| (prop_name.to_string(), prop.visibility))
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+                .and_then(|shape| {
+                    shape.properties.iter().find_map(|prop| {
+                        let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
+                        (!prop_name.starts_with("__private_brand_")
+                            && prop.visibility != tsz_solver::Visibility::Public)
+                            .then(|| (prop_name.to_string(), prop.visibility))
+                    })
                 })
-            })
         };
 
         if let (Some((source_member, source_visibility)), Some((target_member, target_visibility))) =

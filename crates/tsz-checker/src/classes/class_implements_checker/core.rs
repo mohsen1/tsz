@@ -67,8 +67,10 @@ impl<'a> CheckerState<'a> {
             let display_name = array_display_name(self);
 
             if let Some(array_base) = self.ctx.types.get_array_base_type()
-                && let Some(shape) =
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, array_base)
+                && let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    array_base,
+                )
             {
                 let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
                     self.ctx.types,
@@ -101,7 +103,7 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(shape) =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, interface_type)
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, interface_type)
         {
             let has_index_signature = shape.string_index.is_some() || shape.number_index.is_some();
             if !shape.properties.is_empty() {
@@ -464,10 +466,12 @@ impl<'a> CheckerState<'a> {
                             for &type_idx in &heritage_clause.types.nodes {
                                 let base_type = self.get_type_from_type_node(type_idx);
                                 let base_type = self.evaluate_type_for_assignability(base_type);
-                                if let Some(shape) = tsz_solver::type_queries::get_object_shape(
-                                    self.ctx.types,
-                                    base_type,
-                                ) {
+                                if let Some(shape) =
+                                    crate::query_boundaries::common::object_shape_for_type(
+                                        self.ctx.types,
+                                        base_type,
+                                    )
+                                {
                                     for prop in &shape.properties {
                                         let member_name = self.ctx.types.resolve_atom(prop.name);
                                         implemented_members.insert(member_name);
@@ -725,9 +729,10 @@ impl<'a> CheckerState<'a> {
             rustc_hash::FxHashMap::default();
         if !overloaded_methods.is_empty() {
             let class_instance_type = self.get_class_instance_type(class_idx, class_data);
-            if let Some(shape) =
-                tsz_solver::type_queries::get_object_shape(self.ctx.types, class_instance_type)
-            {
+            if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                self.ctx.types,
+                class_instance_type,
+            ) {
                 for prop in &shape.properties {
                     let name = self.ctx.types.resolve_atom(prop.name);
                     if overloaded_methods.contains(&name) {
@@ -1167,7 +1172,10 @@ impl<'a> CheckerState<'a> {
                             let in_instance_type = {
                                 let inst = self.get_class_instance_type(class_idx, class_data);
                                 if let Some(shape) =
-                                    tsz_solver::type_queries::get_object_shape(self.ctx.types, inst)
+                                    crate::query_boundaries::common::object_shape_for_type(
+                                        self.ctx.types,
+                                        inst,
+                                    )
                                 {
                                     let member_atom = self.ctx.types.intern_string(&member_name);
                                     shape.properties.iter().any(|p| p.name == member_atom)

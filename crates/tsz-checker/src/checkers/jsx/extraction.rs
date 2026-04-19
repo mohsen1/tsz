@@ -48,7 +48,7 @@ impl<'a> CheckerState<'a> {
         tag_name_idx: NodeIndex,
     ) -> bool {
         if let Some(shape) =
-            tsz_solver::type_queries::get_function_shape(self.ctx.types, component_type)
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, component_type)
             && !shape.is_constructor
             && shape.type_params.is_empty()
         {
@@ -60,9 +60,10 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if let Some(sigs) =
-            tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
-        {
+        if let Some(sigs) = crate::query_boundaries::common::call_signatures_for_type(
+            self.ctx.types,
+            component_type,
+        ) {
             let non_generic: Vec<_> = sigs
                 .iter()
                 .filter(|sig| sig.type_params.is_empty())
@@ -221,7 +222,7 @@ impl<'a> CheckerState<'a> {
                 else {
                     if self.is_generic_jsx_component(member)
                         || tsz_solver::contains_type_parameters(self.ctx.types, member)
-                        || tsz_solver::type_queries::needs_evaluation_for_merge(
+                        || crate::query_boundaries::common::needs_evaluation_for_merge(
                             self.ctx.types,
                             member,
                         )
@@ -378,7 +379,8 @@ impl<'a> CheckerState<'a> {
                 || tsz_solver::contains_type_parameters(self.ctx.types, ty)
                 || self.is_generic_jsx_component(ty)
             {
-                if is_this_tag || tsz_solver::type_queries::is_this_type(self.ctx.types, ty) {
+                if is_this_tag || crate::query_boundaries::common::is_this_type(self.ctx.types, ty)
+                {
                     return false;
                 }
                 return true;
@@ -395,17 +397,22 @@ impl<'a> CheckerState<'a> {
             // having signatures to avoid false TS2604.  The actual signature checking
             // happens during props extraction where these types are fully evaluated.
             if !is_this_tag
-                && tsz_solver::type_queries::needs_evaluation_for_merge(self.ctx.types, ty)
+                && crate::query_boundaries::common::needs_evaluation_for_merge(self.ctx.types, ty)
             {
                 return true;
             }
             let direct_has_signatures =
-                tsz_solver::type_queries::get_call_signatures(self.ctx.types, ty)
+                crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, ty)
                     .is_some_and(|sigs| !sigs.is_empty())
-                    || tsz_solver::type_queries::get_construct_signatures(self.ctx.types, ty)
-                        .is_some_and(|sigs| !sigs.is_empty())
-                    || tsz_solver::type_queries::get_function_shape(self.ctx.types, ty).is_some()
-                    || tsz_solver::type_queries::get_callable_shape(self.ctx.types, ty).is_some();
+                    || crate::query_boundaries::common::construct_signatures_for_type(
+                        self.ctx.types,
+                        ty,
+                    )
+                    .is_some_and(|sigs| !sigs.is_empty())
+                    || crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
+                        .is_some()
+                    || crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty)
+                        .is_some();
             if direct_has_signatures {
                 return true;
             }
@@ -414,12 +421,23 @@ impl<'a> CheckerState<'a> {
             if evaluated == ty {
                 return false;
             }
-            tsz_solver::type_queries::get_call_signatures(self.ctx.types, evaluated)
+            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, evaluated)
                 .is_some_and(|sigs| !sigs.is_empty())
-                || tsz_solver::type_queries::get_construct_signatures(self.ctx.types, evaluated)
-                    .is_some_and(|sigs| !sigs.is_empty())
-                || tsz_solver::type_queries::get_function_shape(self.ctx.types, evaluated).is_some()
-                || tsz_solver::type_queries::get_callable_shape(self.ctx.types, evaluated).is_some()
+                || crate::query_boundaries::common::construct_signatures_for_type(
+                    self.ctx.types,
+                    evaluated,
+                )
+                .is_some_and(|sigs| !sigs.is_empty())
+                || crate::query_boundaries::common::function_shape_for_type(
+                    self.ctx.types,
+                    evaluated,
+                )
+                .is_some()
+                || crate::query_boundaries::common::callable_shape_for_type(
+                    self.ctx.types,
+                    evaluated,
+                )
+                .is_some()
         });
 
         if !has_signatures {
@@ -442,8 +460,11 @@ impl<'a> CheckerState<'a> {
             return self.is_jsx_string_tag_type(constraint);
         }
 
-        if tsz_solver::type_queries::is_string_type(self.ctx.types, type_id)
-            || tsz_solver::type_queries::is_string_literal(self.ctx.types, type_id)
+        if crate::query_boundaries::common::is_string_type(self.ctx.types, type_id)
+            || crate::query_boundaries::checkers::iterable::is_string_literal_type(
+                self.ctx.types,
+                type_id,
+            )
         {
             return true;
         }
@@ -457,7 +478,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(members) =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, type_id)
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
         {
             return members
                 .iter()
@@ -522,20 +543,27 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             // Skip unresolved Application/Lazy member types (e.g. ComponentClass<any>)
-            if tsz_solver::type_queries::needs_evaluation_for_merge(self.ctx.types, member_type) {
+            if crate::query_boundaries::common::needs_evaluation_for_merge(
+                self.ctx.types,
+                member_type,
+            ) {
                 continue;
             }
 
             let is_unresolved = |t: TypeId| -> bool {
                 !is_concrete(t)
-                    || tsz_solver::type_queries::needs_evaluation_for_merge(self.ctx.types, t)
+                    || crate::query_boundaries::common::needs_evaluation_for_merge(
+                        self.ctx.types,
+                        t,
+                    )
             };
             let is_valid_null_like_return = |t: TypeId| -> bool { t == TypeId::NULL };
 
             let mut is_sfc = false;
-            if let Some(shape) =
-                tsz_solver::type_queries::get_function_shape(self.ctx.types, member_type)
-                && !shape.is_constructor
+            if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(
+                self.ctx.types,
+                member_type,
+            ) && !shape.is_constructor
             {
                 is_sfc = true;
                 let return_type = self.evaluate_type_with_env(shape.return_type);
@@ -559,12 +587,12 @@ impl<'a> CheckerState<'a> {
             // Check call/construct signatures against JSX.Element/ElementClass.
             for (get_sigs_fn, target, is_call_sig) in [
                 (
-                    tsz_solver::type_queries::get_call_signatures as fn(_, _) -> _,
+                    crate::query_boundaries::common::get_call_signatures as fn(_, _) -> _,
                     jsx_element_type,
                     true,
                 ),
                 (
-                    tsz_solver::type_queries::get_construct_signatures,
+                    crate::query_boundaries::common::get_construct_signatures,
                     jsx_element_class_type,
                     false,
                 ),
@@ -659,7 +687,7 @@ impl<'a> CheckerState<'a> {
         if matches!(
             evaluated_return,
             TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
-        ) || tsz_solver::type_queries::needs_evaluation_for_merge(
+        ) || crate::query_boundaries::common::needs_evaluation_for_merge(
             self.ctx.types,
             evaluated_return,
         ) || crate::query_boundaries::common::contains_type_parameters(
@@ -695,7 +723,7 @@ impl<'a> CheckerState<'a> {
 
         // Check Function type (single signature)
         if let Some(shape) =
-            tsz_solver::type_queries::get_function_shape(self.ctx.types, component_type)
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, component_type)
             && !shape.is_constructor
         {
             // Skip generic SFCs — we can't infer type args without full inference
@@ -730,9 +758,10 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check Callable type (overloaded signatures)
-        if let Some(sigs) =
-            tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
-            && !sigs.is_empty()
+        if let Some(sigs) = crate::query_boundaries::common::call_signatures_for_type(
+            self.ctx.types,
+            component_type,
+        ) && !sigs.is_empty()
         {
             // G4: Skip overloaded SFCs — we don't do JSX overload resolution.
             // Picking the first non-generic overload would produce wrong errors
@@ -819,7 +848,7 @@ impl<'a> CheckerState<'a> {
         let component_type = self.normalize_jsx_component_type_for_resolution(component_type);
 
         if let Some(shape) =
-            tsz_solver::type_queries::get_function_shape(self.ctx.types, component_type)
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, component_type)
             && !shape.is_constructor
             && !shape.type_params.is_empty()
         {
@@ -835,9 +864,10 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        if let Some(sigs) =
-            tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
-        {
+        if let Some(sigs) = crate::query_boundaries::common::call_signatures_for_type(
+            self.ctx.types,
+            component_type,
+        ) {
             let generic: Vec<_> = sigs
                 .iter()
                 .filter(|sig| !sig.type_params.is_empty())
@@ -862,9 +892,10 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a component type is an overloaded SFC (>= 2 non-generic call signatures).
     pub(super) fn is_overloaded_sfc(&self, component_type: TypeId) -> bool {
-        let Some(sigs) =
-            tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
-        else {
+        let Some(sigs) = crate::query_boundaries::common::call_signatures_for_type(
+            self.ctx.types,
+            component_type,
+        ) else {
             return false;
         };
         let non_generic_count = sigs.iter().filter(|s| s.type_params.is_empty()).count();
@@ -876,9 +907,10 @@ impl<'a> CheckerState<'a> {
     /// `recover_jsx_component_props_type` returns `None` -- the component has
     /// overloaded generic signatures that couldn't be resolved to a single props type.
     pub(super) fn has_multi_signature_overloads(&self, component_type: TypeId) -> bool {
-        let Some(sigs) =
-            tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
-        else {
+        let Some(sigs) = crate::query_boundaries::common::call_signatures_for_type(
+            self.ctx.types,
+            component_type,
+        ) else {
             return false;
         };
         sigs.len() >= 2
@@ -888,9 +920,10 @@ impl<'a> CheckerState<'a> {
     /// that should go through overload resolution. This handles class components like
     /// `React.Component` which typically have 2 construct overloads.
     pub(super) fn has_multi_construct_overloads(&self, component_type: TypeId) -> bool {
-        let Some(sigs) =
-            tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)
-        else {
+        let Some(sigs) = crate::query_boundaries::common::construct_signatures_for_type(
+            self.ctx.types,
+            component_type,
+        ) else {
             return false;
         };
         sigs.len() >= 2
@@ -899,21 +932,23 @@ impl<'a> CheckerState<'a> {
     /// Check if a component type has generic call or construct signatures.
     pub(super) fn is_generic_jsx_component(&self, component_type: TypeId) -> bool {
         if let Some(shape) =
-            tsz_solver::type_queries::get_function_shape(self.ctx.types, component_type)
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, component_type)
             && !shape.is_constructor
             && !shape.type_params.is_empty()
         {
             return true;
         }
-        if let Some(sigs) =
-            tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
-            && sigs.iter().any(|s| !s.type_params.is_empty())
+        if let Some(sigs) = crate::query_boundaries::common::call_signatures_for_type(
+            self.ctx.types,
+            component_type,
+        ) && sigs.iter().any(|s| !s.type_params.is_empty())
         {
             return true;
         }
-        if let Some(sigs) =
-            tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)
-            && sigs.iter().any(|s| !s.type_params.is_empty())
+        if let Some(sigs) = crate::query_boundaries::common::construct_signatures_for_type(
+            self.ctx.types,
+            component_type,
+        ) && sigs.iter().any(|s| !s.type_params.is_empty())
         {
             return true;
         }
@@ -922,19 +957,21 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a generic JSX component's type params carry default types.
     fn generic_jsx_component_has_defaults(&self, component_type: TypeId) -> bool {
-        if let Some(sigs) =
-            tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)
-            && sigs
-                .iter()
-                .any(|s| s.type_params.iter().any(|tp| tp.default.is_some()))
+        if let Some(sigs) = crate::query_boundaries::common::construct_signatures_for_type(
+            self.ctx.types,
+            component_type,
+        ) && sigs
+            .iter()
+            .any(|s| s.type_params.iter().any(|tp| tp.default.is_some()))
         {
             return true;
         }
-        if let Some(sigs) =
-            tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
-            && sigs
-                .iter()
-                .any(|s| s.type_params.iter().any(|tp| tp.default.is_some()))
+        if let Some(sigs) = crate::query_boundaries::common::call_signatures_for_type(
+            self.ctx.types,
+            component_type,
+        ) && sigs
+            .iter()
+            .any(|s| s.type_params.iter().any(|tp| tp.default.is_some()))
         {
             return true;
         }
@@ -947,8 +984,10 @@ impl<'a> CheckerState<'a> {
         component_type: TypeId,
         element_idx: Option<NodeIndex>,
     ) -> Option<TypeId> {
-        let sigs =
-            tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)?;
+        let sigs = crate::query_boundaries::common::construct_signatures_for_type(
+            self.ctx.types,
+            component_type,
+        )?;
         if sigs.is_empty() {
             return None;
         }
@@ -1049,7 +1088,7 @@ impl<'a> CheckerState<'a> {
         // e.g. `Component<{reqd: any}, any>` is an Application that evaluates
         // to a concrete object. Only skip if evaluation still yields a type
         // with unresolved type parameters (outer generic context).
-        let instance_type = if tsz_solver::type_queries::needs_evaluation_for_merge(
+        let instance_type = if crate::query_boundaries::common::needs_evaluation_for_merge(
             self.ctx.types,
             raw_instance_type,
         ) {
@@ -1182,7 +1221,8 @@ impl<'a> CheckerState<'a> {
 
     fn strip_implicit_jsx_children_from_props_fallback(&mut self, props_type: TypeId) -> TypeId {
         let props_type = self.normalize_jsx_required_props_target(props_type);
-        if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)
+        if let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, props_type)
         {
             let filtered_props: Vec<_> = shape
                 .properties
@@ -1196,7 +1236,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let Some(members) =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, props_type)
+            crate::query_boundaries::common::intersection_members(self.ctx.types, props_type)
         else {
             return props_type;
         };
@@ -1205,7 +1245,7 @@ impl<'a> CheckerState<'a> {
             .into_iter()
             .filter(|member| {
                 let Some(shape) =
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, *member)
+                    crate::query_boundaries::common::object_shape_for_type(self.ctx.types, *member)
                 else {
                     return true;
                 };
@@ -1234,7 +1274,7 @@ impl<'a> CheckerState<'a> {
         let original_props = self.normalize_jsx_required_props_target(original_props);
         let managed_props = self.normalize_jsx_required_props_target(managed_props);
         let Some(shape) =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, original_props)
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, original_props)
         else {
             return true;
         };
@@ -1254,14 +1294,17 @@ impl<'a> CheckerState<'a> {
         default_props_type: TypeId,
     ) -> Option<TypeId> {
         let props_type = self.normalize_jsx_required_props_target(props_type);
-        let props_shape = tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)?;
+        let props_shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, props_type)?;
         if props_shape.string_index.is_some() || props_shape.number_index.is_some() {
             return None;
         }
 
         let default_props_type = self.evaluate_type_with_env(default_props_type);
-        let default_shape =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, default_props_type)?;
+        let default_shape = crate::query_boundaries::common::object_shape_for_type(
+            self.ctx.types,
+            default_props_type,
+        )?;
         if default_shape.properties.is_empty() {
             return Some(props_type);
         }
@@ -1320,7 +1363,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if it has any properties
-        if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, evaluated) {
+        if let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, evaluated)
+        {
             if shape.properties.is_empty() {
                 return Some(String::new()); // Empty interface
             }

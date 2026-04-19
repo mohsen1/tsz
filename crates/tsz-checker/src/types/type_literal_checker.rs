@@ -3,6 +3,7 @@
 //! Type literals represent inline object types like `{ x: string; y: number }` or
 //! callable types with call/construct signatures.
 
+use crate::query_boundaries::common::is_template_literal_type;
 use crate::state::{CheckerState, ParamTypeResolutionMode};
 use crate::symbol_resolver::TypeSymbolResolution;
 use rustc_hash::FxHashMap;
@@ -11,7 +12,6 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
-use tsz_solver::visitor::is_template_literal_type;
 
 // =============================================================================
 // Type Literal Type Checking

@@ -276,7 +276,8 @@ impl<'a> FlowAnalyzer<'a> {
                     let op_str = map_compound_assignment_to_binary(bin.operator_token)?;
 
                     // Evaluate the binary operation to get result type
-                    let evaluator = BinaryOpEvaluator::new(self.interner);
+                    let evaluator =
+                        crate::query_boundaries::common::new_binary_op_evaluator(self.interner);
                     return match evaluator.evaluate(left_type, right_type, op_str) {
                         BinaryOpResult::Success(result) => Some(result),
                         // For type errors, return ANY to prevent cascading errors
@@ -843,7 +844,10 @@ impl<'a> FlowAnalyzer<'a> {
             });
         }
 
-        Some(self.interner.tuple(tuple_elements))
+        Some(crate::query_boundaries::flow_analysis::tuple_type(
+            self.interner,
+            tuple_elements,
+        ))
     }
 
     fn destructuring_array_literal_element_type(&self, element: NodeIndex) -> Option<TypeId> {
@@ -1753,7 +1757,7 @@ impl<'a> FlowAnalyzer<'a> {
         } else if kept.len() == 1 {
             kept[0]
         } else {
-            self.interner.union(kept)
+            crate::query_boundaries::flow_analysis::union_types(self.interner, kept)
         }
     }
 

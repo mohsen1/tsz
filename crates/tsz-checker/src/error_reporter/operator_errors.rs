@@ -237,7 +237,10 @@ impl<'a> CheckerState<'a> {
     /// Used to determine if `+` is string concatenation rather than arithmetic.
     fn is_string_like_type(&self, type_id: TypeId) -> bool {
         type_id == TypeId::STRING
-            || tsz_solver::type_queries::is_string_literal(self.ctx.types, type_id)
+            || crate::query_boundaries::checkers::iterable::is_string_literal_type(
+                self.ctx.types,
+                type_id,
+            )
     }
 
     /// Emit errors for binary operator type mismatches.
@@ -295,7 +298,7 @@ impl<'a> CheckerState<'a> {
 
         use crate::query_boundaries::common::BinaryOpEvaluator;
 
-        let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
 
         // TS2469: Check if either operand is a symbol type.
         // tsc's behavior for TS2469 varies by operator category:
@@ -326,7 +329,7 @@ impl<'a> CheckerState<'a> {
             }
             let check_union = |t: TypeId| -> bool {
                 if let Some(members) =
-                    tsz_solver::type_queries::get_union_members(self.ctx.types, t)
+                    crate::query_boundaries::common::union_members(self.ctx.types, t)
                 {
                     members.iter().any(|&m| {
                         evaluator.is_symbol_like(m)
@@ -513,7 +516,7 @@ impl<'a> CheckerState<'a> {
         // We check both original and evaluated forms because evaluate_type_for_binary_ops
         // may partially resolve the type.
         let is_infer_placeholder = |type_id: TypeId| -> bool {
-            tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, type_id)
+            crate::query_boundaries::common::type_param_info(self.ctx.types, type_id)
                 .is_some_and(|tp| self.ctx.types.resolve_atom(tp.name).starts_with("__infer_"))
         };
         if is_infer_placeholder(eval_left)
@@ -639,7 +642,7 @@ impl<'a> CheckerState<'a> {
 
         // 2. If it's a parent Enum type (widen_enum_member_type returned it
         //    unchanged because it has no parent), keep for display.
-        if tsz_solver::visitor::is_enum_type(self.ctx.types, type_id) {
+        if crate::query_boundaries::common::is_enum_type(self.ctx.types, type_id) {
             return type_id;
         }
 

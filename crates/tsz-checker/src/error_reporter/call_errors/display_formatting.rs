@@ -242,7 +242,7 @@ impl<'a> CheckerState<'a> {
                 let last = raw_sig.params.last()?;
                 last.rest.then_some(last.type_id)
             })?;
-        if !tsz_solver::type_queries::is_callable_type(self.ctx.types, raw_param_type) {
+        if !crate::query_boundaries::common::is_callable_type(self.ctx.types, raw_param_type) {
             return None;
         }
 
@@ -276,7 +276,7 @@ impl<'a> CheckerState<'a> {
             node.kind,
             k if k == tsz_parser::parser::syntax_kind_ext::ARROW_FUNCTION
                 || k == tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
-        ) || !tsz_solver::type_queries::is_callable_type(self.ctx.types, param_type)
+        ) || !crate::query_boundaries::common::is_callable_type(self.ctx.types, param_type)
         {
             return None;
         }
@@ -537,28 +537,29 @@ impl<'a> CheckerState<'a> {
             }
 
             let annotated_base_type = self.get_type_from_type_node(var_decl.type_annotation);
-            if let Some(type_sym) =
-                tsz_solver::type_queries::get_type_shape_symbol(self.ctx.types, annotated_base_type)
-                    .or_else(|| {
-                        let def_id = tsz_solver::type_queries::get_lazy_def_id(
-                            self.ctx.types,
-                            annotated_base_type,
-                        )?;
-                        self.ctx.def_to_symbol_id_with_fallback(def_id)
-                    })
-                && !declaration_owners.contains(&type_sym)
+            if let Some(type_sym) = crate::query_boundaries::common::type_shape_symbol(
+                self.ctx.types,
+                annotated_base_type,
+            )
+            .or_else(|| {
+                let def_id = crate::query_boundaries::common::lazy_def_id(
+                    self.ctx.types,
+                    annotated_base_type,
+                )?;
+                self.ctx.def_to_symbol_id_with_fallback(def_id)
+            }) && !declaration_owners.contains(&type_sym)
             {
                 declaration_owners.push(type_sym);
             }
         }
 
         let base_type = self.get_type_of_node(access.expression);
-        if let Some(base_sym) = tsz_solver::type_queries::get_type_shape_symbol(
+        if let Some(base_sym) = crate::query_boundaries::common::type_shape_symbol(
             self.ctx.types,
             base_type,
         )
         .or_else(|| {
-            let def_id = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, base_type)?;
+            let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base_type)?;
             self.ctx.def_to_symbol_id_with_fallback(def_id)
         }) && !declaration_owners.contains(&base_sym)
         {
@@ -785,7 +786,7 @@ impl<'a> CheckerState<'a> {
             ]
             .into_iter()
             .filter_map(|candidate| {
-                tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, candidate)
             })
             .find_map(|shape| {
                 shape
@@ -863,7 +864,7 @@ impl<'a> CheckerState<'a> {
         let index_value_type = candidates
             .into_iter()
             .filter_map(|candidate| {
-                tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, candidate)
             })
             .find_map(|shape| {
                 if prefer_number_index {
@@ -944,16 +945,17 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::common::union_members(self.ctx.types, candidate)
             {
                 for member in members {
-                    if let Some(shape) =
-                        tsz_solver::type_queries::get_object_shape(self.ctx.types, member)
-                        && shape.properties.iter().any(|p| p.name == prop_atom)
+                    if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                        self.ctx.types,
+                        member,
+                    ) && shape.properties.iter().any(|p| p.name == prop_atom)
                     {
                         return true;
                     }
                 }
             }
             if let Some(shape) =
-                tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, candidate)
                 && shape.properties.iter().any(|p| p.name == prop_atom)
             {
                 return true;
@@ -1052,8 +1054,11 @@ impl<'a> CheckerState<'a> {
 
         if crate::query_boundaries::common::is_mapped_type(self.ctx.types, display_type) {
             let evaluated_display = self.evaluate_type_for_assignability(display_type);
-            if tsz_solver::type_queries::get_object_shape(self.ctx.types, evaluated_display)
-                .is_some()
+            if crate::query_boundaries::common::object_shape_for_type(
+                self.ctx.types,
+                evaluated_display,
+            )
+            .is_some()
             {
                 display_type = evaluated_display;
             }
@@ -1078,7 +1083,7 @@ impl<'a> CheckerState<'a> {
             node.kind,
             k if k == tsz_parser::parser::syntax_kind_ext::ARROW_FUNCTION
                 || k == tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
-        ) || !tsz_solver::type_queries::is_callable_type(self.ctx.types, arg_type)
+        ) || !crate::query_boundaries::common::is_callable_type(self.ctx.types, arg_type)
         {
             return None;
         }
@@ -1245,11 +1250,11 @@ impl<'a> CheckerState<'a> {
         is_rest: bool,
     ) -> Option<String> {
         let params = if let Some(shape) =
-            tsz_solver::type_queries::get_function_shape(self.ctx.types, expected)
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, expected)
         {
             shape.params.clone()
         } else {
-            tsz_solver::type_queries::get_callable_shape(self.ctx.types, expected)
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, expected)
                 .and_then(|shape| shape.call_signatures.first().cloned())
                 .map(|sig| sig.params)?
         };
@@ -1287,11 +1292,11 @@ impl<'a> CheckerState<'a> {
         index: usize,
     ) -> Option<String> {
         let params = if let Some(shape) =
-            tsz_solver::type_queries::get_function_shape(self.ctx.types, expected)
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, expected)
         {
             shape.params.clone()
         } else {
-            tsz_solver::type_queries::get_callable_shape(self.ctx.types, expected)
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, expected)
                 .and_then(|shape| shape.call_signatures.first().cloned())
                 .map(|sig| sig.params)?
         };

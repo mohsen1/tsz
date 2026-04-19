@@ -532,7 +532,7 @@ impl<'a> CheckerState<'a> {
             common::lazy_def_id(self.ctx.types, base)
                 .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
                 .or_else(|| {
-                    tsz_solver::visitor::type_query_symbol(self.ctx.types, base)
+                    crate::query_boundaries::common::type_query_symbol(self.ctx.types, base)
                         .map(|symbol_ref| SymbolId(symbol_ref.0))
                 })
         };
@@ -1252,7 +1252,7 @@ impl<'a> CheckerState<'a> {
             // full rest parameter type; re-checking here would incorrectly compare
             // the spread marker against the rest element type (e.g., [...U] vs
             // `string | number | boolean` instead of `(string | number | boolean)[]`).
-            if tsz_solver::type_queries::is_spread_marker_tuple(
+            if crate::query_boundaries::common::is_spread_marker_tuple(
                 self.ctx.types.as_type_database(),
                 cached_actual,
             ) {
@@ -1277,7 +1277,7 @@ impl<'a> CheckerState<'a> {
             // resolve_generic_call. Re-checking here would re-compute the argument
             // type without in_const_assertion, producing a mutable type that fails
             // assignability against the readonly expected type.
-            if tsz_solver::type_queries::type_has_readonly_members(
+            if crate::query_boundaries::common::type_has_readonly_members(
                 self.ctx.types.as_type_database(),
                 expected,
             ) {
@@ -1711,7 +1711,7 @@ impl<'a> CheckerState<'a> {
                 && ty != TypeId::ERROR
                 && !common::contains_type_parameters(self.ctx.types, ty)
                 && !common::contains_infer_types(self.ctx.types, ty)
-                && tsz_solver::type_queries::get_function_shape(self.ctx.types, ty)
+                && crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
                     .is_some_and(|shape| shape.params.iter().all(|param| !param.rest))
         });
         let raw_context_requires_generic_epc_skip = expected_context_type.is_some_and(|ty| {

@@ -22,7 +22,7 @@ fn should_preserve_contextual_application_shape(
     db: &dyn tsz_solver::TypeDatabase,
     ty: TypeId,
 ) -> bool {
-    if tsz_solver::type_queries::get_application_info(db, ty).is_some() {
+    if crate::query_boundaries::common::application_info(db, ty).is_some() {
         return true;
     }
 
@@ -33,8 +33,8 @@ fn should_preserve_contextual_application_shape(
             .any(|member| should_preserve_contextual_application_shape(db, member));
     }
 
-    if let Some(inner) = tsz_solver::visitor::readonly_inner_type(db, ty)
-        .or_else(|| tsz_solver::visitor::no_infer_inner_type(db, ty))
+    if let Some(inner) = crate::query_boundaries::common::readonly_inner_type(db, ty)
+        .or_else(|| crate::query_boundaries::common::no_infer_inner_type(db, ty))
     {
         return should_preserve_contextual_application_shape(db, inner);
     }
@@ -515,7 +515,8 @@ impl<'a> CheckerState<'a> {
         // Fallback: if the constructor type is still Lazy after resolve_lazy_type,
         // try resolving by name from lib contexts. This handles lib interfaces like
         // ProxyConstructor whose DefId has no symbol mapping when first accessed.
-        if let Some(def_id) = tsz_solver::visitor::lazy_def_id(self.ctx.types, constructor_type)
+        if let Some(def_id) =
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types, constructor_type)
             && let Some(def_info) = self.ctx.definition_store.get(def_id)
         {
             let name = self.ctx.types.resolve_atom(def_info.name);
@@ -594,7 +595,7 @@ impl<'a> CheckerState<'a> {
             constructor_param_types = ?constructor_shape.as_ref().map(|s| s.params.iter().map(|p| (
                 self.format_type(p.type_id),
                 self.ctx.types.lookup(p.type_id),
-                tsz_solver::type_queries::get_application_info(self.ctx.types, p.type_id)
+                crate::query_boundaries::common::application_info(self.ctx.types, p.type_id)
                     .map(|(_, args)| args),
             )).collect::<Vec<_>>()),
             "New expression: two-pass inference check"
@@ -823,13 +824,18 @@ impl<'a> CheckerState<'a> {
                                     .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
                                     .map(|symbol| symbol.escaped_name.as_str())
                                     .or_else(|| {
-                                        tsz_solver::visitor::type_query_symbol(self.ctx.types, base)
-                                            .and_then(|sym_ref| {
+                                        crate::query_boundaries::common::type_query_symbol(
+                                            self.ctx.types,
+                                            base,
+                                        )
+                                        .and_then(
+                                            |sym_ref| {
                                                 self.ctx
                                                     .binder
                                                     .get_symbol(SymbolId(sym_ref.0))
                                                     .map(|symbol| symbol.escaped_name.as_str())
-                                            })
+                                            },
+                                        )
                                     })
                             };
                             let same_base = src_base == dst_base
@@ -905,11 +911,11 @@ impl<'a> CheckerState<'a> {
                                     && inner != TypeId::ANY
                                     && inner != TypeId::UNKNOWN
                                     && let Some(exec_shape) =
-                                        query::get_function_shape(self.ctx.types, param_type)
+                                        query::function_shape_for_type(self.ctx.types, param_type)
                                 {
                                     let mut exec_shape = (*exec_shape).clone();
                                     if let Some(first_param) = exec_shape.params.first_mut()
-                                        && let Some(resolve_shape) = query::get_function_shape(
+                                        && let Some(resolve_shape) = query::function_shape_for_type(
                                             self.ctx.types,
                                             first_param.type_id,
                                         )
@@ -947,7 +953,7 @@ impl<'a> CheckerState<'a> {
                                 && let Some(inner) =
                                     self.promise_like_return_type_argument(promise_member)
                             {
-                                for ty in tsz_solver::visitor::collect_all_types(
+                                for ty in crate::query_boundaries::common::collect_all_types(
                                     self.ctx.types,
                                     param_type,
                                 ) {

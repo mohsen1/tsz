@@ -12,17 +12,21 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     fn assignability_display_has_own_signature_type_params(&self, ty: TypeId) -> bool {
-        if let Some(fn_shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, ty) {
+        if let Some(fn_shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
+        {
             return !fn_shape.type_params.is_empty();
         }
 
-        tsz_solver::type_queries::get_callable_shape(self.ctx.types, ty).is_some_and(|shape| {
-            shape
-                .call_signatures
-                .iter()
-                .chain(shape.construct_signatures.iter())
-                .any(|sig| !sig.type_params.is_empty())
-        })
+        crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty).is_some_and(
+            |shape| {
+                shape
+                    .call_signatures
+                    .iter()
+                    .chain(shape.construct_signatures.iter())
+                    .any(|sig| !sig.type_params.is_empty())
+            },
+        )
     }
 
     pub(crate) fn normalize_template_placeholder_spacing_for_display(&self, text: &str) -> String {
@@ -119,7 +123,7 @@ impl<'a> CheckerState<'a> {
         // 1. Computed bodies (intersection reduction, conditional evaluation) → expand.
         // 2. Aliases wrapping a generic application (e.g. `type Foo = Id<{...}>`) →
         //    show the inner application.  Detected via display_alias on the evaluated result.
-        if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, ty)
+        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty)
             && let Some(def) = self.ctx.definition_store.get(def_id)
             && def.kind == tsz_solver::def::DefKind::TypeAlias
             && def.type_params.is_empty()
@@ -157,7 +161,7 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some(shape) =
-                tsz_solver::type_queries::get_object_shape(self.ctx.types, keyof_inner)
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, keyof_inner)
                 && let Some(sym_id) = shape.symbol
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             {
@@ -182,7 +186,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some((object_type, index_type)) =
-            tsz_solver::type_queries::get_index_access_types(self.ctx.types, ty)
+            crate::query_boundaries::common::index_access_types(self.ctx.types, ty)
             && let Some(extract_display) = self.format_extract_keyof_string_type(index_type)
         {
             let object_display = self.format_type_for_assignability_message(object_type);
@@ -225,9 +229,15 @@ impl<'a> CheckerState<'a> {
         // non-literal targets widen). This context is not available here.
         let is_anonymous_object_type =
             crate::query_boundaries::dispatch::is_object_like_type(self.ctx.types, display_ty)
-                && !tsz_solver::type_queries::is_intersection_type(self.ctx.types, display_ty)
-                && tsz_solver::type_queries::get_object_shape(self.ctx.types, display_ty)
-                    .is_some_and(|shape| shape.symbol.is_none());
+                && !crate::query_boundaries::common::is_intersection_type(
+                    self.ctx.types,
+                    display_ty,
+                )
+                && crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    display_ty,
+                )
+                .is_some_and(|shape| shape.symbol.is_none());
         let is_fresh_object_literal =
             self.ctx.types.get_display_properties(display_ty).is_some() && is_anonymous_object_type;
         let mut formatted = if is_fresh_object_literal {
@@ -241,7 +251,7 @@ impl<'a> CheckerState<'a> {
         // of guessing type args from properties.
         if !formatted.contains('<')
             && let Some(shape) =
-                tsz_solver::type_queries::get_object_shape(self.ctx.types, display_ty)
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, display_ty)
             && let Some(sym_id) = shape.symbol
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
         {
@@ -325,19 +335,23 @@ impl<'a> CheckerState<'a> {
                                         }
                                         return_type
                                     };
-                                if let Some(fn_shape) = tsz_solver::type_queries::get_function_shape(
-                                    self.ctx.types,
-                                    prop.type_id,
-                                ) {
+                                if let Some(fn_shape) =
+                                    crate::query_boundaries::common::function_shape_for_type(
+                                        self.ctx.types,
+                                        prop.type_id,
+                                    )
+                                {
                                     return extract_from_shape(
                                         &fn_shape.params,
                                         fn_shape.return_type,
                                     );
                                 }
-                                if let Some(callable) = tsz_solver::type_queries::get_callable_shape(
-                                    self.ctx.types,
-                                    prop.type_id,
-                                ) && callable.call_signatures.len() == 1
+                                if let Some(callable) =
+                                    crate::query_boundaries::common::callable_shape_for_type(
+                                        self.ctx.types,
+                                        prop.type_id,
+                                    )
+                                    && callable.call_signatures.len() == 1
                                 {
                                     let sig = &callable.call_signatures[0];
                                     return extract_from_shape(&sig.params, sig.return_type);
@@ -425,7 +439,7 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|shape| !shape.type_params.is_empty())
         };
         let direct_def_name = |state: &Self, candidate: TypeId| {
-            let def_id = tsz_solver::type_queries::get_lazy_def_id(
+            let def_id = crate::query_boundaries::common::lazy_def_id(
                 state.ctx.types.as_type_database(),
                 candidate,
             )
@@ -458,11 +472,14 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             let symbol_name =
-                tsz_solver::type_queries::get_object_shape(state.ctx.types, candidate)
+                crate::query_boundaries::common::object_shape_for_type(state.ctx.types, candidate)
                     .and_then(|shape| shape.symbol)
                     .or_else(|| {
-                        tsz_solver::type_queries::get_callable_shape(state.ctx.types, candidate)
-                            .and_then(|shape| shape.symbol)
+                        crate::query_boundaries::common::callable_shape_for_type(
+                            state.ctx.types,
+                            candidate,
+                        )
+                        .and_then(|shape| shape.symbol)
                     })
                     .and_then(|sym_id| state.ctx.binder.get_symbol(sym_id))
                     .map(|symbol| symbol.escaped_name.clone())?;
@@ -470,14 +487,14 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(members) =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, ty)
+            crate::query_boundaries::common::intersection_members(self.ctx.types, ty)
         {
             let mut named_members = Vec::new();
             let mut saw_namespace_member = false;
 
             for member in members {
                 if tsz_solver::is_module_namespace_type(self.ctx.types, member)
-                    || tsz_solver::type_queries::is_type_query_type(self.ctx.types, member)
+                    || crate::query_boundaries::common::is_type_query_type(self.ctx.types, member)
                     || self.ctx.namespace_module_names.contains_key(&member)
                 {
                     saw_namespace_member = true;
@@ -500,7 +517,8 @@ impl<'a> CheckerState<'a> {
 
         let export_equals_default_name = |state: &mut Self, candidate: TypeId| {
             let default_name = state.ctx.types.intern_string("default");
-            let shape = tsz_solver::type_queries::get_object_shape(state.ctx.types, candidate)?;
+            let shape =
+                crate::query_boundaries::common::object_shape_for_type(state.ctx.types, candidate)?;
             let default_prop = shape
                 .properties
                 .iter()
@@ -508,14 +526,16 @@ impl<'a> CheckerState<'a> {
             let default_ty = default_prop.type_id;
 
             let wrapper_method_mentions_default = shape.properties.iter().any(|prop| {
-                let Some(return_ty) =
-                    tsz_solver::type_queries::get_return_type(state.ctx.types, prop.type_id)
-                else {
+                let Some(return_ty) = crate::query_boundaries::common::return_type_for_type(
+                    state.ctx.types,
+                    prop.type_id,
+                ) else {
                     return false;
                 };
-                let Some(return_members) =
-                    tsz_solver::type_queries::get_intersection_members(state.ctx.types, return_ty)
-                else {
+                let Some(return_members) = crate::query_boundaries::common::intersection_members(
+                    state.ctx.types,
+                    return_ty,
+                ) else {
                     return false;
                 };
                 let has_default_member = return_members.iter().copied().any(|member| {
@@ -526,7 +546,10 @@ impl<'a> CheckerState<'a> {
                 });
                 let has_namespace_member = return_members.iter().copied().any(|member| {
                     tsz_solver::is_module_namespace_type(state.ctx.types, member)
-                        || tsz_solver::type_queries::is_type_query_type(state.ctx.types, member)
+                        || crate::query_boundaries::common::is_type_query_type(
+                            state.ctx.types,
+                            member,
+                        )
                         || state.ctx.namespace_module_names.contains_key(&member)
                 });
                 has_default_member && has_namespace_member
@@ -552,7 +575,7 @@ impl<'a> CheckerState<'a> {
             return Some(name);
         }
         let def_id =
-            tsz_solver::type_queries::get_lazy_def_id(self.ctx.types.as_type_database(), ty)
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types.as_type_database(), ty)
                 .or_else(|| self.ctx.definition_store.find_def_for_type(ty))
                 .or_else(|| self.ctx.definition_store.find_def_for_type(display_ty))
                 .or_else(|| {
@@ -629,22 +652,33 @@ impl<'a> CheckerState<'a> {
             .into_iter()
             .find_map(|candidate| {
                 let sym_id =
-                    tsz_solver::type_queries::get_type_shape_symbol(self.ctx.types, candidate)
+                    crate::query_boundaries::common::type_shape_symbol(self.ctx.types, candidate)
                         .or_else(|| {
-                            tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
-                                .and_then(|shape| shape.symbol)
+                            crate::query_boundaries::common::object_shape_for_type(
+                                self.ctx.types,
+                                candidate,
+                            )
+                            .and_then(|shape| shape.symbol)
                         })
                         .or_else(|| {
-                            tsz_solver::type_queries::get_callable_shape(self.ctx.types, candidate)
-                                .and_then(|shape| shape.symbol)
+                            crate::query_boundaries::common::callable_shape_for_type(
+                                self.ctx.types,
+                                candidate,
+                            )
+                            .and_then(|shape| shape.symbol)
                         })?;
                 let symbol = self.ctx.binder.get_symbol(sym_id)?;
                 let is_class_symbol = (symbol.flags & tsz_binder::symbol_flags::CLASS) != 0;
-                let is_value_type =
-                    tsz_solver::type_queries::get_function_shape(self.ctx.types, candidate)
-                        .is_some()
-                        || tsz_solver::type_queries::get_callable_shape(self.ctx.types, candidate)
-                            .is_some();
+                let is_value_type = crate::query_boundaries::common::function_shape_for_type(
+                    self.ctx.types,
+                    candidate,
+                )
+                .is_some()
+                    || crate::query_boundaries::common::callable_shape_for_type(
+                        self.ctx.types,
+                        candidate,
+                    )
+                    .is_some();
                 (is_class_symbol && is_value_type).then_some(sym_id)
             })
     }
@@ -752,7 +786,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn format_qualified_enum_name_for_message(&mut self, ty: TypeId) -> Option<String> {
-        let def_id = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, ty)?;
+        let def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, ty)?;
         let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) != 0 {
@@ -859,10 +893,10 @@ impl<'a> CheckerState<'a> {
     fn nominal_shape_symbol_for_display(&mut self, ty: TypeId) -> Option<tsz_binder::SymbolId> {
         let resolved = self.evaluate_type_for_assignability(ty);
         [ty, resolved].into_iter().find_map(|candidate| {
-            tsz_solver::type_queries::get_type_shape_symbol(self.ctx.types, candidate).or_else(
+            crate::query_boundaries::common::type_shape_symbol(self.ctx.types, candidate).or_else(
                 || {
                     let def_id =
-                        tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, candidate)?;
+                        crate::query_boundaries::common::lazy_def_id(self.ctx.types, candidate)?;
                     self.ctx.def_to_symbol_id_with_fallback(def_id)
                 },
             )
@@ -927,9 +961,13 @@ impl<'a> CheckerState<'a> {
         let resolved = self.resolve_type_for_property_access(ty);
         let evaluated = self.judge_evaluate(resolved);
         [ty, resolved, evaluated].into_iter().any(|candidate| {
-            tsz_solver::type_queries::get_function_shape(self.ctx.types, candidate).is_some()
-                || tsz_solver::type_queries::get_callable_shape(self.ctx.types, candidate)
-                    .is_some_and(|s| !s.call_signatures.is_empty())
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, candidate)
+                .is_some()
+                || crate::query_boundaries::common::callable_shape_for_type(
+                    self.ctx.types,
+                    candidate,
+                )
+                .is_some_and(|s| !s.call_signatures.is_empty())
                 || candidate == TypeId::FUNCTION
         })
     }
@@ -942,7 +980,6 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> Option<String> {
-        use tsz_solver::type_queries;
         // Source must be a string literal
         let source_str = match tsz_solver::literal_value(self.ctx.types, source) {
             Some(tsz_solver::LiteralValue::String(atom)) => self.ctx.types.resolve_atom(atom),
@@ -950,24 +987,25 @@ impl<'a> CheckerState<'a> {
         };
 
         // Collect target string literal members
-        let target_literals: Vec<String> =
-            if let Some(members) = type_queries::get_union_members(self.ctx.types, target) {
-                members
-                    .iter()
-                    .filter_map(|&m| match tsz_solver::literal_value(self.ctx.types, m) {
-                        Some(tsz_solver::LiteralValue::String(atom)) => {
-                            Some(self.ctx.types.resolve_atom(atom))
-                        }
-                        _ => None,
-                    })
-                    .collect()
-            } else if let Some(tsz_solver::LiteralValue::String(atom)) =
-                tsz_solver::literal_value(self.ctx.types, target)
-            {
-                vec![self.ctx.types.resolve_atom(atom)]
-            } else {
-                vec![]
-            };
+        let target_literals: Vec<String> = if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, target)
+        {
+            members
+                .iter()
+                .filter_map(|&m| match tsz_solver::literal_value(self.ctx.types, m) {
+                    Some(tsz_solver::LiteralValue::String(atom)) => {
+                        Some(self.ctx.types.resolve_atom(atom))
+                    }
+                    _ => None,
+                })
+                .collect()
+        } else if let Some(tsz_solver::LiteralValue::String(atom)) =
+            tsz_solver::literal_value(self.ctx.types, target)
+        {
+            vec![self.ctx.types.resolve_atom(atom)]
+        } else {
+            vec![]
+        };
 
         // Use tsc's getSpellingSuggestion algorithm with weighted Levenshtein.
         // tsc uses substitution cost 2.0 (0.1 for case-only diffs), which means
@@ -1012,7 +1050,7 @@ impl<'a> CheckerState<'a> {
 
         let mut symbol_candidates: Vec<tsz_binder::SymbolId> = Vec::new();
         if let Some(sym) = candidates.into_iter().find_map(|candidate| {
-            tsz_solver::type_queries::get_type_shape_symbol(self.ctx.types, candidate)
+            crate::query_boundaries::common::type_shape_symbol(self.ctx.types, candidate)
         }) {
             symbol_candidates.push(sym);
         }
@@ -1114,14 +1152,20 @@ impl<'a> CheckerState<'a> {
             } else {
                 source_candidates.iter().any(|candidate| {
                     if let Some(source_callable) =
-                        tsz_solver::type_queries::get_callable_shape(self.ctx.types, *candidate)
+                        crate::query_boundaries::common::callable_shape_for_type(
+                            self.ctx.types,
+                            *candidate,
+                        )
                     {
                         source_callable
                             .properties
                             .iter()
                             .any(|p| p.name == required_atom)
                     } else if let Some(source_shape) =
-                        tsz_solver::type_queries::get_object_shape(self.ctx.types, *candidate)
+                        crate::query_boundaries::common::object_shape_for_type(
+                            self.ctx.types,
+                            *candidate,
+                        )
                     {
                         source_shape
                             .properties
@@ -1140,7 +1184,10 @@ impl<'a> CheckerState<'a> {
         if !source_is_function_like {
             for target_candidate in target_candidates {
                 let Some(target_callable) =
-                    tsz_solver::type_queries::get_callable_shape(self.ctx.types, target_candidate)
+                    crate::query_boundaries::common::callable_shape_for_type(
+                        self.ctx.types,
+                        target_candidate,
+                    )
                 else {
                     continue;
                 };
@@ -1160,9 +1207,10 @@ impl<'a> CheckerState<'a> {
         }
 
         for target_candidate in target_candidates {
-            if let Some(target_callable) =
-                tsz_solver::type_queries::get_callable_shape(self.ctx.types, target_candidate)
-            {
+            if let Some(target_callable) = crate::query_boundaries::common::callable_shape_for_type(
+                self.ctx.types,
+                target_candidate,
+            ) {
                 let required_props: Vec<_> = target_callable
                     .properties
                     .iter()
@@ -1177,7 +1225,7 @@ impl<'a> CheckerState<'a> {
                         } else {
                             source_candidates.iter().any(|candidate| {
                                 if let Some(source_callable) =
-                                    tsz_solver::type_queries::get_callable_shape(
+                                    crate::query_boundaries::common::callable_shape_for_type(
                                         self.ctx.types,
                                         *candidate,
                                     )
@@ -1187,7 +1235,7 @@ impl<'a> CheckerState<'a> {
                                         .iter()
                                         .any(|p| p.name == prop.name)
                                 } else if let Some(source_shape) =
-                                    tsz_solver::type_queries::get_object_shape(
+                                    crate::query_boundaries::common::object_shape_for_type(
                                         self.ctx.types,
                                         *candidate,
                                     )
@@ -1213,7 +1261,11 @@ impl<'a> CheckerState<'a> {
             [direct, resolved, evaluated]
                 .into_iter()
                 .find(|candidate| {
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, *candidate).is_some()
+                    crate::query_boundaries::common::object_shape_for_type(
+                        self.ctx.types,
+                        *candidate,
+                    )
+                    .is_some()
                 })?
         };
         let target_with_shape = {
@@ -1223,14 +1275,22 @@ impl<'a> CheckerState<'a> {
             [direct, resolved, evaluated]
                 .into_iter()
                 .find(|candidate| {
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, *candidate).is_some()
+                    crate::query_boundaries::common::object_shape_for_type(
+                        self.ctx.types,
+                        *candidate,
+                    )
+                    .is_some()
                 })?
         };
 
-        let source_shape =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, source_with_shape)?;
-        let target_shape =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, target_with_shape)?;
+        let source_shape = crate::query_boundaries::common::object_shape_for_type(
+            self.ctx.types,
+            source_with_shape,
+        )?;
+        let target_shape = crate::query_boundaries::common::object_shape_for_type(
+            self.ctx.types,
+            target_with_shape,
+        )?;
 
         if target_shape.string_index.is_some() || target_shape.number_index.is_some() {
             return None;
@@ -1260,14 +1320,16 @@ impl<'a> CheckerState<'a> {
         // primitive types (number, string, etc.) or literal types.
         // Restricting to object/function/callable/union/intersection types avoids
         // regressions like `number` → `TypeOfInfinity`.
-        let is_object = tsz_solver::type_queries::get_object_shape(self.ctx.types, ty).is_some();
+        let is_object =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty).is_some();
         let is_union = if !is_object {
-            tsz_solver::type_queries::get_union_members(self.ctx.types, ty).is_some()
+            crate::query_boundaries::common::union_members(self.ctx.types, ty).is_some()
         } else {
             false
         };
         let is_function = if !is_object && !is_union {
-            if let Some(fn_shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, ty)
+            if let Some(fn_shape) =
+                crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
             {
                 // Skip function types that have their own type parameters — these
                 // are generic functions (including JSDoc @template callbacks) where
@@ -1278,7 +1340,8 @@ impl<'a> CheckerState<'a> {
                 }
                 true
             } else {
-                tsz_solver::type_queries::get_callable_shape(self.ctx.types, ty).is_some()
+                crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty)
+                    .is_some()
             }
         } else {
             false
@@ -1291,7 +1354,7 @@ impl<'a> CheckerState<'a> {
         // Application like B<string>), let the formatter handle it — using the
         // raw alias name would lose the type arguments.
         if self.ctx.types.get_display_alias(ty).is_some_and(|alias| {
-            tsz_solver::type_queries::get_type_application(self.ctx.types, alias).is_some()
+            crate::query_boundaries::common::type_application(self.ctx.types, alias).is_some()
         }) {
             return None;
         }
@@ -1303,7 +1366,7 @@ impl<'a> CheckerState<'a> {
         // For intersection types (e.g., typeof X & Function), expand to the full
         // type representation rather than using the alias name. This matches tsc's
         // behavior in assignability messages for complex intersection types.
-        if tsz_solver::type_queries::get_intersection_members(self.ctx.types, ty).is_some() {
+        if crate::query_boundaries::common::intersection_members(self.ctx.types, ty).is_some() {
             return None;
         }
 

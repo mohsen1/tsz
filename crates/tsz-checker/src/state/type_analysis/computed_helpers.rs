@@ -112,7 +112,7 @@ impl<'a> CheckerState<'a> {
         {
             let db = self.ctx.types.as_type_database();
             if tsz_solver::is_function_type(db, type_id)
-                || tsz_solver::visitor::callable_shape_id(db, type_id).is_some()
+                || crate::query_boundaries::common::callable_shape_id(db, type_id).is_some()
             {
                 return type_id;
             }

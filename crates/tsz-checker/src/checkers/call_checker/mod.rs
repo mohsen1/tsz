@@ -1161,7 +1161,7 @@ impl<'a> CheckerState<'a> {
             let unresolved_refresh_context = expected_type.is_some_and(|ty| {
                 ty == TypeId::UNKNOWN
                     || ty == TypeId::ERROR
-                    || tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, ty)
+                    || crate::query_boundaries::common::contains_infer_types(self.ctx.types, ty)
             });
             let expected_context_type = self.contextual_type_option_for_call_argument_at(
                 expected_type,

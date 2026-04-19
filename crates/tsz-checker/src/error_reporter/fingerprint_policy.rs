@@ -252,7 +252,10 @@ impl<'a> CheckerState<'a> {
                 if matches!(tgt_str.as_str(), "Boolean" | "Number" | "String" | "Object") {
                     return None;
                 }
-                if tsz_solver::type_queries::is_intersection_type(self.ctx.types, *target_type) {
+                if crate::query_boundaries::common::is_intersection_type(
+                    self.ctx.types,
+                    *target_type,
+                ) {
                     return None;
                 }
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
@@ -285,7 +288,10 @@ impl<'a> CheckerState<'a> {
                 if matches!(tgt_str.as_str(), "Boolean" | "Number" | "String" | "Object") {
                     return None;
                 }
-                if tsz_solver::type_queries::is_intersection_type(self.ctx.types, *target_type) {
+                if crate::query_boundaries::common::is_intersection_type(
+                    self.ctx.types,
+                    *target_type,
+                ) {
                     return None;
                 }
                 let src_str = self.format_type_diagnostic(*source_type);

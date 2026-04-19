@@ -14,12 +14,12 @@ use tsz_solver::{TupleElement, TypeId};
 
 impl<'a> CheckerState<'a> {
     fn promise_like_array_context_shape(&self, type_id: TypeId) -> Option<TypeId> {
-        match tsz_solver::type_queries::classify_promise_type(self.ctx.types, type_id) {
-            tsz_solver::type_queries::PromiseTypeKind::Application { args, .. }
+        match crate::query_boundaries::common::classify_promise_type(self.ctx.types, type_id) {
+            crate::query_boundaries::common::PromiseTypeKind::Application { args, .. }
                 if self.type_ref_is_promise_like(type_id) =>
             {
                 args.first().and_then(|&inner| {
-                    tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, inner)
+                    crate::query_boundaries::common::array_applicable_type(self.ctx.types, inner)
                 })
             }
             _ => None,
@@ -63,7 +63,7 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some(applicable) =
-                tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, member)
+                crate::query_boundaries::common::array_applicable_type(self.ctx.types, member)
             {
                 if !applicable_shapes.contains(&applicable) {
                     applicable_shapes.push(applicable);
@@ -113,7 +113,7 @@ impl<'a> CheckerState<'a> {
 
             // Non-array-applicable object-like types without index signatures can't
             // meaningfully contextually type array literals. Skip them.
-            if tsz_solver::type_queries::is_object_like_type(self.ctx.types, member) {
+            if crate::query_boundaries::dispatch::is_object_like_type(self.ctx.types, member) {
                 continue;
             }
         }
@@ -131,12 +131,12 @@ impl<'a> CheckerState<'a> {
         let mut saw_tuple = false;
         for member in members {
             let Some(applicable) =
-                tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, member)
+                crate::query_boundaries::common::array_applicable_type(self.ctx.types, member)
             else {
                 return false;
             };
 
-            if !tsz_solver::type_queries::is_tuple_type(self.ctx.types, applicable) {
+            if !crate::query_boundaries::common::is_tuple_type(self.ctx.types, applicable) {
                 return false;
             }
             saw_tuple = true;
@@ -155,7 +155,7 @@ impl<'a> CheckerState<'a> {
             }
 
             let candidate =
-                tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, member)
+                crate::query_boundaries::common::array_applicable_type(self.ctx.types, member)
                     .or_else(|| self.promise_like_array_context_shape(member));
 
             let Some(candidate) = candidate else {
@@ -170,7 +170,7 @@ impl<'a> CheckerState<'a> {
                     return None;
                 }
 
-                if tsz_solver::type_queries::is_object_like_type(self.ctx.types, member) {
+                if crate::query_boundaries::dispatch::is_object_like_type(self.ctx.types, member) {
                     continue;
                 }
 
@@ -236,7 +236,7 @@ impl<'a> CheckerState<'a> {
                 let resolved = self.resolve_type_for_property_access(contextual);
                 let resolved = self.resolve_lazy_type(resolved);
                 let resolved = tsz_solver::remove_nullish(self.ctx.types, resolved);
-                if tsz_solver::type_queries::is_tuple_type(self.ctx.types, resolved) {
+                if crate::query_boundaries::common::is_tuple_type(self.ctx.types, resolved) {
                     return factory.tuple(vec![]);
                 }
             }
@@ -287,7 +287,7 @@ impl<'a> CheckerState<'a> {
             let evaluated = self.evaluate_application_type(resolved);
             // Try the type directly first
             if let Some(applicable) =
-                tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, evaluated)
+                crate::query_boundaries::common::array_applicable_type(self.ctx.types, evaluated)
             {
                 // Mark constraint-derived when the resolved type was a type parameter
                 // (get_array_applicable_type handles TypeParameter internally).
@@ -330,9 +330,10 @@ impl<'a> CheckerState<'a> {
             ) {
                 let constraint = self.resolve_lazy_type(constraint);
                 let constraint = self.evaluate_application_type(constraint);
-                if let Some(applicable) =
-                    tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, constraint)
-                {
+                if let Some(applicable) = crate::query_boundaries::common::array_applicable_type(
+                    self.ctx.types,
+                    constraint,
+                ) {
                     tuple_context_from_constraint = true;
                     return Some(applicable);
                 }
@@ -341,7 +342,8 @@ impl<'a> CheckerState<'a> {
         });
 
         let tuple_context = applicable_contextual_type.and_then(|applicable| {
-            let elems = tsz_solver::type_queries::get_tuple_elements(self.ctx.types, applicable)?;
+            let elems =
+                crate::query_boundaries::common::tuple_elements(self.ctx.types, applicable)?;
             // When all tuple elements are rest (e.g., `[...any[]]` from a
             // destructuring pattern like `[...rest]`), the contextual type is
             // effectively an array, not a fixed-length tuple.  Don't force
@@ -353,7 +355,11 @@ impl<'a> CheckerState<'a> {
             // TypeScript to trigger tuple inference from array literal arguments.
             if elems.iter().all(|e| e.rest) {
                 let has_type_param_rest = elems.iter().any(|e| {
-                    e.rest && tsz_solver::type_queries::is_type_parameter(self.ctx.types, e.type_id)
+                    e.rest
+                        && crate::query_boundaries::common::is_type_parameter(
+                            self.ctx.types,
+                            e.type_id,
+                        )
                 });
                 if has_type_param_rest {
                     Some(elems)
@@ -372,7 +378,7 @@ impl<'a> CheckerState<'a> {
         // Without this, array literals become Array(union) which loses element-level detail.
         let force_tuple_for_mapped = tuple_context.is_none()
             && resolved_contextual_type.is_some_and(|resolved| {
-                tsz_solver::type_queries::is_homomorphic_mapped_type_context(
+                crate::query_boundaries::common::is_homomorphic_mapped_type_context(
                     self.ctx.types,
                     resolved,
                 )
@@ -394,7 +400,7 @@ impl<'a> CheckerState<'a> {
             && !force_tuple_for_mapped
             && tuple_context_from_constraint
             && applicable_contextual_type.is_some_and(|applicable| {
-                tsz_solver::type_queries::union_contains_tuple(self.ctx.types, applicable)
+                crate::query_boundaries::common::union_contains_tuple(self.ctx.types, applicable)
             });
 
         // When the contextual type is an object with numeric-string properties
@@ -408,9 +414,9 @@ impl<'a> CheckerState<'a> {
             && resolved_contextual_type.is_some_and(|resolved| {
                 // Only force tuple for object types that have a "0" property but
                 // aren't already handled by get_array_applicable_type.
-                tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, resolved)
+                crate::query_boundaries::common::array_applicable_type(self.ctx.types, resolved)
                     .is_none()
-                    && tsz_solver::type_queries::is_tuple_like_type(self.ctx.types, resolved)
+                    && crate::query_boundaries::common::is_tuple_like_type(self.ctx.types, resolved)
             });
 
         // Use the applicable (narrowed) type for contextual typing when available,
@@ -554,9 +560,10 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // If it's a tuple type, expand its elements
-                if let Some(elems) =
-                    tsz_solver::type_queries::get_tuple_elements(self.ctx.types, spread_expr_type)
-                {
+                if let Some(elems) = crate::query_boundaries::common::tuple_elements(
+                    self.ctx.types,
+                    spread_expr_type,
+                ) {
                     if let Some(ref _expected) = tuple_context {
                         // For tuple context, add each element with spread flag
                         for elem in &elems {
@@ -863,7 +870,7 @@ impl<'a> CheckerState<'a> {
 
             // Already a recognized array/tuple type?
             if let Some(elem) =
-                tsz_solver::type_queries::get_array_element_type(self.ctx.types, member)
+                crate::query_boundaries::common::array_element_type(self.ctx.types, member)
             {
                 element_types.push(elem);
                 continue;

@@ -1405,8 +1405,10 @@ impl<'a> CheckerState<'a> {
                     // Apply the same widening check as the full path
                     if flow_cached != cached && flow_cached != TypeId::ERROR {
                         let evaluated_cached = self.evaluate_type_for_assignability(cached);
-                        let widened_cached =
-                            tsz_solver::widening::widen_type(self.ctx.types, evaluated_cached);
+                        let widened_cached = crate::query_boundaries::common::widen_type(
+                            self.ctx.types,
+                            evaluated_cached,
+                        );
                         if widened_cached == flow_cached {
                             return cached;
                         }
@@ -1474,8 +1476,10 @@ impl<'a> CheckerState<'a> {
                 // and lazy references, so widen_type can see the actual union members.
                 if narrowed != cached && narrowed != TypeId::ERROR {
                     let evaluated_cached = self.evaluate_type_for_assignability(cached);
-                    let widened_cached =
-                        tsz_solver::widening::widen_type(self.ctx.types, evaluated_cached);
+                    let widened_cached = crate::query_boundaries::common::widen_type(
+                        self.ctx.types,
+                        evaluated_cached,
+                    );
                     if widened_cached == narrowed {
                         // Update stable flow cache: flow returned declared type
                         if should_narrow {
@@ -1667,7 +1671,7 @@ impl<'a> CheckerState<'a> {
             if narrowed != result && narrowed != TypeId::ERROR {
                 let evaluated_result = self.evaluate_type_for_assignability(result);
                 let widened_result =
-                    tsz_solver::widening::widen_type(self.ctx.types, evaluated_result);
+                    crate::query_boundaries::common::widen_type(self.ctx.types, evaluated_result);
                 if widened_result == narrowed {
                     // Flow just widened our literal type - use the original result
                     narrowed = result;

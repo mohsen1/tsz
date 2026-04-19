@@ -30,7 +30,7 @@ impl<'a> CheckerState<'a> {
         left_idx: NodeIndex,
         left_type: TypeId,
     ) -> TypeId {
-        let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
         if evaluator.is_valid_instanceof_left_operand(left_type) {
             return left_type;
         }
@@ -445,7 +445,7 @@ impl<'a> CheckerState<'a> {
         narrowed_type: TypeId,
     ) -> bool {
         // First check if the narrowed type is an empty object `{}`
-        if !tsz_solver::visitor::is_empty_object_type(self.ctx.types, narrowed_type) {
+        if !crate::query_boundaries::common::is_empty_object_type(self.ctx.types, narrowed_type) {
             return false;
         }
 
@@ -579,7 +579,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
         // PERF: Use SmallVec to avoid heap allocation for simple binary expressions.
         // Most binary ops (??. ||, &&, +=, etc.) have exactly 1 stack frame and 2 types.
         // Only deep + chains or nested binary expressions spill to heap.
@@ -1351,7 +1351,7 @@ impl<'a> CheckerState<'a> {
                         .literal_type_from_initializer(right_idx)
                         .unwrap_or(eval_right);
                     if matches!(op_str, "<<" | ">>" | ">>>")
-                        && let Some(n) = tsz_solver::type_queries::get_number_literal_value(
+                        && let Some(n) = crate::query_boundaries::common::number_literal_value(
                             self.ctx.types,
                             right_narrow,
                         )
@@ -1522,7 +1522,9 @@ impl<'a> CheckerState<'a> {
                         // tsc checks both operands independently — when one is boxed
                         // and the other is also invalid (e.g., boolean ** Number), both
                         // errors must be emitted.
-                        let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(
+                            self.ctx.types,
+                        );
                         if left_is_boxed && let Some(node) = self.ctx.arena.get(left_idx) {
                             let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                             self.ctx.error(
@@ -1973,11 +1975,11 @@ impl<'a> CheckerState<'a> {
     /// for TS2367 display purposes. When types are from different families, tsc widens literals
     /// to their base primitive types in error messages.
     fn get_primitive_family(&self, type_id: TypeId) -> TypeId {
+        use crate::query_boundaries::common::LiteralTypeKind;
         use crate::query_boundaries::common::{
             classify_literal_type, is_string_intrinsic_type, is_template_literal_type,
             is_unique_symbol_type,
         };
-        use tsz_solver::type_queries::LiteralTypeKind;
 
         // Check direct primitive type IDs
         if type_id == TypeId::STRING
@@ -2083,7 +2085,8 @@ impl<'a> CheckerState<'a> {
 
         // Validate left operand
         if left_type != TypeId::ERROR {
-            let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+            let evaluator =
+                crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
             let lhs_type = self.declared_instanceof_left_operand_type(left_idx, left_type);
             if !evaluator.is_valid_instanceof_left_operand(lhs_type) {
                 self.error_at_node_msg(
@@ -2107,7 +2110,8 @@ impl<'a> CheckerState<'a> {
                 .or_else(|| self.resolve_lib_type_by_name("Function"));
 
             if let Some(func_ty) = func_ty_opt {
-                let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+                let evaluator =
+                    crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                 is_valid_rhs = evaluator.is_valid_instanceof_right_operand(
                     eval_right,
                     func_ty,
