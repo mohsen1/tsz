@@ -1405,11 +1405,12 @@ fn test_contextual_instantiation_generic_function_to_callable_target() {
 /// Non-generic construct signature source is NOT assignable to a generic
 /// construct signature target. `new() => MyClass` is not <: `new<T>() => T`
 /// because T is universally quantified — the generic constructor returns *any*
-/// T satisfying its constraint, so the concrete `new() => MyClass` cannot
-/// satisfy "for all T". Kernel intentionally keeps T opaque (no erasure to
-/// constraints) to prevent spurious acceptance — see e7a5fce5e0.
+/// With erase_generics=true, target type params are erased to their constraints
+/// (tsc's getErasedSignature behavior), so `new() => MyClass` IS assignable to
+/// `new<T extends { value: number }>() => T` when MyClass matches the constraint.
+/// See 7131d1b165 which restored erase-to-constraints for erase_generics=true.
 #[test]
-fn test_nongeneric_construct_sig_not_assignable_to_generic_target() {
+fn test_nongeneric_construct_sig_assignable_to_generic_target() {
     let interner = TypeInterner::new();
 
     // Create a concrete return type to represent `MyClass` (implements MyInterface)
@@ -1465,13 +1466,12 @@ fn test_nongeneric_construct_sig_not_assignable_to_generic_target() {
         ..Default::default()
     });
 
-    // Non-generic source is NOT assignable to generic target:
-    // the target's T is kept as an opaque type parameter (not erased to its
-    // constraint) so concrete types cannot spuriously satisfy universal targets.
+    // With erase_generics=true, T is erased to { value: number }.
+    // source `new() => MyClass` is assignable to erased `new() => { value: number }`.
     let mut checker = SubtypeChecker::new(&interner);
     checker.strict_function_types = false;
     checker.erase_generics = true;
-    assert!(!checker.check_subtype(source, target).is_true());
+    assert!(checker.check_subtype(source, target).is_true());
 }
 
 /// Regression test for genericFunctionCallSignatureReturnTypeMismatch.ts (TS2322)

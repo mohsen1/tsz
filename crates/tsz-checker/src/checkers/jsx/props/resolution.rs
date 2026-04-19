@@ -737,9 +737,9 @@ impl<'a> CheckerState<'a> {
                         use crate::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
                         };
-                        let is_literal_target = matches!(
-                            self.ctx.types.lookup(expected_type),
-                            Some(tsz_solver::TypeData::Literal(_))
+                        let is_literal_target = crate::query_boundaries::common::is_literal_type(
+                            self.ctx.types,
+                            expected_type,
                         );
                         let source_str = if expected_type_is_boolean_literal || is_literal_target {
                             "true"
