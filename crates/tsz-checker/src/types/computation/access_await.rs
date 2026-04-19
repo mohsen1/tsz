@@ -4,6 +4,8 @@ use crate::context::TypingRequest;
 use crate::query_boundaries::common as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 const MAX_AWAIT_DEPTH: u32 = 10;
@@ -106,6 +108,19 @@ impl<'a> CheckerState<'a> {
             request.read().contextual_opt(None)
         };
 
+        // Ensure awaited dynamic imports report TS2712 even when call-expression
+        // checking paths skip nested async callback bodies.
+        if self.ctx.promise_constructor_diagnostics_required()
+            && let Some(import_call_idx) = self.await_operand_dynamic_import_call(unary.expression)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                import_call_idx,
+                diagnostic_messages::A_DYNAMIC_IMPORT_CALL_IN_ES5_REQUIRES_THE_PROMISE_CONSTRUCTOR_MAKE_SURE_YOU_HAVE,
+                diagnostic_codes::A_DYNAMIC_IMPORT_CALL_IN_ES5_REQUIRES_THE_PROMISE_CONSTRUCTOR_MAKE_SURE_YOU_HAVE,
+            );
+        }
+
         // Get the type of the await operand with transformed contextual type
         // Guard: if the operand is missing (e.g. `await;`), return ANY
         if unary.expression.is_none() {
@@ -132,6 +147,34 @@ impl<'a> CheckerState<'a> {
             }
         }
         current_type
+    }
+
+    fn await_operand_dynamic_import_call(&self, operand_idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(operand_idx)?;
+
+        if let Some(call) = self.ctx.arena.get_call_expr(node)
+            && self.is_dynamic_import(call)
+        {
+            return Some(operand_idx);
+        }
+
+        if node.kind != SyntaxKind::ImportKeyword as u16 {
+            return None;
+        }
+
+        let parent_idx = self.ctx.arena.get_extended(operand_idx)?.parent;
+        if parent_idx.is_none() {
+            return None;
+        }
+        let parent_node = self.ctx.arena.get(parent_idx)?;
+        if parent_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.ctx.arena.get_call_expr(parent_node)?;
+        if call.expression != operand_idx || !self.is_dynamic_import(call) {
+            return None;
+        }
+        Some(parent_idx)
     }
 
     fn await_expression_uses_call_like_syntax(&self, idx: NodeIndex) -> bool {
