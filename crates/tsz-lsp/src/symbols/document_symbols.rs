@@ -55,6 +55,12 @@ pub enum SymbolKind {
     Alias = 27,
     Getter = 28,
     Setter = 29,
+    // Interface/object-type signatures — nameless declarations that tsc
+    // represents with synthetic text (`()`, `new()`, `[]`) and dedicated
+    // ScriptElementKind strings. Non-LSP; treat as Property downstream.
+    CallSignature = 30,
+    ConstructSignature = 31,
+    IndexSignature = 32,
 }
 
 impl SymbolKind {
@@ -78,6 +84,9 @@ impl SymbolKind {
             Self::Alias => "alias",
             Self::Getter => "getter",
             Self::Setter => "setter",
+            Self::CallSignature => "call",
+            Self::ConstructSignature => "construct",
+            Self::IndexSignature => "index",
         }
     }
 }
@@ -575,6 +584,53 @@ impl<'a> DocumentSymbolProvider<'a> {
                 }
             }
 
+            // Call signature on an interface/object type: `(): any`.
+            // tsc surfaces these as nameless entries with text `()` and
+            // ScriptElementKind "call".
+            k if k == syntax_kind_ext::CALL_SIGNATURE => {
+                let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
+                vec![DocumentSymbol {
+                    name: "()".to_string(),
+                    detail: None,
+                    kind: SymbolKind::CallSignature,
+                    kind_modifiers: String::new(),
+                    range,
+                    selection_range: range,
+                    container_name: container_name.map(std::string::ToString::to_string),
+                    children: vec![],
+                }]
+            }
+
+            // Construct signature: `new(): IPoint` — text `new()`.
+            k if k == syntax_kind_ext::CONSTRUCT_SIGNATURE => {
+                let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
+                vec![DocumentSymbol {
+                    name: "new()".to_string(),
+                    detail: None,
+                    kind: SymbolKind::ConstructSignature,
+                    kind_modifiers: String::new(),
+                    range,
+                    selection_range: range,
+                    container_name: container_name.map(std::string::ToString::to_string),
+                    children: vec![],
+                }]
+            }
+
+            // Index signature: `[key: string]: number` — text `[]`.
+            k if k == syntax_kind_ext::INDEX_SIGNATURE => {
+                let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
+                vec![DocumentSymbol {
+                    name: "[]".to_string(),
+                    detail: None,
+                    kind: SymbolKind::IndexSignature,
+                    kind_modifiers: String::new(),
+                    range,
+                    selection_range: range,
+                    container_name: container_name.map(std::string::ToString::to_string),
+                    children: vec![],
+                }]
+            }
+
             // Method Signature (Interface Member)
             k if k == syntax_kind_ext::METHOD_SIGNATURE => {
                 if let Some(sig) = self.arena.get_signature(node) {
@@ -601,26 +657,88 @@ impl<'a> DocumentSymbolProvider<'a> {
                 }
             }
 
-            // Constructor (Class Member)
+            // Constructor (Class Member). Parameter properties
+            // (`constructor(public x: number)`) are hoisted into the
+            // enclosing class as siblings of the constructor — tsc treats
+            // them as class members, not as children of the constructor.
             k if k == syntax_kind_ext::CONSTRUCTOR => {
-                let (children, modifiers) = if let Some(ctor) = self.arena.get_constructor(node) {
-                    let c = self.collect_children_from_block(ctor.body, container_name);
-                    let m = self.get_kind_modifiers_from_list(&ctor.modifiers);
-                    (c, m)
-                } else {
-                    (vec![], String::new())
-                };
+                let mut out = Vec::new();
+                if let Some(ctor) = self.arena.get_constructor(node) {
+                    let children = self.collect_children_from_block(ctor.body, container_name);
+                    let modifiers = self.get_kind_modifiers_from_list(&ctor.modifiers);
+                    out.push(DocumentSymbol {
+                        name: "constructor".to_string(),
+                        detail: None,
+                        kind: SymbolKind::Constructor,
+                        kind_modifiers: modifiers,
+                        range: node_range(self.arena, self.line_map, self.source_text, node_idx),
+                        selection_range: self.get_range_keyword(node_idx, 11), // "constructor".len()
+                        container_name: container_name.map(std::string::ToString::to_string),
+                        children,
+                    });
 
-                vec![DocumentSymbol {
-                    name: "constructor".to_string(),
-                    detail: None,
-                    kind: SymbolKind::Constructor,
-                    kind_modifiers: modifiers,
-                    range: node_range(self.arena, self.line_map, self.source_text, node_idx),
-                    selection_range: self.get_range_keyword(node_idx, 11), // "constructor".len()
-                    container_name: container_name.map(std::string::ToString::to_string),
-                    children,
-                }]
+                    for &param_idx in &ctor.parameters.nodes {
+                        let Some(param_node) = self.arena.get(param_idx) else {
+                            continue;
+                        };
+                        let Some(param) = self.arena.get_parameter(param_node) else {
+                            continue;
+                        };
+                        let param_mods = self.get_kind_modifiers_from_list(&param.modifiers);
+                        // A parameter becomes a class property only when
+                        // it carries an access modifier or `readonly`.
+                        // Readonly isn't surfaced in `kindModifiers` (per
+                        // tsc) but does upgrade the parameter to a
+                        // property. Check both the emitted string and
+                        // the raw modifier nodes for readonly.
+                        let has_access = param_mods.contains("public")
+                            || param_mods.contains("private")
+                            || param_mods.contains("protected");
+                        let has_readonly = param.modifiers.as_ref().is_some_and(|ml| {
+                            ml.nodes.iter().any(|&m| {
+                                self.arena
+                                    .get(m)
+                                    .is_some_and(|n| n.kind == SyntaxKind::ReadonlyKeyword as u16)
+                            })
+                        });
+                        if !has_access && !has_readonly {
+                            continue;
+                        }
+                        let Some(name) = self.get_name(param.name) else {
+                            continue;
+                        };
+                        let range =
+                            node_range(self.arena, self.line_map, self.source_text, param_idx);
+                        let selection_range =
+                            node_range(self.arena, self.line_map, self.source_text, param.name);
+                        out.push(DocumentSymbol {
+                            name,
+                            detail: None,
+                            kind: SymbolKind::Property,
+                            kind_modifiers: param_mods,
+                            range,
+                            selection_range,
+                            container_name: container_name.map(std::string::ToString::to_string),
+                            children: vec![],
+                        });
+                    }
+                }
+                out
+            }
+
+            // Class Static Block (`static { ... }`). tsc doesn't emit an
+            // entry for the block itself; instead the block's top-level
+            // variable declarations (and nested function/class/etc. forms
+            // that `collect_symbols` already recognizes) bubble up as
+            // siblings of the class's members.
+            k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
+                let mut symbols = Vec::new();
+                if let Some(block) = self.arena.get_block(node) {
+                    for &stmt in &block.statements.nodes {
+                        symbols.extend(self.collect_symbols(stmt, container_name));
+                    }
+                }
+                symbols
             }
 
             // Get Accessor (Class Member)

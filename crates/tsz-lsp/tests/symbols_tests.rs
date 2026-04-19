@@ -869,13 +869,17 @@ class Router {
 
     assert_eq!(tree.len(), 1);
     assert_eq!(tree[0].name, "Router");
-    assert_eq!(tree[0].children.len(), 4);
+    // `private routes` is a TypeScript parameter property — tsc
+    // surfaces it as a class member sibling of the constructor (in
+    // addition to `add`, `remove`, `get`).
+    assert_eq!(tree[0].children.len(), 5);
 
     let names: Vec<&str> = tree[0].children.iter().map(|c| c.name.as_str()).collect();
     assert!(names.contains(&"constructor"));
     assert!(names.contains(&"add"));
     assert!(names.contains(&"remove"));
     assert!(names.contains(&"get"));
+    assert!(names.contains(&"routes"));
 }
 
 #[test]
