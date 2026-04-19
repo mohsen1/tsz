@@ -1032,11 +1032,10 @@ jobs:
         id: shard-results
         run: |
           set -euo pipefail
-          # Keep shards small enough that the heaviest language-service ranges do not
-          # exhaust the runner before results are uploaded.
-          # 10 shards × 700 = 7000, covering all 6562 fourslash tests with headroom.
-          CHUNK=700
-          OFFSET=$(( ${{ matrix.shard }} * CHUNK ))
+          # --shard=I/N interleaves tests by index (idx % N == I) so heavy
+          # language-service clusters spread evenly across shards instead of
+          # concentrating alphabetically (prior --offset/--max behaviour left
+          # shard 7 ~3.2× heavier than shard 9).
 
           TMPOUT=$(mktemp)
           CLEANOUT=$(mktemp)
@@ -1044,7 +1043,7 @@ jobs:
 
           # 2 workers keeps peak memory within the 7GB CI runner limit.
           # 512MB per-worker memory limit catches runaway tests.
-          ./scripts/fourslash/run-fourslash.sh --skip-cargo-build --offset=$OFFSET --max=$CHUNK --workers=2 --memory-limit=512 2>&1 | tee "$TMPOUT" || true
+          ./scripts/fourslash/run-fourslash.sh --skip-cargo-build --shard=${{ matrix.shard }}/10 --workers=2 --memory-limit=512 2>&1 | tee "$TMPOUT" || true
           sed -E 's/\x1b\[[0-9;]*m//g' "$TMPOUT" > "$CLEANOUT"
 
           RESULTS_LINE=$(grep "^Results:" "$CLEANOUT" | tail -1 || true)
