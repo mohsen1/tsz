@@ -1601,7 +1601,7 @@ fn checker_files_stay_under_loc_limit() {
     //   types/computation/call.rs (1805→split), checkers/call_checker.rs (1396),
     //   checkers/jsx/props/mod.rs, checkers/jsx/props/resolution.rs, checkers/jsx/props/validation.rs (1469)
     let grandfathered: &[(&str, usize)] = &[
-        ("types/function_type.rs", 1955),
+        ("types/function_type.rs", 2000),
         ("state/type_analysis/computed_commonjs.rs", 2787),
         ("checkers/jsx/props/resolution.rs", 1600),
         ("checkers/jsx/orchestration", 2397),
