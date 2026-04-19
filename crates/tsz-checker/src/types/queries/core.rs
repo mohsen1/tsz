@@ -369,7 +369,11 @@ impl<'a> CheckerState<'a> {
                         .map(|ident| ident.escaped_text.clone())
                         .unwrap_or_default()
                 } else {
-                    String::new()
+                    // Anonymous class expression — infer the name from an
+                    // enclosing variable binding (e.g. `let Foo = class { … }`)
+                    // so TS2715 reports `Foo` rather than ''.
+                    self.infer_anonymous_class_expression_name(current)
+                        .unwrap_or_default()
                 };
 
                 return Some(class_name);
@@ -382,6 +386,32 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    /// For an anonymous class expression, walk up to an enclosing variable
+    /// declaration whose initializer is this class and return the variable
+    /// name. Matches tsc's behavior of inferring a contextual name for
+    /// `let X = class { … }` diagnostics.
+    pub(crate) fn infer_anonymous_class_expression_name(
+        &self,
+        class_idx: NodeIndex,
+    ) -> Option<String> {
+        let ext = self.ctx.arena.get_extended(class_idx)?;
+        let parent_idx = ext.parent;
+        if parent_idx.is_none() {
+            return None;
+        }
+        let parent_node = self.ctx.arena.get(parent_idx)?;
+        if parent_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let var_decl = self.ctx.arena.get_variable_declaration(parent_node)?;
+        if var_decl.initializer != class_idx {
+            return None;
+        }
+        let name_node = self.ctx.arena.get(var_decl.name)?;
+        let ident = self.ctx.arena.get_identifier(name_node)?;
+        Some(ident.escaped_text.clone())
     }
 
     /// Returns true when `idx` is inside an instance property initializer of the
