@@ -402,7 +402,10 @@ impl<'a> CheckerState<'a> {
         }
 
         // Only try to evaluate if the rest param type is an Application
-        if !tsz_solver::is_generic_application(self.ctx.types, last_param.type_id) {
+        if !crate::query_boundaries::common::is_generic_application(
+            self.ctx.types,
+            last_param.type_id,
+        ) {
             return type_id;
         }
 
@@ -887,7 +890,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // General check: does the return context reference any const type parameter?
-        let referenced = tsz_solver::collect_referenced_types(self.ctx.types, ret_ctx);
+        let referenced =
+            crate::query_boundaries::common::collect_referenced_types(self.ctx.types, ret_ctx);
         referenced.into_iter().any(|ty| {
             crate::query_boundaries::common::type_param_info(self.ctx.types, ty)
                 .is_some_and(|info| info.is_const)

@@ -128,7 +128,7 @@ impl<'a> CheckerState<'a> {
             // ImportCallOptions is a weak type (all optional properties).
             // When the source is a primitive/literal, emit TS2559 directly with
             // the correct type names matching tsc's format.
-            if tsz_solver::is_primitive_type(self.ctx.types, options_type) {
+            if crate::query_boundaries::common::is_primitive_type(self.ctx.types, options_type) {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 // Use the literal text from the AST for string/numeric literals;
                 // for other primitives, fall back to the type formatter.

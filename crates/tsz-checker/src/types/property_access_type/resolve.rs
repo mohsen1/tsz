@@ -584,7 +584,10 @@ impl<'a> CheckerState<'a> {
                         type_id,
                     );
                     if base_nullish.is_some()
-                        && !tsz_solver::type_contains_undefined(self.ctx.types, result_type)
+                        && !crate::query_boundaries::common::type_contains_undefined(
+                            self.ctx.types,
+                            result_type,
+                        )
                     {
                         result_type = factory.union2(result_type, TypeId::UNDEFINED);
                     }
@@ -657,7 +660,10 @@ impl<'a> CheckerState<'a> {
                             let mut result_type =
                                 effective_write_result(refined_type_id, write_type);
                             if base_nullish.is_some()
-                                && !tsz_solver::type_contains_undefined(self.ctx.types, result_type)
+                                && !crate::query_boundaries::common::type_contains_undefined(
+                                    self.ctx.types,
+                                    result_type,
+                                )
                             {
                                 result_type = factory.union2(result_type, TypeId::UNDEFINED);
                             }
@@ -677,7 +683,10 @@ impl<'a> CheckerState<'a> {
                             .insert((resolved_base, prop_atom), property_type);
                         let mut result_type = property_type.unwrap_or(TypeId::ERROR);
                         if base_nullish.is_some()
-                            && !tsz_solver::type_contains_undefined(self.ctx.types, result_type)
+                            && !crate::query_boundaries::common::type_contains_undefined(
+                                self.ctx.types,
+                                result_type,
+                            )
                         {
                             result_type = factory.union2(result_type, TypeId::UNDEFINED);
                         }
@@ -759,7 +768,10 @@ impl<'a> CheckerState<'a> {
         // constraint for display purposes. tsc shows the apparent type in error
         // messages (e.g., 'NumClass<number> | StrClass<string>'), not the raw
         // indexed access type (e.g., 'Entries[EntryId]').
-        if tsz_solver::is_index_access_type(self.ctx.types, display_object_type) {
+        if crate::query_boundaries::common::is_index_access_type(
+            self.ctx.types,
+            display_object_type,
+        ) {
             let resolved = self.resolve_index_access_base_constraint(display_object_type);
             if resolved != display_object_type {
                 display_object_type = resolved;
@@ -1652,8 +1664,10 @@ impl<'a> CheckerState<'a> {
                         // Suppress TS2339 for index access types on type parameters.
                         // When accessing properties on types like T[keyof T], we cannot
                         // determine what properties exist until T is instantiated.
-                        if !tsz_solver::is_index_access_type(self.ctx.types, object_type_for_access)
-                        {
+                        if !crate::query_boundaries::common::is_index_access_type(
+                            self.ctx.types,
+                            object_type_for_access,
+                        ) {
                             self.error_property_not_exist_at(
                                 property_name,
                                 object_type_for_access,
@@ -1674,10 +1688,12 @@ impl<'a> CheckerState<'a> {
                     // instead of D, causing assignment mismatches in polymorphic
                     // `this` checks (e.g., `this.self = this.self2` would fail
                     // because D_subst != D even though they're semantically equal).
-                    if tsz_solver::contains_this_type(self.ctx.types, prop_type)
-                        && prop_type != original_object_type
+                    if crate::query_boundaries::common::contains_this_type(
+                        self.ctx.types,
+                        prop_type,
+                    ) && prop_type != original_object_type
                     {
-                        prop_type = tsz_solver::substitute_this_type(
+                        prop_type = crate::query_boundaries::common::substitute_this_type(
                             self.ctx.types,
                             prop_type,
                             original_object_type,
@@ -1697,9 +1713,12 @@ impl<'a> CheckerState<'a> {
                         if let PropertyAccessResult::Success {
                             type_id: raw_type, ..
                         } = raw
-                            && tsz_solver::contains_this_type(self.ctx.types, raw_type)
+                            && crate::query_boundaries::common::contains_this_type(
+                                self.ctx.types,
+                                raw_type,
+                            )
                         {
-                            prop_type = tsz_solver::substitute_this_type(
+                            prop_type = crate::query_boundaries::common::substitute_this_type(
                                 self.ctx.types,
                                 raw_type,
                                 original_object_type,
@@ -2377,7 +2396,7 @@ impl<'a> CheckerState<'a> {
                                     crate::query_boundaries::common::is_type_parameter_like(
                                         self.ctx.types,
                                         display_object_type,
-                                    ) || tsz_solver::is_index_access_type(
+                                    ) || crate::query_boundaries::common::is_index_access_type(
                                         self.ctx.types,
                                         display_object_type,
                                     ) || display_object_type == TypeId::UNKNOWN
@@ -2400,7 +2419,7 @@ impl<'a> CheckerState<'a> {
                                 crate::query_boundaries::common::is_type_parameter_like(
                                     self.ctx.types,
                                     display_object_type,
-                                ) || tsz_solver::is_index_access_type(
+                                ) || crate::query_boundaries::common::is_index_access_type(
                                     self.ctx.types,
                                     display_object_type,
                                 ) || display_object_type == TypeId::UNKNOWN

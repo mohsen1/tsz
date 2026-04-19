@@ -106,7 +106,10 @@ impl<'a> CheckerState<'a> {
                 let use_async_promise_union_context = self.ctx.in_async_context()
                     && contextual_expected_type != TypeId::UNKNOWN
                     && contextual_expected_type != TypeId::NEVER
-                    && !tsz_solver::is_union_type(self.ctx.types, contextual_expected_type)
+                    && !crate::query_boundaries::common::is_union_type(
+                        self.ctx.types,
+                        contextual_expected_type,
+                    )
                     && !self.is_promise_type(contextual_expected_type)
                     && self
                         .ctx
@@ -666,7 +669,9 @@ impl<'a> CheckerState<'a> {
         // the resolution pass, so we check it instead of the resolution stack.
         let constraint_refs_circular_alias = {
             let mut refs_to_check = vec![constraint_type];
-            if let Some(inner) = tsz_solver::keyof_inner_type(self.ctx.types, constraint_type) {
+            if let Some(inner) =
+                crate::query_boundaries::common::keyof_inner_type(self.ctx.types, constraint_type)
+            {
                 refs_to_check.push(inner);
             }
             refs_to_check.iter().any(|&ref_type| {
@@ -679,10 +684,11 @@ impl<'a> CheckerState<'a> {
         // Skip TS2313 for valid mapped type key patterns like `keyof T` where T
         // is the type parameter being constrained.
         let is_keyof_parent_type_param =
-            tsz_solver::keyof_inner_type(self.ctx.types, constraint_type).is_some_and(|inner| {
-                crate::query_boundaries::common::type_param_info(self.ctx.types, inner)
-                    .is_some_and(|info| info.name == atom)
-            });
+            crate::query_boundaries::common::keyof_inner_type(self.ctx.types, constraint_type)
+                .is_some_and(|inner| {
+                    crate::query_boundaries::common::type_param_info(self.ctx.types, inner)
+                        .is_some_and(|info| info.name == atom)
+                });
         if constraint_refs_circular_alias && !is_keyof_parent_type_param {
             let message = format!("Type parameter '{name}' has a circular constraint.");
             self.ctx.error(
@@ -751,10 +757,11 @@ impl<'a> CheckerState<'a> {
         // In tsc, a mapped type constraint that references T via keyof T (or in property types)
         // is NOT circular — it means "T must conform to this mapped shape". This is a common
         // and valid TypeScript pattern.
-        let constraint_is_mapped = tsz_solver::is_mapped_type(self.ctx.types, constraint_type)
-            || tsz_solver::is_mapped_type(self.ctx.types, evaluated);
+        let constraint_is_mapped =
+            crate::query_boundaries::common::is_mapped_type(self.ctx.types, constraint_type)
+                || crate::query_boundaries::common::is_mapped_type(self.ctx.types, evaluated);
         if !constraint_is_mapped
-            && tsz_solver::contains_type_parameter_named_shallow(
+            && crate::query_boundaries::common::contains_type_parameter_named_shallow(
                 self.ctx.types,
                 constraint_type,
                 atom,

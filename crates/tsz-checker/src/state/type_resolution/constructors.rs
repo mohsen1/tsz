@@ -164,11 +164,13 @@ impl<'a> CheckerState<'a> {
                             &sig.type_params[..param_index],
                             &args,
                         );
-                        args.push(tsz_solver::instantiate_type_preserving_meta(
-                            self.ctx.types,
-                            fallback,
-                            &substitution,
-                        ));
+                        args.push(
+                            crate::query_boundaries::common::instantiate_type_preserving_meta(
+                                self.ctx.types,
+                                fallback,
+                                &substitution,
+                            ),
+                        );
                     }
                 }
                 if args.len() > sig.type_params.len() {
@@ -295,7 +297,7 @@ impl<'a> CheckerState<'a> {
                                         &sig.type_params[..param_index],
                                         &args,
                                     );
-                                    args.push(tsz_solver::instantiate_type_preserving_meta(
+                                    args.push(crate::query_boundaries::common::instantiate_type_preserving_meta(
                                         self.ctx.types,
                                         fallback,
                                         &substitution,
@@ -354,11 +356,13 @@ impl<'a> CheckerState<'a> {
                                 &sig.type_params[..param_index],
                                 &args,
                             );
-                            args.push(tsz_solver::instantiate_type_preserving_meta(
-                                self.ctx.types,
-                                fallback,
-                                &substitution,
-                            ));
+                            args.push(
+                                crate::query_boundaries::common::instantiate_type_preserving_meta(
+                                    self.ctx.types,
+                                    fallback,
+                                    &substitution,
+                                ),
+                            );
                         }
                         self.instantiate_signature(&sig, &args)
                     } else {
@@ -410,7 +414,7 @@ impl<'a> CheckerState<'a> {
                 &sig.type_params[..param_index],
                 supplied_args,
             );
-            let resolved = tsz_solver::instantiate_type_preserving_meta(
+            let resolved = crate::query_boundaries::common::instantiate_type_preserving_meta(
                 self.ctx.types,
                 fallback,
                 &substitution,
@@ -770,11 +774,13 @@ impl<'a> CheckerState<'a> {
                     &base_type_params[..param_index],
                     &type_args,
                 );
-                type_args.push(tsz_solver::instantiate_type_preserving_meta(
-                    self.ctx.types,
-                    fallback,
-                    &substitution,
-                ));
+                type_args.push(
+                    crate::query_boundaries::common::instantiate_type_preserving_meta(
+                        self.ctx.types,
+                        fallback,
+                        &substitution,
+                    ),
+                );
             }
         }
         if type_args.len() > base_type_params.len() {
@@ -783,7 +789,11 @@ impl<'a> CheckerState<'a> {
 
         let substitution =
             tsz_solver::TypeSubstitution::from_args(self.ctx.types, base_type_params, &type_args);
-        tsz_solver::instantiate_type(self.ctx.types, base_instance_type, &substitution)
+        crate::query_boundaries::common::instantiate_type(
+            self.ctx.types,
+            base_instance_type,
+            &substitution,
+        )
     }
 
     pub(crate) fn base_instance_type_from_expression(

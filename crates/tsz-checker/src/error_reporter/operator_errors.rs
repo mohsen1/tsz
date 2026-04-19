@@ -645,6 +645,6 @@ impl<'a> CheckerState<'a> {
         }
 
         // 3. Fall back to standard literal-to-base-type widening
-        tsz_solver::get_base_type_for_comparison(self.ctx.types, type_id)
+        crate::query_boundaries::common::get_base_type_for_comparison(self.ctx.types, type_id)
     }
 }

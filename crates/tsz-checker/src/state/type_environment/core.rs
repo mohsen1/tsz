@@ -320,9 +320,14 @@ impl<'a> CheckerState<'a> {
             } else {
                 false
             };
-            let is_safe_for_generic_alias =
-                tsz_solver::is_conditional_type(self.ctx.types.as_type_database(), result)
-                    || tsz_solver::is_index_access_type(self.ctx.types.as_type_database(), result);
+            let is_safe_for_generic_alias = crate::query_boundaries::common::is_conditional_type(
+                self.ctx.types.as_type_database(),
+                result,
+            )
+                || crate::query_boundaries::common::is_index_access_type(
+                    self.ctx.types.as_type_database(),
+                    result,
+                );
             if !has_param_args || is_safe_for_generic_alias {
                 self.ctx.types.store_display_alias(result, type_id);
             }

@@ -110,7 +110,9 @@ impl<'a> CheckerState<'a> {
         // its name.  This must happen before any evaluation/resolution that
         // could replace the type parameter with its constraint type.
         // tsc always displays type parameters by name in assignability messages.
-        if let Some(info) = tsz_solver::type_param_info(self.ctx.types.as_type_database(), ty) {
+        if let Some(info) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types.as_type_database(), ty)
+        {
             return self.ctx.types.resolve_atom_ref(info.name).to_string();
         }
 
@@ -155,7 +157,9 @@ impl<'a> CheckerState<'a> {
             return collapsed;
         }
 
-        if let Some(keyof_inner) = tsz_solver::keyof_inner_type(self.ctx.types, ty) {
+        if let Some(keyof_inner) =
+            crate::query_boundaries::common::keyof_inner_type(self.ctx.types, ty)
+        {
             if let Some(alias_name) = self.lookup_type_alias_name_for_display(keyof_inner) {
                 return format!("keyof {alias_name}");
             }
@@ -493,7 +497,7 @@ impl<'a> CheckerState<'a> {
             let mut saw_namespace_member = false;
 
             for member in members {
-                if tsz_solver::is_module_namespace_type(self.ctx.types, member)
+                if crate::query_boundaries::common::is_module_namespace_type(self.ctx.types, member)
                     || crate::query_boundaries::common::is_type_query_type(self.ctx.types, member)
                     || self.ctx.namespace_module_names.contains_key(&member)
                 {
@@ -545,12 +549,13 @@ impl<'a> CheckerState<'a> {
                             == symbol_backed_name(state, default_ty)
                 });
                 let has_namespace_member = return_members.iter().copied().any(|member| {
-                    tsz_solver::is_module_namespace_type(state.ctx.types, member)
-                        || crate::query_boundaries::common::is_type_query_type(
-                            state.ctx.types,
-                            member,
-                        )
-                        || state.ctx.namespace_module_names.contains_key(&member)
+                    crate::query_boundaries::common::is_module_namespace_type(
+                        state.ctx.types,
+                        member,
+                    ) || crate::query_boundaries::common::is_type_query_type(
+                        state.ctx.types,
+                        member,
+                    ) || state.ctx.namespace_module_names.contains_key(&member)
                 });
                 has_default_member && has_namespace_member
             });
@@ -613,8 +618,8 @@ impl<'a> CheckerState<'a> {
         if self.target_preserves_literal_surface(other) {
             return self.format_type_diagnostic(ty);
         }
-        if tsz_solver::literal_value(self.ctx.types, ty).is_some()
-            && tsz_solver::string_intrinsic_components(self.ctx.types, other)
+        if crate::query_boundaries::common::literal_value(self.ctx.types, ty).is_some()
+            && crate::query_boundaries::common::string_intrinsic_components(self.ctx.types, other)
                 .is_some_and(|(_, type_arg)| type_arg == TypeId::STRING)
         {
             let widened = self.widen_type_for_display(ty);
@@ -981,10 +986,11 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> Option<String> {
         // Source must be a string literal
-        let source_str = match tsz_solver::literal_value(self.ctx.types, source) {
-            Some(tsz_solver::LiteralValue::String(atom)) => self.ctx.types.resolve_atom(atom),
-            _ => return None,
-        };
+        let source_str =
+            match crate::query_boundaries::common::literal_value(self.ctx.types, source) {
+                Some(tsz_solver::LiteralValue::String(atom)) => self.ctx.types.resolve_atom(atom),
+                _ => return None,
+            };
 
         // Collect target string literal members
         let target_literals: Vec<String> = if let Some(members) =
@@ -992,15 +998,17 @@ impl<'a> CheckerState<'a> {
         {
             members
                 .iter()
-                .filter_map(|&m| match tsz_solver::literal_value(self.ctx.types, m) {
-                    Some(tsz_solver::LiteralValue::String(atom)) => {
-                        Some(self.ctx.types.resolve_atom(atom))
+                .filter_map(|&m| {
+                    match crate::query_boundaries::common::literal_value(self.ctx.types, m) {
+                        Some(tsz_solver::LiteralValue::String(atom)) => {
+                            Some(self.ctx.types.resolve_atom(atom))
+                        }
+                        _ => None,
                     }
-                    _ => None,
                 })
                 .collect()
         } else if let Some(tsz_solver::LiteralValue::String(atom)) =
-            tsz_solver::literal_value(self.ctx.types, target)
+            crate::query_boundaries::common::literal_value(self.ctx.types, target)
         {
             vec![self.ctx.types.resolve_atom(atom)]
         } else {
@@ -1122,7 +1130,7 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> Option<tsz_common::interner::Atom> {
-        if tsz_solver::is_primitive_type(self.ctx.types, source) {
+        if crate::query_boundaries::common::is_primitive_type(self.ctx.types, source) {
             return None;
         }
 

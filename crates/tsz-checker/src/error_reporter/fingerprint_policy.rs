@@ -245,7 +245,8 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_type,
             } => {
-                if tsz_solver::is_primitive_type(self.ctx.types, *source_type) {
+                if crate::query_boundaries::common::is_primitive_type(self.ctx.types, *source_type)
+                {
                     return None;
                 }
                 let tgt_str = self.format_type_diagnostic(*target_type);
@@ -281,7 +282,8 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_type,
             } => {
-                if tsz_solver::is_primitive_type(self.ctx.types, *source_type) {
+                if crate::query_boundaries::common::is_primitive_type(self.ctx.types, *source_type)
+                {
                     return None;
                 }
                 let tgt_str = self.format_type_diagnostic(*target_type);

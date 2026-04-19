@@ -1567,7 +1567,7 @@ impl<'a> CheckerState<'a> {
     /// - Max depth protection (20 levels)
     /// - Comprehensive type traversal including function parameters
     pub(crate) fn type_contains_error(&self, type_id: TypeId) -> bool {
-        tsz_solver::contains_error_type(self.ctx.types, type_id)
+        crate::query_boundaries::common::contains_error_type(self.ctx.types, type_id)
     }
 
     /// Returns whether a type references type parameters.
@@ -1612,7 +1612,10 @@ impl<'a> CheckerState<'a> {
             return cached;
         }
 
-        let split = tsz_solver::split_nullish_type(self.ctx.types.as_type_database(), type_id);
+        let split = crate::query_boundaries::common::split_nullish_type(
+            self.ctx.types.as_type_database(),
+            type_id,
+        );
         self.ctx
             .narrowing_cache
             .split_nullish_cache

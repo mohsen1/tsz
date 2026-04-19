@@ -1018,7 +1018,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check if the raw property type IS ThisType (bare polymorphic this)
-        if !tsz_solver::is_this_type(self.ctx.types, raw_type) {
+        if !crate::query_boundaries::common::is_this_type(self.ctx.types, raw_type) {
             return None;
         }
 
@@ -1082,7 +1082,7 @@ impl<'a> CheckerState<'a> {
                 } = raw
                 {
                     // Property is this-typed if the raw type IS `ThisType`
-                    if tsz_solver::is_this_type(self.ctx.types, type_id) {
+                    if crate::query_boundaries::common::is_this_type(self.ctx.types, type_id) {
                         return true;
                     }
                     // For properties with class instance type (like `self2: D`),
@@ -1185,7 +1185,7 @@ impl<'a> CheckerState<'a> {
                 } = raw
                 {
                     // Check if the accessed property has ThisType
-                    if tsz_solver::is_this_type(self.ctx.types, type_id) {
+                    if crate::query_boundaries::common::is_this_type(self.ctx.types, type_id) {
                         return true;
                     }
                     // Recursively check if the accessed property was
@@ -1235,7 +1235,10 @@ impl<'a> CheckerState<'a> {
                         type_id,
                     ) {
                         for sig in &callable.call_signatures {
-                            if tsz_solver::is_this_type(self.ctx.types, sig.return_type) {
+                            if crate::query_boundaries::common::is_this_type(
+                                self.ctx.types,
+                                sig.return_type,
+                            ) {
                                 return true;
                             }
                         }

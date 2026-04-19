@@ -162,7 +162,7 @@ impl<'a> CheckerState<'a> {
         // the real object shape. Only retry the initial lookup when it already
         // failed; otherwise preserve the original first-pass result and use the
         // expanded type only for mapped-property validation below.
-        if tsz_solver::is_generic_application(self.ctx.types, object_type) {
+        if crate::query_boundaries::common::is_generic_application(self.ctx.types, object_type) {
             let expanded = self.evaluate_application_type(object_type);
             if expanded != object_type && expanded != TypeId::ANY && expanded != TypeId::ERROR {
                 mapped_candidate_type = expanded;
@@ -211,8 +211,8 @@ impl<'a> CheckerState<'a> {
                     resolved_object_type,
                 )
         {
-            let should_retry =
-                retry_for_not_found || tsz_solver::is_lazy_type(self.ctx.types, constraint);
+            let should_retry = retry_for_not_found
+                || crate::query_boundaries::common::is_lazy_type(self.ctx.types, constraint);
             if should_retry {
                 let evaluated = self.evaluate_type_with_env(constraint);
                 if evaluated != constraint && evaluated != TypeId::ANY && evaluated != TypeId::ERROR
@@ -352,7 +352,9 @@ impl<'a> CheckerState<'a> {
     /// producing a concrete key union (e.g., `"a" | "b"`), and creates a new
     /// mapped type with the resolved constraint.
     fn resolve_mapped_constraint_for_property_access(&mut self, object_type: TypeId) -> TypeId {
-        let Some(mapped_id) = tsz_solver::mapped_type_id(self.ctx.types, object_type) else {
+        let Some(mapped_id) =
+            crate::query_boundaries::common::mapped_type_id(self.ctx.types, object_type)
+        else {
             return object_type;
         };
         let mapped = self.ctx.types.mapped_type(mapped_id);
@@ -383,7 +385,8 @@ impl<'a> CheckerState<'a> {
         mapped_type: TypeId,
         prop_name: &str,
     ) -> Option<tsz_solver::operations::property::PropertyAccessResult> {
-        let mapped_id = tsz_solver::mapped_type_id(self.ctx.types, mapped_type)?;
+        let mapped_id =
+            crate::query_boundaries::common::mapped_type_id(self.ctx.types, mapped_type)?;
         let mapped = self.ctx.types.mapped_type(mapped_id);
 
         let prop_atom = self.ctx.types.intern_string(prop_name);

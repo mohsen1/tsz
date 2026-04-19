@@ -176,7 +176,7 @@ impl<'a> CheckerState<'a> {
             });
 
         let type_id = self.evaluate_type_with_env(type_id);
-        if tsz_solver::is_generic_application(self.ctx.types, type_id) {
+        if crate::query_boundaries::common::is_generic_application(self.ctx.types, type_id) {
             let widened = crate::query_boundaries::common::widen_type(self.ctx.types, type_id);
             if let Some(def_id) = constructor_display_def {
                 self.ctx
@@ -299,7 +299,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn normalize_excess_display_type(&self, ty: TypeId) -> TypeId {
-        let ty = tsz_solver::evaluate_type(self.ctx.types, ty);
+        let ty = crate::query_boundaries::common::evaluate_type(self.ctx.types, ty);
         if let Some(app) = query::type_application(self.ctx.types, ty) {
             let args: Vec<_> = app
                 .args
@@ -389,8 +389,8 @@ impl<'a> CheckerState<'a> {
         }
 
         if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
-            || tsz_solver::function_shape_id(self.ctx.types, ty).is_some()
-            || tsz_solver::callable_shape_id(self.ctx.types, ty).is_some()
+            || crate::query_boundaries::common::function_shape_id(self.ctx.types, ty).is_some()
+            || crate::query_boundaries::common::callable_shape_id(self.ctx.types, ty).is_some()
         {
             return true;
         }
@@ -438,7 +438,7 @@ impl<'a> CheckerState<'a> {
         // to their base type.  tsc shows `"TypeTwo"` in error messages, not
         // `string`.  Without this guard the else-branch evaluates the literal
         // and the widened primitive replaces the original.
-        if tsz_solver::literal_value(self.ctx.types, ty).is_some() {
+        if crate::query_boundaries::common::literal_value(self.ctx.types, ty).is_some() {
             return ty;
         }
         let ty = self
@@ -496,7 +496,10 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types.factory().union_preserve_members(normalized)
                 }
             } else if query::function_shape(self.ctx.types, ty).is_some_and(|shape| {
-                tsz_solver::is_conditional_type(self.ctx.types, shape.return_type)
+                crate::query_boundaries::common::is_conditional_type(
+                    self.ctx.types,
+                    shape.return_type,
+                )
             }) {
                 ty
             } else {
@@ -560,30 +563,33 @@ impl<'a> CheckerState<'a> {
                     // Skip normalizing TypeQuery return types to preserve the typeof
                     // syntax. Resolving TypeQuery to the full function type causes double
                     // arrows like `() => () => typeof fn` instead of `() => typeof fn`.
-                    let return_type =
-                        if crate::query_boundaries::common::is_type_query_type(
-                            self.ctx.types,
+                    let return_type = if crate::query_boundaries::common::is_type_query_type(
+                        self.ctx.types,
+                        shape.return_type,
+                    ) || crate::query_boundaries::common::is_conditional_type(
+                        self.ctx.types,
+                        shape.return_type,
+                    ) {
+                        shape.return_type
+                    } else {
+                        self.normalize_assignability_display_type_inner(
                             shape.return_type,
-                        ) || tsz_solver::is_conditional_type(self.ctx.types, shape.return_type)
-                        {
-                            shape.return_type
-                        } else {
-                            self.normalize_assignability_display_type_inner(
-                                shape.return_type,
-                                visiting,
-                                depth + 1,
-                            )
-                        };
-                    let return_type =
-                        if tsz_solver::is_conditional_type(self.ctx.types, shape.return_type) {
-                            return_type
-                        } else {
-                            let widened = crate::query_boundaries::common::widen_type(
-                                self.ctx.types,
-                                return_type,
-                            );
-                            self.widen_fresh_object_literal_properties_for_display(widened)
-                        };
+                            visiting,
+                            depth + 1,
+                        )
+                    };
+                    let return_type = if crate::query_boundaries::common::is_conditional_type(
+                        self.ctx.types,
+                        shape.return_type,
+                    ) {
+                        return_type
+                    } else {
+                        let widened = crate::query_boundaries::common::widen_type(
+                            self.ctx.types,
+                            return_type,
+                        );
+                        self.widen_fresh_object_literal_properties_for_display(widened)
+                    };
                     if params.iter().zip(shape.params.iter()).all(|(a, b)| a == b)
                         && return_type == shape.return_type
                     {
@@ -792,30 +798,31 @@ impl<'a> CheckerState<'a> {
                 // Skip normalizing TypeQuery return types to preserve the typeof
                 // syntax. Resolving TypeQuery to the full function type causes double
                 // arrows like `() => () => typeof fn` instead of `() => typeof fn`.
-                let return_type =
-                    if crate::query_boundaries::common::is_type_query_type(
-                        self.ctx.types,
+                let return_type = if crate::query_boundaries::common::is_type_query_type(
+                    self.ctx.types,
+                    shape.return_type,
+                ) || crate::query_boundaries::common::is_conditional_type(
+                    self.ctx.types,
+                    shape.return_type,
+                ) {
+                    shape.return_type
+                } else {
+                    self.normalize_assignability_display_type_inner(
                         shape.return_type,
-                    ) || tsz_solver::is_conditional_type(self.ctx.types, shape.return_type)
-                    {
-                        shape.return_type
-                    } else {
-                        self.normalize_assignability_display_type_inner(
-                            shape.return_type,
-                            visiting,
-                            depth + 1,
-                        )
-                    };
-                let return_type =
-                    if tsz_solver::is_conditional_type(self.ctx.types, shape.return_type) {
-                        return_type
-                    } else {
-                        let widened = crate::query_boundaries::common::widen_type(
-                            self.ctx.types,
-                            return_type,
-                        );
-                        self.widen_fresh_object_literal_properties_for_display(widened)
-                    };
+                        visiting,
+                        depth + 1,
+                    )
+                };
+                let return_type = if crate::query_boundaries::common::is_conditional_type(
+                    self.ctx.types,
+                    shape.return_type,
+                ) {
+                    return_type
+                } else {
+                    let widened =
+                        crate::query_boundaries::common::widen_type(self.ctx.types, return_type);
+                    self.widen_fresh_object_literal_properties_for_display(widened)
+                };
                 if params.iter().zip(shape.params.iter()).all(|(a, b)| a == b)
                     && return_type == shape.return_type
                 {
@@ -918,7 +925,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn split_optional_object_for_excess_display(&self, ty: TypeId) -> TypeId {
-        let ty = tsz_solver::evaluate_type(self.ctx.types, ty);
+        let ty = crate::query_boundaries::common::evaluate_type(self.ctx.types, ty);
         if let Some(members) = query::union_members(self.ctx.types, ty) {
             let non_undefined: Vec<_> = members
                 .iter()
@@ -943,15 +950,16 @@ impl<'a> CheckerState<'a> {
         // Evaluate for structural analysis but preserve original members for display.
         // NoInfer<T> wrappers and type aliases are stripped by evaluation, but the
         // display should preserve them (tsc shows `NoInfer<{x: string}>` not `{x: string}`).
-        let evaluated = tsz_solver::evaluate_type(self.ctx.types, ty);
+        let evaluated = crate::query_boundaries::common::evaluate_type(self.ctx.types, ty);
         let original_members = query::union_members(self.ctx.types, ty);
         if let Some(members) = query::union_members(self.ctx.types, evaluated) {
             let object_like: Vec<_> = members
                 .iter()
                 .enumerate()
                 .filter(|(_, member)| {
-                    let evaluated = tsz_solver::evaluate_type(self.ctx.types, **member);
-                    !tsz_solver::is_primitive_type(self.ctx.types, evaluated)
+                    let evaluated =
+                        crate::query_boundaries::common::evaluate_type(self.ctx.types, **member);
+                    !crate::query_boundaries::common::is_primitive_type(self.ctx.types, evaluated)
                         && !crate::query_boundaries::common::contains_type_parameters(
                             self.ctx.types,
                             evaluated,
@@ -1092,7 +1100,7 @@ impl<'a> CheckerState<'a> {
         // tsc shows the alias name in excess property messages. Check for Lazy(DefId)
         // references before evaluation strips the name. The formatter handles Lazy types
         // by resolving to the definition name.
-        if tsz_solver::is_lazy_type(self.ctx.types, ty) {
+        if crate::query_boundaries::common::is_lazy_type(self.ctx.types, ty) {
             return self.format_type_diagnostic(ty);
         }
 
@@ -1114,9 +1122,10 @@ impl<'a> CheckerState<'a> {
         let ty = self.strip_non_object_union_members_for_excess_display(ty);
 
         if let Some(members) = query::intersection_members(self.ctx.types, ty) {
-            let preserve_intersection_parts = members
-                .iter()
-                .any(|member| tsz_solver::evaluate_type(self.ctx.types, *member) == TypeId::OBJECT);
+            let preserve_intersection_parts = members.iter().any(|member| {
+                crate::query_boundaries::common::evaluate_type(self.ctx.types, *member)
+                    == TypeId::OBJECT
+            });
             let mut changed = false;
             let parts: Vec<String> = members
                 .iter()
@@ -1342,7 +1351,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if tsz_solver::literal_value(self.ctx.types, ty).is_some() {
+        if crate::query_boundaries::common::literal_value(self.ctx.types, ty).is_some() {
             return false;
         }
 
@@ -1388,7 +1397,7 @@ impl<'a> CheckerState<'a> {
         // This check MUST run before the generic-type-parameter guard below —
         // these alias shapes should substitute their evaluated form for display
         // even when the reference contains free type parameters.
-        if tsz_solver::is_generic_application(self.ctx.types, ty)
+        if crate::query_boundaries::common::is_generic_application(self.ctx.types, ty)
             && let Some(def_id) =
                 crate::query_boundaries::common::get_application_lazy_def_id(self.ctx.types, ty)
             && let Some(def) = self.ctx.definition_store.get(def_id)
@@ -1407,15 +1416,22 @@ impl<'a> CheckerState<'a> {
         }
 
         if evaluated == TypeId::NEVER
-            || tsz_solver::literal_value(self.ctx.types, evaluated).is_some()
+            || crate::query_boundaries::common::literal_value(self.ctx.types, evaluated).is_some()
         {
             return true;
         }
 
-        if (tsz_solver::lazy_def_id(self.ctx.types, ty).is_some()
-            || tsz_solver::string_intrinsic_components(self.ctx.types, ty).is_some())
-            && (tsz_solver::is_template_literal_type(self.ctx.types, evaluated)
-                || tsz_solver::string_intrinsic_components(self.ctx.types, evaluated).is_some())
+        if (crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty).is_some()
+            || crate::query_boundaries::common::string_intrinsic_components(self.ctx.types, ty)
+                .is_some())
+            && (crate::query_boundaries::common::is_template_literal_type(
+                self.ctx.types,
+                evaluated,
+            ) || crate::query_boundaries::common::string_intrinsic_components(
+                self.ctx.types,
+                evaluated,
+            )
+            .is_some())
         {
             return true;
         }
@@ -1423,7 +1439,7 @@ impl<'a> CheckerState<'a> {
         if !crate::query_boundaries::common::is_index_access_type(self.ctx.types, ty)
             && !crate::query_boundaries::common::is_keyof_type(self.ctx.types, ty)
             && !crate::query_boundaries::common::is_conditional_type(self.ctx.types, ty)
-            && !tsz_solver::is_generic_application(self.ctx.types, ty)
+            && !crate::query_boundaries::common::is_generic_application(self.ctx.types, ty)
         {
             return false;
         }

@@ -1017,13 +1017,17 @@ impl<'a> CheckerState<'a> {
                         let mut interface_member_type = prop.type_id;
                         // Substitute `this` type in interface members
                         if let Some(this_type) = class_this_type
-                            && tsz_solver::contains_this_type(self.ctx.types, interface_member_type)
-                        {
-                            interface_member_type = tsz_solver::substitute_this_type(
+                            && crate::query_boundaries::common::contains_this_type(
                                 self.ctx.types,
                                 interface_member_type,
-                                this_type,
-                            );
+                            )
+                        {
+                            interface_member_type =
+                                crate::query_boundaries::common::substitute_this_type(
+                                    self.ctx.types,
+                                    interface_member_type,
+                                    this_type,
+                                );
                         }
 
                         // Skip optional properties
@@ -1060,13 +1064,17 @@ impl<'a> CheckerState<'a> {
                             // concrete class instance type for a fair comparison against the
                             // interface member (which has already been this-substituted above).
                             if let Some(this_type) = class_this_type
-                                && tsz_solver::contains_this_type(self.ctx.types, class_member_type)
-                            {
-                                class_member_type = tsz_solver::substitute_this_type(
+                                && crate::query_boundaries::common::contains_this_type(
                                     self.ctx.types,
                                     class_member_type,
-                                    this_type,
-                                );
+                                )
+                            {
+                                class_member_type =
+                                    crate::query_boundaries::common::substitute_this_type(
+                                        self.ctx.types,
+                                        class_member_type,
+                                        this_type,
+                                    );
                             }
 
                             // Check visibility (TS2420)
@@ -1251,9 +1259,11 @@ impl<'a> CheckerState<'a> {
                         // `this` types (e.g. `Vnode<A, this>`) retain an abstract
                         // `this` that cannot be satisfied, causing false TS2430.
                         let target_type = if let Some(this_type) = class_this_type
-                            && tsz_solver::contains_this_type(self.ctx.types, interface_type)
-                        {
-                            tsz_solver::substitute_this_type(
+                            && crate::query_boundaries::common::contains_this_type(
+                                self.ctx.types,
+                                interface_type,
+                            ) {
+                            crate::query_boundaries::common::substitute_this_type(
                                 self.ctx.types,
                                 interface_type,
                                 this_type,

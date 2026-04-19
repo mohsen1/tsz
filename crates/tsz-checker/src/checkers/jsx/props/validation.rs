@@ -499,8 +499,11 @@ impl<'a> CheckerState<'a> {
                             &base_type_params,
                             &type_args,
                         );
-                        base_type =
-                            tsz_solver::instantiate_type(self.ctx.types, base_type, &substitution);
+                        base_type = crate::query_boundaries::common::instantiate_type(
+                            self.ctx.types,
+                            base_type,
+                            &substitution,
+                        );
                     }
 
                     let base_type = self.normalize_jsx_required_props_target(base_type);

@@ -807,7 +807,7 @@ impl<'a> CheckerState<'a> {
                     t != TypeId::ANY
                         && t != TypeId::UNKNOWN
                         && t != TypeId::ERROR
-                        && tsz_solver::remove_undefined(self.ctx.types, t) != t
+                        && crate::query_boundaries::common::remove_undefined(self.ctx.types, t) != t
                 });
                 if !self_refs.is_empty() && has_effective_undefined {
                     self.error_at_node(

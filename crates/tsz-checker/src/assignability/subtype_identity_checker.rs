@@ -296,7 +296,7 @@ impl<'a> CheckerState<'a> {
             // Enum(DefId, _) type, convert it to the structural enum constructor
             // object. This ensures `typeof M.Color` (TypeQuery -> Enum) produces
             // the same structural type as `m.Color` (property access -> Object).
-            if tsz_solver::is_enum_type(self.ctx.types, resolved) {
+            if crate::query_boundaries::common::is_enum_type(self.ctx.types, resolved) {
                 let binder_sym = tsz_binder::SymbolId(sym_id);
                 if let Some(symbol) = self.ctx.binder.get_symbol(binder_sym)
                     && (symbol.flags & tsz_binder::symbol_flags::ENUM) != 0
@@ -519,7 +519,11 @@ impl<'a> CheckerState<'a> {
         concrete_this: TypeId,
     ) -> TypeId {
         // First, substitute any directly-visible ThisType.
-        let type_id = tsz_solver::substitute_this_type(self.ctx.types, type_id, concrete_this);
+        let type_id = crate::query_boundaries::common::substitute_this_type(
+            self.ctx.types,
+            type_id,
+            concrete_this,
+        );
         if type_id == other_type {
             return type_id;
         }
@@ -572,8 +576,11 @@ impl<'a> CheckerState<'a> {
                     return true;
                 }
                 // Check if substituting ThisType changes the resolved type.
-                let substituted =
-                    tsz_solver::substitute_this_type(self.ctx.types, resolved, concrete_this);
+                let substituted = crate::query_boundaries::common::substitute_this_type(
+                    self.ctx.types,
+                    resolved,
+                    concrete_this,
+                );
                 if substituted != resolved {
                     return true;
                 }
@@ -581,8 +588,11 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if substituting ThisType changes the type at all.
-        let substituted =
-            tsz_solver::substitute_this_type(self.ctx.types, prop_type, concrete_this);
+        let substituted = crate::query_boundaries::common::substitute_this_type(
+            self.ctx.types,
+            prop_type,
+            concrete_this,
+        );
         substituted != prop_type
     }
 }

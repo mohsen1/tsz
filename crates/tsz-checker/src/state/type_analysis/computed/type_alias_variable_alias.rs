@@ -194,8 +194,14 @@ impl<'a> CheckerState<'a> {
                 // the body is evaluable (Conditional, IndexAccess, Mapped, etc.) AND it
                 // does not contain deferred type parameters, evaluate it now.
                 if params.is_empty()
-                    && tsz_solver::is_conditional_type(self.ctx.types, alias_type)
-                    && !tsz_solver::contains_type_parameters(self.ctx.types, alias_type)
+                    && crate::query_boundaries::common::is_conditional_type(
+                        self.ctx.types,
+                        alias_type,
+                    )
+                    && !crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        alias_type,
+                    )
                 {
                     alias_type = self.evaluate_type_with_env(alias_type);
                 }

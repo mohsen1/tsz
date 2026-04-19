@@ -22,7 +22,7 @@ impl<'a> CheckerState<'a> {
         use tsz_scanner::SyntaxKind;
 
         let is_arith_compound_op = |op: u16| -> bool {
-            tsz_solver::is_compound_assignment_operator(op)
+            crate::query_boundaries::common::is_compound_assignment_operator(op)
                 && !matches!(
                     op,
                     k if k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
@@ -659,8 +659,9 @@ impl<'a> CheckerState<'a> {
         // Only widen object-like types (to convert literal properties to primitives).
         // For literal/primitive receiver types (e.g., `""`, `42`), tsc preserves the
         // literal in TS2339 messages (e.g., `'""'` not `'string'`).
-        let is_literal_or_primitive = tsz_solver::literal_value(self.ctx.types, ty).is_some()
-            || tsz_solver::is_primitive_type(self.ctx.types, ty);
+        let is_literal_or_primitive =
+            crate::query_boundaries::common::literal_value(self.ctx.types, ty).is_some()
+                || crate::query_boundaries::common::is_primitive_type(self.ctx.types, ty);
         let ty = if is_literal_or_primitive {
             ty
         } else {
@@ -691,7 +692,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        if let Some(def_id) = tsz_solver::lazy_def_id(self.ctx.types, type_id)
+        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
             .or_else(|| self.ctx.definition_store.find_def_for_type(type_id))
             && let Some(def) = self.ctx.definition_store.get(def_id)
         {
@@ -1013,8 +1014,8 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
-        if tsz_solver::literal_value(self.ctx.types, source).is_some()
-            && tsz_solver::string_intrinsic_components(self.ctx.types, target)
+        if crate::query_boundaries::common::literal_value(self.ctx.types, source).is_some()
+            && crate::query_boundaries::common::string_intrinsic_components(self.ctx.types, target)
                 .is_some_and(|(_, type_arg)| type_arg == TypeId::STRING)
         {
             let widened = self.widen_type_for_display(source);
@@ -1035,7 +1036,7 @@ impl<'a> CheckerState<'a> {
         }
         if !in_arith_compound
             && self.is_literal_sensitive_assignment_target(target)
-            && tsz_solver::literal_value(self.ctx.types, source).is_some()
+            && crate::query_boundaries::common::literal_value(self.ctx.types, source).is_some()
         {
             return self.format_assignability_type_for_message(source, target);
         }
@@ -1109,7 +1110,12 @@ impl<'a> CheckerState<'a> {
                     || preserve_literal_surface
                 {
                     display_type
-                } else if tsz_solver::keyof_inner_type(self.ctx.types, display_type).is_some() {
+                } else if crate::query_boundaries::common::keyof_inner_type(
+                    self.ctx.types,
+                    display_type,
+                )
+                .is_some()
+                {
                     let evaluated = self.evaluate_type_for_assignability(display_type);
                     crate::query_boundaries::common::widen_type(self.ctx.types, evaluated)
                 } else {
@@ -1245,7 +1251,9 @@ impl<'a> CheckerState<'a> {
             }
 
             let display_type =
-                if tsz_solver::keyof_inner_type(self.ctx.types, display_type).is_some() {
+                if crate::query_boundaries::common::keyof_inner_type(self.ctx.types, display_type)
+                    .is_some()
+                {
                     let evaluated = self.evaluate_type_for_assignability(display_type);
                     crate::query_boundaries::common::widen_type(self.ctx.types, evaluated)
                 } else {
@@ -1464,8 +1472,8 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) -> String {
-        if tsz_solver::literal_value(self.ctx.types, source).is_some()
-            && tsz_solver::string_intrinsic_components(self.ctx.types, target)
+        if crate::query_boundaries::common::literal_value(self.ctx.types, source).is_some()
+            && crate::query_boundaries::common::string_intrinsic_components(self.ctx.types, target)
                 .is_some_and(|(_, type_arg)| type_arg == TypeId::STRING)
         {
             let widened = self.widen_type_for_display(source);
@@ -1673,7 +1681,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> Option<String> {
         let preserve_literal_surface = self.target_preserves_literal_surface(target);
-        if tsz_solver::is_template_literal_type(self.ctx.types, source) {
+        if crate::query_boundaries::common::is_template_literal_type(self.ctx.types, source) {
             return Some(self.format_type_diagnostic_structural(source));
         }
 
@@ -1682,9 +1690,13 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        if tsz_solver::literal_value(self.ctx.types, evaluated).is_some()
-            || tsz_solver::is_template_literal_type(self.ctx.types, evaluated)
-            || tsz_solver::string_intrinsic_components(self.ctx.types, evaluated).is_some()
+        if crate::query_boundaries::common::literal_value(self.ctx.types, evaluated).is_some()
+            || crate::query_boundaries::common::is_template_literal_type(self.ctx.types, evaluated)
+            || crate::query_boundaries::common::string_intrinsic_components(
+                self.ctx.types,
+                evaluated,
+            )
+            .is_some()
         {
             return Some(if preserve_literal_surface {
                 self.format_type_diagnostic(evaluated)
@@ -1738,7 +1750,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         target: TypeId,
     ) -> bool {
-        if tsz_solver::string_intrinsic_components(self.ctx.types, target)
+        if crate::query_boundaries::common::string_intrinsic_components(self.ctx.types, target)
             .is_some_and(|(_, type_arg)| type_arg == TypeId::STRING)
         {
             return false;
@@ -1763,7 +1775,7 @@ impl<'a> CheckerState<'a> {
         {
             return self.is_literal_sensitive_assignment_target_inner(inner);
         }
-        if tsz_solver::literal_value(self.ctx.types, target).is_some() {
+        if crate::query_boundaries::common::literal_value(self.ctx.types, target).is_some() {
             return true;
         }
         if crate::query_boundaries::common::enum_def_id(self.ctx.types, target).is_some() {
@@ -1777,11 +1789,13 @@ impl<'a> CheckerState<'a> {
         // Template literal types (e.g., `:${string}:`) expect specific string
         // patterns — preserving the source literal in the diagnostic is more
         // informative than showing widened `string`.
-        if tsz_solver::is_template_literal_type(self.ctx.types, target) {
+        if crate::query_boundaries::common::is_template_literal_type(self.ctx.types, target) {
             return true;
         }
-        if let Some(list) = tsz_solver::union_list_id(self.ctx.types, target)
-            .or_else(|| tsz_solver::intersection_list_id(self.ctx.types, target))
+        if let Some(list) = crate::query_boundaries::common::union_list_id(self.ctx.types, target)
+            .or_else(|| {
+                crate::query_boundaries::common::intersection_list_id(self.ctx.types, target)
+            })
         {
             return self
                 .ctx

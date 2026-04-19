@@ -573,7 +573,8 @@ impl<'a> CheckerState<'a> {
                 // This ensures that `() => "foo"` is displayed as `() => string`
                 // to match tsc's behavior for error messages.
                 let func_type = self.get_type_of_node(arg_idx);
-                let widened_func_type = tsz_solver::widen_type_deep(self.ctx.types, func_type);
+                let widened_func_type =
+                    crate::query_boundaries::common::widen_type_deep(self.ctx.types, func_type);
                 // For callback return type errors, use the full function types in the error message
                 // instead of just the return types. This produces errors like:
                 // "Type '() => string' is not assignable to type '{ (): number; (i: number): number; }'"
@@ -724,7 +725,8 @@ impl<'a> CheckerState<'a> {
                     let func_type = self.get_type_of_node(func_idx);
                     // Widen the function type for display to match tsc behavior
                     // (e.g., show `() => string` instead of `() => "foo"`)
-                    let widened_func_type = tsz_solver::widen_type_deep(self.ctx.types, func_type);
+                    let widened_func_type =
+                        crate::query_boundaries::common::widen_type_deep(self.ctx.types, func_type);
                     // For functions that are the RHS of an assignment (e.g., `A.prototype.foo = function() {}`),
                     // use the assignment LHS as the anchor to match tsc behavior.
                     // Otherwise, use the function position as the anchor.
@@ -853,7 +855,8 @@ impl<'a> CheckerState<'a> {
         // properties via index signatures or prototypes, which causes misleading
         // per-property TS2322 errors instead of the correct top-level mismatch
         // (e.g., "Type '{ 0: number }' is not assignable to type 'string'").
-        if tsz_solver::is_primitive_type(self.ctx.types, effective_param_type) {
+        if crate::query_boundaries::common::is_primitive_type(self.ctx.types, effective_param_type)
+        {
             return false;
         }
 

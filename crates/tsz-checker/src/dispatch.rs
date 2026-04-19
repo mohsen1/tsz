@@ -1070,7 +1070,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             // For unconstrained type parameters (no `extends`), skip —
                             // T could be anything.
                             let (should_check, effective_asserted) = if should_check {
-                                if tsz_solver::is_this_type(self.checker.ctx.types, asserted_type) {
+                                if crate::query_boundaries::common::is_this_type(
+                                    self.checker.ctx.types,
+                                    asserted_type,
+                                ) {
                                     // `this` type — substitute with class instance type
                                     // for the overlap check. `ThisType` is parameter-like
                                     // but `get_type_parameter_constraint` doesn't handle it,
@@ -1208,7 +1211,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                     // suffices if X overlaps with ANY member (A or B).
                                     let mut have_overlap = false;
                                     if structured_generic_assertion_target
-                                        && tsz_solver::is_mapped_type(
+                                        && crate::query_boundaries::common::is_mapped_type(
                                             self.checker.ctx.types,
                                             effective_asserted,
                                         )
@@ -1339,12 +1342,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                             .checker
                                             .deep_evaluate_object_properties(evaluated_asserted);
 
-                                        let both_callable = tsz_solver::callable_shape_id(
+                                        let both_callable = crate::query_boundaries::common::callable_shape_id(
                                             self.checker.ctx.types,
                                             deep_expr,
                                         )
                                         .is_some()
-                                            && tsz_solver::callable_shape_id(
+                                            && crate::query_boundaries::common::callable_shape_id(
                                                 self.checker.ctx.types,
                                                 deep_asserted,
                                             )

@@ -249,7 +249,8 @@ impl<'a> CheckerState<'a> {
         // `[1,2,3] as const satisfies unknown[]` is accepted because `satisfies`
         // checks structural shape, not mutability. If the source is Readonly<T>,
         // try checking T against the target.
-        if let Some(inner) = tsz_solver::readonly_inner_type(self.ctx.types, source)
+        if let Some(inner) =
+            crate::query_boundaries::common::readonly_inner_type(self.ctx.types, source)
             && self.is_assignable_to(inner, target)
         {
             return true;
@@ -644,14 +645,16 @@ impl<'a> CheckerState<'a> {
 
         let target_member =
             crate::query_boundaries::common::enum_member_type(self.ctx.types, target);
-        let target_literal =
-            target_member.and_then(|member| tsz_solver::literal_value(self.ctx.types, member));
+        let target_literal = target_member.and_then(|member| {
+            crate::query_boundaries::common::literal_value(self.ctx.types, member)
+        });
 
         target_member?;
 
         match source_literal {
             Some(source_literal) => {
-                let source_val = tsz_solver::literal_value(self.ctx.types, source_literal);
+                let source_val =
+                    crate::query_boundaries::common::literal_value(self.ctx.types, source_literal);
                 match (source_val, target_literal) {
                     (
                         Some(tsz_solver::LiteralValue::Number(source_num)),
@@ -1370,24 +1373,24 @@ impl<'a> CheckerState<'a> {
             // Convert to RelationFailure to check, then back. But simpler: just
             // check the conditions directly using the boundary's logic.
             let evaluated_target = self.evaluate_type_for_assignability(target);
-            let should_suppress =
-                tsz_solver::has_deferred_conditional_member(self.ctx.types, evaluated_target)
-                    || [target, evaluated_target].into_iter().any(|candidate| {
-                        crate::query_boundaries::common::intersection_members(
-                            self.ctx.types,
-                            candidate,
-                        )
-                        .is_some_and(|members| {
-                            members.iter().any(|member| {
-                                let evaluated = self.evaluate_type_for_assignability(*member);
-                                tsz_solver::is_primitive_type(self.ctx.types, evaluated)
-                                    || crate::query_boundaries::common::is_type_parameter_like(
-                                        self.ctx.types,
-                                        evaluated,
-                                    )
-                            })
+            let should_suppress = crate::query_boundaries::common::has_deferred_conditional_member(
+                self.ctx.types,
+                evaluated_target,
+            ) || [target, evaluated_target].into_iter().any(|candidate| {
+                crate::query_boundaries::common::intersection_members(self.ctx.types, candidate)
+                    .is_some_and(|members| {
+                        members.iter().any(|member| {
+                            let evaluated = self.evaluate_type_for_assignability(*member);
+                            crate::query_boundaries::common::is_primitive_type(
+                                self.ctx.types,
+                                evaluated,
+                            ) || crate::query_boundaries::common::is_type_parameter_like(
+                                self.ctx.types,
+                                evaluated,
+                            )
                         })
-                    });
+                    })
+            });
             if should_suppress {
                 None
             } else {
