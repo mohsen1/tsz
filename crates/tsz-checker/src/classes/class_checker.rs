@@ -1190,11 +1190,17 @@ impl<'a> CheckerState<'a> {
                         base_class_name = String::from("(Anonymous class)");
                     }
                 } else {
-                    // Get the class name from the expression (identifier)
-                    if let Some(expr_node) = self.ctx.arena.get(expr_idx)
-                        && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
-                    {
-                        base_class_name = ident.escaped_text.clone();
+                    // Get the class name from the expression (identifier or property access)
+                    if let Some(expr_node) = self.ctx.arena.get(expr_idx) {
+                        if let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
+                            base_class_name = ident.escaped_text.clone();
+                        } else if let Some(access) = self.ctx.arena.get_access_expr(expr_node)
+                            && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
+                            && let Some(name_ident) = self.ctx.arena.get_identifier(name_node)
+                        {
+                            // e.g., `extends React.Component` — show rightmost name.
+                            base_class_name = name_ident.escaped_text.clone();
+                        }
                     }
 
                     // Find the base class declaration via heritage symbol resolution
@@ -1263,7 +1269,13 @@ impl<'a> CheckerState<'a> {
                                 )
                             })
                         })
-                        .unwrap_or_else(|| self.format_type(instance_type));
+                        .unwrap_or_else(|| {
+                            self.format_heritage_instance_display(
+                                instance_type,
+                                h_expr_idx,
+                                type_arguments,
+                            )
+                        });
                     let base_instance_member_names =
                         self.collect_property_names_from_type(instance_type);
                     let base_static_type =
@@ -1329,7 +1341,13 @@ impl<'a> CheckerState<'a> {
                                 )
                             })
                         })
-                        .unwrap_or_else(|| self.format_type(instance_type));
+                        .unwrap_or_else(|| {
+                            self.format_heritage_instance_display(
+                                instance_type,
+                                h_expr_idx,
+                                type_arguments,
+                            )
+                        });
                     let base_instance_member_names =
                         self.collect_property_names_from_type(instance_type);
                     let base_static_type =
