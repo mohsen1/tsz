@@ -42,4 +42,5 @@ pub mod options;
 // Back-compat alias while we migrate to domain-folder layout.
 pub use checker_options::CheckerOptions;
 pub use options::checker as checker_options;
-pub mod numeric;
+pub mod primitives;
+pub use primitives::numeric;
