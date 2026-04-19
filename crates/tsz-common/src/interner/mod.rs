@@ -498,5 +498,5 @@ impl Default for ShardedInterner {
 }
 
 #[cfg(test)]
-#[path = "../tests/interner_tests.rs"]
+#[path = "../../tests/interner_tests.rs"]
 mod tests;
