@@ -584,6 +584,29 @@ fn test_import_type_of_node_builtin_uses_ts2591() {
 }
 
 #[test]
+fn test_dynamic_import_of_node_builtin_uses_ts2591_with_no_types_and_symbols() {
+    let diags = check_with_module_not_found_errors(
+        r#"import("node:path");"#,
+        "no.ts",
+        vec![],
+        vec!["node:path"],
+        CheckerOptions {
+            module: crate::common::ModuleKind::Preserve,
+            no_types_and_symbols: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_error_code(&diags, TS2591),
+        "Dynamic import of unresolved Node builtin should emit TS2591, got: {diags:?}"
+    );
+    assert!(
+        no_error_code(&diags, TS2307),
+        "Dynamic import of unresolved Node builtin should not emit TS2307, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_no_types_and_symbols_keeps_ts2591_for_node_builtin_imports() {
     let diags = check_with_module_not_found_errors(
         r#"import { parse } from "url";
