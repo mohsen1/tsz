@@ -403,7 +403,7 @@ pub use context::{CheckerContext, CheckerOptions, EnclosingClassInfo, TypeCache}
 pub use control_flow::{FlowAnalyzer, FlowGraph as ControlFlowGraph};
 pub use declarations::DeclarationChecker;
 pub use dispatch::ExpressionDispatcher;
-pub use expr::ExpressionChecker;
+pub use expr::{ExprCheckResult, ExpressionChecker};
 pub use flow_analyzer::{
     AssignmentState, AssignmentStateMap, DefiniteAssignmentAnalyzer, DefiniteAssignmentResult,
     merge_assignment_states,
