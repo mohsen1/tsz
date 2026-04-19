@@ -1318,19 +1318,12 @@ impl<'a> DeclarationEmitter<'a> {
         // If the symbol is re-exported from a module accessible via a bare
         // package specifier (no subpath), the type IS portable -- consumers
         // can reference it through the package root.  tsc does not emit
-        // TS2883 in this situation.
+        // TS2883 in this situation, even if the type's internal definition
+        // references non-exported helper types (those are internal details
+        // of the library, not the consumer's concern).
         if self
             .package_root_export_reference_path(sym_id, &type_name, binder, current_file_path)
             .is_some()
-            && self
-                .collect_non_portable_references_in_symbol_declaration_with_state(
-                    sym_id,
-                    visited_types,
-                    visited_symbols,
-                    visited_declaration_symbols,
-                    visited_nodes,
-                )
-                .is_empty()
         {
             return None;
         }
@@ -1791,7 +1784,13 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(import_module) = &symbol.import_module
                     && import_module.starts_with('.')
                 {
-                    let resolved = module_rel_dir.join(import_module);
+                    // Normalize the joined path to remove `.` components
+                    // introduced by joining a dir with a `./foo.js` specifier.
+                    let resolved: std::path::PathBuf = module_rel_dir
+                        .join(import_module)
+                        .components()
+                        .filter(|c| !matches!(c, std::path::Component::CurDir))
+                        .collect();
                     let resolved_str = resolved.to_string_lossy();
                     let resolved_stripped = self.strip_ts_extensions(&resolved_str);
                     let resolved_stripped = resolved_stripped
@@ -1823,27 +1822,31 @@ impl<'a> DeclarationEmitter<'a> {
             .module_exports
             .iter()
             .find_map(|(module_path, exports)| {
-                let exported = exports.get(type_name)?;
-                let exported = self.resolve_portability_symbol(exported, binder);
+                let exported_raw = exports.get(type_name)?;
+                // Resolve alias using the alias's OWN source file as the base,
+                // so relative imports like `./useQuery-CPqkvEsh.js` in
+                // `index.d.ts` resolve correctly rather than relative to the
+                // user's current file.
+                let exported = self
+                    .resolve_alias_in_source_context(exported_raw, binder)
+                    .unwrap_or_else(|| self.resolve_portability_symbol(exported_raw, binder));
                 if module_path == &source_path || exported != sym_id {
                     return None;
                 }
 
                 let specifier =
                     self.package_specifier_for_node_modules_path(current_file_path, module_path)?;
-                if specifier.contains('/') {
-                    return None;
-                }
-                let package_root = std::path::Path::new(module_path)
-                    .parent()
-                    .unwrap_or_else(|| std::path::Path::new(""));
-                let has_explicit_entrypoint = self
-                    .reverse_export_specifier_for_runtime_path(package_root, "./index.ts")
-                    .is_some()
-                    || self
-                        .reverse_export_specifier_for_runtime_path(package_root, "./index.d.ts")
-                        .is_some();
-                if !has_explicit_entrypoint {
+                // Allow bare package root specifiers only (no subpath segments).
+                // Unscoped packages have no slash ("react", "lodash").
+                // Scoped packages have exactly one slash ("@tanstack/vue-query", "@types/node").
+                // Subpath imports have extra slashes ("lodash/fp", "@scope/pkg/sub").
+                let slash_count = specifier.chars().filter(|&c| c == '/').count();
+                let is_root_specifier = if specifier.starts_with('@') {
+                    slash_count == 1
+                } else {
+                    slash_count == 0
+                };
+                if !is_root_specifier {
                     return None;
                 }
 
@@ -2009,6 +2012,57 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        None
+    }
+
+    /// Resolve an alias symbol to its target, using the alias's OWN source file
+    /// as the base for relative `import_module` resolution.
+    ///
+    /// The standard `resolve_import_symbol_from_module_exports` uses
+    /// `self.current_file_path`, which is wrong when the alias lives in a
+    /// different file (e.g., `index.d.ts` re-exporting from
+    /// `./useQuery-CPqkvEsh.js`).
+    pub(in crate::declaration_emitter) fn resolve_alias_in_source_context(
+        &self,
+        sym_id: SymbolId,
+        binder: &BinderState,
+    ) -> Option<SymbolId> {
+        let symbol = binder.symbols.get(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
+            return None;
+        }
+        let module_specifier = symbol.import_module.as_deref()?;
+        let export_name = symbol
+            .import_name
+            .as_deref()
+            .unwrap_or(symbol.escaped_name.as_str());
+
+        // Use the alias symbol's own source file as the resolution base.
+        let source_path = self.get_symbol_source_path(sym_id, binder)?;
+
+        // `matching_module_export_paths` compares the stripped module path
+        // against the raw specifier.  ESM `.d.ts` files use `.js` extensions
+        // in re-exports (`from './foo.js'`), so we normalise both sides by
+        // stripping the specifier's extension too.
+        let specifier_normalized = self.strip_ts_extensions(module_specifier);
+        let effective_specifier = if specifier_normalized != module_specifier {
+            specifier_normalized.as_str()
+        } else {
+            module_specifier
+        };
+
+        for module_path in
+            self.matching_module_export_paths(binder, &source_path, effective_specifier)
+        {
+            let Some(exports) = binder.module_exports.get(module_path) else {
+                continue;
+            };
+            if let Some(resolved) = exports.get(export_name) {
+                if resolved != sym_id {
+                    return Some(resolved);
+                }
+            }
+        }
         None
     }
 

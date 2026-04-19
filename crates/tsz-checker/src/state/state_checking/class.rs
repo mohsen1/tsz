@@ -735,10 +735,13 @@ impl<'a> CheckerState<'a> {
         // TS4094: Property of exported anonymous class type may not be private or protected.
         // When `declaration: true`, anonymous class types in exported positions cannot have
         // private/protected members represented in .d.ts files.
+        // Anchor at the export statement, not the class keyword — tsc reports at the
+        // `export` position (col 1), which is the parent when class is a ClassExpression.
         if self.ctx.emit_declarations() && !self.ctx.is_declaration_file() && class.name.is_none() {
-            let is_exported = self.is_class_exported_default(stmt_idx, &class.modifiers);
-            if is_exported {
-                self.report_anonymous_class_private_members(stmt_idx, &class.members);
+            if let Some(report_at) =
+                self.get_anonymous_class_export_anchor(stmt_idx, &class.modifiers)
+            {
+                self.report_anonymous_class_private_members(report_at, &class.members);
             }
         }
 
@@ -1936,6 +1939,54 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    /// Return the node index to anchor TS4094 at for an exported anonymous class.
+    ///
+    /// tsc reports TS4094 at the `export` keyword (col 1), not the `class` keyword.
+    /// When the class is an expression inside an export statement, the parent node
+    /// starts at `export`. When it's a ClassDeclaration with own `export default`
+    /// modifiers, the first modifier starts before the class keyword.
+    fn get_anonymous_class_export_anchor(
+        &self,
+        class_idx: NodeIndex,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+    ) -> Option<NodeIndex> {
+        use tsz_scanner::SyntaxKind;
+        let has_export = self
+            .ctx
+            .arena
+            .has_modifier(modifiers, SyntaxKind::ExportKeyword);
+        let has_default = self
+            .ctx
+            .arena
+            .has_modifier(modifiers, SyntaxKind::DefaultKeyword);
+        if has_export && has_default {
+            // ClassDeclaration with `export default` modifiers. Use the first modifier
+            // node as the anchor so we report at `export` (col 1), not `class`.
+            if let Some(mods) = modifiers
+                && let Some(&first_mod_idx) = mods.nodes.first()
+            {
+                return Some(first_mod_idx);
+            }
+            return Some(class_idx);
+        }
+        // ClassExpression in `export default class` or `export = class`.
+        // The parent export-statement node starts at the `export` keyword.
+        if let Some(ext) = self.ctx.arena.get_extended(class_idx)
+            && let Some(parent) = self.ctx.arena.get(ext.parent)
+        {
+            if parent.kind == syntax_kind_ext::EXPORT_DECLARATION
+                && let Some(export_data) = self.ctx.arena.get_export_decl(parent)
+                && export_data.is_default_export
+            {
+                return Some(ext.parent);
+            }
+            if parent.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
+                return Some(ext.parent);
+            }
+        }
+        None
     }
 
     /// TS1497: Check that a decorator expression follows the valid grammar.
