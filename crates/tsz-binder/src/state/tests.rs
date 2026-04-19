@@ -550,6 +550,59 @@ export = Point;
 }
 
 #[test]
+fn export_equals_qualified_namespace_target_populates_cached_members() {
+    let source = r#"
+declare module "nestNamespaceModule" {
+    namespace a1.a2 {
+        class d {}
+    }
+    namespace a1.a2.n3 {
+        class c {}
+    }
+    export = a1.a2;
+}
+"#;
+    let mut parser = ParserState::new("ambient.d.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let exports = binder
+        .module_exports
+        .get("nestNamespaceModule")
+        .expect("expected cached module exports for ambient module");
+    assert!(exports.has("export="), "expected export= entry");
+    assert!(exports.has("d"), "expected export= target member d");
+    assert!(exports.has("n3"), "expected export= target member n3");
+}
+
+#[test]
+fn export_equals_import_equals_qualified_target_populates_cached_members() {
+    let source = r#"
+declare module "renameModule" {
+    namespace a.b {
+        class c {}
+    }
+    import d = a.b;
+    export = d;
+}
+"#;
+    let mut parser = ParserState::new("ambient2.d.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let exports = binder
+        .module_exports
+        .get("renameModule")
+        .expect("expected cached module exports for ambient module");
+    assert!(exports.has("export="), "expected export= entry");
+    assert!(exports.has("c"), "expected export= target member c");
+}
+
+#[test]
 fn iife_no_flow_start_node() {
     // For a non-async, non-generator IIFE, the binder should NOT create a
     // FlowStart node for the function body. This means the IIFE body runs
