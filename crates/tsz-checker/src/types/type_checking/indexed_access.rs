@@ -1,7 +1,5 @@
-//! Indexed access type validation (`T[K]`).
-//!
-//! Validates that the index type `K` is assignable to `keyof T` for indexed
-//! access type nodes, emitting TS2536 when the constraint is violated.
+//! Indexed access type validation (`T[K]`), including `keyof`-compat checks
+//! and TS2536 diagnostics for invalid index constraints.
 
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -236,11 +234,8 @@ impl<'a> CheckerState<'a> {
                             })
                     });
                 }
-                // Semantic fallback: when the constraint is a type expression (e.g.,
-                // `optionalKeys<T>`, `Extract<keyof T, string>`, or any alias), evaluate
-                // it and check if it's assignable to `keyof T` for the object type
-                // parameter. Use `keyof T` directly (not `keyof (constraint of T)`) so
-                // that deferred keyof relationships are preserved.
+                // Semantic fallback for alias/type-expression constraints
+                // (e.g. `optionalKeys<T>`, `Extract<keyof T, string>`).
                 if crate::query_boundaries::common::is_type_parameter_like(
                     self.ctx.types,
                     object_type,
@@ -251,9 +246,7 @@ impl<'a> CheckerState<'a> {
                     if self.is_assignable_to(constraint_eval, keyof_object_param) {
                         return true;
                     }
-                    // Also check if the constraint's structure contains a keyof
-                    // targeting the object (handles `optionalKeys<T>` which evaluates
-                    // to `{[k in keyof T]: ...}[keyof T]` — a subset of keyof T).
+                    // Also handle constraints that structurally contain `keyof T`.
                     if self.is_keyof_for_current_object(
                         constraint_eval,
                         object_type,
