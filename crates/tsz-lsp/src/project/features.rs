@@ -126,11 +126,15 @@ impl Project {
         self.touch_file(file_name);
         let start = Instant::now();
         let mut scope_stats = ScopeCacheStats::default();
-        let mut completions = {
+        // Preserve the distinction between "no completion context" (None)
+        // and "valid context with no items" (Some(empty)) — the former maps
+        // to tsserver `undefined`, the latter to an empty CompletionInfo.
+        let inner_result = {
             let file = self.files.get_mut(file_name)?;
             file.get_completions_with_stats(position, Some(&mut scope_stats))
-                .unwrap_or_default()
         };
+        let inner_emitted_result = inner_result.is_some();
+        let mut completions = inner_result.unwrap_or_default();
 
         let existing_file_symbols: FxHashSet<String> = self
             .files
@@ -256,7 +260,11 @@ impl Project {
         }
 
         let result = if completions.is_empty() {
-            None
+            if inner_emitted_result {
+                Some(Vec::new())
+            } else {
+                None
+            }
         } else {
             // Attach resolve data to each item so completionItem/resolve
             // can look up documentation using the original file and position.

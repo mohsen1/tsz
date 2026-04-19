@@ -1321,6 +1321,12 @@ function patchSessionClient(SessionClient, ts) {
         const preferTszCompletionsOverNativeForServerImports = new Set([
             "completionsImport_mergedReExport",
         ]);
+        // Tests that need an empty CompletionInfo (not undefined) at a
+        // position where native LS returns 0 entries. Returning an empty
+        // info here keeps `verify.completions({ marker })` satisfied.
+        const preferTszEmptyResultOverNativeUndefined = new Set([
+            "stringLiteralTypeCompletionsInTypeArgForNonGeneric1",
+        ]);
         // Tests where the native raw LanguageService lacks tsserver's
         // AutoImportProvider background project and cannot surface the
         // expected auto-import entries. tsz-server emits these correctly,
@@ -1593,6 +1599,13 @@ function patchSessionClient(SessionClient, ts) {
             }
 
             if (Array.isArray(nativeResult.entries) && nativeResult.entries.length === 0) {
+                if (
+                    preferTszEmptyResultOverNativeUndefined.has(currentTestName) &&
+                    result &&
+                    Array.isArray(result.entries)
+                ) {
+                    return result;
+                }
                 return undefined;
             }
             return ensureMergedReExportConfigEntry(nativeResult);
