@@ -728,19 +728,25 @@ impl<'a> DocumentSymbolProvider<'a> {
                             || self.is_declaration(clause_node.kind)
                         {
                             // Collect the inner declaration/alias and add the
-                            // `export` (and optional `default`) modifier. Use
-                            // `append_modifier` to de-duplicate when the inner
-                            // declaration already reports its own `export` —
-                            // e.g. when a `VARIABLE_STATEMENT` with an `export`
-                            // modifier is nested under an EXPORT_DECLARATION
-                            // wrapper — so the emitted kindModifiers doesn't
-                            // end up as `"export,export"`.
+                            // `export` modifier. `append_modifier` de-duplicates
+                            // when the inner declaration already reports its
+                            // own `export` — e.g. when a `VARIABLE_STATEMENT`
+                            // with an `export` modifier is nested under an
+                            // EXPORT_DECLARATION wrapper — so the emitted
+                            // kindModifiers doesn't end up as `"export,export"`.
+                            //
+                            // tsc does NOT append a `default` kindModifier:
+                            // named default exports (`export default class C`)
+                            // keep just `export`, anonymous ones
+                            // (`export default class { }`) get their name
+                            // replaced with `default` and still only carry
+                            // `export` — no `default` modifier at either site.
                             let mut symbols = self.collect_symbols(export_clause, container_name);
                             for sym in &mut symbols {
-                                let mut mods = String::from("export");
-                                if is_default {
-                                    append_modifier(&mut mods, "default");
+                                if is_default && self.is_synthetic_placeholder_name(&sym.name) {
+                                    sym.name = "default".to_string();
                                 }
+                                let mut mods = String::from("export");
                                 for existing in
                                     sym.kind_modifiers.split(',').filter(|m| !m.is_empty())
                                 {
@@ -763,7 +769,9 @@ impl<'a> DocumentSymbolProvider<'a> {
                         }
                     }
 
-                    // export default <expression> (non-declaration)
+                    // export default <expression> (non-declaration). tsc
+                    // labels these with `default` as the text and only
+                    // `export` as the modifier (no `default` modifier).
                     if is_default {
                         let range =
                             node_range(self.arena, self.line_map, self.source_text, node_idx);
@@ -772,7 +780,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                             name: "default".to_string(),
                             detail: None,
                             kind: SymbolKind::Variable,
-                            kind_modifiers: "export,default".to_string(),
+                            kind_modifiers: "export".to_string(),
                             range,
                             selection_range,
                             container_name: container_name.map(std::string::ToString::to_string),
@@ -855,6 +863,18 @@ impl<'a> DocumentSymbolProvider<'a> {
             }
         }
         symbols
+    }
+
+    /// The declaration arms use `<class>`, `<function>`, etc. as a stable
+    /// placeholder when a declaration has no identifier. When such a
+    /// placeholder bubbles up through a default export, tsc replaces it
+    /// with the literal `default` as the nav item's text — these are the
+    /// forms we'd substitute.
+    fn is_synthetic_placeholder_name(&self, name: &str) -> bool {
+        matches!(
+            name,
+            "<class>" | "<function>" | "<anonymous>" | "<interface>" | "<type>" | "<enum>"
+        )
     }
 
     /// Check if a node kind is a declaration.
