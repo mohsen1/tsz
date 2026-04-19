@@ -119,8 +119,12 @@ def main() -> int:
         ],
         help="Restrict to one failure category.",
     )
-    parser.add_argument("--code", help="Only pick failures involving this error code (e.g. TS2322).")
-    parser.add_argument("--path-only", action="store_true", help="Print only the test path(s).")
+    parser.add_argument(
+        "--code", help="Only pick failures involving this error code (e.g. TS2322)."
+    )
+    parser.add_argument(
+        "--path-only", action="store_true", help="Print only the test path(s)."
+    )
     args = parser.parse_args()
 
     if args.count < 1:
