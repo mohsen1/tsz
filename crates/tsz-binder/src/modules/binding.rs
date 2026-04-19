@@ -546,8 +546,10 @@ impl BinderState {
                         }
                         syntax_kind_ext::EXPORT_ASSIGNMENT => {
                             if let Some(assign) = arena.get_export_assignment(stmt_node)
-                                && let Some(sym_id) = self
-                                    .resolve_export_assignment_target_symbol(arena, assign.expression)
+                                && let Some(sym_id) = self.resolve_export_assignment_target_symbol(
+                                    arena,
+                                    assign.expression,
+                                )
                             {
                                 if assign.is_export_equals {
                                     exported_symbols.push(("export=".to_string(), sym_id));
