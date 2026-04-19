@@ -244,7 +244,7 @@ pub fn create_scanner(text: String, skip_trivia: bool) -> ScannerState {
 // Parser WASM Interface (High-Performance Parser)
 // =============================================================================
 
-use crate::api::wasm::compiler_options::CompilerOptions;
+use crate::api::wasm::compiler_options::{CompilerOptions, parse_compiler_options_json};
 use crate::binder::BinderState;
 use crate::checker::context::LibContext;
 use crate::context::emit::EmitContext;
@@ -391,17 +391,11 @@ impl Parser {
     /// ```
     #[wasm_bindgen(js_name = setCompilerOptions)]
     pub fn set_compiler_options(&mut self, options_json: &str) -> Result<(), JsValue> {
-        match serde_json::from_str::<CompilerOptions>(options_json) {
-            Ok(options) => {
-                self.compiler_options = options;
-                // Invalidate type cache when compiler options change
-                self.type_cache = None;
-                Ok(())
-            }
-            Err(e) => Err(JsValue::from_str(&format!(
-                "Failed to parse compiler options: {e}"
-            ))),
-        }
+        let options = parse_compiler_options_json(options_json)?;
+        self.compiler_options = options;
+        // Invalidate type cache when compiler options change
+        self.type_cache = None;
+        Ok(())
     }
 
     /// Add a lib file (e.g., lib.es5.d.ts) for global type resolution.
@@ -1728,18 +1722,12 @@ impl WasmProgram {
     /// * `options_json` - JSON string containing compiler options
     #[wasm_bindgen(js_name = setCompilerOptions)]
     pub fn set_compiler_options(&mut self, options_json: &str) -> Result<(), JsValue> {
-        match serde_json::from_str::<CompilerOptions>(options_json) {
-            Ok(options) => {
-                self.compiler_options = options;
-                // Invalidate any previous compilation since options affect typing
-                self.merged = None;
-                self.bind_results = None;
-                Ok(())
-            }
-            Err(e) => Err(JsValue::from_str(&format!(
-                "Failed to parse compiler options: {e}"
-            ))),
-        }
+        let options = parse_compiler_options_json(options_json)?;
+        self.compiler_options = options;
+        // Invalidate any previous compilation since options affect typing
+        self.merged = None;
+        self.bind_results = None;
+        Ok(())
     }
 
     /// Get the number of files in the program.
