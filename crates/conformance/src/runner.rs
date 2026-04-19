@@ -86,28 +86,20 @@ fn filter_lib_diagnostics_tsz(
 /// tsc emits TS6053 for unresolved `/.lib/` references. Since our wrapper
 /// resolves them, these TS6053 entries are artifacts that should not count
 /// as "missing" diagnostics.
-///
-/// Also filter synthetic-position TS6053 entries when tsc reports NO error
-/// codes. Those are cache-generation artifacts (tsc's `--traceResolution`
-/// output captured during `generate-tsc-cache`) that do not correspond to
-/// any expected baseline diagnostic and should not count as expected.
 fn filter_lib_diagnostics_tsc(
     tsc_result: &crate::tsc_results::TscResult,
 ) -> (Vec<u32>, Vec<DiagnosticFingerprint>) {
     let mut codes = tsc_result.error_codes.clone();
     let mut fps = tsc_result.diagnostic_fingerprints.clone();
 
-    // Cache-artifact cleanup: when tsc reports no real error codes, drop
-    // synthetic-position TS6053 / TS2688 entries that snuck into the
-    // fingerprint list (e.g. trace-resolution output for tests like
-    // library-reference-3). They don't correspond to anything tsc actually
-    // flags as a diagnostic in its baseline .errors.txt output.
-    if codes.is_empty() {
-        fps.retain(|fp| {
-            let synthetic = fp.file.is_empty() && fp.line == 0 && fp.column == 0;
-            !(synthetic && matches!(fp.code, 6053 | 2688))
-        });
-    }
+    // Structural invariant: every fingerprint's code must also appear in
+    // `error_codes`. If it doesn't, the fingerprint is a parser artifact —
+    // typically a `--traceResolution` trace line shaped like `error TSxxxx:`
+    // that our no-position regex matched but the code-list regex did not.
+    // Drop such orphan fingerprints unconditionally; this supersedes the
+    // previous hardcoded `TS6053 | TS2688 when codes.is_empty()` filter.
+    let code_set: std::collections::HashSet<u32> = codes.iter().copied().collect();
+    fps.retain(|fp| code_set.contains(&fp.code));
 
     let had_lib = fps.iter().any(is_lib_diagnostic);
     if !had_lib {
