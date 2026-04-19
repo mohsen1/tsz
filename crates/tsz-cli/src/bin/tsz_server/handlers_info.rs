@@ -56,8 +56,40 @@ fn symbol_kind_to_tsserver(
         SymbolKind::CallSignature => "call",
         SymbolKind::ConstructSignature => "construct",
         SymbolKind::IndexSignature => "index",
+        SymbolKind::SynthesizedConstructor => "constructor",
+        SymbolKind::Unknown => "",
         _ => "unknown",
     }
+}
+
+/// Mirror tsc's `escapeString(s, '"')` — replace control characters
+/// and backslash/double-quote with their JS escape sequences, and
+/// encode non-printable high chars as `\uNNNN`. Used on the filename
+/// stem before wrapping it in double quotes for external-module
+/// navbar/navtree root entries, so a filename like `my fil<TAB>e`
+/// renders as `"my fil\te"` rather than embedding a literal tab.
+fn escape_string_double_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\x08' => out.push_str("\\b"),
+            '\x0c' => out.push_str("\\f"),
+            '\x0b' => out.push_str("\\v"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            '\u{0085}' => out.push_str("\\u0085"),
+            c if (c as u32) < 0x20 => {
+                out.push_str(&format!("\\u{:04X}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Sort a navtree/navbar symbol slice in-place, recursively sorting each
@@ -72,18 +104,56 @@ fn symbol_kind_to_tsserver(
 /// from the source-ordered expected output).
 fn sort_symbols_deep(symbols: &mut [tsz::lsp::symbols::document_symbols::DocumentSymbol]) {
     use tsz::lsp::symbols::document_symbols::SymbolKind;
-    fn sort_key(sym: &tsz::lsp::symbols::document_symbols::DocumentSymbol) -> Option<String> {
-        // Mirror tsc's `tryGetName`: anything without a normal declaration
-        // name compares as "nameless" (sorts ahead of named siblings and
-        // falls back to kind ordinal among itself). Covers computed
-        // property names (`[x]`, `["foo"]`, `[1]`) and interface-type
-        // signatures (`()` call, `new()` construct, `[]` index).
-        let nameless = sym.name.starts_with('[') || sym.name == "()" || sym.name == "new()";
-        if nameless {
-            None
-        } else {
-            Some(sym.name.to_lowercase())
+    // Children of an expando-promoted class (synthesized constructor +
+    // BinaryExpression / CallExpression nav nodes from
+    // `X.prototype.y = …` / `Object.defineProperty(X, …)`) sort by
+    // source position — tsc's `compareChildren` falls through to
+    // `compareValues(node.pos, node.pos)` for expando nodes since
+    // their `tryGetName` returns undefined (or the owner's name).
+    let is_expando_container = symbols
+        .iter()
+        .any(|s| matches!(s.kind, SymbolKind::SynthesizedConstructor));
+    if is_expando_container {
+        symbols.sort_by(|a, b| {
+            (a.range.start.line, a.range.start.character)
+                .cmp(&(b.range.start.line, b.range.start.character))
+        });
+        for sym in symbols.iter_mut() {
+            sort_symbols_deep(&mut sym.children);
         }
+        return;
+    }
+    fn sort_key(sym: &tsz::lsp::symbols::document_symbols::DocumentSymbol) -> Option<String> {
+        // Mirror tsc's `tryGetName`: constructors and interface-type
+        // signatures are truly nameless. Computed property names
+        // where the inner expression is a simple literal (`[1]`,
+        // `["foo"]`) unwrap to the literal's value so they sort
+        // alongside identifier-named siblings — `[1]` compares as
+        // `"1"`, `["A7"]` as `"A7"`. Complex computed expressions
+        // stay nameless.
+        if sym.name == "()" || sym.name == "new()" || sym.name == "[]" {
+            return None;
+        }
+        if matches!(sym.kind, SymbolKind::Constructor) {
+            return None;
+        }
+        if let Some(stripped) = sym.name.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            let inner = stripped.trim();
+            // Numeric literal: `[1]`, `[42]`, `[3.14]`.
+            if !inner.is_empty() && inner.chars().all(|c| c.is_ascii_digit() || c == '.') {
+                return Some(inner.to_lowercase());
+            }
+            // String literal: `["foo"]` or `['foo']`. Strip the quotes.
+            if (inner.starts_with('"') && inner.ends_with('"') && inner.len() >= 2)
+                || (inner.starts_with('\'') && inner.ends_with('\'') && inner.len() >= 2)
+            {
+                return Some(inner[1..inner.len() - 1].to_lowercase());
+            }
+            // Anything else (`[Symbol.iterator]`, `[a]`, `[1+1]`) —
+            // tsc's `tryGetName` returns undefined → nameless.
+            return None;
+        }
+        Some(sym.name.to_lowercase())
     }
     // tsc's `compareChildren` tiebreaker is `navigationBarNodeKind` — the
     // AST SyntaxKind of the underlying node. Map our higher-level
@@ -120,6 +190,13 @@ fn sort_symbols_deep(symbols: &mut [tsz::lsp::symbols::document_symbols::Documen
             SymbolKind::CallSignature => 180,
             SymbolKind::ConstructSignature => 181,
             SymbolKind::IndexSignature => 182,
+            // Same ordinal as FunctionDeclaration: the synthetic
+            // constructor is backed by a function node, so tsc's
+            // comparer uses the FunctionDeclaration SyntaxKind.
+            SymbolKind::SynthesizedConstructor => 262,
+            // Unknown maps to BinaryExpression (227) — expando assignments
+            // like `X.y = 42` are BinaryExpression nav nodes in tsc.
+            SymbolKind::Unknown => 227,
         }
     }
     symbols.sort_by(|a, b| {
@@ -1921,7 +1998,14 @@ impl Server {
                     .and_then(|stem| stem.to_str())
                     .unwrap_or("")
                     .to_string();
-                (format!("\"{basename}\""), "module")
+                // tsc's `getItemName` wraps the filename-derived module
+                // name with `escapeString` (double-quote style) before
+                // quoting. Mirrors that so control characters render as
+                // their escape sequences (\t, \n, \\…).
+                (
+                    format!("\"{}\"", escape_string_double_quote(&basename)),
+                    "module",
+                )
             } else {
                 ("<global>".to_string(), "script")
             };
@@ -1995,15 +2079,20 @@ impl Server {
                     | SymbolKind::Namespace
                     | SymbolKind::File
                     | SymbolKind::Struct => true,
+                    // tsc's `isTopLevelFunctionDeclaration` allows only
+                    // SourceFile, ModuleBlock, MethodDeclaration, and
+                    // Constructor as parents. A function at the source
+                    // file level (None parent) or inside a method /
+                    // constructor body surfaces — but a function inside
+                    // a namespace body is NOT top-level here, because
+                    // tsc's parent-check sees the ModuleDeclaration
+                    // nav node (which isn't in the allowed list), not
+                    // the underlying ModuleBlock.
                     SymbolKind::Function => matches!(
                         parent_kind,
                         None // root (source file)
                             | Some(
-                                SymbolKind::File
-                                    | SymbolKind::Module
-                                    | SymbolKind::Namespace
-                                    | SymbolKind::Method
-                                    | SymbolKind::Constructor
+                                SymbolKind::File | SymbolKind::Method | SymbolKind::Constructor
                             )
                     ),
                     _ => false,
@@ -2105,7 +2194,10 @@ impl Server {
                     .and_then(|stem| stem.to_str())
                     .unwrap_or("")
                     .to_string();
-                (format!("\"{basename}\""), "module")
+                (
+                    format!("\"{}\"", escape_string_double_quote(&basename)),
+                    "module",
+                )
             } else {
                 ("<global>".to_string(), "script")
             };
