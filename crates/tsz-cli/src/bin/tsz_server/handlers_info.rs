@@ -1758,7 +1758,8 @@ impl Server {
             })) {
                 return Some(native);
             }
-            let (arena, _binder, root, source_text) = self.parse_and_bind_file(file)?;
+            let (arena, binder, root, source_text) = self.parse_and_bind_file(file)?;
+            let is_external_module = binder.is_external_module;
             let line_map = LineMap::build(&source_text);
             let provider = DocumentSymbolProvider::new(&arena, &line_map, &source_text);
             let symbols = provider.get_document_symbols(root);
@@ -1813,9 +1814,22 @@ impl Server {
             // Compute the end span based on source text length
             let total_lines = source_text.lines().count();
             let last_line_len = source_text.lines().last().map_or(0, str::len);
+            // External modules get a filename-as-module wrapper instead of
+            // the `<global>` / `script` header that scripts use. Matches
+            // tsserver's `getNavigationTree` output.
+            let (text, kind) = if is_external_module {
+                let basename = std::path::Path::new(file)
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                (format!("\"{basename}\""), "module")
+            } else {
+                ("<global>".to_string(), "script")
+            };
             Some(serde_json::json!({
-                "text": "<global>",
-                "kind": "script",
+                "text": text,
+                "kind": kind,
                 "childItems": child_items,
                 "spans": [{"start": {"line": 1, "offset": 1}, "end": {"line": total_lines, "offset": last_line_len + 1}}],
             }))
