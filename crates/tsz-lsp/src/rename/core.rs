@@ -62,6 +62,31 @@ impl<'a> RenameProvider<'a> {
             return PrepareRenameResult::cannot_rename("You cannot rename this element.");
         }
 
+        // `import.meta` / `new.target` are MetaProperty-like access
+        // expressions whose rhs identifier is a contextual keyword
+        // (`meta` / `target`). tsc rejects rename on the rhs. Cover
+        // both the true META_PROPERTY shape (`new.target`) and the
+        // tsz-specific PROPERTY_ACCESS_EXPRESSION lowering of
+        // `import.meta` (see parser's parse_import_expression — it
+        // returns PROPERTY_ACCESS_EXPRESSION whose lhs is the
+        // ImportKeyword token).
+        if let Some(ext) = self.arena.get_extended(node_idx)
+            && let Some(parent) = self.arena.get(ext.parent)
+        {
+            if parent.kind == syntax_kind_ext::META_PROPERTY {
+                return PrepareRenameResult::cannot_rename("You cannot rename this element.");
+            }
+            if parent.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = self.arena.get_access_expr(parent)
+                && access.name_or_argument == node_idx
+                && let Some(lhs) = self.arena.get(access.expression)
+                && (lhs.kind == tsz_scanner::SyntaxKind::ImportKeyword as u16
+                    || lhs.kind == tsz_scanner::SyntaxKind::NewKeyword as u16)
+            {
+                return PrepareRenameResult::cannot_rename("You cannot rename this element.");
+            }
+        }
+
         // `default` cannot be renamed when used as a declaration name
         // (parameter, variable, function, class), but CAN be renamed as a
         // property name in an object literal.
@@ -836,6 +861,24 @@ pub(super) fn extract_identifier_from_source(source: &str, pos: u32, end: u32) -
 pub(super) fn is_non_renamable_builtin(name: &str) -> bool {
     matches!(
         name,
-        "undefined" | "NaN" | "Infinity" | "globalThis" | "arguments"
+        "undefined"
+            | "NaN"
+            | "Infinity"
+            | "globalThis"
+            | "arguments"
+            // Primitive type keywords are parsed as Identifier in type
+            // positions but are not renamable (tsc rejects rename on
+            // these). Matches TypeScript's `isKnownIntrinsicTypeSymbol`
+            // behaviour for the navigation-rename path.
+            | "any"
+            | "bigint"
+            | "boolean"
+            | "never"
+            | "number"
+            | "object"
+            | "string"
+            | "symbol"
+            | "unknown"
+            | "void"
     )
 }
