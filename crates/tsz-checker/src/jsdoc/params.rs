@@ -231,7 +231,7 @@ impl<'a> CheckerState<'a> {
     /// (variable initializer, property/shorthand assignment, binary `=`
     /// assignment, parameter default). False for anonymous expressions in
     /// positions like `return function() {...}` or array literals.
-    fn function_has_effective_name(&self, func_idx: NodeIndex) -> bool {
+    pub(crate) fn function_has_effective_name(&self, func_idx: NodeIndex) -> bool {
         use tsz_parser::syntax_kind_ext;
         let Some(node) = self.ctx.arena.get(func_idx) else {
             return false;
