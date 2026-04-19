@@ -360,5 +360,5 @@ impl std::fmt::Display for ByteSpan<'_> {
 // =============================================================================
 
 #[cfg(test)]
-#[path = "../tests/span.rs"]
+#[path = "../../tests/span.rs"]
 mod tests;
