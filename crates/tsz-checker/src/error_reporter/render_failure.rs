@@ -1096,7 +1096,7 @@ impl<'a> CheckerState<'a> {
                 self.format_assignment_source_type_for_diagnostic(source, target, idx)
             };
             let widened_target = self.widen_fresh_object_literal_properties_for_display(target);
-            (src, self.format_type(widened_target))
+            (src, self.format_type_diagnostic_flattened(widened_target))
         } else if source_type == TypeId::OBJECT {
             ("{}".to_string(), tgt_str)
         } else {
