@@ -1254,6 +1254,40 @@ impl<'a> CheckerState<'a> {
             let substitution =
                 TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
 
+            // When a base interface has overloaded methods, defer mismatch reporting
+            // for those method names to the dedicated overload coverage pass below.
+            let overloaded_base_method_names: rustc_hash::FxHashSet<String> = {
+                let mut counts: rustc_hash::FxHashMap<String, usize> =
+                    rustc_hash::FxHashMap::default();
+                for &base_iface_idx in &base_iface_indices {
+                    let Some(base_node) = self.ctx.arena.get(base_iface_idx) else {
+                        continue;
+                    };
+                    let Some(base_iface) = self.ctx.arena.get_interface(base_node) else {
+                        continue;
+                    };
+                    for &base_member_idx in &base_iface.members.nodes {
+                        let Some(base_member_node) = self.ctx.arena.get(base_member_idx) else {
+                            continue;
+                        };
+                        if base_member_node.kind != METHOD_SIGNATURE {
+                            continue;
+                        }
+                        let Some(sig) = self.ctx.arena.get_signature(base_member_node) else {
+                            continue;
+                        };
+                        let Some(name) = self.get_property_name(sig.name) else {
+                            continue;
+                        };
+                        *counts.entry(name).or_insert(0) += 1;
+                    }
+                }
+                counts
+                    .into_iter()
+                    .filter_map(|(name, count)| (count > 1).then_some(name))
+                    .collect()
+            };
+
             let mut ts2430_emitted_for_base = false;
             'derived_loop: for (member_name, member_type, derived_member_idx, derived_kind) in
                 &derived_members
@@ -1298,6 +1332,15 @@ impl<'a> CheckerState<'a> {
 
                         found = true;
                         let base_type = instantiate_type(self.ctx.types, base_type, &substitution);
+
+                        if *derived_kind == METHOD_SIGNATURE
+                            && base_member_node.kind == METHOD_SIGNATURE
+                            && overloaded_base_method_names.contains(member_name)
+                        {
+                            // Overloaded method names are validated by the
+                            // overload coverage check after this loop.
+                            break;
+                        }
 
                         // For method signatures, also check required parameter
                         // count: derived methods must not require more parameters
@@ -1423,34 +1466,172 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // For each method with multiple base overloads, check coverage
+                let signature_has_literal_parameter = |type_id: TypeId| -> bool {
+                    let has_literal_param =
+                        |params: &[crate::query_boundaries::common::ParamInfo]| {
+                            params.iter().any(|param| {
+                                crate::query_boundaries::common::is_literal_type(
+                                    self.ctx.types,
+                                    param.type_id,
+                                )
+                            })
+                        };
+
+                    if let Some(signatures) =
+                        crate::query_boundaries::common::call_signatures_for_type(
+                            self.ctx.types,
+                            type_id,
+                        )
+                    {
+                        return signatures
+                            .iter()
+                            .any(|signature| has_literal_param(&signature.params));
+                    }
+
+                    if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(
+                        self.ctx.types,
+                        type_id,
+                    ) {
+                        return has_literal_param(&shape.params);
+                    }
+
+                    if let Some(shape) = crate::query_boundaries::common::callable_shape_for_type(
+                        self.ctx.types,
+                        type_id,
+                    ) {
+                        return shape
+                            .call_signatures
+                            .iter()
+                            .any(|signature| has_literal_param(&signature.params));
+                    }
+
+                    if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                        self.ctx.types,
+                        type_id,
+                    ) && shape.properties.len() == 1
+                        && shape.properties[0].is_method
+                    {
+                        let method_type = shape.properties[0].type_id;
+                        if let Some(signatures) =
+                            crate::query_boundaries::common::call_signatures_for_type(
+                                self.ctx.types,
+                                method_type,
+                            )
+                        {
+                            return signatures
+                                .iter()
+                                .any(|signature| has_literal_param(&signature.params));
+                        }
+                        if let Some(shape) =
+                            crate::query_boundaries::common::function_shape_for_type(
+                                self.ctx.types,
+                                method_type,
+                            )
+                        {
+                            return has_literal_param(&shape.params);
+                        }
+                        if let Some(shape) =
+                            crate::query_boundaries::common::callable_shape_for_type(
+                                self.ctx.types,
+                                method_type,
+                            )
+                        {
+                            return shape
+                                .call_signatures
+                                .iter()
+                                .any(|signature| has_literal_param(&signature.params));
+                        }
+                    }
+
+                    false
+                };
+
+                let select_implementation_signature = |signatures: &[TypeId]| -> Option<TypeId> {
+                    if signatures.is_empty() {
+                        return None;
+                    }
+
+                    let mut last_non_specialized: Option<TypeId> = None;
+                    for &signature in signatures {
+                        if !signature_has_literal_parameter(signature) {
+                            last_non_specialized = Some(signature);
+                        }
+                    }
+
+                    last_non_specialized.or_else(|| signatures.last().copied())
+                };
+
+                let has_non_specialized_signature = |signatures: &[TypeId]| -> bool {
+                    signatures
+                        .iter()
+                        .any(|&signature| !signature_has_literal_parameter(signature))
+                };
+
+                let select_implementation_signature_with_node =
+                    |signatures: &[(TypeId, NodeIndex)]| -> Option<(TypeId, NodeIndex)> {
+                        if signatures.is_empty() {
+                            return None;
+                        }
+
+                        let mut last_non_specialized: Option<(TypeId, NodeIndex)> = None;
+                        for &(signature, node_idx) in signatures {
+                            if !signature_has_literal_parameter(signature) {
+                                last_non_specialized = Some((signature, node_idx));
+                            }
+                        }
+
+                        last_non_specialized.or_else(|| signatures.last().copied())
+                    };
+
+                let has_non_specialized_signature_with_node =
+                    |signatures: &[(TypeId, NodeIndex)]| -> bool {
+                        signatures
+                            .iter()
+                            .any(|&(signature, _)| !signature_has_literal_parameter(signature))
+                    };
+
+                // For overloaded method inheritance, tsc compatibility hinges on
+                // the trailing (implementation) signature.
                 'overload_check: for (method_name, base_sigs) in &base_method_overloads {
                     let Some(derived_sigs) = derived_method_overloads.get(method_name) else {
                         continue;
                     };
-                    for &base_type in base_sigs {
-                        let mut matched = false;
-                        for &(derived_type, derived_idx) in derived_sigs {
-                            if !should_report_member_type_mismatch(
-                                self,
-                                derived_type,
-                                base_type,
-                                derived_idx,
-                            ) {
-                                matched = true;
-                                break;
-                            }
-                        }
-                        if !matched {
-                            self.error_at_node(
-                                iface_data.name,
-                                &format!(
-                                    "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
-                                ),
-                                diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
-                            );
-                            break 'overload_check;
-                        }
+                    if has_non_specialized_signature(base_sigs)
+                        && !has_non_specialized_signature_with_node(derived_sigs)
+                    {
+                        self.error_at_node(
+                            iface_data.name,
+                            &format!(
+                                "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
+                            ),
+                            diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
+                        );
+                        break 'overload_check;
+                    }
+                    let Some(base_trailing_sig) = select_implementation_signature(base_sigs) else {
+                        continue;
+                    };
+                    let Some((derived_trailing_sig, derived_trailing_idx)) =
+                        select_implementation_signature_with_node(derived_sigs)
+                    else {
+                        continue;
+                    };
+
+                    if !self
+                        .is_assignable_to_no_erase_generics(derived_trailing_sig, base_trailing_sig)
+                        && !self.should_suppress_assignability_for_parse_recovery(
+                            derived_trailing_idx,
+                            derived_trailing_idx,
+                        )
+                    {
+                        self.error_at_node(
+                            iface_data.name,
+                            &format!(
+                                "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
+                            ),
+                            diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
+                        );
+                        break 'overload_check;
                     }
                 }
             }
