@@ -256,7 +256,7 @@ pub fn get_jsdoc_content(comment: &CommentRange, source: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "../tests/comments_tests.rs"]
+#[path = "../../tests/comments_tests.rs"]
 mod tests;
 
 /// Get leading comments from cached comment ranges.
