@@ -1025,27 +1025,20 @@ impl Runner {
                     let tsc_has_2318 =
                         tsc_error_codes.contains(&2318) || tsc_fps.iter().any(|fp| fp.code == 2318);
                     if is_nolib && tsc_has_2318 {
-                        // When tsc has TS2318 only in fingerprints (not error_codes),
-                        // we need to also filter TS2318 from tsz's output to avoid
-                        // false positives.
+                        // Under @noLib, tsc suppresses cascaded errors from missing
+                        // global types. Mirror that by restricting tsz's output to
+                        // codes tsc reports, plus TS2318 itself so fingerprint
+                        // comparison sees our "Cannot find global type" diagnostics.
+                        // (The tsc cache sometimes stores TS2318 only in fingerprints,
+                        // with an empty error_codes list — keep TS2318 in both cases.)
                         let tsc_code_set: std::collections::HashSet<u32> =
                             tsc_error_codes.iter().cloned().collect();
-                        if !tsc_error_codes.contains(&2318) {
-                            // tsc has TS2318 in fingerprints only — filter it from tsz too
-                            compile_result
-                                .error_codes
-                                .retain(|c| tsc_code_set.contains(c));
-                            compile_result
-                                .diagnostic_fingerprints
-                                .retain(|fp| tsc_code_set.contains(&fp.code));
-                        } else {
-                            compile_result
-                                .error_codes
-                                .retain(|c| tsc_code_set.contains(c) || *c == 2318);
-                            compile_result
-                                .diagnostic_fingerprints
-                                .retain(|fp| tsc_code_set.contains(&fp.code) || fp.code == 2318);
-                        }
+                        compile_result
+                            .error_codes
+                            .retain(|c| tsc_code_set.contains(c) || *c == 2318);
+                        compile_result
+                            .diagnostic_fingerprints
+                            .retain(|fp| tsc_code_set.contains(&fp.code) || fp.code == 2318);
                     }
 
                     // If TSC expects only TS5024, tsz may emit extra diagnostics
