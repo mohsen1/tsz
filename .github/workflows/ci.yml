@@ -524,10 +524,9 @@ jobs:
           restore-keys: ${{ runner.os }}-test-build-
 
       - name: Build test binaries (dist-fast profile)
-        # Only the binaries actually uploaded downstream. Skips audit-unsoundness
-        # and the tsz-lsp bin (neither consumed by shards) and drops redundant
-        # `-p tsz-lsp` (already a transitive dep of tsz-cli).
-        run: cargo build --profile dist-fast -p tsz-cli --bin tsz --bin tsz-server -p tsz-conformance
+        # tsz-server is built in the `test-build-server` job in parallel so
+        # the fourslash lane can start ~1 min earlier on the critical path.
+        run: cargo build --profile dist-fast -p tsz-cli --bin tsz -p tsz-conformance
 
       - name: Upload test binaries
         uses: actions/upload-artifact@v4
@@ -536,7 +535,6 @@ jobs:
           path: |
             .target/dist-fast/tsz
             .target/dist-fast/tsz-conformance
-            .target/dist-fast/tsz-server
           retention-days: 1
 
       # Pre-build emit runner JS and TS harness while Rust compiles are cached
@@ -557,6 +555,56 @@ jobs:
           path: |
             scripts/emit/dist/
             scripts/node_modules/
+          retention-days: 1
+
+  # ─── Fourslash: Build only tsz-server (smaller, faster tail) ───────────────
+  # Split from test-build so the fourslash lane can start ~1 min earlier.
+  # Cache uses the same restore-keys prefix so the first run can seed itself
+  # from whatever test-build already cached.
+  test-build-server:
+    name: "Test Suite: Build tsz-server"
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    needs: [changes]
+    if: >-
+      needs.changes.outputs.solver == 'true' ||
+      needs.changes.outputs.checker == 'true' ||
+      needs.changes.outputs.binder == 'true' ||
+      needs.changes.outputs.parser == 'true' ||
+      needs.changes.outputs.scanner == 'true' ||
+      needs.changes.outputs.common == 'true' ||
+      needs.changes.outputs.root == 'true' ||
+      needs.changes.outputs.lsp == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .target
+          key: ${{ runner.os }}-test-build-server-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-test-build-server-
+            ${{ runner.os }}-test-build-
+
+      - name: Build tsz-server (dist-fast profile)
+        run: cargo build --profile dist-fast -p tsz-cli --bin tsz-server
+
+      - name: Upload tsz-server
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-fast-server
+          path: .target/dist-fast/tsz-server
           retention-days: 1
 
 
@@ -801,7 +849,7 @@ jobs:
           path: .target/dist-fast/
 
       - name: Make binaries executable
-        run: chmod +x .target/dist-fast/tsz .target/dist-fast/tsz-server
+        run: chmod +x .target/dist-fast/tsz
 
       - name: Download emit runner
         uses: actions/download-artifact@v4
@@ -986,7 +1034,7 @@ jobs:
     name: "Fourslash (${{ matrix.shard }}/10)"
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [changes, test-build]
+    needs: [changes, test-build-server]
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -1010,15 +1058,15 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Download test binaries
+      - name: Download tsz-server
         uses: actions/download-artifact@v4
         with:
-          name: dist-fast-binaries
+          name: dist-fast-server
           path: .target/dist-fast/
 
-      - name: Make binaries executable
+      - name: Make tsz-server executable
         run: |
-          chmod +x .target/dist-fast/tsz .target/dist-fast/tsz-server
+          chmod +x .target/dist-fast/tsz-server
           mkdir -p .target/release
           ln -sf "$PWD/.target/dist-fast/tsz-server" .target/release/tsz-server
 
