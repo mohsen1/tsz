@@ -2385,6 +2385,14 @@ impl<'a> CheckerState<'a> {
 #[cfg(test)]
 mod tests {
     use super::ts_extension_suffix;
+    use crate::context::{CheckerOptions, ScriptTarget};
+    use crate::module_resolution::build_module_resolution_maps;
+    use crate::state::CheckerState;
+    use std::sync::Arc;
+    use tsz_binder::BinderState;
+    use tsz_common::common::ModuleKind;
+    use tsz_parser::parser::ParserState;
+    use tsz_solver::TypeInterner;
 
     #[test]
     fn ts_extension_detects_ts() {
@@ -2434,5 +2442,114 @@ mod tests {
     #[test]
     fn ts_extension_ignores_json() {
         assert_eq!(ts_extension_suffix("./data.json"), None);
+    }
+
+    fn import_binding_is_type_only_for_named_files(
+        files: &[(&str, &str)],
+        entry_file: &str,
+        module_name: &str,
+        import_name: &str,
+    ) -> bool {
+        let mut arenas = Vec::with_capacity(files.len());
+        let mut binders = Vec::with_capacity(files.len());
+        let mut roots = Vec::with_capacity(files.len());
+        let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+        for (name, source) in files {
+            let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+            let root = parser.parse_source_file();
+            let mut binder = BinderState::new();
+            binder.bind_source_file(parser.get_arena(), root);
+            arenas.push(Arc::new(parser.get_arena().clone()));
+            binders.push(Arc::new(binder));
+            roots.push(root);
+        }
+
+        let entry_idx = file_names
+            .iter()
+            .position(|name| name == entry_file)
+            .expect("entry file should exist");
+        let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+
+        let all_arenas = Arc::new(arenas);
+        let all_binders = Arc::new(binders);
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            all_arenas[entry_idx].as_ref(),
+            all_binders[entry_idx].as_ref(),
+            &types,
+            file_names[entry_idx].clone(),
+            CheckerOptions {
+                allow_js: true,
+                check_js: true,
+                target: ScriptTarget::ES2015,
+                module: ModuleKind::ES2020,
+                ..CheckerOptions::default()
+            },
+        );
+
+        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+        checker.ctx.set_all_binders(Arc::clone(&all_binders));
+        checker.ctx.set_current_file_idx(entry_idx);
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker
+            .ctx
+            .set_resolved_module_paths(Arc::new(resolved_module_paths));
+        checker.ctx.set_resolved_modules(resolved_modules);
+
+        checker.check_source_file(roots[entry_idx]);
+        checker.is_import_specifier_type_only(module_name, import_name)
+            || checker.is_export_type_only_across_binders(module_name, import_name)
+            || (import_name == "default" && checker.is_module_export_equals_type_only(module_name))
+    }
+
+    #[test]
+    fn import_binding_is_type_only_detects_exported_interface() {
+        assert!(import_binding_is_type_only_for_named_files(
+            &[
+                (
+                    "mod.d.ts",
+                    r#"
+export interface WriteFileOptions {}
+export function writeFile(path: string, data: any, options: WriteFileOptions, callback: (err: Error) => void): void;
+                    "#,
+                ),
+                (
+                    "index.js",
+                    r#"
+import { writeFile, WriteFileOptions } from "./mod";
+writeFile("", "", /** @type {WriteFileOptions} */ ({}), () => {});
+                    "#,
+                ),
+            ],
+            "index.js",
+            "./mod",
+            "WriteFileOptions",
+        ));
+    }
+
+    #[test]
+    fn import_binding_is_type_only_detects_default_interface_export() {
+        assert!(import_binding_is_type_only_for_named_files(
+            &[
+                (
+                    "dep.d.ts",
+                    r#"
+export default interface TruffleContract {
+  foo: number;
+}
+                    "#,
+                ),
+                (
+                    "caller.js",
+                    r#"
+import TruffleContract from "./dep";
+                    "#,
+                ),
+            ],
+            "caller.js",
+            "./dep",
+            "default",
+        ));
     }
 }

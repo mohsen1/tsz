@@ -94,6 +94,16 @@ fn declaration_is_module_augmentation(
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn class_declaration_symbol(&self, class_idx: NodeIndex) -> Option<SymbolId> {
+        let arena_ptr = self.ctx.arena as *const _ as usize;
+        self.ctx
+            .binder
+            .cross_file_node_symbols
+            .get(&arena_ptr)
+            .and_then(|node_symbols| node_symbols.get(&class_idx.0).copied())
+            .or_else(|| self.ctx.binder.get_node_symbol(class_idx))
+    }
+
     /// Get the instance type of a class declaration.
     ///
     /// This is the type that instances of the class will have. It includes:
@@ -130,7 +140,7 @@ impl<'a> CheckerState<'a> {
         class: &tsz_parser::parser::node::ClassData,
         apply_module_augmentations: bool,
     ) -> TypeId {
-        let current_sym = self.ctx.binder.get_node_symbol(class_idx);
+        let current_sym = self.class_declaration_symbol(class_idx);
         let is_in_resolution_set = current_sym
             .is_some_and(|sym_id| self.ctx.class_instance_resolution_set.contains(&sym_id));
 
@@ -203,7 +213,7 @@ impl<'a> CheckerState<'a> {
         visited_nodes: &mut FxHashSet<NodeIndex>,
         apply_module_augmentations: bool,
     ) -> TypeId {
-        let current_sym = self.ctx.binder.get_node_symbol(class_idx);
+        let current_sym = self.class_declaration_symbol(class_idx);
         let factory = self.ctx.types.factory();
 
         // Try to insert into global class_instance_resolution_set for recursion prevention.
@@ -1787,10 +1797,40 @@ impl<'a> CheckerState<'a> {
 
         // Merge interface declarations for class/interface merging (class members take precedence)
         if let Some(sym_id) = current_sym
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && let Some((symbol_flags, symbol_declarations, symbol_name)) = self
+                .get_cross_file_symbol(sym_id)
+                .map(|symbol| {
+                    (
+                        symbol.flags,
+                        symbol.declarations.clone(),
+                        symbol.escaped_name.clone(),
+                    )
+                })
         {
-            let interface_decls: Vec<NodeIndex> = symbol
-                .declarations
+            let mut merged_symbol_flags = symbol_flags;
+            let mut merged_symbol_declarations = symbol_declarations;
+            let owner_file_idx = self.ctx.resolve_symbol_file_index(sym_id);
+
+            for &candidate_id in self.ctx.binder.get_symbols().find_all_by_name(&symbol_name) {
+                if candidate_id == sym_id || self.ctx.resolve_symbol_file_index(candidate_id) != owner_file_idx {
+                    continue;
+                }
+                let Some(candidate_symbol) = self.get_cross_file_symbol(candidate_id) else {
+                    continue;
+                };
+                if (candidate_symbol.flags & tsz_binder::symbol_flags::INTERFACE) == 0 {
+                    continue;
+                }
+
+                merged_symbol_flags |= candidate_symbol.flags;
+                for &decl_idx in &candidate_symbol.declarations {
+                    if !merged_symbol_declarations.contains(&decl_idx) {
+                        merged_symbol_declarations.push(decl_idx);
+                    }
+                }
+            }
+
+            let interface_decls: Vec<NodeIndex> = merged_symbol_declarations
                 .iter()
                 .copied()
                 .filter(|&decl_idx| {
@@ -1849,12 +1889,12 @@ impl<'a> CheckerState<'a> {
             // built-in `interface TemplateStringsArray extends ReadonlyArray<string>`).
             // Check cross-arena declarations and resolve the lib interface type.
             if interface_decls.is_empty()
-                && (symbol.flags & tsz_binder::symbol_flags::INTERFACE) != 0
+                && (merged_symbol_flags & tsz_binder::symbol_flags::INTERFACE) != 0
                 && !self.ctx.lib_contexts.is_empty()
             {
                 // Check for cross-arena interface declarations
                 let mut cross_arena_interface_type: Option<TypeId> = None;
-                for &decl_idx in &symbol.declarations {
+                for &decl_idx in &merged_symbol_declarations {
                     if let Some(arenas) =
                         self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
                     {
@@ -1885,12 +1925,12 @@ impl<'a> CheckerState<'a> {
 
                 // Fall back to resolve_lib_type_by_name if no cross-arena decls found
                 let lib_interface_type = cross_arena_interface_type
-                    .or_else(|| self.resolve_lib_type_by_name(&symbol.escaped_name));
+                    .or_else(|| self.resolve_lib_type_by_name(&symbol_name));
 
                 if let Some(interface_type) = lib_interface_type {
                     // Merge heritage types for the lib interface
                     let interface_type = self.merge_cross_file_heritage(
-                        &symbol.declarations,
+                        &merged_symbol_declarations,
                         sym_id,
                         interface_type,
                     );

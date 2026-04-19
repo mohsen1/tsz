@@ -1906,6 +1906,26 @@ fn compile_allow_import_clauses_to_merge_with_types_fixture_has_no_default_expor
         result.files_read,
         result.file_infos
     );
+
+    assert!(
+        !result.diagnostics.iter().any(|diag| diag.code == diagnostic_codes::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_EXPORTED_USING_EXPORT_TYPE),
+        "Expected merged default export path to avoid false TS1362, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+
+    assert!(
+        result.diagnostics.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF
+                && diag.message_text.contains("originalZZZ")
+        }),
+        "Expected value-only default import from b.ts to still emit TS2749, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
 }
 
 #[test]

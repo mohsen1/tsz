@@ -24,6 +24,44 @@ struct DestructuringSource {
 }
 
 impl<'a> FlowAnalyzer<'a> {
+    fn assigned_type_respecting_access_read_surface(
+        &self,
+        assignment_node: NodeIndex,
+        target: NodeIndex,
+        assigned_type: TypeId,
+    ) -> Option<TypeId> {
+        if !self.is_access_reference(target) {
+            return Some(assigned_type);
+        }
+
+        let Some(node) = self.arena.get(assignment_node) else {
+            return Some(assigned_type);
+        };
+        let Some(bin) = self.arena.get_binary_expr(node) else {
+            return Some(assigned_type);
+        };
+        if node.kind != syntax_kind_ext::BINARY_EXPRESSION
+            || bin.operator_token != SyntaxKind::EqualsToken as u16
+            || !self.is_matching_reference(bin.left, target)
+        {
+            return Some(assigned_type);
+        }
+
+        let Some(read_target_type) = self.node_types.and_then(|nt| nt.get(&target.0).copied())
+        else {
+            return Some(assigned_type);
+        };
+        if matches!(
+            read_target_type,
+            TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
+        ) {
+            return Some(assigned_type);
+        }
+
+        self.is_assignable_to(assigned_type, read_target_type)
+            .then_some(assigned_type)
+    }
+
     fn node_contains_descendant(&self, ancestor: NodeIndex, mut descendant: NodeIndex) -> bool {
         while descendant.is_some() {
             if descendant == ancestor {
@@ -272,7 +310,11 @@ impl<'a> FlowAnalyzer<'a> {
                             .is_some_and(|lit| lit.elements.nodes.is_empty())
                 });
             if is_unannotated_decl_init {
-                return Some(self.interner.array(TypeId::ANY));
+                return self.assigned_type_respecting_access_read_surface(
+                    assignment_node,
+                    target,
+                    self.interner.array(TypeId::ANY),
+                );
             }
 
             // Also handle `let x; x = []` — assignment of empty array to an
@@ -289,7 +331,11 @@ impl<'a> FlowAnalyzer<'a> {
                 && let Some(sym_id) = self.binder.resolve_identifier(self.arena, target)
                 && self.is_control_flow_typed_any_symbol(sym_id)
             {
-                return Some(self.interner.array(TypeId::ANY));
+                return self.assigned_type_respecting_access_read_surface(
+                    assignment_node,
+                    target,
+                    self.interner.array(TypeId::ANY),
+                );
             }
 
             // For flow narrowing, prefer literal types from AST nodes over the type checker's widened types
@@ -325,7 +371,11 @@ impl<'a> FlowAnalyzer<'a> {
                 {
                     return None;
                 }
-                return Some(literal_type);
+                return self.assigned_type_respecting_access_read_surface(
+                    assignment_node,
+                    target,
+                    literal_type,
+                );
             }
             // For variable declarations with type annotations, preserve the declared
             // type (return None) in two cases:
@@ -376,7 +426,11 @@ impl<'a> FlowAnalyzer<'a> {
                 {
                     return None;
                 }
-                return Some(nullish_type);
+                return self.assigned_type_respecting_access_read_surface(
+                    assignment_node,
+                    target,
+                    nullish_type,
+                );
             }
             let mut cached_rhs_type = None;
             if let Some(node_types) = self.node_types
@@ -405,6 +459,21 @@ impl<'a> FlowAnalyzer<'a> {
                         && bin.operator_token == SyntaxKind::EqualsToken as u16
                         && self.is_matching_reference(bin.left, target)
                     {
+                        // For divergent accessors, the assignment target type can be the
+                        // setter parameter type while later reads must still use the
+                        // getter surface. If the RHS isn't assignable to the read type of
+                        // a property/element access, don't narrow future reads to the RHS.
+                        if self
+                            .assigned_type_respecting_access_read_surface(
+                                assignment_node,
+                                target,
+                                rhs_type,
+                            )
+                            .is_none()
+                        {
+                            return None;
+                        }
+
                         let declared_target_type = self
                             .binder
                             .resolve_identifier(self.arena, bin.left)
@@ -427,15 +496,27 @@ impl<'a> FlowAnalyzer<'a> {
                             return None;
                         }
                     }
-                    return Some(rhs_type);
+                    return self.assigned_type_respecting_access_read_surface(
+                        assignment_node,
+                        target,
+                        rhs_type,
+                    );
                 }
             }
             let fallback_rhs_type = self.fallback_assigned_type_from_expression(rhs);
             if let Some(rhs_type) = fallback_rhs_type {
-                return Some(rhs_type);
+                return self.assigned_type_respecting_access_read_surface(
+                    assignment_node,
+                    target,
+                    rhs_type,
+                );
             }
             if let Some(rhs_type) = cached_rhs_type {
-                return Some(rhs_type);
+                return self.assigned_type_respecting_access_read_surface(
+                    assignment_node,
+                    target,
+                    rhs_type,
+                );
             }
             return None;
         }

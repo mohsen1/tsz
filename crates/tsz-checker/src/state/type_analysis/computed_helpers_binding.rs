@@ -1474,7 +1474,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         if (flags & symbol_flags::NAMESPACE_MODULE) != 0 {
-            return true;
+            return self.is_module_uninstantiated(sym_id);
         }
         if (flags & symbol_flags::TYPE) != 0 {
             return true;
@@ -1497,7 +1497,7 @@ impl<'a> CheckerState<'a> {
                         return false;
                     }
                     if (tf & symbol_flags::NAMESPACE_MODULE) != 0 {
-                        return true;
+                        return self.is_module_uninstantiated(target);
                     }
                     return (tf & symbol_flags::TYPE) != 0;
                 }

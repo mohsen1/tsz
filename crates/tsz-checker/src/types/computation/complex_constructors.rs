@@ -363,7 +363,7 @@ impl<'a> CheckerState<'a> {
         name_ident.escaped_text == "prototype"
     }
 
-    fn js_prototype_binding_literal_name(&self, name_idx: NodeIndex) -> Option<String> {
+    fn js_prototype_binding_literal_name(&mut self, name_idx: NodeIndex) -> Option<String> {
         use tsz_scanner::SyntaxKind;
 
         let name_node = self.ctx.arena.get(name_idx)?;
@@ -377,7 +377,17 @@ impl<'a> CheckerState<'a> {
                     .get_literal(name_node)
                     .map(|lit| lit.text.clone())
             }
-            _ => None,
+            _ => {
+                let prev_preserve = self.ctx.preserve_literal_types;
+                self.ctx.preserve_literal_types = true;
+                let key_type = self.get_type_of_node(name_idx);
+                self.ctx.preserve_literal_types = prev_preserve;
+                crate::query_boundaries::type_computation::access::literal_property_name(
+                    self.ctx.types,
+                    key_type,
+                )
+                .map(|atom| self.ctx.types.resolve_atom(atom))
+            }
         }
     }
 

@@ -309,7 +309,9 @@ impl<'a> CheckerState<'a> {
             let Some(sig) = self.ctx.arena.get_signature(member_node) else {
                 continue;
             };
-            let prop_name_text = self.node_text(sig.name)?.trim().to_string();
+            let Some(prop_name_text) = self.get_property_name_resolved(sig.name) else {
+                continue;
+            };
             if prop_name_text != children_prop_name || sig.type_annotation.is_none() {
                 continue;
             }
@@ -413,13 +415,14 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let key = self.format_type(children_type);
+            let key = self.resolve_type_for_property_access(children_type);
+            let key = self.evaluate_type_with_env(key);
             if self.type_has_jsx_children_callable_signature(children_type) {
                 if callable_seen.insert(key) {
-                    callable_candidates.push(children_type);
+                    callable_candidates.push(key);
                 }
             } else if other_seen.insert(key) {
-                other_candidates.push(children_type);
+                other_candidates.push(key);
             }
         }
 
@@ -457,9 +460,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let key = self.format_type(children_type);
+            let key = self.resolve_type_for_property_access(children_type);
+            let key = self.evaluate_type_with_env(key);
             if seen.insert(key) {
-                callable_candidates.push(children_type);
+                callable_candidates.push(key);
             }
         }
 
@@ -495,12 +499,30 @@ impl<'a> CheckerState<'a> {
     fn strip_jsx_readonly_application_alias(&mut self, type_id: TypeId) -> TypeId {
         let type_id = self.resolve_type_for_property_access(type_id);
         let type_id = self.evaluate_type_with_env(type_id);
+        if let Some(inner) =
+            crate::query_boundaries::common::unwrap_readonly_or_noinfer(self.ctx.types, type_id)
+        {
+            return self.resolve_type_for_property_access(inner);
+        }
         if let Some((base, args)) =
             tsz_solver::type_queries::get_application_info(self.ctx.types, type_id)
             && args.len() == 1
-            && self.format_type(base) == "Readonly"
         {
-            return self.resolve_type_for_property_access(args[0]);
+            let is_readonly_alias =
+                self.ctx
+                    .resolve_type_to_symbol_id(base)
+                    .is_some_and(|sym_id| {
+                        let lib_binders = self.get_lib_binders();
+                        let Some(symbol) =
+                            self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                        else {
+                            return false;
+                        };
+                        symbol.escaped_name == "Readonly"
+                    });
+            if is_readonly_alias {
+                return self.resolve_type_for_property_access(args[0]);
+            }
         }
         type_id
     }
