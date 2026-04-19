@@ -68,8 +68,7 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        // First, detect non-portable references (immutable borrow of self)
-        let _ = self.emit_non_portable_type_diagnostic(type_id, decl_name, file, pos, length);
+        self.emit_non_portable_type_diagnostic(type_id, decl_name, file, pos, length);
     }
 
     pub(crate) fn emit_non_portable_type_diagnostic(
@@ -130,14 +129,15 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(interner) = self.type_interner else {
             return;
         };
-        let Some(callee_type_id) = self.get_node_type_or_names(&[call.expression]) else {
+        let callee_type_id_opt = self.get_node_type_or_names(&[call.expression]);
+        let Some(callee_type_id) = callee_type_id_opt else {
             return;
         };
 
         // Extract the return type of the callee function
-        let Some(return_type_id) =
-            tsz_solver::type_queries::get_return_type(interner, callee_type_id)
-        else {
+        let return_type_id_opt =
+            tsz_solver::type_queries::get_return_type(interner, callee_type_id);
+        let Some(return_type_id) = return_type_id_opt else {
             return;
         };
 
@@ -159,8 +159,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         // Run the full portability check on the return type
-        let _ =
-            self.emit_non_portable_type_diagnostic(return_type_id, decl_name, file, pos, length);
+        self.emit_non_portable_type_diagnostic(return_type_id, decl_name, file, pos, length);
     }
 
     /// When the callee's return type can't be resolved through the solver,
@@ -189,19 +188,74 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        // Find the function declaration and look for a return type annotation
-        for &decl_idx in &symbol.declarations {
-            let source_arena = binder
-                .symbol_arenas
+        // Find the actual function symbol and its source arena.
+        //
+        // `binder.symbol_arenas` may be empty in the fast-path per-file binder
+        // (it is set to `Default::default()` to avoid cloning the full cross-program
+        // map into every file binder).  Use `self.global_symbol_arenas` — the full
+        // program-level map set on the emitter at emit time — as the reliable source.
+        //
+        // If `resolved` is still an ALIAS (import didn't resolve to the target), scan
+        // `module_exports` to find the same-named symbol from a foreign module.
+        let (_, func_symbol, func_arena_arc) = {
+            let current_arena_ptr = self.arena as *const _ as usize;
+
+            // Try resolved symbol first via global_symbol_arenas.
+            // If the arena IS the current file's arena, the resolved symbol is the
+            // local alias itself — fall through to module_exports scan below.
+            let use_resolved = self
+                .global_symbol_arenas
                 .get(&resolved)
-                .map(|arena| arena.as_ref())
-                .unwrap_or(self.arena);
+                .filter(|arena| std::sync::Arc::as_ptr(arena) as usize != current_arena_ptr);
+
+            if let Some(arena) = use_resolved {
+                (resolved, symbol, arena)
+            } else {
+                // Alias wasn't resolved to its target. Walk module_exports to find the
+                // same-named symbol in the specific module this alias imports from.
+                // Restricting to `import_module` prevents false positives from
+                // same-named exports in unrelated modules.
+                let import_module = symbol.import_module.as_deref().unwrap_or("");
+                let mut found = None;
+                for (path, table) in &binder.module_exports {
+                    // Only search in modules whose path ends with the import specifier.
+                    // e.g. import_module="foo" matches ".../node_modules/foo/index.d.ts"
+                    if !import_module.is_empty() {
+                        let node_modules_segment = format!("node_modules/{import_module}");
+                        if !path.contains(&node_modules_segment) {
+                            continue;
+                        }
+                    }
+                    if let Some(export_sym_id) = table.get(symbol.escaped_name.as_str()) {
+                        if export_sym_id == resolved {
+                            continue;
+                        }
+                        if let Some(arena) = self.global_symbol_arenas.get(&export_sym_id) {
+                            let ptr = std::sync::Arc::as_ptr(arena) as usize;
+                            if ptr != current_arena_ptr {
+                                if let Some(sym) = binder.symbols.get(export_sym_id) {
+                                    found = Some((export_sym_id, sym, arena));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                let Some((fid, fsym, farena)) = found else {
+                    return;
+                };
+                (fid, fsym, farena)
+            }
+        };
+
+        // Find the function declaration and look for a return type annotation
+        for &decl_idx in &func_symbol.declarations {
+            let source_arena = func_arena_arc.as_ref();
 
             let Some(decl_node) = source_arena.get(decl_idx) else {
                 continue;
             };
 
-            // Check if it's a function declaration with a return type annotation
             let Some(func) = source_arena.get_function(decl_node) else {
                 continue;
             };
@@ -210,18 +264,14 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
-            // Get the return type annotation node
             let Some(type_node) = source_arena.get(func.type_annotation) else {
                 continue;
             };
 
-            // If the return type is a type reference (simple identifier),
-            // find its symbol and check portability
             if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
                 let Some(type_ref) = source_arena.get_type_ref(type_node) else {
                     continue;
                 };
-                // Get the type name from the type reference
                 let type_name_idx = type_ref.type_name;
                 let type_name_text = source_arena
                     .get(type_name_idx)
@@ -231,15 +281,71 @@ impl<'a> DeclarationEmitter<'a> {
                     continue;
                 };
 
-                // Look up the type symbol through the binder's node-symbol mapping
-                let type_sym_id = binder.get_node_symbol(type_name_idx);
+                // Look up the return-type symbol via cross_file_node_symbols (keyed by
+                // arena pointer). The `binder.get_node_symbol` path only covers the
+                // local file's nodes; cross_file_node_symbols covers all arenas.
+                let arena_ptr = std::sync::Arc::as_ptr(func_arena_arc) as usize;
+                let type_sym_id = binder
+                    .cross_file_node_symbols
+                    .get(&arena_ptr)
+                    .and_then(|sym_map| sym_map.get(&type_name_idx.0).copied())
+                    // Fallback 1: same-file module exports (for types re-exported from
+                    // the function's source file).
+                    .or_else(|| {
+                        let func_file_path =
+                            self.arena_to_path.get(&arena_ptr).map(String::as_str)?;
+                        let table = binder.module_exports.get(func_file_path)?;
+                        let tsym = table.get(type_name_text.as_str())?;
+                        let tarena = self.global_symbol_arenas.get(&tsym)?;
+                        let current_arena_ptr = self.arena as *const _ as usize;
+                        (std::sync::Arc::as_ptr(tarena) as usize != current_arena_ptr)
+                            .then_some(tsym)
+                    })
+                    // Fallback 2: scan for an ALIAS symbol with this name declared in
+                    // the function's source file. This covers types that are imported
+                    // but not re-exported (e.g., `import { MySpecialType } from "nested"`
+                    // inside `foo/index.d.ts`). Only bare-specifier imports are considered
+                    // — relative imports cannot be non-portable.
+                    .or_else(|| {
+                        binder.symbols.iter().find_map(|candidate| {
+                            if candidate.escaped_name.as_str() != type_name_text.as_str() {
+                                return None;
+                            }
+                            if !candidate.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
+                                return None;
+                            }
+                            let import_mod = candidate.import_module.as_deref()?;
+                            // Only bare specifiers can point to nested node_modules.
+                            if import_mod.is_empty()
+                                || import_mod.starts_with('.')
+                                || import_mod.starts_with('/')
+                            {
+                                return None;
+                            }
+                            // Symbol must be declared in the same file as the function.
+                            let sym_arena = self.global_symbol_arenas.get(&candidate.id)?;
+                            (std::sync::Arc::as_ptr(sym_arena) as usize == arena_ptr)
+                                .then_some(candidate.id)
+                        })
+                    });
+
                 if let Some(type_sym_id) = type_sym_id {
+                    // Only check portability for ALIAS symbols (import bindings).
+                    let is_alias = binder
+                        .symbols
+                        .get(type_sym_id)
+                        .is_some_and(|s| s.has_any_flags(tsz_binder::symbol_flags::ALIAS));
+                    if !is_alias {
+                        continue;
+                    }
+
                     let current_file_path = self.current_file_path.as_deref().unwrap_or("");
                     let mut visited_types = rustc_hash::FxHashSet::default();
                     let mut visited_symbols = rustc_hash::FxHashSet::default();
                     let mut visited_declaration_symbols = rustc_hash::FxHashSet::default();
                     let mut visited_nodes = rustc_hash::FxHashSet::default();
 
+                    // Standard portability check first.
                     if let Some((from_path, _type_name)) = self.check_symbol_portability(
                         type_sym_id,
                         binder,
@@ -249,6 +355,26 @@ impl<'a> DeclarationEmitter<'a> {
                         &mut visited_declaration_symbols,
                         &mut visited_nodes,
                     ) {
+                        use tsz_common::diagnostics::Diagnostic;
+                        self.diagnostics.push(Diagnostic::from_code(
+                            2883,
+                            file,
+                            pos,
+                            length,
+                            &[decl_name, &from_path, &type_name_text],
+                        ));
+                        return;
+                    }
+
+                    // Fallback: the standard check fails when the alias's bare-specifier
+                    // import cannot be resolved from the CONSUMER'S perspective (e.g.,
+                    // `foo/index.d.ts` imports `MySpecialType from "nested"` but from
+                    // `entry.ts`, `"nested"` is not visible at the top-level).
+                    // Directly check whether `import_module` resolves to a NESTED
+                    // sub-node_modules package relative to the function's source package.
+                    if let Some(from_path) =
+                        self.check_nested_transitive_import(type_sym_id, binder)
+                    {
                         use tsz_common::diagnostics::Diagnostic;
                         self.diagnostics.push(Diagnostic::from_code(
                             2883,

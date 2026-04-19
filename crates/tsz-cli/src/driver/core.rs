@@ -2361,10 +2361,12 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
         options.composite = true;
         // composite implies declaration and incremental
         options.emit_declarations = true;
+        options.checker.emit_declarations = true;
         options.incremental = true;
     }
     if args.declaration {
         options.emit_declarations = true;
+        options.checker.emit_declarations = true;
     }
     if args.declaration_map {
         options.declaration_map = true;
