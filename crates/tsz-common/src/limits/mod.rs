@@ -227,5 +227,5 @@ pub const MAX_TYPE_RESOLUTION_OPS: u32 = 100_000;
 pub const THREAD_STACK_SIZE_BYTES: usize = 64 * 1024 * 1024;
 
 #[cfg(test)]
-#[path = "../tests/limits.rs"]
+#[path = "../../tests/limits.rs"]
 mod tests;
