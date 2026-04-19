@@ -800,20 +800,77 @@ impl<'a> DocumentSymbolProvider<'a> {
             // Module / Namespace Declaration
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 if let Some(module) = self.arena.get_module(node) {
-                    let name = self
-                        .get_name(module.name)
-                        .unwrap_or_else(|| "<module>".to_string());
+                    // Build the fully-qualified module name the way tsc
+                    // does: `namespace A.B.C {}` is modeled as nested
+                    // MODULE_DECLARATION nodes; tsc flattens them into a
+                    // single "A.B.C" nav entry whose children belong to
+                    // the innermost body. String-literal module names
+                    // (`declare module 'foo'`) keep their surrounding
+                    // quotes. `clean_module_text` strips line
+                    // continuations and truncates at 150 chars.
+                    let is_string_literal = self
+                        .arena
+                        .get(module.name)
+                        .is_some_and(|n| n.kind == SyntaxKind::StringLiteral as u16);
+                    let mut name_parts = Vec::new();
+                    let first_part = if is_string_literal {
+                        let start = module.name.0 as usize;
+                        let end = self
+                            .arena
+                            .get(module.name)
+                            .map_or(start, |n| n.end as usize);
+                        // Use raw source text so the quote character is
+                        // preserved exactly.
+                        self.source_text
+                            .get(
+                                self.arena
+                                    .get(module.name)
+                                    .map(|n| n.pos as usize)
+                                    .unwrap_or(0)..end,
+                            )
+                            .unwrap_or("")
+                            .to_string()
+                    } else {
+                        self.get_name(module.name).unwrap_or_default()
+                    };
+                    name_parts.push(first_part);
+
+                    let mut innermost = node_idx;
+                    let mut innermost_body = module.body;
+                    if !is_string_literal {
+                        let mut body = module.body;
+                        while !body.is_none() {
+                            let Some(body_node) = self.arena.get(body) else {
+                                break;
+                            };
+                            if body_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                                break;
+                            }
+                            let Some(inner) = self.arena.get_module(body_node) else {
+                                break;
+                            };
+                            if let Some(part) = self.get_name(inner.name) {
+                                name_parts.push(part);
+                            }
+                            innermost = body;
+                            innermost_body = inner.body;
+                            body = inner.body;
+                        }
+                    }
+
+                    let name = clean_module_text(&name_parts.join("."));
                     let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
                     let selection_range =
                         node_range(self.arena, self.line_map, self.source_text, module.name);
 
                     let modifiers = self.get_kind_modifiers_from_list(&module.modifiers);
 
-                    let children = if module.body.is_some() {
-                        self.collect_symbols(module.body, Some(&name))
+                    let children = if innermost_body.is_some() {
+                        self.collect_symbols(innermost_body, Some(&name))
                     } else {
                         vec![]
                     };
+                    let _ = innermost;
 
                     vec![DocumentSymbol {
                         name,
@@ -1252,6 +1309,50 @@ impl<'a> DocumentSymbolProvider<'a> {
         }
         None
     }
+}
+
+/// Mirror tsc's `cleanText`: truncate to 150 characters (appending
+/// `...`) and strip ECMAScript line terminators, including the
+/// trailing backslash from multiline string literal continuations.
+/// Used exclusively for module names — tsc applies this to every
+/// navbar/navtree text, but for our purposes identifier text doesn't
+/// ever contain line terminators so applying it narrowly is enough.
+fn clean_module_text(text: &str) -> String {
+    const MAX_LEN: usize = 150;
+    let truncated = if text.chars().count() > MAX_LEN {
+        let head: String = text.chars().take(MAX_LEN).collect();
+        format!("{head}...")
+    } else {
+        text.to_string()
+    };
+    let mut out = String::with_capacity(truncated.len());
+    let mut chars = truncated.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            // Backslash before a newline (line continuation inside a
+            // multi-line string) — drop both.
+            '\\' if matches!(chars.peek(), Some('\r' | '\n' | '\u{2028}' | '\u{2029}')) => {
+                // consume the paired line terminator (handling \r\n too)
+                match chars.next() {
+                    Some('\r') => {
+                        if matches!(chars.peek(), Some('\n')) {
+                            chars.next();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // Bare line terminators are removed.
+            '\r' => {
+                if matches!(chars.peek(), Some('\n')) {
+                    chars.next();
+                }
+            }
+            '\n' | '\u{2028}' | '\u{2029}' => {}
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// Helper to append a modifier to a comma-separated string.
