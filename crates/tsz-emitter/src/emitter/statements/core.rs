@@ -356,8 +356,11 @@ impl<'a> Printer<'a> {
                             let c_pos = self.all_comments[self.comment_emit_idx].pos;
                             let c_trailing =
                                 self.all_comments[self.comment_emit_idx].has_trailing_new_line;
-                            let comment_text =
-                                crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
+                            let comment_text = crate::safe_slice::slice_or_empty(
+                                text,
+                                c_pos as usize,
+                                c_end as usize,
+                            );
                             self.write_comment_with_reindent(comment_text, Some(c_pos));
                             if c_trailing {
                                 self.write_line();
@@ -1348,7 +1351,7 @@ impl<'a> Printer<'a> {
             for comment in comments {
                 self.write_space();
                 let comment_text =
-                    safe_slice::slice(text, comment.pos as usize, comment.end as usize);
+                    safe_slice::slice_or_empty(text, comment.pos as usize, comment.end as usize);
                 if !comment_text.is_empty() {
                     self.write_comment_with_reindent(comment_text, Some(comment.pos));
                 }
