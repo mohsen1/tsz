@@ -59,6 +59,8 @@ interface TestCase {
   noEmitHelpers: boolean;
   noEmitOnError: boolean;
   noEmitExpected: boolean;
+  noJsEmitExpected: boolean;
+  noDtsEmitExpected: boolean;
   importHelpers: boolean;
   esModuleInterop: boolean;
   useDefineForClassFields?: boolean;
@@ -624,6 +626,8 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       noEmitHelpers,
       noEmitOnError,
       noEmitExpected: baseline.noEmitExpected,
+      noJsEmitExpected: baseline.noJsEmitExpected,
+      noDtsEmitExpected: baseline.noDtsEmitExpected,
       importHelpers,
       esModuleInterop,
       useDefineForClassFields,
@@ -805,12 +809,15 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       cache.set(cacheKey, { hash: sourceHash, jsOutput: tszJs, dtsOutput: tszDts });
     }
 
-    // When the baseline says "missing from original emit" (noEmitExpected) and
-    // we ran with type checking (declaration mode), the compiler should produce
-    // no output (e.g., --noEmitOnError with type errors). Verify that tsz also
-    // produced no output. In JS-only mode (--noCheck), the noCheck emit content
-    // is the expected output, so we fall through to normal comparison.
-    if (!config.dtsOnly && testCase.noEmitExpected && emitDeclarations) {
+    // When the baseline says "missing from original emit" for a JS-like file
+    // (noJsEmitExpected) and we ran with type checking (declaration mode), the
+    // compiler should produce no JS output (e.g., --noEmitOnError with type
+    // errors). Verify that tsz also produced no output. In JS-only mode
+    // (--noCheck), the noCheck emit content is the expected output, so we fall
+    // through to normal comparison. A DTS-only "missing" marker (e.g. a
+    // cross-file declaration merge that can't be serialized) does NOT suppress
+    // JS emit — tsc still writes the JS in that case.
+    if (!config.dtsOnly && testCase.noJsEmitExpected && emitDeclarations) {
       const actualTrimmed = tszJs.replace(/\r\n/g, '\n').trim();
       if (actualTrimmed === '') {
         result.jsMatch = true; // Both sides agree: no output
@@ -865,7 +872,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
     }
 
     // For noEmitExpected tests in declaration mode, also verify no DTS output.
-    if (!config.jsOnly && testCase.noEmitExpected && emitDeclarations) {
+    if (!config.jsOnly && testCase.noDtsEmitExpected && emitDeclarations) {
       const actualDtsTrimmed = (tszDts ?? '').replace(/\r\n/g, '\n').trim();
       if (actualDtsTrimmed === '') {
         result.dtsMatch = true; // Both sides agree: no declaration output
