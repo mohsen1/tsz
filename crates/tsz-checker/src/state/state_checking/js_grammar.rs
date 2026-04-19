@@ -22,17 +22,28 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
         let orphaned = self.find_orphaned_extends_tags_for_statements(statements);
-        for (tag_name, pos, len) in orphaned {
+        for (tag_name, position) in orphaned {
             let message = format_message(
                 diagnostic_messages::JSDOC_IS_NOT_ATTACHED_TO_A_CLASS,
                 &[tag_name],
             );
-            self.ctx.error(
-                pos,
-                len,
-                message,
-                diagnostic_codes::JSDOC_IS_NOT_ATTACHED_TO_A_CLASS,
-            );
+            match position {
+                Some((pos, len)) => {
+                    self.ctx.error(
+                        pos,
+                        len,
+                        message,
+                        diagnostic_codes::JSDOC_IS_NOT_ATTACHED_TO_A_CLASS,
+                    );
+                }
+                None => {
+                    // Fully-dangling JSDoc — tsc emits at program level.
+                    self.error_program_level(
+                        message,
+                        diagnostic_codes::JSDOC_IS_NOT_ATTACHED_TO_A_CLASS,
+                    );
+                }
+            }
         }
     }
 
