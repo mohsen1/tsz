@@ -856,6 +856,12 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+        if !has_applicable
+            && self
+                .type_query_targets_generic_function_like_with_arity(type_query_idx, num_type_args)
+        {
+            has_applicable = true;
+        }
 
         if !has_applicable {
             // Skip TS2635 if any type argument node contains parse errors (e.g. JSDoc
@@ -871,6 +877,59 @@ impl<'a> CheckerState<'a> {
             let error_node = type_arg_nodes.last().copied().unwrap_or(type_query_idx);
             self.error_no_applicable_signatures_for_type_args(expr_type, error_node);
         }
+    }
+
+    fn type_query_targets_generic_function_like_with_arity(
+        &self,
+        type_query_idx: NodeIndex,
+        num_type_args: usize,
+    ) -> bool {
+        let Some(type_query_node) = self.ctx.arena.get(type_query_idx) else {
+            return false;
+        };
+        let Some(type_query) = self.ctx.arena.get_type_query(type_query_node) else {
+            return false;
+        };
+        let Some(sym_u32) = self.resolve_value_symbol_for_lowering(type_query.expr_name) else {
+            return false;
+        };
+        let sym_id = tsz_binder::SymbolId(sym_u32);
+        let value_decl = self
+            .get_cross_file_symbol(sym_id)
+            .map(|symbol| symbol.value_declaration)
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .map(|symbol| symbol.value_declaration)
+            })
+            .unwrap_or(NodeIndex::NONE);
+        if value_decl.is_none() {
+            return false;
+        }
+        let Some(decl_node) = self.ctx.arena.get(value_decl) else {
+            return false;
+        };
+        if let Some(func) = self.ctx.arena.get_function(decl_node) {
+            return func
+                .type_parameters
+                .as_ref()
+                .map_or(0, |tps| tps.nodes.len())
+                == num_type_args;
+        }
+        if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+            && let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+            && var_decl.initializer.is_some()
+            && let Some(init_node) = self.ctx.arena.get(var_decl.initializer)
+            && let Some(func) = self.ctx.arena.get_function(init_node)
+        {
+            return func
+                .type_parameters
+                .as_ref()
+                .map_or(0, |tps| tps.nodes.len())
+                == num_type_args;
+        }
+        false
     }
 
     /// Walk a type node AST subtree to find `TYPE_QUERY` nodes (`typeof expr`)
