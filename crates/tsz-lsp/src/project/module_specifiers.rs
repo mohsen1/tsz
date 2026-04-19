@@ -95,6 +95,16 @@ impl Project {
                 candidates.push(root_dirs_relative);
             }
         } else if pref == Some("relative") || pref == Some("project-relative") {
+            // Explicit path mappings (tsconfig `paths`) are user-declared
+            // and take precedence over workspace-package specifiers derived
+            // from a target's package.json `name`. Order them first so that
+            // aliases like `{"pkg-2/*": ["./packages/pkg-2/src/*"]}` win over
+            // the `pkg-2/src/utils` bare-package form tsc would otherwise
+            // consider non-preferred. `package_imports` (package.json
+            // `imports` / `#…` specifiers), however, is NOT tsconfig-level
+            // and must stay behind the relative specifier for project-
+            // relative preference to keep tsc parity.
+            candidates.extend(path_mappings);
             // TypeScript still prefers dependency package specifiers (workspace links /
             // node_modules) over deep relative traversals, even under explicit
             // `relative` preference.
@@ -108,7 +118,6 @@ impl Project {
             if let Some(root_dirs_relative) = root_dirs_relative {
                 candidates.push(root_dirs_relative);
             }
-            candidates.extend(path_mappings);
             candidates.extend(package_imports);
         } else {
             candidates.push(relative);
