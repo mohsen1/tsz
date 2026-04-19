@@ -11,6 +11,7 @@ use crate::{
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
+use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
@@ -33,6 +34,13 @@ fn is_module_file_extension(file_name: &str) -> bool {
         || file_name.ends_with(".cjs")
 }
 
+fn is_js_like_file_name(file_name: &str) -> bool {
+    file_name.ends_with(".js")
+        || file_name.ends_with(".jsx")
+        || file_name.ends_with(".mjs")
+        || file_name.ends_with(".cjs")
+}
+
 impl BinderStateScopeInputs {
     pub(super) fn with_scopes(scopes: Vec<Scope>, node_scope_ids: FxHashMap<u32, ScopeId>) -> Self {
         Self {
@@ -45,6 +53,109 @@ impl BinderStateScopeInputs {
 }
 
 impl BinderState {
+    fn parse_jsdoc_import_tag(rest: &str) -> Vec<(String, String, String)> {
+        let rest = rest.trim();
+        let mut results = Vec::new();
+        if let Some(from_idx) = rest.rfind("from") {
+            let before_from = rest[..from_idx].trim();
+            if matches!(
+                before_from.split_whitespace().next(),
+                Some("type" | "defer")
+            ) && before_from.contains(char::is_whitespace)
+            {
+                return results;
+            }
+            let after_from = rest[from_idx + 4..].trim();
+            let quote = after_from.chars().next().unwrap_or(' ');
+            if quote == '"' || quote == '\'' || quote == '`' {
+                let specifier = after_from[1..]
+                    .split(quote)
+                    .next()
+                    .unwrap_or("")
+                    .to_string();
+                if before_from.starts_with('{') && before_from.ends_with('}') {
+                    let inner = &before_from[1..before_from.len() - 1];
+                    for part in inner.split(',') {
+                        let part = part.trim();
+                        if part.is_empty() {
+                            continue;
+                        }
+                        let parts: Vec<&str> = part.split(" as ").collect();
+                        if parts.len() == 2 {
+                            results.push((
+                                parts[1].trim().to_string(),
+                                specifier.clone(),
+                                parts[0].trim().to_string(),
+                            ));
+                        } else {
+                            results.push((part.to_string(), specifier.clone(), part.to_string()));
+                        }
+                    }
+                } else if let Some(ns_name) = before_from.strip_prefix("* as ") {
+                    let ns_name = ns_name.trim().to_string();
+                    if !ns_name.is_empty() {
+                        results.push((ns_name, specifier, "*".to_string()));
+                    }
+                } else {
+                    let default_name = before_from.to_string();
+                    if !default_name.is_empty() {
+                        results.push((default_name, specifier, "default".to_string()));
+                    }
+                }
+            }
+        }
+        results
+    }
+
+    fn bind_jsdoc_import_tags(
+        &mut self,
+        arena: &NodeArena,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+        root: NodeIndex,
+    ) {
+        if source_file.comments.is_empty()
+            || source_file.is_declaration_file
+            || !is_js_like_file_name(&source_file.file_name)
+        {
+            return;
+        }
+
+        let source_text = source_file.text.as_ref();
+        for comment in &source_file.comments {
+            if !is_jsdoc_comment(comment, source_text) {
+                continue;
+            }
+            let content = get_jsdoc_content(comment, source_text);
+            for line in content.lines() {
+                let trimmed = line.trim_start_matches('*').trim();
+                let Some(rest) = trimmed.strip_prefix("@import") else {
+                    continue;
+                };
+                for (local_name, specifier, import_name) in Self::parse_jsdoc_import_tag(rest) {
+                    if local_name.is_empty() || specifier.is_empty() {
+                        continue;
+                    }
+                    self.file_import_sources.push(specifier.clone());
+                    // Namespace JSDoc imports (`* as NS`) must be visible to the
+                    // regular symbol resolver for qualified references like `NS.I`.
+                    // Default/named JSDoc imports already flow through the JSDoc typedef
+                    // path and creating parallel ALIAS symbols for those can recurse.
+                    if import_name != "*" {
+                        continue;
+                    }
+                    let sym_id =
+                        self.declare_symbol(arena, &local_name, symbol_flags::ALIAS, root, false);
+                    if let Some(sym) = self.symbols.get_mut(sym_id) {
+                        // JSDoc @import bindings are type-only aliases that target a module member.
+                        sym.is_type_only = true;
+                        sym.import_module = Some(specifier.clone());
+                        sym.import_name = Some(import_name);
+                    }
+                }
+            }
+        }
+    }
+
     #[must_use]
     pub fn new() -> Self {
         Self::with_options(BinderOptions::default())
@@ -941,6 +1052,8 @@ impl BinderState {
                 self.bind_node(arena, stmt_idx);
                 self.top_level_flow.insert(stmt_idx.0, self.current_flow);
             }
+
+            self.bind_jsdoc_import_tags(arena, sf, root);
 
             // Re-process `export = X` statements that may have failed on the first
             // pass due to forward-reference ordering (e.g., `export = React` appears
