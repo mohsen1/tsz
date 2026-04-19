@@ -45,6 +45,10 @@ export interface BaselineContent {
    * noCheck emit content for comparison in JS-only mode.
    */
   noEmitExpected: boolean;
+  /** True when a JS (.js/.jsx/.mjs/.cjs) file is marked missing. */
+  noJsEmitExpected: boolean;
+  /** True when a DTS (.d.ts/.d.mts/.d.cts) file is marked missing. */
+  noDtsEmitExpected: boolean;
 }
 
 /**
@@ -62,6 +66,8 @@ export function parseBaseline(content: string): BaselineContent {
     dtsFileName: null,
     files: new Map(),
     noEmitExpected: false,
+    noJsEmitExpected: false,
+    noDtsEmitExpected: false,
   };
 
   // Split by file markers: //// [filename]
@@ -81,6 +87,14 @@ export function parseBaseline(content: string): BaselineContent {
   }
   if (missingFromOriginalEmitFiles.size > 0) {
     result.noEmitExpected = true;
+    for (const missing of missingFromOriginalEmitFiles) {
+      if (/\.(js|jsx|mjs|cjs)$/.test(missing)) {
+        result.noJsEmitExpected = true;
+      }
+      if (/\.d\.(ts|mts|cts)$/.test(missing)) {
+        result.noDtsEmitExpected = true;
+      }
+    }
   }
 
   let match: RegExpExecArray | null;
