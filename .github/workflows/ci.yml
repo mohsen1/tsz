@@ -518,7 +518,10 @@ jobs:
           restore-keys: ${{ runner.os }}-test-build-
 
       - name: Build test binaries (dist-fast profile)
-        run: cargo build --profile dist-fast -p tsz-cli -p tsz-conformance -p tsz-lsp
+        # Only the binaries actually uploaded downstream. Skips audit-unsoundness
+        # and the tsz-lsp bin (neither consumed by shards) and drops redundant
+        # `-p tsz-lsp` (already a transitive dep of tsz-cli).
+        run: cargo build --profile dist-fast -p tsz-cli --bin tsz --bin tsz-server -p tsz-conformance
 
       - name: Upload test binaries
         uses: actions/upload-artifact@v4
