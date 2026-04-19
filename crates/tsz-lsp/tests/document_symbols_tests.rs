@@ -796,13 +796,15 @@ fn test_document_symbols_export_default_class() {
     let symbols = provider.get_document_symbols(root);
 
     assert!(!symbols.is_empty(), "Should produce at least one symbol");
-    // Should have export,default modifiers
     let sym = &symbols[0];
-    assert!(
-        sym.kind_modifiers.contains("export") && sym.kind_modifiers.contains("default"),
-        "Expected 'export,default' modifiers, got: '{}'",
+    // tsc emits just `export` (no `default` modifier) for named default
+    // exports; the `default`-ness is encoded implicitly.
+    assert_eq!(
+        sym.kind_modifiers, "export",
+        "Expected 'export' modifier on named default export, got: '{}'",
         sym.kind_modifiers
     );
+    assert_eq!(sym.name, "Widget");
 }
 
 #[test]
@@ -817,11 +819,30 @@ fn test_document_symbols_export_default_function() {
 
     assert!(!symbols.is_empty(), "Should produce at least one symbol");
     let sym = &symbols[0];
-    assert!(
-        sym.kind_modifiers.contains("export") && sym.kind_modifiers.contains("default"),
-        "Expected 'export,default' modifiers, got: '{}'",
+    assert_eq!(
+        sym.kind_modifiers, "export",
+        "Expected 'export' modifier on named default export, got: '{}'",
         sym.kind_modifiers
     );
+    assert_eq!(sym.name, "main");
+}
+
+#[test]
+fn test_document_symbols_export_default_anonymous_class() {
+    let source = "export default class {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert!(!symbols.is_empty(), "Should produce at least one symbol");
+    let sym = &symbols[0];
+    // Anonymous default export: name becomes "default", modifier stays
+    // just `export`.
+    assert_eq!(sym.name, "default");
+    assert_eq!(sym.kind_modifiers, "export");
 }
 
 #[test]
