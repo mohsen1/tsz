@@ -762,38 +762,6 @@ impl<'a> CheckerState<'a> {
                     })
         };
 
-        let is_constructor_like = |type_id: TypeId| -> bool {
-            if crate::query_boundaries::common::has_construct_signatures(self.ctx.types, type_id) {
-                return true;
-            }
-            if let Some(shape) =
-                crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
-            {
-                if shape.is_constructor {
-                    return true;
-                }
-            }
-            if let Some(app) =
-                crate::query_boundaries::common::type_application(self.ctx.types, type_id)
-            {
-                if crate::query_boundaries::common::has_construct_signatures(
-                    self.ctx.types,
-                    app.base,
-                ) {
-                    return true;
-                }
-                if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(
-                    self.ctx.types,
-                    app.base,
-                ) {
-                    if shape.is_constructor {
-                        return true;
-                    }
-                }
-            }
-            false
-        };
-
         let has_own_signature_type_params = |type_id: TypeId| -> bool {
             if let Some(shape) =
                 crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
@@ -1046,8 +1014,6 @@ impl<'a> CheckerState<'a> {
                 && !(!has_own_signature_type_params(source)
                     && contains_type_parameters(source)
                     && !contains_type_parameters(target))
-                && !is_constructor_like(source)
-                && !is_constructor_like(target)
                 && !target_is_index_signature())
     }
 
