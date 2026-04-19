@@ -104,8 +104,7 @@ fn filter_lib_diagnostics_tsc(
     // flags as a diagnostic in its baseline .errors.txt output.
     if codes.is_empty() {
         fps.retain(|fp| {
-            let synthetic =
-                fp.file.is_empty() && fp.line == 0 && fp.column == 0;
+            let synthetic = fp.file.is_empty() && fp.line == 0 && fp.column == 0;
             !(synthetic && matches!(fp.code, 6053 | 2688))
         });
     }
