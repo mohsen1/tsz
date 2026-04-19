@@ -2138,6 +2138,14 @@ impl Server {
         }
 
         if Self::is_project_config_file(&path) {
+            // Always include package.json files outside node_modules: they
+            // carry workspace-package metadata (`name`, `exports`, …) that
+            // the auto-import specifier resolver needs even for sibling
+            // packages that aren't ancestors of the currently-edited file.
+            // `tsconfig.json` / `jsconfig.json` stay gated by ancestry.
+            if path.ends_with("/package.json") {
+                return true;
+            }
             return Self::is_config_related_to_file(&path, &current_file);
         }
 
