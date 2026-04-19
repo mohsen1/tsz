@@ -50,6 +50,7 @@ fn symbol_kind_to_tsserver(
         SymbolKind::EnumMember => "enum member",
         SymbolKind::TypeParameter => "type parameter",
         SymbolKind::Struct => "type",
+        SymbolKind::Alias => "alias",
         _ => "unknown",
     }
 }
@@ -1867,7 +1868,8 @@ impl Server {
             })) {
                 return Some(native);
             }
-            let (arena, _binder, root, source_text) = self.parse_and_bind_file(file)?;
+            let (arena, binder, root, source_text) = self.parse_and_bind_file(file)?;
+            let is_external_module = binder.is_external_module;
             let line_map = LineMap::build(&source_text);
             let provider = DocumentSymbolProvider::new(&arena, &line_map, &source_text);
             let symbols = provider.get_document_symbols(root);
@@ -1978,14 +1980,26 @@ impl Server {
             }
 
             let mut items = Vec::new();
-            // Root item
+            // Root item — external modules get a filename-as-module header
+            // (matches tsserver's `getNavigationBarItems` — mirrors the
+            // navtree wrapping in `handle_navtree`).
             let total_lines = source_text.lines().count();
             let last_line_len = source_text.lines().last().map_or(0, str::len);
             let child_items: Vec<serde_json::Value> =
                 symbols.iter().map(navbar_child_item).collect();
+            let (root_text, root_kind) = if is_external_module {
+                let basename = std::path::Path::new(file)
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                (format!("\"{basename}\""), "module")
+            } else {
+                ("<global>".to_string(), "script")
+            };
             let mut root = serde_json::json!({
-                "text": "<global>",
-                "kind": "script",
+                "text": root_text,
+                "kind": root_kind,
                 "indent": 0,
                 "spans": [{"start": {"line": 1, "offset": 1}, "end": {"line": total_lines, "offset": last_line_len + 1}}],
             });
