@@ -508,25 +508,28 @@ impl<'a> CheckerState<'a> {
         // For `export = alias` where `alias` comes from `import alias = Namespace`,
         // resolve the namespace target explicitly so named imports can see members.
         if (target_symbol.flags & symbol_flags::ALIAS) != 0 {
-            let decl_idx = if target_symbol.value_declaration.is_some() {
-                target_symbol.value_declaration
-            } else if let Some(&first_decl) = target_symbol.declarations.first() {
-                first_decl
-            } else {
-                NodeIndex::NONE
-            };
-
-            if decl_idx.is_some()
-                && let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                && decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                && let Some(import_decl) = self.ctx.arena.get_import_decl(decl_node)
+            let mut decl_candidates = target_symbol.declarations.clone();
+            if target_symbol.value_declaration.is_some()
+                && !decl_candidates.contains(&target_symbol.value_declaration)
             {
-                let module_ref = import_decl.module_specifier;
-                if let Some(module_ref_node) = self.ctx.arena.get(module_ref)
-                    && module_ref_node.kind != SyntaxKind::StringLiteral as u16
-                    && let Some(target_id) = self.resolve_qualified_symbol(module_ref)
+                decl_candidates.push(target_symbol.value_declaration);
+            }
+
+            for decl_idx in decl_candidates {
+                if !decl_idx.is_some() {
+                    continue;
+                }
+                if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                    && decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    && let Some(import_decl) = self.ctx.arena.get_import_decl(decl_node)
                 {
-                    candidate_symbol_ids.push(target_id);
+                    let module_ref = import_decl.module_specifier;
+                    if let Some(module_ref_node) = self.ctx.arena.get(module_ref)
+                        && module_ref_node.kind != SyntaxKind::StringLiteral as u16
+                        && let Some(target_id) = self.resolve_qualified_symbol(module_ref)
+                    {
+                        candidate_symbol_ids.push(target_id);
+                    }
                 }
             }
         }
@@ -578,7 +581,6 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-
         false
     }
 

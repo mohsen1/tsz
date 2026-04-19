@@ -763,12 +763,10 @@ impl BinderState {
                     // For example: export = Utils; makes all Utils exports available
                     self.bind_node(arena, assign.expression);
 
-                    // If the expression is an identifier, resolve it and copy its exports
-                    if let Some(name) = Self::get_identifier_name(arena, assign.expression)
-                        && let Some(sym_id) = self
-                            .current_scope
-                            .get(name)
-                            .or_else(|| self.file_locals.get(name))
+                    // Resolve the `export =` target (identifier or qualified name)
+                    // and copy its exports to the current module.
+                    if let Some(sym_id) =
+                        self.resolve_export_assignment_target_symbol(arena, assign.expression)
                     {
                         // Track the explicit `export =` target so require-import resolution
                         // can recover the assigned symbol directly.
@@ -1201,6 +1199,72 @@ impl BinderState {
                 // For other node types, no symbols to create
             }
         }
+    }
+
+    pub(crate) fn resolve_export_assignment_target_symbol(
+        &self,
+        arena: &NodeArena,
+        expression: NodeIndex,
+    ) -> Option<crate::SymbolId> {
+        fn collect_qualified_parts(
+            arena: &NodeArena,
+            node_idx: NodeIndex,
+            out: &mut Vec<String>,
+        ) -> bool {
+            let Some(node) = arena.get(node_idx) else {
+                return false;
+            };
+            if let Some(ident) = arena.get_identifier(node) {
+                out.push(ident.escaped_text.to_string());
+                return true;
+            }
+            if node.kind == syntax_kind_ext::QUALIFIED_NAME
+                && let Some(qualified) = arena.get_qualified_name(node)
+            {
+                return collect_qualified_parts(arena, qualified.left, out)
+                    && collect_qualified_parts(arena, qualified.right, out);
+            }
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = arena.get_access_expr(node)
+            {
+                return collect_qualified_parts(arena, access.expression, out)
+                    && collect_qualified_parts(arena, access.name_or_argument, out);
+            }
+            false
+        }
+
+        if let Some(name) = Self::get_identifier_name(arena, expression) {
+            return self
+                .current_scope
+                .get(name)
+                .or_else(|| self.file_locals.get(name));
+        }
+
+        let mut parts = Vec::new();
+        if !collect_qualified_parts(arena, expression, &mut parts) || parts.is_empty() {
+            return None;
+        }
+
+        let mut current_sym_id = self
+            .current_scope
+            .get(parts[0].as_str())
+            .or_else(|| self.file_locals.get(parts[0].as_str()))?;
+
+        for part in parts.iter().skip(1) {
+            let symbol = self.symbols.get(current_sym_id)?;
+            current_sym_id = symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(part))
+                .or_else(|| {
+                    symbol
+                        .members
+                        .as_ref()
+                        .and_then(|members| members.get(part))
+                })?;
+        }
+
+        Some(current_sym_id)
     }
 
     /// Check if a node is exported.
