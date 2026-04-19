@@ -1373,13 +1373,9 @@ var r6 = foo5(a);
 #[test]
 fn test_generic_constructor_callback_with_leading_arg() {
     // foo7<T>(x:T, cb) has two arguments. With the deferral fix (non-context-sensitive
-    // args are no longer deferred), T is correctly inferred from arg 0. However,
-    // the final argument check for generic callables against overloaded concrete
-    // targets does not yet match tsc's `instantiateSignatureInContextOf` behavior
-    // (which infers source type params from both parameter and return type positions).
-    // This causes a false positive TS2345 that tsc does not emit.
-    // TODO: Fix instantiate_generic_function_argument_against_target to use return
-    // type for inference when target has concrete (non-placeholder) types.
+    // args are no longer deferred), T is correctly inferred from arg 0. The constructor
+    // suppression narrowing ensures we no longer emit a false positive TS2345 when the
+    // argument is a constructor-like type application; tsc accepts both calls here.
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
 function foo7<T>(x:T, cb: { new(x: T): string; new(x: T, y?: T): string }) {
@@ -1397,11 +1393,10 @@ var r14 = foo7(1, c);
         },
     );
 
-    // The generic callable instantiation fix now handles the target return type,
-    // so these should no longer produce a false-positive TS2345.
+    // Matches tsc: both invocations type-check without TS2345.
     assert!(
         !has_error(&diagnostics, 2345),
-        "Should not emit TS2345 for generic constructor callbacks with leading arg (false positive was fixed)"
+        "Expected no TS2345 (constructor callback inference should match tsc)"
     );
 }
 
