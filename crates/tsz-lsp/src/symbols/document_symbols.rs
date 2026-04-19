@@ -301,8 +301,13 @@ impl<'a> DocumentSymbolProvider<'a> {
                 }
             }
 
-            // Class Declaration
-            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+            // Class Declaration / Class Expression share the same
+            // ClassData shape; tsc surfaces both as a `class` nav node
+            // with their members as children. Anonymous class
+            // expressions fall back to `<class>` as their text.
+            k if k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::CLASS_EXPRESSION =>
+            {
                 if let Some(class) = self.arena.get_class(node) {
                     let name_node = class.name;
                     let name = self
@@ -604,6 +609,13 @@ impl<'a> DocumentSymbolProvider<'a> {
             // Property Declaration (Class Member)
             k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
                 if let Some(prop) = self.arena.get_property_decl(node) {
+                    // Class properties with computed names whose inner
+                    // expression isn't a simple literal (e.g. `[1+1]`
+                    // or `[expr()]`) are dropped from navtree — tsc
+                    // leaves them out entirely.
+                    if self.is_complex_computed_name(prop.name) {
+                        return Vec::new();
+                    }
                     let name = self
                         .get_name(prop.name)
                         .unwrap_or_else(|| "<property>".to_string());
@@ -611,6 +623,11 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let selection_range =
                         node_range(self.arena, self.line_map, self.source_text, prop.name);
                     let modifiers = self.get_kind_modifiers_from_list(&prop.modifiers);
+                    // Class property initializers behave like variable
+                    // initializers for navtree purposes — `x = class {…}`
+                    // surfaces inner members, `y = function() {…}` walks
+                    // the body, `z = { a, b }` surfaces object members.
+                    let children = self.collect_initializer_children(prop.initializer, Some(&name));
 
                     vec![DocumentSymbol {
                         name,
@@ -620,7 +637,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         range,
                         selection_range,
                         container_name: container_name.map(std::string::ToString::to_string),
-                        children: vec![],
+                        children,
                     }]
                 } else {
                     vec![]
@@ -1117,10 +1134,15 @@ impl<'a> DocumentSymbolProvider<'a> {
             return self.collect_object_literal_members(init_idx, container_name);
         }
 
-        // `class Foo {}` as an initializer — delegate to the class arm so
-        // modifiers / members render the same.
+        // `class Foo {}` as an initializer — unwrap to the class's
+        // members so `prop = class { x, y() }` emits x/y as direct
+        // children of `prop` rather than wrapping in a class entry.
         if init_node.kind == syntax_kind_ext::CLASS_EXPRESSION {
-            return self.collect_symbols(init_idx, container_name);
+            let wrapper = self.collect_symbols(init_idx, container_name);
+            if wrapper.len() == 1 {
+                return wrapper.into_iter().next().unwrap().children;
+            }
+            return wrapper;
         }
 
         // Arrow and function expressions: only surface nested
@@ -1934,6 +1956,36 @@ impl<'a> DocumentSymbolProvider<'a> {
             }
         }
         symbols
+    }
+
+    /// A class-member name is "complex-computed" when it's a
+    /// `[expr]` bracket form whose inner expression isn't a simple
+    /// identifier or literal. tsc omits these entries from the
+    /// navbar outline entirely (compare
+    /// `navigationBarPropertyDeclarations`: `[1+1]` → not surfaced).
+    fn is_complex_computed_name(&self, name_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let Some(comp) = self.arena.get_computed_property(node) else {
+            return false;
+        };
+        let expr_idx = comp.expression;
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        // Simple identifier / literal cases are not complex.
+        matches!(
+            expr_node.kind,
+            k if !(k == SyntaxKind::Identifier as u16
+                || k == SyntaxKind::PrivateIdentifier as u16
+                || k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION)
+        )
     }
 
     /// The declaration arms use `<class>`, `<function>`, etc. as a stable
