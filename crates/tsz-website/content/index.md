@@ -40,6 +40,17 @@ Currently targeting **TypeScript `{{ts_version}}`**
 
 Conformance is measured by diagnostic fingerprint comparison: each diagnostic must match `tsc` in error code, file, line, column, and message.
 
+## Experimental Sound Mode
+
+tsz also has an experimental **Sound Mode** for stricter, opt-in TypeScript checking.
+
+It is still in exploration, stays behind explicit flags, and is being rolled out in a deliberately narrow way:
+
+1. user-authored TypeScript source first
+2. migration flags before ecosystem-wide guarantees
+3. later declaration-boundary work behind separate pilots
+
+Read more on the [Sound Mode page](/sound-mode/) or try the [Playground Sound Mode example](/playground/?example=sound_mode).
 
 ## Install
 
