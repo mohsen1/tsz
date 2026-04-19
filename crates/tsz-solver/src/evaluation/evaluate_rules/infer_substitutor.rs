@@ -129,7 +129,7 @@ impl<'a> InferSubstitutor<'a> {
                         is_class_prototype: prop.is_class_prototype,
                         visibility: prop.visibility,
                         parent_id: prop.parent_id,
-                        declaration_order: 0,
+                        declaration_order: prop.declaration_order,
                         is_string_named: prop.is_string_named,
                     });
                 }
@@ -163,7 +163,7 @@ impl<'a> InferSubstitutor<'a> {
                         is_class_prototype: prop.is_class_prototype,
                         visibility: prop.visibility,
                         parent_id: prop.parent_id,
-                        declaration_order: 0,
+                        declaration_order: prop.declaration_order,
                         is_string_named: prop.is_string_named,
                     });
                 }
@@ -443,7 +443,7 @@ impl<'a> InferSubstitutor<'a> {
                             is_class_prototype: prop.is_class_prototype,
                             visibility: prop.visibility,
                             parent_id: prop.parent_id,
-                            declaration_order: 0,
+                            declaration_order: prop.declaration_order,
                             is_string_named: prop.is_string_named,
                         }
                     })
