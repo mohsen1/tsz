@@ -2,6 +2,7 @@
 
 use crate::query_boundaries::checkers::generic as query;
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
@@ -588,7 +589,7 @@ impl<'a> CheckerState<'a> {
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             && symbol.flags & symbol_flags::ALIAS != 0
         {
-            let mut visited_aliases = Vec::new();
+            let mut visited_aliases = AliasCycleTracker::new();
             if let Some(target) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
                 sym_id = target;
             }

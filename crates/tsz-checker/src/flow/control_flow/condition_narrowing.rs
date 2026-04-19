@@ -7,6 +7,7 @@ use super::FlowAnalyzer;
 use crate::query_boundaries::common::{is_union_type, union_members};
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::flow_analysis::is_unit_type;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{FlowNodeId, SymbolId, symbol_flags};
 use tsz_parser::parser::node::BinaryExprData;
 use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
@@ -491,7 +492,7 @@ impl<'a> FlowAnalyzer<'a> {
         is_true_branch: bool,
         antecedent_id: FlowNodeId,
     ) -> TypeId {
-        let mut visited_aliases = Vec::new();
+        let mut visited_aliases = AliasCycleTracker::new();
 
         self.narrow_type_by_condition_inner(
             type_id,
@@ -510,7 +511,7 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
         is_true_branch: bool,
         antecedent_id: FlowNodeId,
-        visited_aliases: &mut Vec<SymbolId>,
+        visited_aliases: &mut AliasCycleTracker,
     ) -> TypeId {
         let condition_idx = self.skip_parenthesized(condition_idx);
         let Some(cond_node) = self.arena.get(condition_idx) else {
@@ -582,7 +583,7 @@ impl<'a> FlowAnalyzer<'a> {
                 antecedent_id,
                 visited_aliases,
             );
-            visited_aliases.pop();
+            visited_aliases.pop(sym_id);
             return narrowed;
         }
 
@@ -1176,7 +1177,7 @@ impl<'a> FlowAnalyzer<'a> {
         if operator == SyntaxKind::EqualsToken as u16 {
             if self.arena.get(bin.right).is_some() {
                 // Recursively narrow based on the RHS expression
-                let mut visited = Vec::new();
+                let mut visited = AliasCycleTracker::new();
                 return self.narrow_type_by_condition_inner(
                     type_id,
                     bin.right,
@@ -1470,7 +1471,7 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
         is_true_branch: bool,
         antecedent_id: FlowNodeId,
-        visited_aliases: &mut Vec<SymbolId>,
+        visited_aliases: &mut AliasCycleTracker,
     ) -> Option<TypeId> {
         // Only handle strict/loose equality/inequality operators
         let is_strict_eq = bin.operator_token == SyntaxKind::EqualsEqualsEqualsToken as u16;
@@ -1558,7 +1559,7 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
         is_true_branch: bool,
         antecedent_id: FlowNodeId,
-        visited_aliases: &mut Vec<SymbolId>,
+        visited_aliases: &mut AliasCycleTracker,
     ) -> Option<TypeId> {
         let operator = bin.operator_token;
 

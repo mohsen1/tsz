@@ -7,6 +7,7 @@ use crate::query_boundaries::type_computation::complex::{
 };
 use crate::state::CheckerState;
 use crate::state::MemberAccessLevel;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -948,7 +949,7 @@ impl<'a> CheckerState<'a> {
             .resolve_identifier_symbol(computed.expression)
             .or_else(|| self.resolve_qualified_symbol(computed.expression))
             .map(|sym_id| {
-                self.resolve_alias_symbol(sym_id, &mut Vec::new())
+                self.resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
                     .unwrap_or(sym_id)
             })
             .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))

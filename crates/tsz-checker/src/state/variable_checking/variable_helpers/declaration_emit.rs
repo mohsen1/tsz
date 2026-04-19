@@ -4,6 +4,7 @@
 use crate::query_boundaries::common::{collect_referenced_types, lazy_def_id};
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::FxHashSet;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
@@ -347,7 +348,7 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::symbol_flags;
 
         let resolved_sym_id = self
-            .resolve_alias_symbol(sym_id, &mut Vec::new())
+            .resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
             .unwrap_or(sym_id);
         let symbol = self
             .get_symbol_globally(resolved_sym_id)
@@ -472,7 +473,8 @@ impl<'a> CheckerState<'a> {
                                 == Some(resolved_sym_id)
                             || self.ctx.binder.resolve_import_symbol(export_sym_id)
                                 == Some(resolved_sym_id)
-                            || self.resolve_alias_symbol(export_sym_id, &mut Vec::new())
+                            || self
+                                .resolve_alias_symbol(export_sym_id, &mut AliasCycleTracker::new())
                                 == Some(resolved_sym_id)
                     })
                 })
@@ -498,7 +500,7 @@ impl<'a> CheckerState<'a> {
                         == Some(resolved_sym_id)
                     || self.ctx.binder.resolve_import_symbol(candidate_sym_id)
                         == Some(resolved_sym_id)
-                    || self.resolve_alias_symbol(candidate_sym_id, &mut Vec::new())
+                    || self.resolve_alias_symbol(candidate_sym_id, &mut AliasCycleTracker::new())
                         == Some(resolved_sym_id)
             };
 
@@ -598,7 +600,7 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::symbol_flags;
 
         let resolved_sym_id = self
-            .resolve_alias_symbol(sym_id, &mut Vec::new())
+            .resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
             .unwrap_or(sym_id);
 
         let symbol = self.get_symbol_from_any_binder(resolved_sym_id)?;
@@ -842,7 +844,7 @@ impl<'a> CheckerState<'a> {
         visited: &mut FxHashSet<SymbolId>,
     ) -> bool {
         let sym_id = self
-            .resolve_alias_symbol(sym_id, &mut Vec::new())
+            .resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
             .unwrap_or(sym_id);
         if !visited.insert(sym_id) {
             return false;
@@ -931,7 +933,7 @@ impl<'a> CheckerState<'a> {
                         .value_symbol_in_arena(arena, initializer)
                         .unwrap_or(SymbolId::NONE);
                     let init_sym_id = self
-                        .resolve_alias_symbol(init_sym_id, &mut Vec::new())
+                        .resolve_alias_symbol(init_sym_id, &mut AliasCycleTracker::new())
                         .unwrap_or(init_sym_id);
                     if init_sym_id.is_some()
                         && self.symbol_decl_file_idx(init_sym_id) != owner_file_idx
@@ -986,7 +988,7 @@ impl<'a> CheckerState<'a> {
         visited: &mut FxHashSet<SymbolId>,
     ) -> bool {
         let sym_id = self
-            .resolve_alias_symbol(sym_id, &mut Vec::new())
+            .resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
             .unwrap_or(sym_id);
         if !visited.insert(sym_id) {
             return false;

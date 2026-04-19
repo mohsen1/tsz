@@ -9,6 +9,7 @@
 //! operations, providing cleaner APIs for common patterns.
 
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::symbols_domain::name_text::entity_name_text_in_arena;
 use std::sync::Arc;
 use tracing::trace;
@@ -654,7 +655,7 @@ impl<'a> CheckerState<'a> {
         let lib_binders = self.get_lib_binders();
         match self.resolve_identifier_symbol_in_type_position(idx) {
             TypeSymbolResolution::Type(sym_id) => {
-                let mut visited_aliases = Vec::new();
+                let mut visited_aliases = AliasCycleTracker::new();
                 Some(
                     self.resolve_alias_symbol(sym_id, &mut visited_aliases)
                         .unwrap_or(sym_id),
@@ -755,7 +756,7 @@ impl<'a> CheckerState<'a> {
 
                         // For ALIAS symbols, resolve to the target
                         if flags & symbol_flags::ALIAS != 0 {
-                            let mut visited = Vec::new();
+                            let mut visited = AliasCycleTracker::new();
                             if let Some(target_sym_id) =
                                 self.resolve_alias_symbol(sym_id, &mut visited)
                             {
@@ -811,7 +812,7 @@ impl<'a> CheckerState<'a> {
             // For ALIAS symbols (import equals declarations), resolve to the target
             // and check if it's a namespace/module
             if flags & symbol_flags::ALIAS != 0 {
-                let mut visited = Vec::new();
+                let mut visited = AliasCycleTracker::new();
                 if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited) {
                     let target_flags = self
                         .ctx
@@ -902,7 +903,7 @@ impl<'a> CheckerState<'a> {
                     });
                 }
             }
-            let mut visited_aliases = Vec::new();
+            let mut visited_aliases = AliasCycleTracker::new();
             self.resolve_alias_symbol(sym_id, &mut visited_aliases)
                 .map(|target_sym_id| {
                     if let Some(alias_symbol) =
@@ -1246,7 +1247,7 @@ impl<'a> CheckerState<'a> {
         })?;
 
         for segment in segments {
-            let mut visited_aliases = Vec::new();
+            let mut visited_aliases = AliasCycleTracker::new();
             current_sym = self
                 .resolve_alias_symbol(current_sym, &mut visited_aliases)
                 .unwrap_or(current_sym);
@@ -1279,7 +1280,7 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some(ref module_specifier) = symbol.import_module {
-                let mut visited_aliases = Vec::new();
+                let mut visited_aliases = AliasCycleTracker::new();
                 if let Some(member_sym) = self.resolve_reexported_member_symbol(
                     module_specifier,
                     segment,
@@ -1307,7 +1308,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let mut visited_aliases = Vec::new();
+        let mut visited_aliases = AliasCycleTracker::new();
         let resolved_sym = self
             .resolve_alias_symbol(current_sym, &mut visited_aliases)
             .unwrap_or(current_sym);
@@ -1343,7 +1344,7 @@ impl<'a> CheckerState<'a> {
                 let lib_binders = self.get_lib_binders();
                 if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
                     if (symbol.flags & symbol_flags::ALIAS) != 0 {
-                        let mut visited_aliases = Vec::new();
+                        let mut visited_aliases = AliasCycleTracker::new();
                         if let Some(target_sym_id) =
                             self.resolve_alias_symbol(sym_id, &mut visited_aliases)
                             && target_sym_id != sym_id
@@ -1379,7 +1380,7 @@ impl<'a> CheckerState<'a> {
             .get_cross_file_symbol(sym_id)
             .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))?;
         if (symbol.flags & symbol_flags::ALIAS) != 0 {
-            let mut visited_aliases = Vec::new();
+            let mut visited_aliases = AliasCycleTracker::new();
             if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited_aliases)
                 && target_sym_id != sym_id
             {

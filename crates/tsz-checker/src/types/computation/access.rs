@@ -6,6 +6,7 @@
 
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::symbols_domain::name_text::property_access_chain_text_in_arena;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -611,13 +612,13 @@ impl<'a> CheckerState<'a> {
         let const_enum_sym = self
             .resolve_identifier_symbol(access.expression)
             .map(|sym_id| {
-                self.resolve_alias_symbol(sym_id, &mut Vec::new())
+                self.resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
                     .unwrap_or(sym_id)
             })
             .or_else(|| {
                 self.resolve_qualified_symbol(access.expression)
                     .map(|sym_id| {
-                        self.resolve_alias_symbol(sym_id, &mut Vec::new())
+                        self.resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
                             .unwrap_or(sym_id)
                     })
             })

@@ -3,6 +3,7 @@
 use super::TypeOnlyKind;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
@@ -353,13 +354,13 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::symbol_flags;
 
         let sym_id = self.resolve_identifier_symbol(idx)?;
-        let mut visited = Vec::new();
+        let mut visited = AliasCycleTracker::new();
         let target = self.resolve_alias_symbol(sym_id, &mut visited);
 
         let lib_binders = self.get_lib_binders();
 
         // Walk the alias chain to find the first type-only import or export.
-        for &alias_sym_id in &visited {
+        for alias_sym_id in &visited {
             let symbol = match self
                 .ctx
                 .binder
@@ -449,7 +450,7 @@ impl<'a> CheckerState<'a> {
         // any import from that module should inherit the type-only status.
         // This handles: `import X from './b'`, `import X = require('./b')`,
         // and `import * as X from './b'` where b has `export = type_only_ns`.
-        for &alias_sym_id in &visited {
+        for alias_sym_id in &visited {
             let symbol = match self
                 .ctx
                 .binder

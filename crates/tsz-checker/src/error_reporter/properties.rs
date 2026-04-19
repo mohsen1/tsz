@@ -3,6 +3,7 @@
 use crate::diagnostics::diagnostic_codes;
 use crate::error_reporter::fingerprint_policy::{DiagnosticAnchorKind, DiagnosticRenderRequest};
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1124,7 +1125,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         if (symbol.flags & symbol_flags::ALIAS) != 0 {
-            let mut visited = Vec::new();
+            let mut visited = AliasCycleTracker::new();
             if let Some(resolved_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited)
                 && let Some(resolved_symbol) = self.ctx.binder.get_symbol(resolved_sym_id)
             {

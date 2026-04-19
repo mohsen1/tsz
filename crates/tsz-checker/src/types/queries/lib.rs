@@ -9,6 +9,7 @@ use super::lib_resolution::{
     resolve_lib_node_in_lib_contexts,
 };
 use crate::state::{CheckerState, MemberAccessLevel};
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::symbols_domain::name_text::{
     entity_name_text_in_arena, property_access_chain_text_in_arena,
 };
@@ -228,7 +229,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_alias_symbol(
         &self,
         sym_id: tsz_binder::SymbolId,
-        visited_aliases: &mut Vec<tsz_binder::SymbolId>,
+        visited_aliases: &mut AliasCycleTracker,
     ) -> Option<tsz_binder::SymbolId> {
         // Prevent stack overflow from long alias chains
         const MAX_ALIAS_RESOLUTION_DEPTH: usize = 128;
@@ -673,7 +674,7 @@ impl<'a> CheckerState<'a> {
         let resolved_member_id = if let Some(member_symbol) = self.get_cross_file_symbol(member_id)
             && member_symbol.flags & symbol_flags::ALIAS != 0
         {
-            let mut visited_aliases = Vec::new();
+            let mut visited_aliases = AliasCycleTracker::new();
             let resolved = self
                 .resolve_alias_symbol(member_id, &mut visited_aliases)
                 .unwrap_or(member_id);
@@ -685,7 +686,7 @@ impl<'a> CheckerState<'a> {
             // The export specifier in a.ts has is_type_only = true, so A
             // should not be resolvable as a value member of b's namespace.
             let lib_binders = self.get_lib_binders();
-            for &alias_sym_id in &visited_aliases {
+            for alias_sym_id in &visited_aliases {
                 if let Some(alias_sym) = self
                     .ctx
                     .binder
@@ -1007,7 +1008,7 @@ impl<'a> CheckerState<'a> {
                 // Check for re-exports from other modules
                 // This handles cases like: export { foo } from './bar'
                 if let Some(ref module_specifier) = import_module {
-                    let mut visited_aliases = Vec::new();
+                    let mut visited_aliases = AliasCycleTracker::new();
                     if let Some(reexported_sym) = self.resolve_reexported_member_symbol(
                         module_specifier,
                         property_name,
@@ -2145,7 +2146,7 @@ impl<'a> CheckerState<'a> {
                 ));
             }
 
-            let mut visited_aliases = Vec::new();
+            let mut visited_aliases = AliasCycleTracker::new();
             if let Some(reexported_sym) = self.resolve_reexported_member_symbol(
                 module_specifier,
                 property_name,

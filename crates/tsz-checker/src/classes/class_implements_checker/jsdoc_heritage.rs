@@ -6,6 +6,7 @@ use crate::query_boundaries::class::{
     should_report_member_type_mismatch, should_report_member_type_mismatch_bivariant,
 };
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -281,7 +282,7 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .copied()
                 .find(|&candidate| {
-                    let mut visited_aliases = Vec::new();
+                    let mut visited_aliases = AliasCycleTracker::new();
                     let resolved = self
                         .resolve_alias_symbol(candidate, &mut visited_aliases)
                         .unwrap_or(candidate);
@@ -307,7 +308,7 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<tsz_solver::TypeParamInfo> {
         let mut type_params = self.get_type_params_for_symbol(sym_id);
         if type_params.is_empty() {
-            let mut visited_aliases = Vec::new();
+            let mut visited_aliases = AliasCycleTracker::new();
             if let Some(resolved) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
                 type_params = self.get_type_params_for_symbol(resolved);
             }

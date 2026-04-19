@@ -6,6 +6,7 @@ mod type_alias_variable_alias;
 use crate::query_boundaries::common::{contains_infer_types, contains_type_parameters};
 use crate::query_boundaries::state::type_environment;
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -48,7 +49,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let resolve_alias_target = |sym_id: SymbolId| {
-            let mut visited = Vec::new();
+            let mut visited = AliasCycleTracker::new();
             self.resolve_alias_symbol(sym_id, &mut visited)
         };
         let default_target = resolve_alias_target(default_sym_id).unwrap_or(default_sym_id);

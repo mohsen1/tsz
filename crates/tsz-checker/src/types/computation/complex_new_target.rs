@@ -8,6 +8,7 @@
 //! - `new_target_is_class_symbol` — checks whether a `new` target resolves to a class
 
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
@@ -302,7 +303,7 @@ impl<'a> CheckerState<'a> {
             }
         }
         let resolved_sym_id = if (symbol.flags & symbol_flags::ALIAS) != 0 {
-            self.resolve_alias_symbol(sym_id, &mut Vec::new())
+            self.resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
                 .unwrap_or(sym_id)
         } else {
             sym_id

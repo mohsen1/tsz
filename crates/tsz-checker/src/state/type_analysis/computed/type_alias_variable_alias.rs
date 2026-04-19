@@ -5,6 +5,7 @@ use crate::query_boundaries::common::{array_element_type, is_generic_type};
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::state::type_environment;
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1554,7 +1555,7 @@ impl<'a> CheckerState<'a> {
                         self.resolve_named_export_via_export_equals(module_name, export_name)
                     })
                     .or_else(|| {
-                        let mut visited_aliases = Vec::new();
+                        let mut visited_aliases = AliasCycleTracker::new();
                         self.resolve_reexported_member_symbol(
                             module_name,
                             export_name,

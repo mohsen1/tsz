@@ -3,6 +3,7 @@
 
 use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -377,7 +378,7 @@ impl<'a> CheckerState<'a> {
         if let Some((_, flags, _, _)) = symbol_meta.as_ref()
             && flags & symbol_flags::ALIAS != 0
         {
-            let mut visited = Vec::new();
+            let mut visited = AliasCycleTracker::new();
             let alias_result = self.resolve_alias_symbol(sym_id, &mut visited);
             let is_default_import_alias = self
                 .get_cross_file_symbol(sym_id)

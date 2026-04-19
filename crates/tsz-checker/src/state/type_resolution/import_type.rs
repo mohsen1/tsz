@@ -2,6 +2,7 @@
 
 use crate::import::core::ModuleNotFoundSite;
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -750,7 +751,7 @@ impl<'a> CheckerState<'a> {
                         return true;
                     }
 
-                    let mut visited = Vec::new();
+                    let mut visited = AliasCycleTracker::new();
                     self.resolve_alias_symbol(sym_id, &mut visited)
                         .is_some_and(|resolved| symbol_is_type(self, resolved))
                 })

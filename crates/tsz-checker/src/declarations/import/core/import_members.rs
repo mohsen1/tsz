@@ -1,6 +1,7 @@
 //! Import member validation — checking that imported members exist in module exports.
 
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_scanner::SyntaxKind;
@@ -830,7 +831,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if (symbol.flags & symbol_flags::ALIAS) != 0 {
-            let mut visited = Vec::new();
+            let mut visited = AliasCycleTracker::new();
             if let Some(resolved) = self.resolve_alias_symbol(sym_id, &mut visited) {
                 return self.symbol_member_is_type_only(resolved, None);
             }
@@ -1181,9 +1182,9 @@ impl<'a> CheckerState<'a> {
             }
         }
         if (sym.flags & symbol_flags::ALIAS) != 0 {
-            let mut visited_aliases = Vec::new();
+            let mut visited_aliases = AliasCycleTracker::new();
             if let Some(resolved_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
-                for alias_id in visited_aliases {
+                for alias_id in &visited_aliases {
                     if owner_binder
                         .get_symbol(alias_id)
                         .or_else(|| self.ctx.binder.get_symbol(alias_id))

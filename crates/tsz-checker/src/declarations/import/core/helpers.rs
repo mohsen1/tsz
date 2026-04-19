@@ -3,6 +3,7 @@
 use crate::diagnostics::format_message;
 use crate::query_boundaries::capabilities::FeatureGate;
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::symbol_flags;
 use tsz_common::common::ModuleKind;
@@ -328,7 +329,7 @@ impl<'a> CheckerState<'a> {
             .get_symbol_with_libs(export_equals_sym, &lib_binders)
             && (sym.flags & symbol_flags::ALIAS) != 0
         {
-            let mut visited = Vec::new();
+            let mut visited = AliasCycleTracker::new();
             let Some(resolved_sym) = self.resolve_alias_symbol(export_equals_sym, &mut visited)
             else {
                 return false;
@@ -488,7 +489,7 @@ impl<'a> CheckerState<'a> {
             .get_symbol_with_libs(export_equals_sym, &lib_binders)
             && (export_sym.flags & symbol_flags::ALIAS) != 0
         {
-            let mut visited_aliases = Vec::new();
+            let mut visited_aliases = AliasCycleTracker::new();
             self.resolve_alias_symbol(export_equals_sym, &mut visited_aliases)
                 .unwrap_or(export_equals_sym)
         } else {

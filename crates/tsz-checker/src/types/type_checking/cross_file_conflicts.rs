@@ -7,6 +7,7 @@
 //! - Declaration utility helpers (`function_has_body`, `get_access_modifier`, `is_declaration_optional`)
 
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -852,7 +853,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             let resolved = self
-                .resolve_alias_symbol(jsx_sym_id, &mut Vec::new())
+                .resolve_alias_symbol(jsx_sym_id, &mut AliasCycleTracker::new())
                 .unwrap_or(jsx_sym_id);
             let remote_only = self
                 .ctx
@@ -863,7 +864,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some(jsx_sym_id) = self.resolve_jsx_namespace_from_factory() {
             let resolved = self
-                .resolve_alias_symbol(jsx_sym_id, &mut Vec::new())
+                .resolve_alias_symbol(jsx_sym_id, &mut AliasCycleTracker::new())
                 .unwrap_or(jsx_sym_id);
             let remote_only = self
                 .ctx
@@ -945,7 +946,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let resolved = self
-            .resolve_alias_symbol(jsx_sym_id, &mut Vec::new())
+            .resolve_alias_symbol(jsx_sym_id, &mut AliasCycleTracker::new())
             .unwrap_or(jsx_sym_id);
         let remote_only = self
             .ctx
