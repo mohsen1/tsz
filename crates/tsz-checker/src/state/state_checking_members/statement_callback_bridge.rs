@@ -995,6 +995,18 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         self.ctx.switch_depth = self.ctx.switch_depth.saturating_sub(1);
     }
 
+    fn no_fallthrough_cases_in_switch(&self) -> bool {
+        self.ctx.compiler_options.no_fallthrough_cases_in_switch
+    }
+
+    fn report_fallthrough_case(&mut self, clause_idx: NodeIndex) {
+        self.error_at_node(
+            clause_idx,
+            crate::diagnostics::diagnostic_messages::FALLTHROUGH_CASE_IN_SWITCH,
+            crate::diagnostics::diagnostic_codes::FALLTHROUGH_CASE_IN_SWITCH,
+        );
+    }
+
     fn save_and_reset_control_flow_context(&mut self) -> (u32, u32, bool) {
         let saved = (
             self.ctx.iteration_depth,

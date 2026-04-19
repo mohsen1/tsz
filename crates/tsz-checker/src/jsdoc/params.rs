@@ -795,7 +795,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let leading = get_leading_comments_from_cache(comments, pos, source_text);
-        if let Some(comment) = leading.last() {
+        for comment in leading.iter().rev() {
             let end = comment.end as usize;
             let check = pos as usize;
             if end <= check
@@ -841,7 +841,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let leading = get_leading_comments_from_cache(comments, pos, source_text);
-        if let Some(comment) = leading.last() {
+        for comment in leading.iter().rev() {
             let end = comment.end as usize;
             let check = pos as usize;
             if end <= check

@@ -642,6 +642,7 @@ fn directive_to_field_name(key: &str) -> Option<&'static str> {
         "noimplicitoverride" => "noImplicitOverride",
         "strictbuiltiniteratorreturn" => "strictBuiltinIteratorReturn",
         "declaration" => "declaration",
+        "nofallthroughcasesinswitch" | "nofallthrough" => "noFallthroughCasesInSwitch",
         _ => return None,
     })
 }

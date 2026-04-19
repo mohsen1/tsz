@@ -748,31 +748,92 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                     && let Some(name_node) = self.ctx.arena.get(enm.name)
                                     && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                                 {
-                                    if let Some(specifier) = module_specifier.as_deref()
-                                        && let Some((existing_sym_id, owner_idx)) = self
-                                            .resolve_export_in_module_target(
-                                                specifier,
-                                                &ident.escaped_text,
-                                                &mut FxHashSet::default(),
-                                            )
-                                        && let Some(owner_binder) =
-                                            self.ctx.get_binder_for_file(owner_idx)
-                                        && let Some(symbol) =
-                                            owner_binder.get_symbol(existing_sym_id)
-                                    {
-                                        let allowed = (symbol.flags
-                                            & (symbol_flags::REGULAR_ENUM
-                                                | symbol_flags::CONST_ENUM
-                                                | symbol_flags::MODULE))
-                                            != 0;
+                                    // Compute existing-declaration info first (immutable
+                                    // borrow), then drop it before emitting diagnostics.
+                                    #[allow(clippy::type_complexity)]
+                                    let existing_info: Option<
+                                        (bool, Option<(String, u32, u32)>),
+                                    > = {
+                                        if let Some(specifier) = module_specifier.as_deref()
+                                            && let Some((existing_sym_id, owner_idx)) = self
+                                                .resolve_export_in_module_target(
+                                                    specifier,
+                                                    &ident.escaped_text,
+                                                    &mut FxHashSet::default(),
+                                                )
+                                            && let Some(owner_binder) =
+                                                self.ctx.get_binder_for_file(owner_idx)
+                                            && let Some(symbol) =
+                                                owner_binder.get_symbol(existing_sym_id)
+                                        {
+                                            let allowed = (symbol.flags
+                                                & (symbol_flags::REGULAR_ENUM
+                                                    | symbol_flags::CONST_ENUM
+                                                    | symbol_flags::MODULE))
+                                                != 0;
+                                            let first_decl = symbol.declarations.first().copied();
+                                            let owner_arena =
+                                                self.ctx.get_arena_for_file(owner_idx as u32);
+                                            let owner_file = owner_arena
+                                                .source_files
+                                                .first()
+                                                .map(|sf| sf.file_name.clone());
+                                            let existing_name_span = first_decl
+                                                .and_then(|d| owner_arena.get(d))
+                                                .and_then(|n| {
+                                                    use tsz_parser::parser::syntax_kind_ext;
+                                                    let name_idx = if n.kind
+                                                        == syntax_kind_ext::CLASS_DECLARATION
+                                                    {
+                                                        owner_arena.get_class(n).map(|c| c.name)
+                                                    } else if n.kind
+                                                        == syntax_kind_ext::INTERFACE_DECLARATION
+                                                    {
+                                                        owner_arena.get_interface(n).map(|i| i.name)
+                                                    } else if n.kind
+                                                        == syntax_kind_ext::FUNCTION_DECLARATION
+                                                    {
+                                                        owner_arena.get_function(n).map(|f| f.name)
+                                                    } else {
+                                                        None
+                                                    };
+                                                    name_idx.and_then(|nm| owner_arena.get(nm))
+                                                })
+                                                .map(|nm| (nm.pos, nm.end - nm.pos));
+                                            let span = match (owner_file, existing_name_span) {
+                                                (Some(file), Some((pos, len))) => {
+                                                    Some((file, pos, len))
+                                                }
+                                                _ => None,
+                                            };
+                                            Some((allowed, span))
+                                        } else {
+                                            None
+                                        }
+                                    };
+
+                                    if let Some((allowed, span)) = existing_info {
                                         if !allowed {
+                                            // tsc reports TS2567 at BOTH the new enum in
+                                            // the augmentation AND at the original
+                                            // declaration's name. Emit both for parity.
                                             self.ctx.error(
-                                                                    name_node.pos,
-                                                                    name_node.end
-                                                                        - name_node.pos,
-                                                                    diagnostic_messages::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS.to_string(),
-                                                                    diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
-                                                                );
+                                                name_node.pos,
+                                                name_node.end - name_node.pos,
+                                                diagnostic_messages::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS.to_string(),
+                                                diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                                            );
+                                            if let Some((file, pos, len)) = span {
+                                                self.ctx.diagnostics.push(
+                                                    tsz_common::diagnostics::Diagnostic::error(
+                                                        file,
+                                                        pos,
+                                                        len,
+                                                        diagnostic_messages::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS.to_string(),
+                                                        diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                                                    ),
+                                                );
+                                            }
                                         }
                                     }
                                     if register_value_name(&ident.escaped_text, enm.name)
