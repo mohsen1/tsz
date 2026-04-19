@@ -93,13 +93,22 @@ fn filter_lib_diagnostics_tsc(
     let mut fps = tsc_result.diagnostic_fingerprints.clone();
 
     // Structural invariant: every fingerprint's code must also appear in
-    // `error_codes`. If it doesn't, the fingerprint is a parser artifact —
-    // typically a `--traceResolution` trace line shaped like `error TSxxxx:`
-    // that our no-position regex matched but the code-list regex did not.
-    // Drop such orphan fingerprints unconditionally; this supersedes the
-    // previous hardcoded `TS6053 | TS2688 when codes.is_empty()` filter.
+    // `error_codes`. If it doesn't, the fingerprint is usually a parser
+    // artifact — typically a `--traceResolution` trace line shaped like
+    // `error TSxxxx:` that our no-position regex matched but the code-list
+    // regex did not. Drop such orphan fingerprints.
+    //
+    // Exception: TS2318 "Cannot find global type" at synthetic position
+    // (`<unknown>:0:0`) is legitimately stored only in fingerprints for
+    // @noLib tests (the tsc cache generator records them that way when
+    // tsc's test harness produces them as program-level diagnostics).
+    // Keep those so the noLib branch in the runner can compare against
+    // tsz's TS2318 emissions. See PR #578 and #612.
     let code_set: std::collections::HashSet<u32> = codes.iter().copied().collect();
-    fps.retain(|fp| code_set.contains(&fp.code));
+    fps.retain(|fp| {
+        code_set.contains(&fp.code)
+            || (fp.code == 2318 && fp.file.is_empty() && fp.line == 0 && fp.column == 0)
+    });
 
     let had_lib = fps.iter().any(is_lib_diagnostic);
     if !had_lib {
