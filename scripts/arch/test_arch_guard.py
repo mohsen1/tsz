@@ -164,6 +164,38 @@ class ArchGuardCheckerFileSizeBoundaryTests(unittest.TestCase):
             self.assertEqual(hits, [])
 
 
+class ArchGuardCoreLibFacadeSizeBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _core_lib_size_check(self):
+        for entry in self.arch_guard.FILE_LINE_LIMIT_CHECKS:
+            name, path, limit = entry
+            if name == "Core boundary: tsz-core lib facade must stay under 2420 LOC":
+                return path, limit
+        self.fail("core lib facade size boundary check is missing from FILE_LINE_LIMIT_CHECKS")
+
+    def test_rule_exists_with_expected_limit(self):
+        path, limit = self._core_lib_size_check()
+        self.assertEqual(limit, 2420)
+        self.assertTrue(str(path).endswith("crates/tsz-core/src/lib.rs"))
+
+    def test_scan_file_line_limit_flags_file_above_limit(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            target = pathlib.Path(temp_dir) / "too_big.rs"
+            target.write_text("let x = 0;\n" * 11, encoding="utf-8")
+            hits = self.arch_guard.scan_file_line_limit(target, 10)
+            self.assertEqual(len(hits), 1)
+            self.assertTrue(hits[0].endswith("too_big.rs:11 lines (limit 10)"))
+
+    def test_scan_file_line_limit_allows_file_at_limit(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            target = pathlib.Path(temp_dir) / "at_limit.rs"
+            target.write_text("let x = 0;\n" * 10, encoding="utf-8")
+            hits = self.arch_guard.scan_file_line_limit(target, 10)
+            self.assertEqual(hits, [])
+
+
 class ArchGuardSolverTypeDataQuarantineTests(unittest.TestCase):
     def setUp(self):
         self.arch_guard = load_arch_guard_module()
