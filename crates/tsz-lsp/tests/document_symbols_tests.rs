@@ -310,17 +310,15 @@ fn test_get_set_accessors() {
     assert_eq!(symbols.len(), 1);
     assert_eq!(symbols[0].children.len(), 2);
 
-    // Get accessor
+    // Get accessor — tsc exposes getters/setters via ScriptElementKind
+    // "getter"/"setter" (not "property"), which we model with dedicated
+    // SymbolKind variants.
     assert_eq!(symbols[0].children[0].name, "val");
-    assert_eq!(symbols[0].children[0].kind, SymbolKind::Property);
-    assert_eq!(symbols[0].children[0].detail, Some("getter".to_string()));
-    assert!(symbols[0].children[0].kind_modifiers.contains("getter"));
+    assert_eq!(symbols[0].children[0].kind, SymbolKind::Getter);
 
     // Set accessor
     assert_eq!(symbols[0].children[1].name, "val");
-    assert_eq!(symbols[0].children[1].kind, SymbolKind::Property);
-    assert_eq!(symbols[0].children[1].detail, Some("setter".to_string()));
-    assert!(symbols[0].children[1].kind_modifiers.contains("setter"));
+    assert_eq!(symbols[0].children[1].kind, SymbolKind::Setter);
 }
 
 #[test]
@@ -796,13 +794,15 @@ fn test_document_symbols_export_default_class() {
     let symbols = provider.get_document_symbols(root);
 
     assert!(!symbols.is_empty(), "Should produce at least one symbol");
-    // Should have export,default modifiers
     let sym = &symbols[0];
-    assert!(
-        sym.kind_modifiers.contains("export") && sym.kind_modifiers.contains("default"),
-        "Expected 'export,default' modifiers, got: '{}'",
+    // tsc emits just `export` (no `default` modifier) for named default
+    // exports; the `default`-ness is encoded implicitly.
+    assert_eq!(
+        sym.kind_modifiers, "export",
+        "Expected 'export' modifier on named default export, got: '{}'",
         sym.kind_modifiers
     );
+    assert_eq!(sym.name, "Widget");
 }
 
 #[test]
@@ -817,11 +817,30 @@ fn test_document_symbols_export_default_function() {
 
     assert!(!symbols.is_empty(), "Should produce at least one symbol");
     let sym = &symbols[0];
-    assert!(
-        sym.kind_modifiers.contains("export") && sym.kind_modifiers.contains("default"),
-        "Expected 'export,default' modifiers, got: '{}'",
+    assert_eq!(
+        sym.kind_modifiers, "export",
+        "Expected 'export' modifier on named default export, got: '{}'",
         sym.kind_modifiers
     );
+    assert_eq!(sym.name, "main");
+}
+
+#[test]
+fn test_document_symbols_export_default_anonymous_class() {
+    let source = "export default class {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert!(!symbols.is_empty(), "Should produce at least one symbol");
+    let sym = &symbols[0];
+    // Anonymous default export: name becomes "default", modifier stays
+    // just `export`.
+    assert_eq!(sym.name, "default");
+    assert_eq!(sym.kind_modifiers, "export");
 }
 
 #[test]

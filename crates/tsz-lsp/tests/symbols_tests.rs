@@ -225,10 +225,10 @@ class Config {
     assert_eq!(tree[0].children.len(), 2);
     // Getter
     assert_eq!(tree[0].children[0].name, "value");
-    assert_eq!(tree[0].children[0].kind, SymbolKind::Property);
+    assert_eq!(tree[0].children[0].kind, SymbolKind::Getter);
     // Setter
     assert_eq!(tree[0].children[1].name, "value");
-    assert_eq!(tree[0].children[1].kind, SymbolKind::Property);
+    assert_eq!(tree[0].children[1].kind, SymbolKind::Setter);
 }
 
 #[test]
@@ -639,11 +639,11 @@ class Box {
     assert_eq!(tree[0].children.len(), 3);
 
     assert_eq!(tree[0].children[0].name, "width");
-    assert_eq!(tree[0].children[0].kind, SymbolKind::Property);
+    assert_eq!(tree[0].children[0].kind, SymbolKind::Getter);
     assert_eq!(tree[0].children[1].name, "width");
-    assert_eq!(tree[0].children[1].kind, SymbolKind::Property);
+    assert_eq!(tree[0].children[1].kind, SymbolKind::Setter);
     assert_eq!(tree[0].children[2].name, "height");
-    assert_eq!(tree[0].children[2].kind, SymbolKind::Property);
+    assert_eq!(tree[0].children[2].kind, SymbolKind::Getter);
 }
 
 #[test]
