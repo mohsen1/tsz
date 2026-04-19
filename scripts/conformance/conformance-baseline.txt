@@ -29,7 +29,6 @@ FAIL TypeScript/tests/cases/compiler/declarationEmitUsingAlternativeContainingMo
 FAIL TypeScript/tests/cases/compiler/decoratorMetadataNoLibIsolatedModulesTypes.ts
 FAIL TypeScript/tests/cases/compiler/decoratorUsedBeforeDeclaration.ts | expected:[TS2448,TS2450,TS2454,TS2729,TS7006] actual:[TS2448,TS2450,TS2454,TS2729,TS7006]
 FAIL TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/deleteExpressionMustBeOptional_exactOptionalPropertyTypes.ts | expected:[TS2339,TS2790,TS5024] actual:[TS2339,TS2790,TS5024]
 FAIL TypeScript/tests/cases/compiler/destructuringTuple.ts | expected:[TS2488,TS2769] actual:[TS2488,TS2769]
 FAIL TypeScript/tests/cases/compiler/destructuringUnspreadableIntoRest.ts | expected:[TS2339] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/didYouMeanElaborationsForExpressionsWhichCouldBeCalled.ts | expected:[TS2322,TS2345,TS2740,TS2741] actual:[TS2322,TS2345,TS2740,TS2741]
@@ -244,7 +243,6 @@ FAIL TypeScript/tests/cases/compiler/typePredicateInherit.ts | expected:[TS2416]
 FAIL TypeScript/tests/cases/compiler/typeRootsFromNodeModulesInParentDirectory.ts | expected:[TS2307] actual:[TS2792]
 FAIL TypeScript/tests/cases/compiler/typedArraysCrossAssignability01.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/typeofAmbientExternalModules.ts | expected:[TS2564,TS2741] actual:[TS2322,TS2564]
-FAIL TypeScript/tests/cases/compiler/typeofInternalModules.ts | expected:[TS2708,TS2709,TS2741] actual:[TS2708,TS2709,TS2741]
 FAIL TypeScript/tests/cases/compiler/undeclaredModuleError.ts | expected:[TS2304,TS2345,TS2591] actual:[TS2304,TS2345,TS2591]
 FAIL TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts | expected:[TS1005,TS1068,TS1127,TS1128,TS1134,TS1351,TS1389,TS1434,TS2809] actual:[TS1127,TS1128,TS1434]
 FAIL TypeScript/tests/cases/compiler/unionErrorMessageOnMatchingDiscriminant.ts | expected:[TS2322] actual:[TS2322]
@@ -454,7 +452,6 @@ FAIL TypeScript/tests/cases/conformance/node/nodeModulesCJSEmit1.ts | expected:[
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesDeclarationEmitWithPackageExports.ts | expected:[TS1036,TS1479] actual:[TS1036,TS1479]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesExportsSpecifierGenerationDirectory.ts | expected:[TS2307] actual:[TS2307]
 FAIL TypeScript/tests/cases/conformance/node/nodeModulesJson.ts | expected:[TS1544,TS2339,TS2823] actual:[TS1463,TS2339,TS2614,TS2823]
-FAIL TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForTsJsImport.ts | expected:[TS2307] actual:[TS2307,TS2846]
 FAIL TypeScript/tests/cases/conformance/override/override19.ts | expected:[TS4113,TS4117] actual:[TS4113,TS4117]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.objectLiteralMethods.es2018.ts | expected:[TS1005,TS1109,TS5024] actual:[TS1005,TS1109,TS5024]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.binaryNegative.ts | expected:[TS1351,TS6188,TS6189] actual:[TS1351,TS6188,TS6189]
@@ -517,8 +514,6 @@ FAIL TypeScript/tests/cases/conformance/types/keyof/circularIndexedAccessErrors.
 FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess.ts | expected:[TS2322] actual:[TS2322,TS2352,TS2536,TS2538,TS2556,TS2677]
 FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess2.ts | expected:[TS2322,TS2339,TS2739,TS2862,TS7053] actual:[TS2322,TS2339,TS2536,TS2739,TS7053]
 FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccessErrors.ts | expected:[TS2304,TS2322,TS2339,TS2345,TS2536,TS2537,TS2538,TS2564] actual:[TS2304,TS2322,TS2339,TS2345,TS2536,TS2537,TS2538,TS2564]
-FAIL TypeScript/tests/cases/conformance/types/literal/enumLiteralTypes3.ts | expected:[TS2322,TS2367,TS2678] actual:[TS2322,TS2367,TS2678]
-FAIL TypeScript/tests/cases/conformance/types/literal/stringEnumLiteralTypes3.ts | expected:[TS2322,TS2367,TS2678] actual:[TS2322,TS2367,TS2678]
 FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsAssignedToStringMappings.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithSwitchStatements03.ts | expected:[TS2678,TS2695,TS2872] actual:[TS2678,TS2695,TS2872]
 FAIL TypeScript/tests/cases/conformance/types/literal/stringMappingOverPatternLiterals.ts | expected:[TS2322] actual:[TS2322]
@@ -2439,6 +2434,7 @@ PASS TypeScript/tests/cases/compiler/defineVariables_useDefineForClassFields.ts
 PASS TypeScript/tests/cases/compiler/definiteAssignmentOfDestructuredVariable.ts
 PASS TypeScript/tests/cases/compiler/definiteAssignmentWithErrorStillStripped.ts
 PASS TypeScript/tests/cases/compiler/deleteExpressionMustBeOptional.ts
+PASS TypeScript/tests/cases/compiler/deleteExpressionMustBeOptional_exactOptionalPropertyTypes.ts
 PASS TypeScript/tests/cases/compiler/deleteOperator1.ts
 PASS TypeScript/tests/cases/compiler/deleteOperatorInStrictMode.ts
 PASS TypeScript/tests/cases/compiler/deleteReadonly.ts
@@ -6536,6 +6532,7 @@ PASS TypeScript/tests/cases/compiler/typeofExternalModules.ts
 PASS TypeScript/tests/cases/compiler/typeofImportInstantiationExpression.ts
 PASS TypeScript/tests/cases/compiler/typeofInObjectLiteralType.ts
 PASS TypeScript/tests/cases/compiler/typeofInterface.ts
+PASS TypeScript/tests/cases/compiler/typeofInternalModules.ts
 PASS TypeScript/tests/cases/compiler/typeofObjectInference.ts
 PASS TypeScript/tests/cases/compiler/typeofProperty.ts
 PASS TypeScript/tests/cases/compiler/typeofSimple.ts
@@ -10427,6 +10424,7 @@ PASS TypeScript/tests/cases/conformance/node/nodePackageSelfNameScoped.ts
 PASS TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlFileWithinDeclarationFile.ts
 PASS TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlImport.ts
 PASS TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForJsonImport.ts
+PASS TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForTsJsImport.ts
 PASS TypeScript/tests/cases/conformance/nonjsExtensions/declarationFilesForNodeNativeModules.ts
 PASS TypeScript/tests/cases/conformance/override/override1.ts
 PASS TypeScript/tests/cases/conformance/override/override10.ts
@@ -11721,6 +11719,7 @@ PASS TypeScript/tests/cases/conformance/types/literal/booleanLiteralTypes1.ts
 PASS TypeScript/tests/cases/conformance/types/literal/booleanLiteralTypes2.ts
 PASS TypeScript/tests/cases/conformance/types/literal/enumLiteralTypes1.ts
 PASS TypeScript/tests/cases/conformance/types/literal/enumLiteralTypes2.ts
+PASS TypeScript/tests/cases/conformance/types/literal/enumLiteralTypes3.ts
 PASS TypeScript/tests/cases/conformance/types/literal/literalTypeWidening.ts
 PASS TypeScript/tests/cases/conformance/types/literal/literalTypes1.ts
 PASS TypeScript/tests/cases/conformance/types/literal/literalTypes2.ts
@@ -11734,6 +11733,7 @@ PASS TypeScript/tests/cases/conformance/types/literal/numericLiteralTypes3.ts
 PASS TypeScript/tests/cases/conformance/types/literal/numericStringLiteralTypes.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringEnumLiteralTypes1.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringEnumLiteralTypes2.ts
+PASS TypeScript/tests/cases/conformance/types/literal/stringEnumLiteralTypes3.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringLiteralsAssertionsInEqualityComparisons01.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringLiteralsAssertionsInEqualityComparisons02.ts
 PASS TypeScript/tests/cases/conformance/types/literal/stringLiteralsWithEqualityChecks01.ts
