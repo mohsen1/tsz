@@ -298,6 +298,26 @@ CHECKS = [
         },
     ),
     (
+        "Core boundary: global mutable cache statics must stay in dedicated cache modules",
+        ROOT / "crates" / "tsz-core" / "src",
+        re.compile(
+            r"\bstatic\s+[A-Z_][A-Z0-9_]*\s*:\s*"
+            r"(?:std::sync::Mutex|Mutex<|std::sync::RwLock|RwLock<|"
+            r"Lazy<\s*(?:Mutex|RwLock)<|LazyLock<\s*(?:Mutex|RwLock)<|"
+            r"std::sync::LazyLock<\s*(?:Mutex|RwLock)<)"
+        ),
+        {
+            "exclude_dirs": {"tests"},
+            "exclude_files": {
+                # Transitional baseline: config-level map cache.
+                "crates/tsz-core/src/config.rs",
+                # Transitional baseline: project library cache.
+                "crates/tsz-core/src/project/lib_cache.rs",
+            },
+            "ignore_comment_lines": True,
+        },
+    ),
+    (
         "LSP boundary: direct lookup() on solver interner",
         ROOT / "crates" / "tsz-lsp",
         re.compile(r"\.lookup\s*\("),

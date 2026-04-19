@@ -131,6 +131,44 @@ class ArchGuardSolverRelationBoundaryTests(unittest.TestCase):
         self.assertEqual(test_hits, [])
 
 
+class ArchGuardCoreGlobalCacheBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _core_global_cache_boundary_check(self):
+        for name, _base, pattern, excludes in self.arch_guard.CHECKS:
+            if name == "Core boundary: global mutable cache statics must stay in dedicated cache modules":
+                return pattern, excludes
+        self.fail("core global mutable cache boundary check is missing from CHECKS")
+
+    def test_rule_exists(self):
+        self._core_global_cache_boundary_check()
+
+    def test_rule_flags_non_allowlisted_core_file(self):
+        pattern, excludes = self._core_global_cache_boundary_check()
+        text = "static GLOBAL_CACHE: std::sync::Mutex<u8> = std::sync::Mutex::new(0);"
+        hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-core/src/source_file.rs", excludes
+        )
+        self.assertEqual(hits, [1])
+
+    def test_rule_allows_current_baseline_cache_modules(self):
+        pattern, excludes = self._core_global_cache_boundary_check()
+        text = "static LIB_FILE_CACHE: Lazy<Mutex<LibFileCache>> = Lazy::new(|| todo!());"
+        config_hits = self.arch_guard.find_matches(text, pattern, "crates/tsz-core/src/config.rs", excludes)
+        project_hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-core/src/project/lib_cache.rs", excludes
+        )
+        self.assertEqual(config_hits, [])
+        self.assertEqual(project_hits, [])
+
+    def test_rule_ignores_tests_directory(self):
+        pattern, excludes = self._core_global_cache_boundary_check()
+        text = "static TEST_CACHE: std::sync::Mutex<u8> = std::sync::Mutex::new(0);"
+        hits = self.arch_guard.find_matches(text, pattern, "crates/tsz-core/tests/foo.rs", excludes)
+        self.assertEqual(hits, [])
+
+
 class ArchGuardCheckerFileSizeBoundaryTests(unittest.TestCase):
     def setUp(self):
         self.arch_guard = load_arch_guard_module()
