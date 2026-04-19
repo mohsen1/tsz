@@ -418,6 +418,14 @@ impl<'a> DocumentSymbolProvider<'a> {
                                         } else {
                                             stmt_modifiers.clone()
                                         };
+                                        // Walk the initializer expression:
+                                        // object literals / class expressions
+                                        // / arrow bodies surface their members
+                                        // as children of the variable entry.
+                                        let children = self.collect_initializer_children(
+                                            decl.initializer,
+                                            Some(&name),
+                                        );
                                         symbols.push(DocumentSymbol {
                                             name,
                                             detail: None,
@@ -427,7 +435,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                                             selection_range,
                                             container_name: container_name
                                                 .map(std::string::ToString::to_string),
-                                            children: vec![],
+                                            children,
                                         });
                                     }
                                 }
@@ -1023,6 +1031,200 @@ impl<'a> DocumentSymbolProvider<'a> {
 
             // Default fallback
             _ => vec![],
+        }
+    }
+
+    /// Walk a variable / property initializer and produce nav-item
+    /// children for object-literal properties, class expressions, and
+    /// arrow / function expressions with a block body. Mirrors tsc's
+    /// behavior for entries like `const o = { a: function() {} }` and
+    /// `const x = () => { function inner() {} }`.
+    fn collect_initializer_children(
+        &self,
+        init_idx: NodeIndex,
+        container_name: Option<&str>,
+    ) -> Vec<DocumentSymbol> {
+        if init_idx.is_none() {
+            return Vec::new();
+        }
+        let Some(init_node) = self.arena.get(init_idx) else {
+            return Vec::new();
+        };
+
+        // `{ a: ..., b() {}, c }` — walk each property.
+        if init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return self.collect_object_literal_members(init_idx, container_name);
+        }
+
+        // `class Foo {}` as an initializer — delegate to the class arm so
+        // modifiers / members render the same.
+        if init_node.kind == syntax_kind_ext::CLASS_EXPRESSION {
+            return self.collect_symbols(init_idx, container_name);
+        }
+
+        // Arrow and function expressions: only surface nested
+        // declarations from their block body, matching tsc's
+        // "inner function causes the var to be a top-level function"
+        // behavior.
+        if init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            if let Some(func) = self.arena.get_function(init_node) {
+                return self.collect_children_from_block(func.body, container_name);
+            }
+        }
+
+        Vec::new()
+    }
+
+    /// Emit a child entry for each property in an OBJECT_LITERAL_EXPRESSION.
+    /// `PROPERTY_ASSIGNMENT` → property / nested object / method depending
+    /// on the initializer; `SHORTHAND_PROPERTY_ASSIGNMENT` → property;
+    /// `METHOD_DECLARATION` (`m() {}` shorthand) → method. Computed
+    /// property names retain their bracket form via `get_name`.
+    fn collect_object_literal_members(
+        &self,
+        obj_idx: NodeIndex,
+        container_name: Option<&str>,
+    ) -> Vec<DocumentSymbol> {
+        let Some(obj_node) = self.arena.get(obj_idx) else {
+            return Vec::new();
+        };
+        let Some(obj) = self.arena.get_literal_expr(obj_node) else {
+            return Vec::new();
+        };
+        let mut symbols = Vec::new();
+        for &prop_idx in &obj.elements.nodes {
+            let Some(prop_node) = self.arena.get(prop_idx) else {
+                continue;
+            };
+            if prop_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                let Some(prop) = self.arena.get_property_assignment(prop_node) else {
+                    continue;
+                };
+                let Some(name) = self.get_name(prop.name) else {
+                    continue;
+                };
+                let range = node_range(self.arena, self.line_map, self.source_text, prop_idx);
+                let selection_range =
+                    node_range(self.arena, self.line_map, self.source_text, prop.name);
+                // Classify by initializer shape: function-like inits
+                // become methods, everything else stays a property.
+                let (kind, children) =
+                    self.classify_property_initializer(prop.initializer, Some(&name));
+                symbols.push(DocumentSymbol {
+                    name,
+                    detail: None,
+                    kind,
+                    kind_modifiers: String::new(),
+                    range,
+                    selection_range,
+                    container_name: container_name.map(std::string::ToString::to_string),
+                    children,
+                });
+            } else if prop_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                if let Some(short) = self.arena.get_shorthand_property(prop_node)
+                    && let Some(name) = self.get_name(short.name)
+                {
+                    let range = node_range(self.arena, self.line_map, self.source_text, prop_idx);
+                    let selection_range =
+                        node_range(self.arena, self.line_map, self.source_text, short.name);
+                    symbols.push(DocumentSymbol {
+                        name,
+                        detail: None,
+                        kind: SymbolKind::Property,
+                        kind_modifiers: String::new(),
+                        range,
+                        selection_range,
+                        container_name: container_name.map(std::string::ToString::to_string),
+                        children: vec![],
+                    });
+                }
+            } else if prop_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                // Object-literal shorthand method `m() {}` — the
+                // existing METHOD_DECLARATION arm already produces the
+                // right shape.
+                symbols.extend(self.collect_symbols(prop_idx, container_name));
+            } else if prop_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || prop_node.kind == syntax_kind_ext::SET_ACCESSOR
+            {
+                symbols.extend(self.collect_symbols(prop_idx, container_name));
+            } else if prop_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT {
+                // `...b` — tsc surfaces the spread expression's name as
+                // a property entry when it's an identifier. Anything
+                // more complex is skipped.
+                if let Some(spread) = self.arena.get_spread(prop_node)
+                    && let Some(name) = self.get_name(spread.expression)
+                {
+                    let range = node_range(self.arena, self.line_map, self.source_text, prop_idx);
+                    let selection_range = node_range(
+                        self.arena,
+                        self.line_map,
+                        self.source_text,
+                        spread.expression,
+                    );
+                    symbols.push(DocumentSymbol {
+                        name,
+                        detail: None,
+                        kind: SymbolKind::Property,
+                        kind_modifiers: String::new(),
+                        range,
+                        selection_range,
+                        container_name: container_name.map(std::string::ToString::to_string),
+                        children: vec![],
+                    });
+                }
+            }
+        }
+        symbols
+    }
+
+    /// Classify a PROPERTY_ASSIGNMENT's initializer for navbar display.
+    /// Function / arrow initializers are methods (optionally with a
+    /// body-walked child list); object literals become nested objects;
+    /// class expressions become class entries; everything else is a
+    /// plain property leaf.
+    fn classify_property_initializer(
+        &self,
+        init_idx: NodeIndex,
+        container_name: Option<&str>,
+    ) -> (SymbolKind, Vec<DocumentSymbol>) {
+        if init_idx.is_none() {
+            return (SymbolKind::Property, Vec::new());
+        }
+        let Some(init_node) = self.arena.get(init_idx) else {
+            return (SymbolKind::Property, Vec::new());
+        };
+        match init_node.kind {
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
+                let children = self
+                    .arena
+                    .get_function(init_node)
+                    .map(|f| self.collect_children_from_block(f.body, container_name))
+                    .unwrap_or_default();
+                (SymbolKind::Method, children)
+            }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                let children = self.collect_object_literal_members(init_idx, container_name);
+                (SymbolKind::Property, children)
+            }
+            k if k == syntax_kind_ext::CLASS_EXPRESSION => {
+                let children = self.collect_symbols(init_idx, container_name);
+                // The CLASS_EXPRESSION arm returns a class entry; when
+                // used as a property initializer, we usually want to
+                // inline its members. But tsc keeps the wrapper — mirror
+                // that by taking the class entry's children as the
+                // property's children and treating the property as
+                // a class-shaped entry.
+                if children.len() == 1 {
+                    let class_entry = &children[0];
+                    return (SymbolKind::Class, class_entry.children.clone());
+                }
+                (SymbolKind::Property, children)
+            }
+            _ => (SymbolKind::Property, Vec::new()),
         }
     }
 
