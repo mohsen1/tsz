@@ -1397,11 +1397,11 @@ var r14 = foo7(1, c);
         },
     );
 
-    // Known false positive: tsc accepts these but we emit TS2345 because
-    // the generic callable instantiation doesn't consider the target return type.
+    // The generic callable instantiation fix now handles the target return type,
+    // so these should no longer produce a false-positive TS2345.
     assert!(
-        has_error(&diagnostics, 2345),
-        "Expected TS2345 (known false positive for generic constructor callbacks with leading arg)"
+        !has_error(&diagnostics, 2345),
+        "Should not emit TS2345 for generic constructor callbacks with leading arg (false positive was fixed)"
     );
 }
 

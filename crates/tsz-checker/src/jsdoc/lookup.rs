@@ -24,6 +24,11 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+/// `(tag_name, Some((pos, len)))` for orphaned `@extends`/`@augments` tags.
+/// `None` means fully-dangling (no attached statement); `Some` gives the
+/// statement's source position and length for diagnostic anchoring.
+type OrphanedExtendsTag = (&'static str, Option<(u32, u32)>);
+
 impl<'a> CheckerState<'a> {
     fn global_source_file_idx_for_name(&self, file_name: &str) -> Option<usize> {
         if self.ctx.file_name == file_name {
@@ -900,7 +905,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn find_orphaned_extends_tags_for_statements(
         &self,
         statements: &[NodeIndex],
-    ) -> Vec<(&'static str, Option<(u32, u32)>)> {
+    ) -> Vec<OrphanedExtendsTag> {
         use tsz_parser::parser::syntax_kind_ext;
         let Some(sf) = self.ctx.arena.source_files.first() else {
             return Vec::new();
