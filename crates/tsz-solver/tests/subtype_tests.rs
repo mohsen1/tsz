@@ -1421,10 +1421,7 @@ fn test_array_subtyping() {
     assert!(checker.is_subtype_of(string_array, any_array));
 }
 
-// TODO: Fix iterable protocol subtyping guard -- Array<number> should be recognized
-// as subtype of Iterable<number> but the current guard is overly strict.
 #[test]
-#[ignore]
 fn test_array_to_iterable_protocol_subtyping() {
     let interner = TypeInterner::new();
     let cache = QueryCache::new(&interner);
