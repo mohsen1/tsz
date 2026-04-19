@@ -5,10 +5,11 @@
 //! compilation driver, watch mode, etc.).
 
 pub mod args;
-pub mod build;
+pub mod commands;
+pub use commands::build;
+pub use commands::help;
 pub use tsz::config;
 pub mod driver;
-pub mod help;
 pub mod incremental;
 pub mod locale;
 pub mod project;
