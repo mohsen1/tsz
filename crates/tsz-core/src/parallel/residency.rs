@@ -143,13 +143,15 @@ pub struct ResidencyBudget {
     pub high_watermark_bytes: usize,
 }
 
+/// Default memory pressure thresholds for `MergedProgram` residency tracking.
+const DEFAULT_LOW_WATERMARK_BYTES: usize = 256 * 1024 * 1024;
+const DEFAULT_HIGH_WATERMARK_BYTES: usize = 512 * 1024 * 1024;
+
 impl Default for ResidencyBudget {
     fn default() -> Self {
         Self {
-            // 256 MB low watermark
-            low_watermark_bytes: 256 * 1024 * 1024,
-            // 512 MB high watermark
-            high_watermark_bytes: 512 * 1024 * 1024,
+            low_watermark_bytes: DEFAULT_LOW_WATERMARK_BYTES,
+            high_watermark_bytes: DEFAULT_HIGH_WATERMARK_BYTES,
         }
     }
 }

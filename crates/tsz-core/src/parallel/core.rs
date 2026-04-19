@@ -341,7 +341,7 @@ pub fn ensure_rayon_global_pool() {
     RAYON_POOL_INIT.call_once(|| {
         // If the pool was already initialized through another rayon call, keep going.
         let _ = rayon::ThreadPoolBuilder::new()
-            .stack_size(64 * 1024 * 1024)
+            .stack_size(tsz_common::limits::THREAD_STACK_SIZE_BYTES)
             .build_global();
     });
 }

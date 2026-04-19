@@ -170,7 +170,7 @@ pub const fn is_deprecated_code(code: u32) -> bool {
 
 /// Returns true if the code falls in the syntactic/parser error range (1xxx).
 pub fn is_syntactic_error_code(code: u32) -> bool {
-    (1000..2000).contains(&code)
+    tsz_common::diagnostics::is_parser_grammar_diagnostic(code)
 }
 
 /// Returns true if the code falls in the semantic/type-checking error range (2xxx+).

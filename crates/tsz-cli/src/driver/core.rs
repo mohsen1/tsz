@@ -1422,11 +1422,13 @@ fn compile_inner(
     // TS2304 unless it co-occurs at the exact same file+position as a TS8xxx
     // error — tsc emits both in cases like `@extends {Mismatch}` (TS2304 + TS8023).
     {
-        let has_js_grammar_errors = diagnostics.iter().any(|d| (8000..9000).contains(&d.code));
+        let has_js_grammar_errors = diagnostics
+            .iter()
+            .any(|d| tsz::checker::diagnostics::is_js_grammar_diagnostic(d.code));
         if has_js_grammar_errors {
             let ts8xxx_positions: rustc_hash::FxHashSet<(String, u32)> = diagnostics
                 .iter()
-                .filter(|d| (8000..9000).contains(&d.code))
+                .filter(|d| tsz::checker::diagnostics::is_js_grammar_diagnostic(d.code))
                 .map(|d| (d.file.clone(), d.start))
                 .collect();
             diagnostics.retain(|d| {
