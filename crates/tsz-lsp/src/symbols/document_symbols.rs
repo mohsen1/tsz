@@ -223,9 +223,13 @@ impl<'a> DocumentSymbolProvider<'a> {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 if let Some(func) = self.arena.get_function(node) {
                     let name_node = func.name;
+                    // tsc uses the literal `<function>` placeholder for
+                    // name-less function declarations (parser error
+                    // recovery cases like `function;`). Keep the same
+                    // placeholder so snapshot diffs stay aligned.
                     let name = self
                         .get_name(name_node)
-                        .unwrap_or_else(|| "<anonymous>".to_string());
+                        .unwrap_or_else(|| "<function>".to_string());
 
                     let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
                     let selection_range = if name_node.is_some() {
@@ -400,21 +404,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                                     if let Some(decl_node) = self.arena.get(decl_idx)
                                         && let Some(decl) =
                                             self.arena.get_variable_declaration(decl_node)
-                                        && let Some(name) = self.get_name(decl.name)
                                     {
-                                        let range = node_range(
-                                            self.arena,
-                                            self.line_map,
-                                            self.source_text,
-                                            decl_idx,
-                                        );
-                                        let selection_range = node_range(
-                                            self.arena,
-                                            self.line_map,
-                                            self.source_text,
-                                            decl.name,
-                                        );
-
                                         let var_modifiers = if is_let {
                                             if stmt_modifiers.is_empty() {
                                                 "let".to_string()
@@ -424,25 +414,51 @@ impl<'a> DocumentSymbolProvider<'a> {
                                         } else {
                                             stmt_modifiers.clone()
                                         };
-                                        // Walk the initializer expression:
-                                        // object literals / class expressions
-                                        // / arrow bodies surface their members
-                                        // as children of the variable entry.
-                                        let children = self.collect_initializer_children(
-                                            decl.initializer,
-                                            Some(&name),
-                                        );
-                                        symbols.push(DocumentSymbol {
-                                            name,
-                                            detail: None,
-                                            kind,
-                                            kind_modifiers: var_modifiers,
-                                            range,
-                                            selection_range,
-                                            container_name: container_name
-                                                .map(std::string::ToString::to_string),
-                                            children,
-                                        });
+                                        if let Some(name) = self.get_name(decl.name) {
+                                            let range = node_range(
+                                                self.arena,
+                                                self.line_map,
+                                                self.source_text,
+                                                decl_idx,
+                                            );
+                                            let selection_range = node_range(
+                                                self.arena,
+                                                self.line_map,
+                                                self.source_text,
+                                                decl.name,
+                                            );
+                                            let children = self.collect_initializer_children(
+                                                decl.initializer,
+                                                Some(&name),
+                                            );
+                                            symbols.push(DocumentSymbol {
+                                                name,
+                                                detail: None,
+                                                kind,
+                                                kind_modifiers: var_modifiers,
+                                                range,
+                                                selection_range,
+                                                container_name: container_name
+                                                    .map(std::string::ToString::to_string),
+                                                children,
+                                            });
+                                        } else if let Some(name_node) = self.arena.get(decl.name)
+                                            && (name_node.kind
+                                                == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                                || name_node.kind
+                                                    == syntax_kind_ext::ARRAY_BINDING_PATTERN)
+                                        {
+                                            // `const { a, b } = …` / `const [c, d] = …`
+                                            // — surface each bound name as its own nav
+                                            // entry matching tsc's `navigationBar`.
+                                            self.collect_binding_pattern(
+                                                decl.name,
+                                                kind,
+                                                &var_modifiers,
+                                                container_name,
+                                                &mut symbols,
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -493,6 +509,15 @@ impl<'a> DocumentSymbolProvider<'a> {
             k if k == syntax_kind_ext::ENUM_MEMBER => {
                 if let Some(member) = self.arena.get_enum_member(node) {
                     let name_node = member.name;
+                    // Reject computed property names even though
+                    // `get_name` can stringify them to `[…]` — tsc
+                    // leaves enum members with computed keys out of the
+                    // navbar entirely.
+                    if let Some(name_inner) = self.arena.get(name_node)
+                        && name_inner.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                    {
+                        return vec![];
+                    }
                     let Some(name) = self.get_name(name_node) else {
                         return vec![];
                     };
@@ -1234,6 +1259,73 @@ impl<'a> DocumentSymbolProvider<'a> {
         }
     }
 
+    /// Recursively walk an OBJECT_BINDING_PATTERN or
+    /// ARRAY_BINDING_PATTERN and append a nav entry per bound name.
+    /// Nested patterns (`{ x: [a, b] }`) recurse so every terminal
+    /// identifier in the destructure surfaces. Uses the declaration's
+    /// inherited `kind` / `kind_modifiers` so `const [a, b] = ...`
+    /// gives two `const` leaves, etc. Function-shaped initializers on
+    /// binding elements (`{ h: i = function j() {} }`) additionally
+    /// surface the inner function name.
+    fn collect_binding_pattern(
+        &self,
+        pattern_idx: NodeIndex,
+        kind: SymbolKind,
+        modifiers: &str,
+        container_name: Option<&str>,
+        out: &mut Vec<DocumentSymbol>,
+    ) {
+        if pattern_idx.is_none() {
+            return;
+        }
+        let Some(pattern_node) = self.arena.get(pattern_idx) else {
+            return;
+        };
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return;
+        };
+        for &elem_idx in &pattern.elements.nodes {
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+            if elem_node.kind != syntax_kind_ext::BINDING_ELEMENT {
+                continue;
+            }
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                continue;
+            };
+            let name_idx = elem.name;
+            if name_idx.is_none() {
+                continue;
+            }
+            let Some(name_node) = self.arena.get(name_idx) else {
+                continue;
+            };
+            if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            {
+                // Nested destructure: recurse into the inner pattern.
+                self.collect_binding_pattern(name_idx, kind, modifiers, container_name, out);
+                continue;
+            }
+            let Some(name) = self.get_name(name_idx) else {
+                continue;
+            };
+            let range = node_range(self.arena, self.line_map, self.source_text, elem_idx);
+            let selection_range = node_range(self.arena, self.line_map, self.source_text, name_idx);
+            out.push(DocumentSymbol {
+                name: name.clone(),
+                detail: None,
+                kind,
+                kind_modifiers: modifiers.to_string(),
+                range,
+                selection_range,
+                container_name: container_name.map(std::string::ToString::to_string),
+                children: vec![],
+            });
+        }
+    }
+
     /// Scan a function/method body for a RETURN_STATEMENT whose
     /// expression is an OBJECT_LITERAL_EXPRESSION. When found, emit
     /// that object's members as if they were direct children of the
@@ -1525,10 +1617,17 @@ impl<'a> DocumentSymbolProvider<'a> {
         }
         if let Some(node) = self.arena.get(node_idx) {
             if node.kind == SyntaxKind::Identifier as u16 {
-                return self
-                    .arena
-                    .get_identifier(node)
-                    .map(|id| id.escaped_text.clone());
+                return self.arena.get_identifier(node).and_then(|id| {
+                    // An empty identifier is typically produced by
+                    // parser error recovery (e.g. `function;` gives a
+                    // name-less FUNCTION_DECLARATION). Treat as missing
+                    // so callers fall back to `<function>` / `<class>`.
+                    if id.escaped_text.is_empty() {
+                        None
+                    } else {
+                        Some(id.escaped_text.clone())
+                    }
+                });
             } else if node.kind == SyntaxKind::PrivateIdentifier as u16 {
                 // Private identifiers keep their `#` prefix in navbar
                 // output (`#foo`). The scanner's token value may or may
