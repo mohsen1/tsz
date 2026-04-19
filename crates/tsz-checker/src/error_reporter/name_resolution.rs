@@ -1134,7 +1134,12 @@ impl<'a> CheckerState<'a> {
         // Check if this is an ES2015+ type that would require a specific lib
         let is_es2015_type = lib_loader::is_es2015_plus_type(name);
 
-        let (code, message) = if is_es2015_type {
+        // Under `--noLib` the TS2583 "change your target library" suggestion
+        // is unhelpful — the user explicitly opted out of libs. tsc falls back
+        // to the plain TS2318 "Cannot find global type" message in that regime.
+        let no_lib = self.ctx.compiler_options.no_lib;
+
+        let (code, message) = if is_es2015_type && !no_lib {
             let lib_version = lib_loader::get_suggested_lib_for_type(name);
             (
                 lib_loader::MISSING_ES2015_LIB_SUPPORT,
