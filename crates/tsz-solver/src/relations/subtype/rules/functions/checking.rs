@@ -143,52 +143,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             )
                         });
 
-                    // For alpha-rename to succeed, the target's constraint must be
-                    // at least as strict as the source's constraint. This ensures the source
-                    // function's constraint requirements are at most as strict
-                    // as the target's.
-                    //
-                    // The key check: target_constraint ≤ source_constraint
-                    // If target's constraint is not assignable to source's constraint,
-                    // then source is stricter and we should NOT allow alpha-rename.
-                    //
-                    // Example:
-                    //   source: <S extends T> (constraint: T)
-                    //   target: <S> (constraint: unknown)
-                    //   check: unknown ≤ T → true (unknown is assignable to T)
-                    //   But wait, this means target is LOOSER, so source is STRICTER!
-                    //   We should NOT allow alpha-rename when source is stricter.
-                    //
-                    // The issue: when source has S extends T and target has S (no constraint),
-                    // the source is stricter. Alpha-rename would erase this distinction.
-                    // We need to detect when source has a constraint that target doesn't.
-                    //
-                    // Correction: check if source has a constraint that target doesn't.
-                    // If source has constraint and target doesn't (or target's constraint
-                    // is looser), then alpha-rename should fail.
-                    //
-                    // We check: does source have a constraint that makes it stricter?
-                    // Source is stricter if:
-                    // - source has constraint, target doesn't: always stricter
-                    // - both have constraints: source is stricter if its constraint is narrower
+                    let target_to_source = self
+                        .check_subtype(target_constraint, source_constraint)
+                        .is_true();
+                    let source_to_target = self
+                        .check_subtype(source_constraint, target_constraint)
+                        .is_true();
+
                     let source_has_constraint = source_tp.constraint.is_some();
                     let target_has_constraint = target_tp.constraint.is_some();
 
                     let source_is_stricter = if source_has_constraint && !target_has_constraint {
-                        // Source has constraint, target doesn't → source is stricter
                         true
                     } else if !source_has_constraint && target_has_constraint {
-                        // Target has constraint, source doesn't → source is looser (OK)
                         false
                     } else if source_has_constraint && target_has_constraint {
-                        // Both have constraints: check if source's is stricter
-                        // If target's constraint is NOT assignable to source's constraint,
-                        // then source is stricter
-                        !self
-                            .check_subtype(target_constraint, source_constraint)
-                            .is_true()
+                        let recursive_wrapper_relax = !target_to_source
+                            && self
+                                .constraint_wraps_target_once(source_constraint, target_constraint);
+                        !target_to_source && !recursive_wrapper_relax
                     } else {
-                        // Neither has constraint → equal
                         false
                     };
 
@@ -199,15 +173,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     // For mapped/indexed contexts, both directions must hold
                     // to preserve constraint information.
                     if mapped_constraint_sensitive {
-                        let target_to_source = self
-                            .check_subtype(target_constraint, source_constraint)
-                            .is_true();
-                        let source_to_target = self
-                            .check_subtype(source_constraint, target_constraint)
-                            .is_true();
                         target_to_source && source_to_target
                     } else {
-                        true // Constraints are compatible, allow alpha-rename
+                        true
                     }
                 });
 
@@ -955,6 +923,36 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         get_tuple_elements(self.interner, type_id).is_some()
             || union_contains_tuple(self.interner, type_id)
+    }
+
+    fn constraint_wraps_target_once(
+        &mut self,
+        source_constraint: TypeId,
+        target_constraint: TypeId,
+    ) -> bool {
+        let Some((source_base, source_args)) =
+            crate::type_queries::get_application_info(self.interner, source_constraint)
+        else {
+            return false;
+        };
+        let Some((target_base, _target_args)) =
+            crate::type_queries::get_application_info(self.interner, target_constraint)
+        else {
+            return false;
+        };
+
+        if !(source_base == target_base && source_args.len() == 1) {
+            return false;
+        }
+
+        let source_inner = source_args[0];
+        source_inner == target_constraint
+            || (self
+                .check_subtype(source_inner, target_constraint)
+                .is_true()
+                && self
+                    .check_subtype(target_constraint, source_inner)
+                    .is_true())
     }
 
     /// Check if a single function type is a subtype of a callable type with overloads.
