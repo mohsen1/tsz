@@ -1413,9 +1413,8 @@ impl<'a> CheckerState<'a> {
                 .and_then(|node| {
                     if node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
                         self.ctx.arena.get_interface(node)
-                    } else if node.kind == syntax_kind_ext::CLASS_DECLARATION {
-                        None // classes handled elsewhere
                     } else {
+                        // classes handled elsewhere; other kinds have no interface data
                         None
                     }
                 })
