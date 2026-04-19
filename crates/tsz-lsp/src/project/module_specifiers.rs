@@ -1313,7 +1313,30 @@ impl Project {
         supports_package_exports: bool,
         exports_mode: ExportsResolutionMode,
     ) -> Option<String> {
-        let normalized = target_file.replace('\\', "/");
+        let original = target_file.replace('\\', "/");
+        // Pnpm's virtual store places the real package under
+        // `node_modules/.pnpm/<pkg>@<ver>/node_modules/<actual>`. Rewrite
+        // to the outer-layout equivalent (`node_modules/<actual>/...`) for
+        // specifier computation, but remember the pnpm-real path so we can
+        // still find `package.json` at the original location below.
+        let pnpm_inner_marker = "/node_modules/.pnpm/";
+        let (normalized, pnpm_real_prefix) = if let Some(pnpm_start) = original.find(pnpm_inner_marker) {
+            let after = &original[pnpm_start + pnpm_inner_marker.len()..];
+            if let Some(inner) = after.find("/node_modules/") {
+                let shifted = pnpm_start + pnpm_inner_marker.len() + inner + "/node_modules/".len();
+                let real_prefix = original[..shifted].to_string();
+                let rewritten = format!(
+                    "{}/node_modules/{}",
+                    &original[..pnpm_start],
+                    &original[shifted..]
+                );
+                (rewritten, Some(real_prefix))
+            } else {
+                (original.clone(), None)
+            }
+        } else {
+            (original.clone(), None)
+        };
         let marker = "/node_modules/";
         let marker_idx = normalized.find(marker)?;
         let node_modules_root = &normalized[..marker_idx + marker.len() - 1];
@@ -1340,6 +1363,19 @@ impl Project {
             .get(&package_json_path)
             .map(|f| f.source_text().to_string())
             .or_else(|| std::fs::read_to_string(&package_json_path).ok())
+            .or_else(|| {
+                // Pnpm-virtual packages keep their package.json at the
+                // original `/node_modules/.pnpm/<pkg>/node_modules/<actual>`
+                // path even after we rewrite the target into outer-layout
+                // form. Fall back to that location so `main`/`types`
+                // collapsing still works for pnpm packages.
+                let real_prefix = pnpm_real_prefix.as_deref()?;
+                let pnpm_package_json_path = format!("{real_prefix}{package_root}/package.json");
+                self.files
+                    .get(&pnpm_package_json_path)
+                    .map(|f| f.source_text().to_string())
+                    .or_else(|| std::fs::read_to_string(&pnpm_package_json_path).ok())
+            })
             .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
 
         if supports_package_exports
