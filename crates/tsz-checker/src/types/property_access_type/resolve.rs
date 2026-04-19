@@ -1681,6 +1681,18 @@ impl<'a> CheckerState<'a> {
                     // E.g., for `class C<T> { x = this; }`, accessing `c.x` where
                     // `c: C<string>` should yield `C<string>`, not raw `ThisType`.
                     //
+                    // `super.method` is special: the property lookup happens on the
+                    // base instance type, but polymorphic `this` in the base member
+                    // should still bind to the current derived receiver. Without
+                    // this, `super.compare(other)` inside `Dog.compare(other: this)`
+                    // sees the base signature as `(other: Animal) => boolean`
+                    // instead of `(other: Dog) => boolean`, which diverges from tsc.
+                    let this_substitution_target = if self.is_super_expression(access.expression) {
+                        self.current_this_type().unwrap_or(original_object_type)
+                    } else {
+                        original_object_type
+                    };
+                    //
                     // Skip substitution when prop_type IS the receiver type. This
                     // prevents creating a new TypeId when accessing properties like
                     // `self2: D` where D is the current class instance type. Without
@@ -1691,12 +1703,12 @@ impl<'a> CheckerState<'a> {
                     if crate::query_boundaries::common::contains_this_type(
                         self.ctx.types,
                         prop_type,
-                    ) && prop_type != original_object_type
+                    ) && prop_type != this_substitution_target
                     {
                         prop_type = crate::query_boundaries::common::substitute_this_type(
                             self.ctx.types,
                             prop_type,
-                            original_object_type,
+                            this_substitution_target,
                         );
                     } else {
                         // When a method returns `this` on an intersection member,
@@ -1721,7 +1733,7 @@ impl<'a> CheckerState<'a> {
                             prop_type = crate::query_boundaries::common::substitute_this_type(
                                 self.ctx.types,
                                 raw_type,
-                                original_object_type,
+                                this_substitution_target,
                             );
                         }
                     }
