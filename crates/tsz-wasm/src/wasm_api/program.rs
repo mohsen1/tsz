@@ -142,6 +142,7 @@ impl TsCompilerOptions {
             preserve_const_enums: false,
             strict_builtin_iterator_return: strict,
             erasable_syntax_only: false,
+            no_fallthrough_cases_in_switch: false,
         }
     }
 }

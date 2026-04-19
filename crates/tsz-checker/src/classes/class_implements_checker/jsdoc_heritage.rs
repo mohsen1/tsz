@@ -445,17 +445,35 @@ impl<'a> CheckerState<'a> {
         let source_text: &str = &sf.text;
         let comments = &sf.comments;
 
-        let Some(node) = self.ctx.arena.get(class_idx) else {
+        let jsdoc_anchor_idx = self
+            .ctx
+            .arena
+            .get_extended(class_idx)
+            .map(|ext| ext.parent)
+            .filter(|parent| {
+                self.ctx
+                    .arena
+                    .get(*parent)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::EXPORT_DECLARATION)
+            })
+            .unwrap_or(class_idx);
+
+        let Some(effective_pos) =
+            self.effective_jsdoc_pos_for_node(jsdoc_anchor_idx, comments, source_text)
+        else {
             return (Vec::new(), Vec::new());
         };
 
         let Some((jsdoc, jsdoc_start)) =
-            self.try_leading_jsdoc_with_pos(comments, node.pos, source_text)
+            self.try_leading_jsdoc_with_pos(comments, effective_pos, source_text)
         else {
             return (Vec::new(), Vec::new());
         };
-        let leading =
-            tsz_common::comments::get_leading_comments_from_cache(comments, node.pos, source_text);
+        let leading = tsz_common::comments::get_leading_comments_from_cache(
+            comments,
+            effective_pos,
+            source_text,
+        );
         let raw_comment = leading
             .last()
             .and_then(|comment| source_text.get(comment.pos as usize..comment.end as usize))
@@ -619,16 +637,27 @@ impl<'a> CheckerState<'a> {
             let Some(sym_id) = sym_id else {
                 continue;
             };
-            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            let lib_binders = self.get_lib_binders();
+            let Some((symbol_flags, symbol_declarations, target_display_name)) = self
+                .get_cross_file_symbol(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
+                .map(|symbol| {
+                    (
+                        symbol.flags,
+                        symbol.declarations.clone(),
+                        symbol.escaped_name.clone(),
+                    )
+                })
+            else {
                 continue;
             };
 
-            let is_class = (symbol.flags & tsz_binder::symbol_flags::CLASS) != 0;
+            let is_class = (symbol_flags & tsz_binder::symbol_flags::CLASS) != 0;
 
             // Check for private/protected members (TS2720 — should extend, not implement)
             let mut has_private_members = false;
             if is_class {
-                for &decl_idx in &symbol.declarations {
+                for &decl_idx in &symbol_declarations {
                     if let Some(node) = self.ctx.arena.get(decl_idx)
                         && node.kind == syntax_kind_ext::CLASS_DECLARATION
                         && let Some(base_class_data) = self.ctx.arena.get_class(node)
@@ -641,7 +670,7 @@ impl<'a> CheckerState<'a> {
 
             if has_private_members {
                 let message = format!(
-                    "Class '{class_name}' incorrectly implements class '{target_name}'. Did you mean to extend '{target_name}' and inherit its members as a subclass?"
+                    "Class '{class_name}' incorrectly implements class '{target_display_name}'. Did you mean to extend '{target_display_name}' and inherit its members as a subclass?"
                 );
                 self.error_at_node(
                     class_error_idx,
@@ -657,7 +686,7 @@ impl<'a> CheckerState<'a> {
             let interface_type = if is_class {
                 // Find the class declaration and get its instance type
                 let mut instance_type = None;
-                for &decl_idx in &symbol.declarations {
+                for &decl_idx in &symbol_declarations {
                     if let Some(node) = self.ctx.arena.get(decl_idx)
                         && node.kind == syntax_kind_ext::CLASS_DECLARATION
                         && let Some(target_class_data) = self.ctx.arena.get_class(node)
@@ -744,7 +773,7 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(
                         class_error_idx,
                         &format!(
-                            "Class '{class_name}' incorrectly implements interface '{target_name}'."
+                            "Class '{class_name}' incorrectly implements interface '{target_display_name}'."
                         ),
                         diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                     );
@@ -762,7 +791,7 @@ impl<'a> CheckerState<'a> {
                 let missing_message = if missing_members.len() == 1 {
                     format!(
                         "Property '{}' is missing in type '{}' but required in type '{}'.",
-                        missing_members[0], class_name, target_name
+                        missing_members[0], class_name, target_display_name
                     )
                 } else {
                     let formatted_list = if missing_members.len() > 4 {
@@ -777,17 +806,17 @@ impl<'a> CheckerState<'a> {
                         missing_members.join(", ")
                     };
                     format!(
-                        "Type '{class_name}' is missing the following properties from type '{target_name}': {formatted_list}"
+                        "Type '{class_name}' is missing the following properties from type '{target_display_name}': {formatted_list}"
                     )
                 };
 
                 let full_message = if is_class {
                     format!(
-                        "Class '{class_name}' incorrectly implements class '{target_name}'. Did you mean to extend '{target_name}' and inherit its members as a subclass?\n  {missing_message}"
+                        "Class '{class_name}' incorrectly implements class '{target_display_name}'. Did you mean to extend '{target_display_name}' and inherit its members as a subclass?\n  {missing_message}"
                     )
                 } else {
                     format!(
-                        "Class '{class_name}' incorrectly implements interface '{target_name}'.\n  {missing_message}"
+                        "Class '{class_name}' incorrectly implements interface '{target_display_name}'.\n  {missing_message}"
                     )
                 };
 
@@ -822,7 +851,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node(
                     error_node_idx,
                     &format!(
-                        "Property '{display_name}' in type '{class_name}' is not assignable to the same property in base type '{target_name}'."
+                        "Property '{display_name}' in type '{class_name}' is not assignable to the same property in base type '{target_display_name}'."
                     ),
                     diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                 );

@@ -92,7 +92,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
+            .target
+            !.target/**/incremental
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
@@ -105,9 +106,6 @@ jobs:
             -p tsz-common -p tsz-scanner -p tsz-parser -p tsz-binder \
             -p tsz-solver -p tsz-checker -p tsz-emitter -p tsz-lowering -p tsz-lsp \
             --all-targets -- -D warnings
-
-      - name: Run clippy (full workspace - warnings only)
-        run: cargo clippy --all-targets --all-features
 
       - name: Checker boundary guardrail
         run: |
@@ -156,7 +154,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
+            .target
+            !.target/**/incremental
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
@@ -200,7 +199,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
+            .target
+            !.target/**/incremental
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
@@ -239,7 +239,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
+            .target
+            !.target/**/incremental
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
@@ -285,7 +286,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
+            .target
+            !.target/**/incremental
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
@@ -326,7 +328,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
+            .target
+            !.target/**/incremental
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
@@ -374,7 +377,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
+            .target
+            !.target/**/incremental
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
@@ -416,7 +420,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
+            .target
+            !.target/**/incremental
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
@@ -453,7 +458,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
+            .target
+            !.target/**/incremental
           key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-wasm-
@@ -966,9 +972,9 @@ jobs:
           path: .ci-metrics/emit.json
           retention-days: 14
 
-  # ─── Fourslash: 15 parallel shards ──────────────────────────────────────
+  # ─── Fourslash: 10 parallel shards ──────────────────────────────────────
   fourslash:
-    name: "Fourslash (${{ matrix.shard }}/15)"
+    name: "Fourslash (${{ matrix.shard }}/10)"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [changes, test-build]
@@ -976,7 +982,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     if: >-
       needs.changes.outputs.solver == 'true' ||
       needs.changes.outputs.checker == 'true' ||
@@ -1022,8 +1028,8 @@ jobs:
           set -euo pipefail
           # Keep shards small enough that the heaviest language-service ranges do not
           # exhaust the runner before results are uploaded.
-          # 15 shards × 450 = 6750, covering all ~6320 fourslash tests.
-          CHUNK=450
+          # 10 shards × 700 = 7000, covering all 6562 fourslash tests with headroom.
+          CHUNK=700
           OFFSET=$(( ${{ matrix.shard }} * CHUNK ))
 
           TMPOUT=$(mktemp)
@@ -1101,7 +1107,7 @@ jobs:
             SHARD_COUNT=$((SHARD_COUNT + 1))
             echo "  $(basename "$f"): ${P}/${T}"
           done
-          echo "Received results from ${SHARD_COUNT}/15 shards"
+          echo "Received results from ${SHARD_COUNT}/10 shards"
 
           if [ "$TOTAL_TESTS" -eq 0 ]; then
             echo "::error::Fourslash produced no results"
