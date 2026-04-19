@@ -571,6 +571,12 @@ pub(crate) struct Server {
     pub(crate) enable_telemetry: bool,
     /// Plugin configurations stored via `configurePlugin` command.
     pub(crate) plugin_configs: FxHashMap<String, serde_json::Value>,
+    /// Persistent native-TypeScript worker subprocess used for operations
+    /// that delegate to real `tsc` (rename, classification, etc.). Loaded
+    /// lazily on first use so that test/CLI invocations that never call
+    /// native TypeScript don't pay the spawn cost.
+    pub(crate) native_ts_worker:
+        Option<std::sync::Mutex<self::handlers_info_alias::NativeTsWorker>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -639,6 +645,8 @@ impl Server {
             _log_config: log_config,
             enable_telemetry: args.enable_telemetry,
             plugin_configs: FxHashMap::default(),
+            native_ts_worker: self::handlers_info_alias::NativeTsWorker::spawn()
+                .map(std::sync::Mutex::new),
         })
     }
 
