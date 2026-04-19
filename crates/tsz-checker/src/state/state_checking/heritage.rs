@@ -60,6 +60,24 @@ impl<'a> CheckerState<'a> {
                 }))
     }
 
+    /// Resolve the display name to use in TS2314-style diagnostics for a heritage
+    /// reference. tsc uses the target symbol's declared name, not the textual
+    /// qualified expression (e.g. `M.E<T>` → `E<T>`), and follows aliases so
+    /// `import { A as B }` renders as `A<T>`.
+    fn heritage_ts2314_display_name(
+        &self,
+        heritage_sym: tsz_binder::SymbolId,
+        fallback: &str,
+    ) -> String {
+        let mut visited_aliases = Vec::new();
+        self.resolve_alias_symbol(heritage_sym, &mut visited_aliases)
+            .and_then(|target| {
+                self.get_symbol_globally(target)
+                    .map(|s| s.escaped_name.clone())
+            })
+            .unwrap_or_else(|| fallback.to_string())
+    }
+
     fn report_unresolved_qualified_heritage_member(
         &mut self,
         expr_idx: NodeIndex,
@@ -365,9 +383,11 @@ impl<'a> CheckerState<'a> {
                                 )
                                 && let Some(name) = self.heritage_name_text(expr_idx)
                             {
+                                let resolved_name =
+                                    self.heritage_ts2314_display_name(heritage_sym, &name);
                                 let type_params = self.get_type_params_for_symbol(heritage_sym);
                                 let display_name = Self::format_generic_display_name_with_interner(
-                                    &name,
+                                    &resolved_name,
                                     &type_params,
                                     self.ctx.types,
                                 );
@@ -398,9 +418,11 @@ impl<'a> CheckerState<'a> {
                             is_extends_clause,
                         );
                         if !skip_ts2314 {
+                            let resolved_name =
+                                self.heritage_ts2314_display_name(heritage_sym, &name);
                             let type_params = self.get_type_params_for_symbol(heritage_sym);
                             let display_name = Self::format_generic_display_name_with_interner(
-                                &name,
+                                &resolved_name,
                                 &type_params,
                                 self.ctx.types,
                             );
