@@ -731,6 +731,13 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 crate::diagnostics::diagnostic_codes::UNREACHABLE_CODE_DETECTED,
             );
             self.ctx.has_reported_unreachable = true;
+        } else if should_skip {
+            // tsc resets the "already reported" marker after a statement that
+            // doesn't affect runtime control flow (function declaration, etc.).
+            // This lets a subsequent unreachable statement emit a fresh TS7027,
+            // matching tsc's one-per-unreachable-group behavior where hoisted
+            // declarations separate groups. See `unreachableJavascriptChecked`.
+            self.ctx.has_reported_unreachable = false;
         }
     }
 
