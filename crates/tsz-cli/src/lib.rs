@@ -5,11 +5,10 @@
 //! compilation driver, watch mode, etc.).
 
 pub mod args;
-pub mod build;
+pub mod commands;
 pub use tsz::config;
 pub mod driver;
 pub mod fs;
-pub mod help;
 pub mod incremental;
 pub mod locale;
 pub mod project_refs;
@@ -17,6 +16,8 @@ pub mod reporter;
 pub mod trace;
 pub mod tracing_config;
 pub mod watch;
+pub use commands::build;
+pub mod help;
 
 #[cfg(test)]
 #[path = "../tests/args_tests.rs"]
