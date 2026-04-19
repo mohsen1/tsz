@@ -650,7 +650,6 @@ impl<'a> CheckerState<'a> {
     /// and unions containing void/undefined.
     /// Returns true for all other types.
     pub fn requires_return_value(&self, return_type: TypeId) -> bool {
-        // void, undefined, any, never don't require a return value
         if return_type == TypeId::VOID
             || return_type == TypeId::UNDEFINED
             || return_type == TypeId::ANY

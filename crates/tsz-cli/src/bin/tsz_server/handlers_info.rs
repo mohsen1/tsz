@@ -53,6 +53,9 @@ fn symbol_kind_to_tsserver(
         SymbolKind::Alias => "alias",
         SymbolKind::Getter => "getter",
         SymbolKind::Setter => "setter",
+        SymbolKind::CallSignature => "call",
+        SymbolKind::ConstructSignature => "construct",
+        SymbolKind::IndexSignature => "index",
         _ => "unknown",
     }
 }
@@ -68,28 +71,79 @@ fn symbol_kind_to_tsserver(
 /// before `[E.A]` purely by bracket-text, and the navbar diverges
 /// from the source-ordered expected output).
 fn sort_symbols_deep(symbols: &mut [tsz::lsp::symbols::document_symbols::DocumentSymbol]) {
+    use tsz::lsp::symbols::document_symbols::SymbolKind;
     fn sort_key(sym: &tsz::lsp::symbols::document_symbols::DocumentSymbol) -> Option<String> {
-        if sym.name.starts_with('[') {
+        // Mirror tsc's `tryGetName`: anything without a normal declaration
+        // name compares as "nameless" (sorts ahead of named siblings and
+        // falls back to kind ordinal among itself). Covers computed
+        // property names (`[x]`, `["foo"]`, `[1]`) and interface-type
+        // signatures (`()` call, `new()` construct, `[]` index).
+        let nameless = sym.name.starts_with('[') || sym.name == "()" || sym.name == "new()";
+        if nameless {
             None
         } else {
             Some(sym.name.to_lowercase())
         }
     }
+    // tsc's `compareChildren` tiebreaker is `navigationBarNodeKind` — the
+    // AST SyntaxKind of the underlying node. Map our higher-level
+    // `SymbolKind` to those underlying values so two siblings with the
+    // same name (e.g. `class Foo {}` + `let Foo = 1;`) sort in the same
+    // order tsc produces. Numbers come from TypeScript's SyntaxKind enum.
+    const fn kind_rank(k: SymbolKind) -> u16 {
+        match k {
+            SymbolKind::Property | SymbolKind::Field => 171,
+            SymbolKind::Method => 174,
+            SymbolKind::Constructor => 176,
+            SymbolKind::Getter => 177,
+            SymbolKind::Setter => 178,
+            SymbolKind::EnumMember => 304,
+            SymbolKind::Variable
+            | SymbolKind::Constant
+            | SymbolKind::Boolean
+            | SymbolKind::Array
+            | SymbolKind::Object
+            | SymbolKind::Null
+            | SymbolKind::Number
+            | SymbolKind::String => 260,
+            SymbolKind::Function | SymbolKind::Event | SymbolKind::Operator => 262,
+            SymbolKind::Class => 263,
+            SymbolKind::Interface => 264,
+            SymbolKind::Struct => 265, // type alias
+            SymbolKind::Enum => 266,
+            SymbolKind::Module | SymbolKind::Namespace | SymbolKind::Package | SymbolKind::File => {
+                267
+            }
+            SymbolKind::Alias => 280, // ImportSpecifier / NamespaceImport
+            SymbolKind::TypeParameter => 170,
+            SymbolKind::Key => 172,
+            SymbolKind::CallSignature => 180,
+            SymbolKind::ConstructSignature => 181,
+            SymbolKind::IndexSignature => 182,
+        }
+    }
     symbols.sort_by(|a, b| {
         match (sort_key(a), sort_key(b)) {
             (Some(na), Some(nb)) => match na.cmp(&nb) {
-                std::cmp::Ordering::Equal => (a.range.start.line, a.range.start.character)
-                    .cmp(&(b.range.start.line, b.range.start.character)),
+                std::cmp::Ordering::Equal => kind_rank(a.kind).cmp(&kind_rank(b.kind)),
                 other => other,
             },
             // tsc: `compareStringsCaseInsensitive(undefined, x)` sorts
             // undefined before any string. Computed-name items therefore
             // sort ahead of identifier-name items at the same level, and
-            // amongst themselves fall back to source position.
+            // amongst themselves fall back to source position (kind rank
+            // alone can't distinguish two `[computed]` class methods).
             (None, Some(_)) => std::cmp::Ordering::Less,
             (Some(_), None) => std::cmp::Ordering::Greater,
-            (None, None) => (a.range.start.line, a.range.start.character)
-                .cmp(&(b.range.start.line, b.range.start.character)),
+            // Nameless against nameless: tsc's tiebreaker is kind
+            // ordinal (call < construct < index). Same-kind pairs
+            // (e.g. two computed-name methods) fall back to source
+            // position.
+            (None, None) => match kind_rank(a.kind).cmp(&kind_rank(b.kind)) {
+                std::cmp::Ordering::Equal => (a.range.start.line, a.range.start.character)
+                    .cmp(&(b.range.start.line, b.range.start.character)),
+                other => other,
+            },
         }
     });
     for sym in symbols.iter_mut() {
