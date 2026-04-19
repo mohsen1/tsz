@@ -408,7 +408,7 @@ impl<'a> CheckerState<'a> {
                     .definition_store
                     .find_def_for_type(type_id)
                     .is_some()
-                || tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, type_id).is_some()
+                || crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id).is_some()
                 || self.ctx.types.get_display_alias(type_id).is_some()
                 || self.ctx.namespace_module_names.contains_key(&type_id);
             if has_named_receiver_identity {
@@ -443,7 +443,7 @@ impl<'a> CheckerState<'a> {
         // cannot be resolved to a concrete type. Reporting errors on these placeholders
         // produces confusing diagnostics. The actual inference/assignability issue should be
         // reported elsewhere.
-        if tsz_solver::type_queries::is_bare_infer_placeholder_db(self.ctx.types, type_id) {
+        if crate::query_boundaries::common::is_bare_infer_placeholder(self.ctx.types, type_id) {
             return;
         }
 
@@ -469,7 +469,7 @@ impl<'a> CheckerState<'a> {
         // computed property name is being evaluated for class member resolution.
         if self.ctx.checking_computed_property_name.is_some()
             && !self.ctx.class_instance_resolution_set.is_empty()
-            && tsz_solver::type_queries::get_application_info(
+            && crate::query_boundaries::common::application_info(
                 self.ctx.types.as_type_database(),
                 type_id,
             )
@@ -922,7 +922,8 @@ impl<'a> CheckerState<'a> {
 
             // For enum container types (e.g., `U8.nonExistent`), tsc displays
             // "typeof EnumName" for the type in the error message.
-            if let Some(def_id) = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, type_id)
+            if let Some(def_id) =
+                crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)
                 && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             {
@@ -1335,8 +1336,11 @@ impl<'a> CheckerState<'a> {
         // TS2339 for the first missing property (matching tsc behavior).
         let is_union_or_intersection =
             crate::query_boundaries::common::union_members(self.ctx.types, object_type).is_some()
-                || tsz_solver::type_queries::get_intersection_members(self.ctx.types, object_type)
-                    .is_some();
+                || crate::query_boundaries::common::intersection_members(
+                    self.ctx.types,
+                    object_type,
+                )
+                .is_some();
         // Check if the object has any index signature. If so, the more specific
         // TS7015/TS7053 diagnostics below should handle the error, not TS2339.
         let idx_resolver =
@@ -1360,7 +1364,7 @@ impl<'a> CheckerState<'a> {
 
         // Check if index is a string literal
         if let Some(atom) =
-            tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
+            crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
         {
             let prop_name = self.ctx.types.resolve_atom_ref(atom);
             let prop_name_str: &str = &prop_name;
@@ -1404,12 +1408,12 @@ impl<'a> CheckerState<'a> {
             && !prefer_write_method
             && self.is_object_literal_backed_element_access_receiver(expr_idx)
             && let Some(union_members) =
-                tsz_solver::type_queries::get_union_members(self.ctx.types, index_type)
+                crate::query_boundaries::common::union_members(self.ctx.types, index_type)
         {
             // Find the first string literal member that doesn't exist as a property
             for member in union_members {
                 if let Some(atom) =
-                    tsz_solver::type_queries::get_string_literal_value(self.ctx.types, member)
+                    crate::query_boundaries::common::string_literal_value(self.ctx.types, member)
                 {
                     let prop_name = self.ctx.types.resolve_atom_ref(atom);
                     let prop_name_str: &str = &prop_name;
@@ -1434,7 +1438,7 @@ impl<'a> CheckerState<'a> {
         if !is_union_or_intersection
             && !has_any_index_signature
             && let Some(num) =
-                tsz_solver::type_queries::get_number_literal_value(self.ctx.types, index_type)
+                crate::query_boundaries::common::number_literal_value(self.ctx.types, index_type)
             && !prefer_write_method
             && self.is_object_literal_backed_element_access_receiver(expr_idx)
         {
@@ -1466,7 +1470,7 @@ impl<'a> CheckerState<'a> {
             prefer_write_method,
         ) {
             let display_object_type =
-                tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
+                crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
                     .and_then(|atom| {
                         let prop_name = self.ctx.types.resolve_atom_ref(atom);
                         self.fresh_empty_object_member_for_missing_union(object_type, &prop_name)
@@ -1562,7 +1566,7 @@ impl<'a> CheckerState<'a> {
         // For type parameters, tsc displays the constraint type name in the
         // diagnostic (e.g., "can't be used to index type 'Item'" not "'T'").
         let display_object_type =
-            tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
+            crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
                 .and_then(|atom| {
                     let prop_name = self.ctx.types.resolve_atom_ref(atom);
                     self.fresh_empty_object_member_for_missing_union(object_type, &prop_name)
@@ -1941,8 +1945,8 @@ impl<'a> CheckerState<'a> {
     /// Get the display name for a namespace/module value type, if applicable.
     /// Returns `Some("M")` for `namespace M {}` types, enabling `typeof M` display.
     fn get_namespace_typeof_name(&self, type_id: TypeId) -> Option<String> {
+        use crate::query_boundaries::common::{NamespaceMemberKind, classify_namespace_member};
         use tsz_binder::{SymbolId, symbol_flags};
-        use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
 
         const fn is_pure_namespace(symbol: &tsz_binder::Symbol) -> bool {
             (symbol.flags & symbol_flags::MODULE) != 0
@@ -2065,7 +2069,7 @@ impl<'a> CheckerState<'a> {
         }
         // Try object shape symbol
         if let Some(shape_id) =
-            tsz_solver::type_queries::get_object_shape_id(self.ctx.types, type_id)
+            crate::query_boundaries::common::object_shape_id(self.ctx.types, type_id)
         {
             let shape = self.ctx.types.object_shape(shape_id);
             if let Some(sym_id) = shape.symbol

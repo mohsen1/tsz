@@ -2,6 +2,7 @@
 
 use crate::context::TypingRequest;
 use crate::query_boundaries::class_type::{callable_shape_for_type, construct_signatures_for_type};
+use crate::query_boundaries::common::is_template_literal_type;
 use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 use crate::state::{CheckerState, MemberAccessLevel};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -9,7 +10,6 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::visitor::is_template_literal_type;
 use tsz_solver::{
     CallSignature, CallableShape, IndexSignature, ParamInfo, PropertyInfo, TypeId, TypeParamInfo,
     TypePredicate, Visibility,
@@ -1523,8 +1523,11 @@ impl<'a> CheckerState<'a> {
                     // bypassing node_types/symbol_types caches.
                     if let Some(annotation_type_id) =
                         self.resolve_param_type_annotation(base_sym_id)
-                        && tsz_solver::visitor::type_param_info(self.ctx.types, annotation_type_id)
-                            .is_some()
+                        && crate::query_boundaries::common::type_param_info(
+                            self.ctx.types,
+                            annotation_type_id,
+                        )
+                        .is_some()
                     {
                         base_type_param = Some(annotation_type_id);
                     }

@@ -48,7 +48,7 @@ impl<'a> CheckerState<'a> {
         request.contextual_type.is_some_and(|type_id| {
             type_id != TypeId::UNKNOWN
                 && type_id != TypeId::ERROR
-                && !tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, type_id)
+                && !crate::query_boundaries::common::contains_infer_types(self.ctx.types, type_id)
                 && !crate::query_boundaries::common::contains_type_parameters(
                     self.ctx.types,
                     type_id,

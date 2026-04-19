@@ -390,9 +390,12 @@ impl<'a> CheckerState<'a> {
             // nested static blocks where the class type may be represented by different
             // TypeIds during resolution (e.g., from symbol_types cache vs
             // class_constructor_type_cache).
-            use tsz_solver::type_queries as tq;
-            let rhs_class_symbol = tq::get_type_shape_symbol(self.ctx.types, evaluated_rhs_type);
-            let declaring_class_symbol = tq::get_type_shape_symbol(self.ctx.types, declaring_type);
+            let rhs_class_symbol = crate::query_boundaries::common::type_shape_symbol(
+                self.ctx.types,
+                evaluated_rhs_type,
+            );
+            let declaring_class_symbol =
+                crate::query_boundaries::common::type_shape_symbol(self.ctx.types, declaring_type);
             if rhs_class_symbol.is_some()
                 && declaring_class_symbol.is_some()
                 && rhs_class_symbol == declaring_class_symbol

@@ -44,7 +44,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if it's a union where all members are enum/enum-member types
-        let Some(members) = tsz_solver::visitor::union_list_id(self.ctx.types, type_id) else {
+        let Some(members) = crate::query_boundaries::common::union_list_id(self.ctx.types, type_id)
+        else {
             // Not a union — check if it's a single enum member
             return self.is_enum_or_enum_member(type_id);
         };
@@ -65,7 +66,7 @@ impl<'a> CheckerState<'a> {
     /// Only when the type stays as `Lazy` (evaluation couldn't resolve it) should
     /// the symbol-based enum check be used as a fallback.
     pub fn is_unresolved_lazy_type(&self, type_id: TypeId) -> bool {
-        tsz_solver::visitor::is_lazy_type(self.ctx.types, type_id)
+        crate::query_boundaries::common::is_lazy_type(self.ctx.types, type_id)
     }
 
     /// Check if a type resolves to an ENUM or `ENUM_MEMBER` symbol.

@@ -1276,7 +1276,7 @@ impl<'a> FlowAnalyzer<'a> {
                 } else if parts.len() == 1 {
                     parts[0]
                 } else {
-                    self.interner.union(parts)
+                    crate::query_boundaries::flow_analysis::union_types(self.interner, parts)
                 };
             }
         }

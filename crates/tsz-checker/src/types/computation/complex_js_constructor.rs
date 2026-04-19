@@ -151,8 +151,10 @@ impl<'a> CheckerState<'a> {
         let func_node_idx = self.ctx.arena.get_extended(body_idx).map(|ext| ext.parent);
 
         // Build effective template/parameter data for JS generic constructors.
-        let func_shape =
-            tsz_solver::type_queries::get_function_shape(self.ctx.types, constructor_type);
+        let func_shape = crate::query_boundaries::common::function_shape_for_type(
+            self.ctx.types,
+            constructor_type,
+        );
         let mut effective_type_params: Vec<tsz_solver::TypeParamInfo> = func_shape
             .as_ref()
             .map(|shape| shape.type_params.clone())
@@ -187,10 +189,9 @@ impl<'a> CheckerState<'a> {
             if effective_type_params.is_empty() {
                 let mut seen = rustc_hash::FxHashSet::default();
                 for &param_type in fallback.values() {
-                    if let Some(tp_info) = tsz_solver::type_queries::get_type_parameter_info(
-                        self.ctx.types,
-                        param_type,
-                    ) && seen.insert(tp_info.name)
+                    if let Some(tp_info) =
+                        crate::query_boundaries::common::type_param_info(self.ctx.types, param_type)
+                        && seen.insert(tp_info.name)
                     {
                         effective_type_params.push(tp_info);
                     }

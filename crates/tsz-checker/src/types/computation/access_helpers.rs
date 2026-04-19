@@ -154,7 +154,8 @@ impl<'a> CheckerState<'a> {
         };
 
         let is_unique_symbol =
-            tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type).is_some();
+            crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
+                .is_some();
         let is_concrete_numeric = literal_index.is_some();
         if !is_unique_symbol && !is_concrete_numeric {
             return false;
@@ -227,11 +228,11 @@ impl<'a> CheckerState<'a> {
     /// conditional types, and intersections containing any of the above
     /// (e.g., `keyof Boxified<T> & string` from for-in variable typing).
     pub(crate) fn is_generic_index_type(&self, index_type: TypeId) -> bool {
-        use tsz_solver::visitor;
-        visitor::is_type_parameter(self.ctx.types, index_type)
-            || visitor::keyof_inner_type(self.ctx.types, index_type).is_some()
-            || visitor::is_index_access_type(self.ctx.types, index_type)
-            || visitor::is_conditional_type(self.ctx.types, index_type)
+        crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type)
+            || crate::query_boundaries::common::keyof_inner_type(self.ctx.types, index_type)
+                .is_some()
+            || crate::query_boundaries::common::is_index_access_type(self.ctx.types, index_type)
+            || crate::query_boundaries::common::is_conditional_type(self.ctx.types, index_type)
             || tsz_solver::is_generic_application(self.ctx.types, index_type)
             || self.intersection_has_generic_index(index_type)
     }
@@ -261,15 +262,17 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         index_type: TypeId,
     ) -> bool {
-        use tsz_solver::visitor;
-
-        let index_mentions_keyof = visitor::keyof_inner_type(self.ctx.types, index_type).is_some()
-            || crate::query_boundaries::common::intersection_members(self.ctx.types, index_type)
+        let index_mentions_keyof =
+            crate::query_boundaries::common::keyof_inner_type(self.ctx.types, index_type).is_some()
+                || crate::query_boundaries::common::intersection_members(
+                    self.ctx.types,
+                    index_type,
+                )
                 .is_some_and(|members| {
-                    members
-                        .iter()
-                        .copied()
-                        .any(|member| visitor::keyof_inner_type(self.ctx.types, member).is_some())
+                    members.iter().copied().any(|member| {
+                        crate::query_boundaries::common::keyof_inner_type(self.ctx.types, member)
+                            .is_some()
+                    })
                 });
 
         if !index_mentions_keyof
@@ -281,7 +284,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if visitor::is_index_access_type(self.ctx.types, object_type)
+        if crate::query_boundaries::common::is_index_access_type(self.ctx.types, object_type)
             || tsz_solver::is_generic_application(self.ctx.types, object_type)
         {
             return true;
@@ -291,7 +294,7 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::intersection_members(self.ctx.types, object_type)
         {
             return members.iter().copied().any(|member| {
-                visitor::is_index_access_type(self.ctx.types, member)
+                crate::query_boundaries::common::is_index_access_type(self.ctx.types, member)
                     || tsz_solver::is_generic_application(self.ctx.types, member)
                     || tsz_solver::mapped_type_id(self.ctx.types, member).is_some()
             });
@@ -311,7 +314,6 @@ impl<'a> CheckerState<'a> {
         index_type: TypeId,
         type_param: TypeId,
     ) -> bool {
-        use tsz_solver::visitor;
         if let Some(members) =
             crate::query_boundaries::common::intersection_members(self.ctx.types, index_type)
         {
@@ -327,13 +329,17 @@ impl<'a> CheckerState<'a> {
             }
         }
         // Direct keyof T
-        if let Some(keyof_inner) = visitor::keyof_inner_type(self.ctx.types, index_type) {
+        if let Some(keyof_inner) =
+            crate::query_boundaries::common::keyof_inner_type(self.ctx.types, index_type)
+        {
             return keyof_inner == type_param;
         }
         // K extends keyof T (type param whose constraint is keyof T)
-        if let Some(param_info) = visitor::type_param_info(self.ctx.types, index_type)
+        if let Some(param_info) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, index_type)
             && let Some(constraint) = param_info.constraint
-            && let Some(keyof_inner) = visitor::keyof_inner_type(self.ctx.types, constraint)
+            && let Some(keyof_inner) =
+                crate::query_boundaries::common::keyof_inner_type(self.ctx.types, constraint)
         {
             return keyof_inner == type_param;
         }
@@ -341,29 +347,28 @@ impl<'a> CheckerState<'a> {
     }
 
     fn same_type_param_identity(&self, left: TypeId, right: TypeId) -> bool {
-        use tsz_solver::visitor;
-
         left == right
-            || visitor::type_param_info(self.ctx.types, left)
-                .zip(visitor::type_param_info(self.ctx.types, right))
+            || crate::query_boundaries::common::type_param_info(self.ctx.types, left)
+                .zip(crate::query_boundaries::common::type_param_info(
+                    self.ctx.types,
+                    right,
+                ))
                 .is_some_and(|(l, r)| l.name == r.name)
     }
 
     fn type_contains_same_type_param_identity(&mut self, ty: TypeId, type_param: TypeId) -> bool {
-        use tsz_solver::visitor;
-
         if self.same_type_param_identity(ty, type_param) {
             return true;
         }
 
-        if let Some(inner) = visitor::keyof_inner_type(self.ctx.types, ty)
+        if let Some(inner) = crate::query_boundaries::common::keyof_inner_type(self.ctx.types, ty)
             && self.type_contains_same_type_param_identity(inner, type_param)
         {
             return true;
         }
 
         if let Some((object_type, index_type)) =
-            tsz_solver::type_queries::get_index_access_types(self.ctx.types, ty)
+            crate::query_boundaries::common::index_access_types(self.ctx.types, ty)
             && (self.type_contains_same_type_param_identity(object_type, type_param)
                 || self.type_contains_same_type_param_identity(index_type, type_param))
         {
@@ -387,7 +392,8 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if let Some(param_info) = visitor::type_param_info(self.ctx.types, ty)
+        if let Some(param_info) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, ty)
             && let Some(constraint) = param_info.constraint
             && self.type_contains_same_type_param_identity(constraint, type_param)
         {
@@ -412,14 +418,15 @@ impl<'a> CheckerState<'a> {
         index_type: TypeId,
         type_param: TypeId,
     ) -> bool {
-        use tsz_solver::visitor;
-
-        if let Some(keyof_inner) = visitor::keyof_inner_type(self.ctx.types, index_type) {
+        if let Some(keyof_inner) =
+            crate::query_boundaries::common::keyof_inner_type(self.ctx.types, index_type)
+        {
             return !self.same_type_param_identity(keyof_inner, type_param)
                 && self.type_contains_same_type_param_identity(keyof_inner, type_param);
         }
 
-        if let Some(param_info) = visitor::type_param_info(self.ctx.types, index_type)
+        if let Some(param_info) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, index_type)
             && let Some(constraint) = param_info.constraint
         {
             return self
@@ -464,19 +471,20 @@ impl<'a> CheckerState<'a> {
         index_type: TypeId,
         type_param: TypeId,
     ) -> Option<TypeId> {
-        use tsz_solver::visitor;
-
-        if let Some(keyof_inner) = visitor::keyof_inner_type(self.ctx.types, index_type)
-            && visitor::is_type_parameter(self.ctx.types, keyof_inner)
+        if let Some(keyof_inner) =
+            crate::query_boundaries::common::keyof_inner_type(self.ctx.types, index_type)
+            && crate::query_boundaries::common::is_type_parameter(self.ctx.types, keyof_inner)
             && keyof_inner != type_param
         {
             return Some(keyof_inner);
         }
 
-        if let Some(param_info) = visitor::type_param_info(self.ctx.types, index_type)
+        if let Some(param_info) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, index_type)
             && let Some(constraint) = param_info.constraint
-            && let Some(keyof_inner) = visitor::keyof_inner_type(self.ctx.types, constraint)
-            && visitor::is_type_parameter(self.ctx.types, keyof_inner)
+            && let Some(keyof_inner) =
+                crate::query_boundaries::common::keyof_inner_type(self.ctx.types, constraint)
+            && crate::query_boundaries::common::is_type_parameter(self.ctx.types, keyof_inner)
             && keyof_inner != type_param
         {
             return Some(keyof_inner);
@@ -496,9 +504,9 @@ impl<'a> CheckerState<'a> {
         object_param: TypeId,
         key_source: TypeId,
     ) -> bool {
-        use tsz_solver::visitor;
-
-        let Some(object_info) = visitor::type_param_info(self.ctx.types, object_param) else {
+        let Some(object_info) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, object_param)
+        else {
             return false;
         };
         let Some(object_constraint) = object_info.constraint else {
@@ -537,10 +545,8 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn is_generic_key_space(&self, type_id: TypeId) -> bool {
-        use tsz_solver::visitor;
-
-        if visitor::keyof_inner_type(self.ctx.types, type_id).is_some()
-            || visitor::is_type_parameter(self.ctx.types, type_id)
+        if crate::query_boundaries::common::keyof_inner_type(self.ctx.types, type_id).is_some()
+            || crate::query_boundaries::common::is_type_parameter(self.ctx.types, type_id)
         {
             return true;
         }
@@ -554,7 +560,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(members) =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, type_id)
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
         {
             return members
                 .iter()

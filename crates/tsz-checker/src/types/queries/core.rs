@@ -908,7 +908,10 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let expr_type = self.get_type_of_node(computed.expression);
-        tsz_solver::type_queries::is_string_literal(self.ctx.types, expr_type)
+        crate::query_boundaries::checkers::iterable::is_string_literal_type(
+            self.ctx.types,
+            expr_type,
+        )
     }
 
     /// Get property name as string from a property name node (identifier, string literal, etc.)
@@ -1026,7 +1029,7 @@ impl<'a> CheckerState<'a> {
                 assignability_prop_name_type,
             ] {
                 if let Some(sym_ref) =
-                    tsz_solver::visitor::unique_symbol_ref(self.ctx.types, candidate)
+                    crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, candidate)
                 {
                     let sym_id = tsz_binder::SymbolId(sym_ref.0);
                     if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {

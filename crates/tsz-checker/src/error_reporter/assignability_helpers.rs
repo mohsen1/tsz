@@ -21,7 +21,7 @@ impl<'a> CheckerState<'a> {
         depth: u32,
     ) -> TypeId {
         if depth != 0
-            || tsz_solver::type_queries::get_array_element_type(self.ctx.types, source).is_none()
+            || crate::query_boundaries::common::array_element_type(self.ctx.types, source).is_none()
         {
             return source;
         }
@@ -53,7 +53,7 @@ impl<'a> CheckerState<'a> {
             }
 
             let element_type =
-                tsz_solver::type_queries::get_array_element_type(self.ctx.types, first_arg_type)
+                crate::query_boundaries::common::array_element_type(self.ctx.types, first_arg_type)
                     .or_else(|| {
                         tsz_solver::operations::get_iterator_info(
                             self.ctx.types,
@@ -130,16 +130,26 @@ impl<'a> CheckerState<'a> {
                 let (pos, end) = self.get_node_span(anchor_idx).unwrap_or((0, 0));
                 self.normalized_anchor_span(anchor_idx, pos, end.saturating_sub(pos))
             });
-        let source_is_function_like =
-            tsz_solver::type_queries::get_callable_shape(self.ctx.types, source_for_display)
-                .is_some()
-                || tsz_solver::type_queries::get_function_shape(self.ctx.types, source_for_display)
-                    .is_some();
-        let target_is_function_like =
-            tsz_solver::type_queries::get_callable_shape(self.ctx.types, target_for_display)
-                .is_some()
-                || tsz_solver::type_queries::get_function_shape(self.ctx.types, target_for_display)
-                    .is_some();
+        let source_is_function_like = crate::query_boundaries::common::callable_shape_for_type(
+            self.ctx.types,
+            source_for_display,
+        )
+        .is_some()
+            || crate::query_boundaries::common::function_shape_for_type(
+                self.ctx.types,
+                source_for_display,
+            )
+            .is_some();
+        let target_is_function_like = crate::query_boundaries::common::callable_shape_for_type(
+            self.ctx.types,
+            target_for_display,
+        )
+        .is_some()
+            || crate::query_boundaries::common::function_shape_for_type(
+                self.ctx.types,
+                target_for_display,
+            )
+            .is_some();
         let (source_str, target_str) = if source_is_function_like || target_is_function_like {
             (
                 self.format_type_diagnostic(source_for_display),
@@ -394,7 +404,8 @@ impl<'a> CheckerState<'a> {
             ]
             .into_iter()
             .find(|candidate| {
-                tsz_solver::type_queries::get_object_shape(self.ctx.types, *candidate).is_some()
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, *candidate)
+                    .is_some()
             })?
         };
 
@@ -411,11 +422,13 @@ impl<'a> CheckerState<'a> {
             ]
             .into_iter()
             .find_map(|candidate| {
-                tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, candidate)
             })
         };
-        let target_shape =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, target_with_shape)?;
+        let target_shape = crate::query_boundaries::common::object_shape_for_type(
+            self.ctx.types,
+            target_with_shape,
+        )?;
 
         // Check if target has index signature using the resolver (more reliable than shape check)
         let target_has_index = [target, target_env_evaluated, target_evaluated]
@@ -479,11 +492,14 @@ impl<'a> CheckerState<'a> {
             })
         };
 
-        tsz_solver::type_queries::get_object_shape(self.ctx.types, target_type)
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target_type)
             .and_then(|shape| find_member(&shape.properties))
             .or_else(|| {
-                tsz_solver::type_queries::get_callable_shape(self.ctx.types, target_type)
-                    .and_then(|shape| find_member(&shape.properties))
+                crate::query_boundaries::common::callable_shape_for_type(
+                    self.ctx.types,
+                    target_type,
+                )
+                .and_then(|shape| find_member(&shape.properties))
             })
     }
 
@@ -604,12 +620,14 @@ impl<'a> CheckerState<'a> {
         // type's symbol, meaning it was declared directly on the target type (not
         // inherited). tsc lists own properties before inherited ones in TS2739/TS2741.
         let target_symbol =
-            tsz_solver::type_queries::get_object_symbol(self.ctx.types, target_type);
+            crate::query_boundaries::common::get_object_symbol(self.ctx.types, target_type);
         let mut property_ranks: FxHashMap<tsz_common::interner::Atom, (u32, usize, bool)> =
             FxHashMap::default();
 
         let mut collect_ranks = |ty: TypeId, tgt_sym: Option<tsz_binder::SymbolId>| {
-            if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, ty) {
+            if let Some(shape) =
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)
+            {
                 for (index, prop) in shape.properties.iter().enumerate() {
                     let is_own = tgt_sym.is_some() && prop.parent_id == tgt_sym;
                     property_ranks.entry(prop.name).or_insert((
@@ -619,7 +637,9 @@ impl<'a> CheckerState<'a> {
                     ));
                 }
             }
-            if let Some(shape) = tsz_solver::type_queries::get_callable_shape(self.ctx.types, ty) {
+            if let Some(shape) =
+                crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty)
+            {
                 for (index, prop) in shape.properties.iter().enumerate() {
                     let is_own = tgt_sym.is_some() && prop.parent_id == tgt_sym;
                     property_ranks.entry(prop.name).or_insert((

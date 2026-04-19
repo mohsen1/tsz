@@ -1074,13 +1074,14 @@ impl<'a> CheckerState<'a> {
                         //   }
                         if derived_number_index_type.is_none() {
                             // Check if base has numeric index signature
-                            let base_num_index_value = tsz_solver::type_queries::get_object_shape(
-                                self.ctx.types,
-                                base_type,
-                            )
-                            .and_then(|shape| {
-                                shape.number_index.as_ref().map(|idx| idx.value_type)
-                            });
+                            let base_num_index_value =
+                                crate::query_boundaries::common::object_shape_for_type(
+                                    self.ctx.types,
+                                    base_type,
+                                )
+                                .and_then(|shape| {
+                                    shape.number_index.as_ref().map(|idx| idx.value_type)
+                                });
 
                             if let Some(base_index_val) = base_num_index_value {
                                 // Skip the index signature check when the base index value type
@@ -1102,7 +1103,7 @@ impl<'a> CheckerState<'a> {
                                     {
                                         // Extract the derived property's raw type
                                         let derived_prop_type =
-                                            tsz_solver::type_queries::find_property_in_type_by_str(
+                                            crate::query_boundaries::common::find_property_by_str(
                                                 self.ctx.types,
                                                 *member_type,
                                                 member_name,
@@ -1133,7 +1134,7 @@ impl<'a> CheckerState<'a> {
                             &derived_members
                         {
                             // Look up the property in the base type
-                            let base_prop = tsz_solver::type_queries::find_property_in_type_by_str(
+                            let base_prop = crate::query_boundaries::common::find_property_by_str(
                                 self.ctx.types,
                                 base_type,
                                 member_name,
@@ -1142,14 +1143,14 @@ impl<'a> CheckerState<'a> {
                             // For intersection types, search each member
                             let base_prop = base_prop.or_else(|| {
                                 if let Some(members) =
-                                    tsz_solver::type_queries::get_intersection_members(
+                                    crate::query_boundaries::common::intersection_members(
                                         self.ctx.types,
                                         base_type,
                                     )
                                 {
                                     for &member in &members {
                                         let prop =
-                                            tsz_solver::type_queries::find_property_in_type_by_str(
+                                            crate::query_boundaries::common::find_property_by_str(
                                                 self.ctx.types,
                                                 member,
                                                 member_name,
@@ -1181,7 +1182,7 @@ impl<'a> CheckerState<'a> {
                                 // (get_type_of_interface_member returns ObjectShape { name: type },
                                 // but we need the raw property type for comparison with base)
                                 let derived_prop_type =
-                                    tsz_solver::type_queries::find_property_in_type_by_str(
+                                    crate::query_boundaries::common::find_property_by_str(
                                         self.ctx.types,
                                         *member_type,
                                         member_name,

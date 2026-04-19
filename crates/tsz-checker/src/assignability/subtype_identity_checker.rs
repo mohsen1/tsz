@@ -104,10 +104,10 @@ impl<'a> CheckerState<'a> {
     /// Returns the original type unchanged if it is not a namespace Lazy type.
     fn resolve_namespace_lazy_for_redeclaration(&mut self, type_id: TypeId) -> TypeId {
         use tsz_binder::symbol_flags;
-        use tsz_solver::type_queries;
 
         // Check if this is a Lazy(DefId) type
-        let Some(def_id) = type_queries::get_lazy_def_id(self.ctx.types, type_id) else {
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
+        else {
             return type_id;
         };
 
@@ -340,18 +340,20 @@ impl<'a> CheckerState<'a> {
         // e.g., `IPromise<string>` vs `Promise<string>` are NOT identical in tsc.
         // This check must happen BEFORE evaluation strips the nominal info.
         {
-            use tsz_solver::type_queries;
             // For Application types: different base types → different nominal origins
-            let prev_base = type_queries::get_application_base(self.ctx.types, prev_type);
-            let curr_base = type_queries::get_application_base(self.ctx.types, current_type);
+            let prev_base =
+                crate::query_boundaries::common::get_application_base(self.ctx.types, prev_type);
+            let curr_base =
+                crate::query_boundaries::common::get_application_base(self.ctx.types, current_type);
             if let (Some(_pb), Some(_cb)) = (prev_base, curr_base)
                 && false
             {
                 return false;
             }
             // For non-generic named types: different Lazy(DefId) → different origins
-            let prev_def = type_queries::get_lazy_def_id(self.ctx.types, prev_type);
-            let curr_def = type_queries::get_lazy_def_id(self.ctx.types, current_type);
+            let prev_def = crate::query_boundaries::common::lazy_def_id(self.ctx.types, prev_type);
+            let curr_def =
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, current_type);
             if let (Some(_pd), Some(_cd)) = (prev_def, curr_def)
                 && false
             {
@@ -524,9 +526,10 @@ impl<'a> CheckerState<'a> {
 
         // For Object types, check if resolving Lazy(DefId) → ThisType properties
         // would produce the same property types as other_type.
-        if let Some(shape) =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types.as_type_database(), type_id)
-        {
+        if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+            self.ctx.types.as_type_database(),
+            type_id,
+        ) {
             // Check if any property has a Lazy → ThisType reference.
             let has_this_alias = shape
                 .properties
@@ -548,17 +551,21 @@ impl<'a> CheckerState<'a> {
     /// for TS2403 redeclaration comparison.
     fn is_this_alias_property(&self, prop_type: TypeId, concrete_this: TypeId) -> bool {
         // Direct ThisType check.
-        if tsz_solver::type_queries::is_this_type(self.ctx.types.as_type_database(), prop_type) {
+        if crate::query_boundaries::common::is_this_type(
+            self.ctx.types.as_type_database(),
+            prop_type,
+        ) {
             return true;
         }
 
         // Lazy(DefId) that resolves to ThisType.
-        if let Some(def_id) =
-            tsz_solver::type_queries::get_lazy_def_id(self.ctx.types.as_type_database(), prop_type)
-        {
+        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(
+            self.ctx.types.as_type_database(),
+            prop_type,
+        ) {
             let env = self.ctx.type_env.borrow();
             if let Some(resolved) = env.get_def(def_id) {
-                if tsz_solver::type_queries::is_this_type(
+                if crate::query_boundaries::common::is_this_type(
                     self.ctx.types.as_type_database(),
                     resolved,
                 ) {

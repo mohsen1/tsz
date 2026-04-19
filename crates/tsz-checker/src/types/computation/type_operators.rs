@@ -126,7 +126,7 @@ impl<'a> CheckerState<'a> {
     /// Computes the type of all property keys for a given object type.
     /// For example: `keyof { x: number; y: string }` = `"x" | "y"`.
     pub(crate) fn get_keyof_type(&mut self, operand: TypeId) -> TypeId {
-        use tsz_solver::type_queries::{TypeResolutionKind, classify_for_type_resolution};
+        use crate::query_boundaries::common::{TypeResolutionKind, classify_for_type_resolution};
 
         let deferred_keyof = self.ctx.types.keyof(operand);
 
@@ -180,7 +180,7 @@ impl<'a> CheckerState<'a> {
             TypeResolutionKind::Resolved => {}
         }
 
-        tsz_solver::type_queries::keyof_object_properties(self.ctx.types, operand)
+        crate::query_boundaries::common::keyof_object_properties(self.ctx.types, operand)
             .unwrap_or(TypeId::NEVER)
     }
 

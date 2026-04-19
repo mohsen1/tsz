@@ -258,8 +258,11 @@ impl<'a> CheckerState<'a> {
                 if let Some(&cached) = self.ctx.node_types.get(&idx.0)
                     && cached != TypeId::ERROR
                     && self.ctx.type_parameter_scope.is_empty()
-                    && tsz_solver::type_queries::get_type_query_symbol_ref(self.ctx.types, cached)
-                        .is_none()
+                    && crate::query_boundaries::common::get_type_query_symbol_ref(
+                        self.ctx.types,
+                        cached,
+                    )
+                    .is_none()
                 {
                     return cached;
                 }
@@ -681,7 +684,7 @@ impl<'a> CheckerState<'a> {
         {
             ((*shape).clone(), shape.properties.len())
         } else if let Some(function_shape) =
-            tsz_solver::type_queries::get_function_shape(self.ctx.types, base_type)
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, base_type)
         {
             let signature = CallSignature {
                 type_params: function_shape.type_params.clone(),

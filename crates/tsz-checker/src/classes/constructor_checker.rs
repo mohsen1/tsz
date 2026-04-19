@@ -138,7 +138,8 @@ impl<'a> CheckerState<'a> {
     /// signatures with different return types (indicating they came from an
     /// intersection of constructor types in a mixin pattern).
     fn compute_mixin_intersected_instance_type(&self, ctor_type: TypeId) -> Option<TypeId> {
-        let shape_id = tsz_solver::visitor::callable_shape_id(self.ctx.types, ctor_type)?;
+        let shape_id =
+            crate::query_boundaries::common::callable_shape_id(self.ctx.types, ctor_type)?;
         let shape = self.ctx.types.callable_shape(shape_id);
         if shape.construct_signatures.len() <= 1 {
             return None;
@@ -161,7 +162,8 @@ impl<'a> CheckerState<'a> {
 
     /// Set all construct signature return types to the given type.
     fn set_all_construct_return_types(&self, ctor_type: TypeId, instance_type: TypeId) -> TypeId {
-        let Some(shape_id) = tsz_solver::visitor::callable_shape_id(self.ctx.types, ctor_type)
+        let Some(shape_id) =
+            crate::query_boundaries::common::callable_shape_id(self.ctx.types, ctor_type)
         else {
             return ctor_type;
         };
@@ -288,7 +290,7 @@ impl<'a> CheckerState<'a> {
     ) {
         // If the return type is an intersection, walk each member
         if let Some(members_list) =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, return_type)
+            crate::query_boundaries::common::intersection_members(self.ctx.types, return_type)
         {
             for &member_id in members_list.iter() {
                 let name = self.format_single_display_type(member_id);
@@ -315,7 +317,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 type_id,
             ),
-            tsz_solver::type_queries::LazyTypeKind::Lazy(_)
+            crate::query_boundaries::common::LazyTypeKind::Lazy(_)
         );
         let display_type = if is_lazy {
             type_id
@@ -366,18 +368,21 @@ impl<'a> CheckerState<'a> {
             }
             match classify_for_instance_type(self.ctx.types, current) {
                 InstanceTypeKind::Callable(shape_id) => {
-                    let instance_type = tsz_solver::type_queries::get_construct_return_type_union(
-                        self.ctx.types,
-                        shape_id,
-                    )?;
+                    let instance_type =
+                        crate::query_boundaries::common::get_construct_return_type_union(
+                            self.ctx.types,
+                            shape_id,
+                        )?;
                     let resolved = self.resolve_type_for_property_access(instance_type);
                     // Register TypeId→DefId so the TypeFormatter can display the
                     // interface name (e.g., "String", "Date") instead of structural
                     // expansion in diagnostics. The resolve step produces a new TypeId
                     // that loses the Lazy(DefId) wrapper.
                     if resolved != instance_type
-                        && let Some(def_id) =
-                            tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, instance_type)
+                        && let Some(def_id) = crate::query_boundaries::common::lazy_def_id(
+                            self.ctx.types,
+                            instance_type,
+                        )
                     {
                         self.ctx
                             .definition_store
@@ -394,8 +399,10 @@ impl<'a> CheckerState<'a> {
                         )?;
                     let resolved = self.resolve_type_for_property_access(return_type);
                     if resolved != return_type
-                        && let Some(def_id) =
-                            tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, return_type)
+                        && let Some(def_id) = crate::query_boundaries::common::lazy_def_id(
+                            self.ctx.types,
+                            return_type,
+                        )
                     {
                         self.ctx
                             .definition_store
@@ -596,7 +603,7 @@ impl<'a> CheckerState<'a> {
             // This handles anonymous abstract construct signature types like
             // `abstract new (...args: any) => any` from type parameter constraints.
             if let Some(callable_shape) =
-                tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id)
+                crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
                 && callable_shape.is_abstract
             {
                 return true;

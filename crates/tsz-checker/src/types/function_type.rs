@@ -630,7 +630,7 @@ impl<'a> CheckerState<'a> {
                         if let Some(from_expected) = expected_contextual_type {
                             let direct_is_placeholderish = extracted == TypeId::ANY
                                 || extracted == TypeId::UNKNOWN
-                                || tsz_solver::type_queries::contains_infer_types_db(
+                                || crate::query_boundaries::common::contains_infer_types(
                                     self.ctx.types,
                                     extracted,
                                 );
@@ -648,19 +648,19 @@ impl<'a> CheckerState<'a> {
                                 });
                             let direct_is_rest_tuple_container = !param.dot_dot_dot_token
                                 && extracted != from_expected
-                                && (tsz_solver::type_queries::get_tuple_elements(
+                                && (crate::query_boundaries::common::tuple_elements(
                                     self.ctx.types,
                                     extracted,
                                 )
                                 .is_some()
-                                    || tsz_solver::type_queries::get_array_element_type(
+                                    || crate::query_boundaries::common::array_element_type(
                                         self.ctx.types,
                                         extracted,
                                     )
                                     .is_some());
                             let expected_is_more_informative = from_expected != TypeId::ANY
                                 && from_expected != TypeId::UNKNOWN
-                                && !tsz_solver::type_queries::contains_infer_types_db(
+                                && !crate::query_boundaries::common::contains_infer_types(
                                     self.ctx.types,
                                     from_expected,
                                 );
@@ -714,12 +714,12 @@ impl<'a> CheckerState<'a> {
                             .map(|type_id| {
                                 let type_id = self.resolve_lazy_type(type_id);
                                 let type_id = self.evaluate_application_type(type_id);
-                                tsz_solver::type_queries::get_function_shape(
+                                crate::query_boundaries::common::function_shape_for_type(
                                     self.ctx.types,
                                     type_id,
                                 )
                                 .is_some()
-                                    || tsz_solver::type_queries::get_call_signatures(
+                                    || crate::query_boundaries::common::call_signatures_for_type(
                                         self.ctx.types,
                                         type_id,
                                     )
@@ -1038,7 +1038,7 @@ impl<'a> CheckerState<'a> {
                         .get(param.initializer)
                         .and_then(|n| self.ctx.arena.get_literal_expr(n))
                         .is_some_and(|lit| lit.elements.nodes.is_empty())
-                        && let Some(elem_type) = tsz_solver::type_queries::get_array_element_type(
+                        && let Some(elem_type) = crate::query_boundaries::common::array_element_type(
                             self.ctx.types,
                             type_id,
                         )
@@ -1172,7 +1172,8 @@ impl<'a> CheckerState<'a> {
                                 | type_query::ArrayLikeKind::Readonly(_)
                         );
                         let no_infer =
-                            tsz_solver::visitor::no_infer_inner_type(db, evaluated).is_some();
+                            crate::query_boundaries::common::no_infer_inner_type(db, evaluated)
+                                .is_some();
                         if array_like || no_infer {
                             type_id = evaluated;
                         }
@@ -1485,7 +1486,7 @@ impl<'a> CheckerState<'a> {
                                     )
                                     .map(|shape| shape.return_type)
                                     .or_else(|| {
-                                        tsz_solver::type_queries::get_return_type(self.ctx.types, ty)
+                                        crate::query_boundaries::common::return_type_for_type(self.ctx.types, ty)
                                     })
                                 })
                             })
@@ -1903,15 +1904,16 @@ impl<'a> CheckerState<'a> {
                             let literal_sensitive_return =
                                 tsz_solver::literal_value(self.ctx.types, expected_return_type)
                                     .is_some()
-                                    || tsz_solver::type_queries::get_enum_def_id(
+                                    || crate::query_boundaries::common::enum_def_id(
                                         self.ctx.types,
                                         expected_return_type,
                                     )
                                     .is_some()
-                                    || (tsz_solver::type_queries::is_symbol_or_unique_symbol(
+                                    || (crate::query_boundaries::common::is_symbol_or_unique_symbol(
                                         self.ctx.types,
                                         expected_return_type,
-                                    ) && expected_return_type != TypeId::SYMBOL)
+                                    )
+                                        && expected_return_type != TypeId::SYMBOL)
                                     || expected_return_type == TypeId::NEVER
                                     || tsz_solver::union_list_id(
                                         self.ctx.types,
@@ -1920,7 +1922,7 @@ impl<'a> CheckerState<'a> {
                                     .is_some_and(|list_id| {
                                         self.ctx.types.type_list(list_id).iter().any(|&member| {
                                             tsz_solver::is_literal_type(self.ctx.types, member)
-                                                || tsz_solver::type_queries::get_enum_def_id(
+                                                || crate::query_boundaries::common::enum_def_id(
                                                     self.ctx.types,
                                                     member,
                                                 )
@@ -1997,10 +1999,10 @@ impl<'a> CheckerState<'a> {
                     let suppress_contextual_return_check = !has_type_annotation
                         && jsdoc_return_context.is_none()
                         && (self.type_has_unresolved_inference_holes(expected_return_type)
-                            || (tsz_solver::type_queries::is_callable_type(
+                            || (crate::query_boundaries::common::is_callable_type(
                                 self.ctx.types,
                                 actual_return,
-                            ) && !tsz_solver::type_queries::is_callable_type(
+                            ) && !crate::query_boundaries::common::is_callable_type(
                                 self.ctx.types,
                                 expected_return_type,
                             ))
@@ -2160,7 +2162,10 @@ impl<'a> CheckerState<'a> {
                                 )
                                 .map(|shape| shape.return_type)
                                 .or_else(|| {
-                                    tsz_solver::type_queries::get_return_type(self.ctx.types, ty)
+                                    crate::query_boundaries::common::return_type_for_type(
+                                        self.ctx.types,
+                                        ty,
+                                    )
                                 })
                             })
                         });
@@ -2248,7 +2253,7 @@ impl<'a> CheckerState<'a> {
                         self.widen_literal_type(inferred_yield)
                     };
                     let final_yield = if !self.ctx.strict_null_checks()
-                        && tsz_solver::type_queries::is_only_null_or_undefined(
+                        && crate::query_boundaries::common::is_only_null_or_undefined(
                             self.ctx.types,
                             widened,
                         ) {

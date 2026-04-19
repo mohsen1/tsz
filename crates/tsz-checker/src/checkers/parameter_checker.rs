@@ -1191,7 +1191,10 @@ impl<'a> CheckerState<'a> {
                 //   ...args: ConstructorParameters<Ctor>
                 //   ...args: ArgMap[K]
                 let resolved = self.evaluate_type_with_resolution(declared_type);
-                if tsz_solver::visitor::contains_type_parameters(self.ctx.types, resolved) {
+                if crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    resolved,
+                ) {
                     continue;
                 }
 

@@ -53,12 +53,18 @@ impl<'a> CheckerState<'a> {
     ) {
         // Try call signatures first (SFC overloads), then construct signatures
         // (class component overloads like React.Component with 2 constructors).
-        let sigs = tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
+        let sigs = crate::query_boundaries::common::call_signatures_for_type(
+            self.ctx.types,
+            component_type,
+        )
+        .filter(|s| s.len() >= 2)
+        .or_else(|| {
+            crate::query_boundaries::common::construct_signatures_for_type(
+                self.ctx.types,
+                component_type,
+            )
             .filter(|s| s.len() >= 2)
-            .or_else(|| {
-                tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)
-                    .filter(|s| s.len() >= 2)
-            });
+        });
         let Some(sigs) = sigs else {
             return;
         };
@@ -317,7 +323,7 @@ impl<'a> CheckerState<'a> {
                 let spread_evaluated = self.evaluate_type_with_env(spread_type);
                 let resolved = self.resolve_type_for_property_access(spread_evaluated);
                 if let Some(shape) =
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved)
+                    crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved)
                 {
                     for prop in &shape.properties {
                         let name = self.ctx.types.resolve_atom(prop.name).to_string();
@@ -367,7 +373,8 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, props_type)
         else {
             // Can't resolve shape — use assignability fallback.
             // Always check assignability even with empty attrs: an empty object `{}`
@@ -449,7 +456,8 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let shape = tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)?;
+        let shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, props_type)?;
         let has_string_index = shape.string_index.is_some();
 
         for attr in &info.attrs {

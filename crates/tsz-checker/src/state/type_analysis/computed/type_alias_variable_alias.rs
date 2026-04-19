@@ -1378,14 +1378,16 @@ impl<'a> CheckerState<'a> {
                                 // - Non-callable primitives (`number | undefined`, etc.):
                                 //   return the export= type directly so narrowing works
                                 //   (e.g., `if (b0) x = b0` narrows `number | undefined`).
-                                let is_object_like = tsz_solver::type_queries::is_object_like_type(
-                                    self.ctx.types,
-                                    export_equals_type,
-                                );
-                                let is_callable_like = tsz_solver::type_queries::is_callable_type(
-                                    self.ctx.types,
-                                    export_equals_type,
-                                );
+                                let is_object_like =
+                                    crate::query_boundaries::dispatch::is_object_like_type(
+                                        self.ctx.types,
+                                        export_equals_type,
+                                    );
+                                let is_callable_like =
+                                    crate::query_boundaries::common::is_callable_type(
+                                        self.ctx.types,
+                                        export_equals_type,
+                                    );
                                 if allow_namespace_default && (is_object_like || is_callable_like) {
                                     return (namespace_type, Vec::new());
                                 }

@@ -910,7 +910,10 @@ impl<'a> CheckerState<'a> {
                 self.ctx.preserve_literal_types = prev_preserve;
                 self.ctx.checking_computed_property_name = prev;
                 if let Some(name) =
-                    tsz_solver::type_queries::get_literal_property_name(self.ctx.types, expr_type)
+                    crate::query_boundaries::type_computation::access::literal_property_name(
+                        self.ctx.types,
+                        expr_type,
+                    )
                 {
                     map.insert(computed.expression, name);
                 }

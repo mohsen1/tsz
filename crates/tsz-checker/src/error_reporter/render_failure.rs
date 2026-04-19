@@ -373,7 +373,8 @@ impl<'a> CheckerState<'a> {
             } => {
                 let (source_str, target_str) = if depth == 0 {
                     let use_structural_source_display =
-                        tsz_solver::type_queries::get_enum_def_id(self.ctx.types, source).is_none();
+                        crate::query_boundaries::common::enum_def_id(self.ctx.types, source)
+                            .is_none();
                     (
                         if use_structural_source_display {
                             self.format_assignment_source_type_for_diagnostic(source, target, idx)
@@ -440,12 +441,13 @@ impl<'a> CheckerState<'a> {
                 // (e.g., "12" not "number", "'false'" not "boolean") in
                 // "has no properties in common" messages.
                 let mut source_str =
-                    if (tsz_solver::type_queries::has_call_signatures(self.ctx.types, source)
-                        || tsz_solver::type_queries::has_construct_signatures(
-                            self.ctx.types,
-                            source,
-                        ))
-                        && depth == 0
+                    if (crate::query_boundaries::common::has_call_signatures(
+                        self.ctx.types,
+                        source,
+                    ) || crate::query_boundaries::common::has_construct_signatures(
+                        self.ctx.types,
+                        source,
+                    )) && depth == 0
                     {
                         let widened_source = self.widen_type_for_display(source);
                         let widened_source = self.widen_function_like_display_type(widened_source);
@@ -537,21 +539,27 @@ impl<'a> CheckerState<'a> {
                 // tsc emits TS2328 as its own diagnostic in the error list, so it
                 // must appear as a standalone "error TS2328:" line.
                 let source_is_direct_callable =
-                    tsz_solver::type_queries::is_callable_type(self.ctx.types, source);
+                    crate::query_boundaries::common::is_callable_type(self.ctx.types, source);
                 let target_is_direct_callable =
-                    tsz_solver::type_queries::is_callable_type(self.ctx.types, target);
-                let source_param_is_callable =
-                    tsz_solver::type_queries::is_callable_type(self.ctx.types, *source_param);
-                let target_param_is_callable =
-                    tsz_solver::type_queries::is_callable_type(self.ctx.types, *target_param);
-                let source_param_is_generic = tsz_solver::type_queries::contains_type_parameters_db(
+                    crate::query_boundaries::common::is_callable_type(self.ctx.types, target);
+                let source_param_is_callable = crate::query_boundaries::common::is_callable_type(
                     self.ctx.types,
                     *source_param,
                 );
-                let target_param_is_generic = tsz_solver::type_queries::contains_type_parameters_db(
+                let target_param_is_callable = crate::query_boundaries::common::is_callable_type(
                     self.ctx.types,
                     *target_param,
                 );
+                let source_param_is_generic =
+                    crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        *source_param,
+                    );
+                let target_param_is_generic =
+                    crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        *target_param,
+                    );
 
                 if depth == 0
                     && source_is_direct_callable
@@ -561,7 +569,7 @@ impl<'a> CheckerState<'a> {
                     && !source_param_is_generic
                     && !target_param_is_generic
                 {
-                    let source_name = tsz_solver::type_queries::get_callable_shape_for_type(
+                    let source_name = crate::query_boundaries::common::get_callable_shape_for_type(
                         self.ctx.types,
                         source,
                     )
@@ -574,7 +582,7 @@ impl<'a> CheckerState<'a> {
                     .map(|a| self.ctx.types.resolve_atom(a))
                     .unwrap_or_else(|| format!("arg{param_index}"));
 
-                    let target_name = tsz_solver::type_queries::get_callable_shape_for_type(
+                    let target_name = crate::query_boundaries::common::get_callable_shape_for_type(
                         self.ctx.types,
                         target,
                     )
@@ -672,17 +680,24 @@ impl<'a> CheckerState<'a> {
         // signatures. Class constructors (construct-only) should still produce TS2741.
         let source_eval_for_fn = self.evaluate_type_with_env(source);
         let target_eval_for_fn = self.evaluate_type_with_env(target);
-        let is_source_fn = tsz_solver::type_queries::has_call_signatures(self.ctx.types, source)
-            || tsz_solver::type_queries::has_call_signatures(self.ctx.types, source_eval_for_fn)
-            || tsz_solver::type_queries::has_call_signatures(self.ctx.types, source_type)
-            || tsz_solver::type_queries::has_call_signatures(
-                self.ctx.types,
-                self.evaluate_type_with_env(source_type),
-            )
-            || is_function_type_display(&display_src_str);
+        let is_source_fn =
+            crate::query_boundaries::common::has_call_signatures(self.ctx.types, source)
+                || crate::query_boundaries::common::has_call_signatures(
+                    self.ctx.types,
+                    source_eval_for_fn,
+                )
+                || crate::query_boundaries::common::has_call_signatures(
+                    self.ctx.types,
+                    source_type,
+                )
+                || crate::query_boundaries::common::has_call_signatures(
+                    self.ctx.types,
+                    self.evaluate_type_with_env(source_type),
+                )
+                || is_function_type_display(&display_src_str);
         let target_has_call_sigs =
-            tsz_solver::type_queries::has_call_signatures(self.ctx.types, target)
-                || tsz_solver::type_queries::has_call_signatures(
+            crate::query_boundaries::common::has_call_signatures(self.ctx.types, target)
+                || crate::query_boundaries::common::has_call_signatures(
                     self.ctx.types,
                     target_eval_for_fn,
                 );
@@ -721,14 +736,16 @@ impl<'a> CheckerState<'a> {
             use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
             let resolver = IndexSignatureResolver::new(self.ctx.types);
             let target_is_array_or_tuple =
-                tsz_solver::visitor::array_element_type(self.ctx.types, target).is_some()
-                    || tsz_solver::visitor::tuple_list_id(self.ctx.types, target).is_some();
+                crate::query_boundaries::common::array_element_type(self.ctx.types, target)
+                    .is_some()
+                    || crate::query_boundaries::common::tuple_list_id(self.ctx.types, target)
+                        .is_some();
             let target_has_index = !target_is_array_or_tuple
                 && (resolver.has_index_signature(target, IndexKind::String)
                     || resolver.has_index_signature(target, IndexKind::Number));
             if target_has_index {
                 let prop_name_str = self.ctx.types.resolve_atom_ref(property_name);
-                let target_has_named_prop = tsz_solver::type_queries::find_property_in_type_by_str(
+                let target_has_named_prop = crate::query_boundaries::common::find_property_by_str(
                     self.ctx.types,
                     target,
                     &prop_name_str,
@@ -771,8 +788,8 @@ impl<'a> CheckerState<'a> {
         let source_evaluated = self.evaluate_type_with_env(source);
         let target_evaluated = self.evaluate_type_with_env(target);
         let target_is_array_or_tuple_for_idx =
-            tsz_solver::visitor::array_element_type(self.ctx.types, target).is_some()
-                || tsz_solver::visitor::tuple_list_id(self.ctx.types, target).is_some();
+            crate::query_boundaries::common::array_element_type(self.ctx.types, target).is_some()
+                || crate::query_boundaries::common::tuple_list_id(self.ctx.types, target).is_some();
         let source_has_index = [source, source_evaluated].iter().any(|t| {
             resolver.has_index_signature(*t, IndexKind::String)
                 || resolver.has_index_signature(*t, IndexKind::Number)
@@ -823,20 +840,21 @@ impl<'a> CheckerState<'a> {
 
         // TSC emits TS2322 instead of TS2741 when the target type is an intersection type.
         let target_evaluated_for_intersection = self.evaluate_type_with_env(target);
-        if tsz_solver::type_queries::is_intersection_type(self.ctx.types, target_type)
-            || tsz_solver::type_queries::is_intersection_type(self.ctx.types, target)
-            || tsz_solver::type_queries::is_intersection_type(
+        if crate::query_boundaries::common::is_intersection_type(self.ctx.types, target_type)
+            || crate::query_boundaries::common::is_intersection_type(self.ctx.types, target)
+            || crate::query_boundaries::common::is_intersection_type(
                 self.ctx.types,
                 target_evaluated_for_intersection,
             )
         {
             let src_str = self.format_type_diagnostic(source_type);
-            let tgt_str = if tsz_solver::type_queries::is_intersection_type(
+            let tgt_str = if crate::query_boundaries::common::is_intersection_type(
                 self.ctx.types,
                 target_evaluated_for_intersection,
             ) {
                 self.format_type_diagnostic(target_evaluated_for_intersection)
-            } else if tsz_solver::type_queries::is_intersection_type(self.ctx.types, target) {
+            } else if crate::query_boundaries::common::is_intersection_type(self.ctx.types, target)
+            {
                 self.format_type_diagnostic(target)
             } else {
                 self.format_type_diagnostic(target_type)
@@ -860,8 +878,8 @@ impl<'a> CheckerState<'a> {
         // Check both the type data and the source's declaration annotation, since
         // intersections may be flattened into Object types by the solver.
         let source_evaluated_for_intersection = self.evaluate_type_with_env(source);
-        if tsz_solver::type_queries::is_intersection_type(self.ctx.types, source)
-            || tsz_solver::type_queries::is_intersection_type(
+        if crate::query_boundaries::common::is_intersection_type(self.ctx.types, source)
+            || crate::query_boundaries::common::is_intersection_type(
                 self.ctx.types,
                 source_evaluated_for_intersection,
             )
@@ -896,12 +914,15 @@ impl<'a> CheckerState<'a> {
         // Named type aliases expanding to intersections are reported as general
         // assignability failures, not property-level "missing" errors.
         if let Some((base, _args)) =
-            tsz_solver::type_queries::get_application_info(self.ctx.types, source)
+            crate::query_boundaries::common::application_info(self.ctx.types, source)
         {
             let base_eval = self.evaluate_type_with_env(base);
             let base_is_intersection =
-                tsz_solver::type_queries::is_intersection_type(self.ctx.types, base)
-                    || tsz_solver::type_queries::is_intersection_type(self.ctx.types, base_eval);
+                crate::query_boundaries::common::is_intersection_type(self.ctx.types, base)
+                    || crate::query_boundaries::common::is_intersection_type(
+                        self.ctx.types,
+                        base_eval,
+                    );
             if base_is_intersection {
                 let src_str = if depth == 0 {
                     self.format_assignment_source_type_for_diagnostic(source, target, idx)
@@ -1165,30 +1186,40 @@ impl<'a> CheckerState<'a> {
             let source_eval = self.evaluate_type_with_env(source);
             let target_eval = self.evaluate_type_with_env(target);
             let display_src = self.format_type_diagnostic(source_type);
-            let is_src_fn = tsz_solver::type_queries::has_call_signatures(self.ctx.types, source)
-                || tsz_solver::type_queries::has_call_signatures(self.ctx.types, source_eval)
-                || tsz_solver::type_queries::has_call_signatures(self.ctx.types, source_type)
-                || tsz_solver::type_queries::has_call_signatures(
-                    self.ctx.types,
-                    self.evaluate_type_with_env(source_type),
-                )
-                || is_function_type_display(&display_src);
+            let is_src_fn =
+                crate::query_boundaries::common::has_call_signatures(self.ctx.types, source)
+                    || crate::query_boundaries::common::has_call_signatures(
+                        self.ctx.types,
+                        source_eval,
+                    )
+                    || crate::query_boundaries::common::has_call_signatures(
+                        self.ctx.types,
+                        source_type,
+                    )
+                    || crate::query_boundaries::common::has_call_signatures(
+                        self.ctx.types,
+                        self.evaluate_type_with_env(source_type),
+                    )
+                    || is_function_type_display(&display_src);
             // Types with construct signatures (class constructors like DateConstructor)
             // are NOT pure function types — they should still produce TS2740/TS2741
             // for missing properties instead of being downgraded to TS2322.
             let src_has_construct =
-                tsz_solver::type_queries::has_construct_signatures(self.ctx.types, source)
-                    || tsz_solver::type_queries::has_construct_signatures(
+                crate::query_boundaries::common::has_construct_signatures(self.ctx.types, source)
+                    || crate::query_boundaries::common::has_construct_signatures(
                         self.ctx.types,
                         source_eval,
                     )
-                    || tsz_solver::type_queries::has_construct_signatures(
+                    || crate::query_boundaries::common::has_construct_signatures(
                         self.ctx.types,
                         source_type,
                     );
             let tgt_has_call =
-                tsz_solver::type_queries::has_call_signatures(self.ctx.types, target)
-                    || tsz_solver::type_queries::has_call_signatures(self.ctx.types, target_eval);
+                crate::query_boundaries::common::has_call_signatures(self.ctx.types, target)
+                    || crate::query_boundaries::common::has_call_signatures(
+                        self.ctx.types,
+                        target_eval,
+                    );
             if is_src_fn && !tgt_has_call && !src_has_construct {
                 let src_str = if depth == 0 {
                     self.format_assignment_source_type_for_diagnostic(source, target, idx)
@@ -1286,8 +1317,10 @@ impl<'a> CheckerState<'a> {
         // named member of the target type's object shape.
         let number_index_suppress =
             source_has_number_index && target_has_number_index && !property_names.is_empty() && {
-                let target_shape =
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, target_type);
+                let target_shape = crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    target_type,
+                );
                 property_names.iter().all(|name| {
                     // If none of the missing properties are real named members of the
                     // target type, the "missing properties" came from index value type
@@ -2014,8 +2047,11 @@ impl<'a> CheckerState<'a> {
         // Skip single-missing-property lookup when the target is an intersection type.
         let target_is_intersection_for_mismatch = {
             let target_eval = self.evaluate_type_with_env(target);
-            tsz_solver::type_queries::is_intersection_type(self.ctx.types, target)
-                || tsz_solver::type_queries::is_intersection_type(self.ctx.types, target_eval)
+            crate::query_boundaries::common::is_intersection_type(self.ctx.types, target)
+                || crate::query_boundaries::common::is_intersection_type(
+                    self.ctx.types,
+                    target_eval,
+                )
         };
         if depth == 0
             && !target_is_intersection_for_mismatch

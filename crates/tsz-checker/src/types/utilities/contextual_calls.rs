@@ -8,8 +8,10 @@ impl<'a> CheckerState<'a> {
         index: usize,
         arg_count: usize,
     ) -> Option<TypeId> {
-        let signatures =
-            tsz_solver::type_queries::get_call_signatures(self.ctx.types, callable_type)?;
+        let signatures = crate::query_boundaries::common::call_signatures_for_type(
+            self.ctx.types,
+            callable_type,
+        )?;
         let accepts_arity = |params: &[tsz_solver::ParamInfo]| {
             let required_count = params.iter().filter(|param| !param.optional).count();
             let has_rest = params.iter().any(|param| param.rest);

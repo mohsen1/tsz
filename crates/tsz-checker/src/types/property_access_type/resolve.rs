@@ -222,7 +222,7 @@ impl<'a> CheckerState<'a> {
                                 preferred_type != TypeId::ANY
                                     && preferred_type != TypeId::UNKNOWN
                                     && preferred_type != TypeId::ERROR
-                                    && !tsz_solver::visitor::is_function_type(
+                                    && !crate::query_boundaries::common::is_function_type(
                                         self.ctx.types,
                                         preferred_type,
                                     )
@@ -998,7 +998,7 @@ impl<'a> CheckerState<'a> {
         {
             let surface = self.resolve_js_export_surface(self.ctx.current_file_idx);
             if let Some(base_type) = surface.lookup_named_export(&base_export_name, self.ctx.types)
-                && (tsz_solver::visitor::is_object_like_type(self.ctx.types, base_type)
+                && (crate::query_boundaries::common::is_object_like_type(self.ctx.types, base_type)
                     || crate::query_boundaries::common::callable_shape_for_type(
                         self.ctx.types,
                         base_type,
@@ -2037,7 +2037,7 @@ impl<'a> CheckerState<'a> {
                                     preferred_type != TypeId::ANY
                                         && preferred_type != TypeId::UNKNOWN
                                         && preferred_type != TypeId::ERROR
-                                        && !tsz_solver::visitor::is_function_type(
+                                        && !crate::query_boundaries::common::is_function_type(
                                             self.ctx.types,
                                             preferred_type,
                                         )

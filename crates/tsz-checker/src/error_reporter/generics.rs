@@ -139,10 +139,11 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> Option<String> {
-        let app = tsz_solver::type_queries::get_type_application(self.ctx.types, type_id)?;
+        let app = crate::query_boundaries::common::type_application(self.ctx.types, type_id)?;
         let sym = tsz_solver::type_query_symbol(self.ctx.types, app.base)?;
         let symbol_type = self.get_type_of_symbol(SymbolId(sym.0));
-        let shape = tsz_solver::type_queries::get_callable_shape(self.ctx.types, symbol_type)?;
+        let shape =
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, symbol_type)?;
         let call_sig = shape
             .call_signatures
             .iter()
@@ -151,8 +152,10 @@ impl<'a> CheckerState<'a> {
             .properties
             .iter()
             .find(|prop| self.ctx.types.resolve_atom_ref(prop.name).as_ref() == "prototype")?;
-        let prototype_shape =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, prototype_prop.type_id)?;
+        let prototype_shape = crate::query_boundaries::common::object_shape_for_type(
+            self.ctx.types,
+            prototype_prop.type_id,
+        )?;
         let prototype_sym_id = prototype_shape.symbol?;
         let prototype_symbol = self.ctx.binder.get_symbol(prototype_sym_id)?;
         let type_param_count = self.symbol_type_parameter_count(prototype_sym_id);
@@ -203,8 +206,10 @@ impl<'a> CheckerState<'a> {
             .properties
             .iter()
             .find(|prop| self.ctx.types.resolve_atom_ref(prop.name).as_ref() == "prototype")?;
-        let prototype_shape =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, prototype_prop.type_id)?;
+        let prototype_shape = crate::query_boundaries::common::object_shape_for_type(
+            self.ctx.types,
+            prototype_prop.type_id,
+        )?;
         let sym_id = prototype_shape.symbol?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         let type_param_count = self.symbol_type_parameter_count(sym_id);
@@ -271,9 +276,9 @@ impl<'a> CheckerState<'a> {
         let evaluated = self.evaluate_type_with_env(type_id);
         if let Some(alias_origin) = self.ctx.types.get_display_alias(evaluated)
             && let Some(app) =
-                tsz_solver::type_queries::get_type_application(self.ctx.types, alias_origin)
+                crate::query_boundaries::common::type_application(self.ctx.types, alias_origin)
             && let Some(def_id) =
-                tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, app.base)
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
             && let Some(def) = self.ctx.definition_store.get(def_id)
             && def.kind == tsz_solver::def::DefKind::TypeAlias
             && let Some(body) = def.body
@@ -488,8 +493,10 @@ impl<'a> CheckerState<'a> {
         let target_str = self.format_type_assertion_overlap_display(target_type, false);
         let (source_str, target_str) = if source_special.is_some()
             || target_special.is_some()
-            || tsz_solver::type_queries::get_type_application(self.ctx.types, source_type).is_some()
-            || tsz_solver::type_queries::get_type_application(self.ctx.types, target_type).is_some()
+            || crate::query_boundaries::common::type_application(self.ctx.types, source_type)
+                .is_some()
+            || crate::query_boundaries::common::type_application(self.ctx.types, target_type)
+                .is_some()
         {
             (source_str, target_str)
         } else if let Some((declared_source, declared_target)) =

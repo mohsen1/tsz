@@ -165,7 +165,10 @@ impl<'a> FlowAnalyzer<'a> {
                 match members.len() {
                     0 => Some(TypeId::NEVER),
                     1 => members.first().copied(),
-                    _ => Some(self.interner.union(members)),
+                    _ => Some(crate::query_boundaries::flow_analysis::union_types(
+                        self.interner,
+                        members,
+                    )),
                 }
             }
             k if k == syntax_kind_ext::INTERSECTION_TYPE => {
@@ -177,13 +180,19 @@ impl<'a> FlowAnalyzer<'a> {
                 match members.len() {
                     0 => Some(TypeId::NEVER),
                     1 => members.first().copied(),
-                    _ => Some(self.interner.intersection(members)),
+                    _ => Some(crate::query_boundaries::flow_analysis::intersection_types(
+                        self.interner,
+                        members,
+                    )),
                 }
             }
             k if k == syntax_kind_ext::ARRAY_TYPE => {
                 let array = self.arena.get_array_type(node)?;
                 let elem = self.fallback_type_from_type_node_syntax(array.element_type)?;
-                Some(self.interner.array(elem))
+                Some(crate::query_boundaries::flow_analysis::array_type(
+                    self.interner,
+                    elem,
+                ))
             }
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 let type_ref = self.arena.get_type_ref(node)?;
@@ -276,9 +285,12 @@ impl<'a> FlowAnalyzer<'a> {
         let element_type = match element_types.len() {
             0 => TypeId::NEVER,
             1 => element_types[0],
-            _ => self.interner.union(element_types),
+            _ => crate::query_boundaries::flow_analysis::union_types(self.interner, element_types),
         };
-        Some(self.interner.array(element_type))
+        Some(crate::query_boundaries::flow_analysis::array_type(
+            self.interner,
+            element_type,
+        ))
     }
 
     fn fallback_object_literal_type_from_syntax(&self, expr: NodeIndex) -> Option<TypeId> {
@@ -331,7 +343,9 @@ impl<'a> FlowAnalyzer<'a> {
         }
         if let Some(computed) = self.arena.get_computed_property(name_node) {
             let key_type = self.fallback_expression_type_from_syntax(computed.expression)?;
-            if let Some(literal) = tsz_solver::visitor::literal_value(self.interner, key_type) {
+            if let Some(literal) =
+                crate::query_boundaries::common::literal_value(self.interner, key_type)
+            {
                 return Some(match literal {
                     tsz_solver::LiteralValue::Number(value) => {
                         self.interner.intern_string(&value.0.to_string())
@@ -513,7 +527,10 @@ impl<'a> FlowAnalyzer<'a> {
         match awaited_members.len() {
             0 => None,
             1 => awaited_members.first().copied(),
-            _ => Some(self.interner.union(awaited_members)),
+            _ => Some(crate::query_boundaries::flow_analysis::union_types(
+                self.interner,
+                awaited_members,
+            )),
         }
     }
 
@@ -747,7 +764,10 @@ impl<'a> FlowAnalyzer<'a> {
         match types.len() {
             0 => None,
             1 => types.pop(),
-            _ => Some(self.interner.union(types)),
+            _ => Some(crate::query_boundaries::flow_analysis::union_types(
+                self.interner,
+                types,
+            )),
         }
     }
 }

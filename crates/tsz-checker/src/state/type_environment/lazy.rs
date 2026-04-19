@@ -1,10 +1,10 @@
 //! Lazy type resolution and type environment population.
 
+use crate::query_boundaries::common::{collect_lazy_def_ids, collect_type_queries, lazy_def_id};
 use crate::query_boundaries::state::type_environment as query;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_solver::TypeId;
-use tsz_solver::visitor::{collect_lazy_def_ids, collect_type_queries, lazy_def_id};
 
 use crate::query_boundaries::state::type_environment::{
     collect_enum_def_ids, collect_referenced_types,
@@ -396,7 +396,7 @@ impl<'a> CheckerState<'a> {
                 // correct intrinsic semantics (e.g., callable source ⊂ Function).
                 // Without this guard, `number` becomes assignable to the empty
                 // `{}` object, silencing TS2345/TS2769 errors.
-                if let Some(shape_id) = tsz_solver::visitor::object_shape_id(
+                if let Some(shape_id) = crate::query_boundaries::common::object_shape_id(
                     self.ctx.types.as_type_database(),
                     resolved,
                 ) {
@@ -598,8 +598,6 @@ impl<'a> CheckerState<'a> {
     /// correctly evaluate the conditional type, but `ensure_relation_input_ready` is
     /// skipped because we're inside symbol resolution.
     fn resolve_type_queries_for_eval(&mut self, type_id: TypeId) {
-        use tsz_solver::visitor::collect_type_queries;
-
         let type_queries = collect_type_queries(self.ctx.types, type_id);
         for symbol_ref in type_queries {
             let sym_id = tsz_binder::SymbolId(symbol_ref.0);
@@ -650,8 +648,11 @@ impl<'a> CheckerState<'a> {
         let result = eval_result.result;
         if result != type_id && result != TypeId::ERROR {
             let db = self.ctx.types.as_type_database();
-            if tsz_solver::visitor::contains_concrete_application_with_def(db, result, alias_def_id)
-            {
+            if crate::query_boundaries::common::contains_concrete_application_with_def(
+                db,
+                result,
+                alias_def_id,
+            ) {
                 return true;
             }
         }
@@ -1114,7 +1115,7 @@ impl<'a> CheckerState<'a> {
 
         // Handle unions and intersections - resolve each member
         // Only create a new union/intersection if members actually changed
-        if let Some(resolved) = tsz_solver::type_queries::map_compound_members_if_changed(
+        if let Some(resolved) = crate::query_boundaries::common::map_compound_members_if_changed(
             self.ctx.types,
             type_id,
             |member| self.resolve_lazy_type_inner(member, visited),

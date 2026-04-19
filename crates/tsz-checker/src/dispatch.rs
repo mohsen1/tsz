@@ -821,7 +821,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                         self.checker.evaluate_type_for_assignability(expr_type);
                                     let evaluated_jsdoc =
                                         self.checker.evaluate_type_for_assignability(jsdoc_type);
-                                    have_overlap = tsz_solver::type_queries::flow::types_are_comparable_for_assertion(
+                                    have_overlap = crate::query_boundaries::common::types_are_comparable_for_assertion(
                                         self.checker.ctx.types,
                                         evaluated_expr,
                                         evaluated_jsdoc,
@@ -1350,7 +1350,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                             )
                                             .is_some();
                                         if !both_callable {
-                                            have_overlap = tsz_solver::type_queries::flow::types_are_comparable_for_assertion(
+                                            have_overlap = crate::query_boundaries::common::types_are_comparable_for_assertion(
                                                 self.checker.ctx.types,
                                                 deep_expr,
                                                 deep_asserted,
@@ -1534,12 +1534,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 children_request.contextual_type.is_some_and(|ctx_type| {
                                     let ctx_type =
                                         self.checker.resolve_type_for_property_access(ctx_type);
-                                    tsz_solver::type_queries::get_function_shape(
+                                    crate::query_boundaries::common::function_shape_for_type(
                                         self.checker.ctx.types,
                                         ctx_type,
                                     )
                                     .is_some()
-                                        || tsz_solver::type_queries::get_call_signatures(
+                                        || crate::query_boundaries::common::call_signatures_for_type(
                                             self.checker.ctx.types,
                                             ctx_type,
                                         )

@@ -723,7 +723,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         // Try tuple element type first
         if let Some(elems) =
-            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, source_type)
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, source_type)
         {
             if index < elems.len() {
                 return Some(elems[index].type_id);
@@ -731,7 +731,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         // Fall back to array element type
-        tsz_solver::type_queries::get_array_element_type(self.ctx.types, source_type)
+        crate::query_boundaries::common::array_element_type(self.ctx.types, source_type)
     }
 
     /// TS2322: Check that a source property type is assignable to a leaf
@@ -1049,7 +1049,7 @@ impl<'a> CheckerState<'a> {
         from_index: usize,
     ) -> Option<TypeId> {
         if let Some(elems) =
-            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, source_type)
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, source_type)
         {
             if from_index >= elems.len() {
                 return None;

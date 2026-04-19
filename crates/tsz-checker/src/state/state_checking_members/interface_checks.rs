@@ -929,11 +929,11 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
             if !matches!(
-                tsz_solver::type_queries::classify_literal_type(
+                crate::query_boundaries::common::classify_literal_type(
                     self.ctx.types.as_type_database(),
                     candidate
                 ),
-                tsz_solver::type_queries::LiteralTypeKind::NotLiteral
+                crate::query_boundaries::common::LiteralTypeKind::NotLiteral
             ) {
                 return false;
             }

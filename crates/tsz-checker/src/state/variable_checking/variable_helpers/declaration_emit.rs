@@ -188,23 +188,27 @@ impl<'a> CheckerState<'a> {
     ) -> Option<(String, String)> {
         let mut result = None;
 
-        tsz_solver::visitor::walk_referenced_types(self.ctx.types, inferred_type, |type_id| {
-            if result.is_some() {
-                return;
-            }
+        crate::query_boundaries::common::walk_referenced_types(
+            self.ctx.types,
+            inferred_type,
+            |type_id| {
+                if result.is_some() {
+                    return;
+                }
 
-            if let Some(shape) = query::object_shape(self.ctx.types, type_id)
-                && let Some(info) = self.inspect_unique_symbol_properties(&shape.properties)
-            {
-                result = Some(info);
-                return;
-            }
-            if let Some(shape) = query::callable_shape(self.ctx.types, type_id)
-                && let Some(info) = self.inspect_unique_symbol_properties(&shape.properties)
-            {
-                result = Some(info);
-            }
-        });
+                if let Some(shape) = query::object_shape(self.ctx.types, type_id)
+                    && let Some(info) = self.inspect_unique_symbol_properties(&shape.properties)
+                {
+                    result = Some(info);
+                    return;
+                }
+                if let Some(shape) = query::callable_shape(self.ctx.types, type_id)
+                    && let Some(info) = self.inspect_unique_symbol_properties(&shape.properties)
+                {
+                    result = Some(info);
+                }
+            },
+        );
 
         result
     }
@@ -215,21 +219,26 @@ impl<'a> CheckerState<'a> {
     ) -> Option<SymbolId> {
         let mut result = None;
 
-        tsz_solver::visitor::walk_referenced_types(self.ctx.types, inferred_type, |type_id| {
-            if result.is_some() {
-                return;
-            }
+        crate::query_boundaries::common::walk_referenced_types(
+            self.ctx.types,
+            inferred_type,
+            |type_id| {
+                if result.is_some() {
+                    return;
+                }
 
-            let Some(sym_ref) = tsz_solver::visitor::unique_symbol_ref(self.ctx.types, type_id)
-            else {
-                return;
-            };
+                let Some(sym_ref) =
+                    crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, type_id)
+                else {
+                    return;
+                };
 
-            let sym_id = SymbolId(sym_ref.0);
-            if self.unique_symbol_type_is_inaccessible(sym_id) {
-                result = Some(sym_id);
-            }
-        });
+                let sym_id = SymbolId(sym_ref.0);
+                if self.unique_symbol_type_is_inaccessible(sym_id) {
+                    result = Some(sym_id);
+                }
+            },
+        );
 
         result
     }

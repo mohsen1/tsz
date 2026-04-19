@@ -1612,6 +1612,7 @@ fn checker_files_stay_under_loc_limit() {
         ("error_reporter/call_errors.rs", 2554),
         ("types/type_checking/duplicate_identifiers_helpers.rs", 2125),
         ("types/type_checking/duplicate_identifiers.rs", 2051),
+        ("error_reporter/render_failure.rs", 2010),
     ];
 
     let mut violations = Vec::new();
@@ -1730,46 +1731,10 @@ fn test_solver_imports_go_through_query_boundaries() {
         "recursion::RecursionGuard",
         "recursion::RecursionProfile",
         "recursion::RecursionResult",
-        // Visitor functions (read-only type inspection)
-        "visitor",
-        "visitor::application_id",
-        "visitor::callable_shape_id",
-        "visitor::collect_lazy_def_ids",
-        "visitor::collect_type_queries",
-        "visitor::is_function_type",
-        "visitor::is_template_literal_type",
-        "visitor::lazy_def_id",
-        "visitor::object_shape_id",
-        "visitor::object_with_index_shape_id",
-        // Read-only type query/classification functions
+        // Misc free functions used by a small number of checker files
+        // (all others must go through query_boundaries/)
         "is_compiler_managed_type",
-        "is_type_parameter",
         "type_contains_undefined",
-        "type_queries",
-        "type_queries::ArrayLikeKind",
-        "type_queries::AugmentationTargetKind",
-        "type_queries::ContextualLiteralAllowKind",
-        "type_queries::IndexKeyKind",
-        "type_queries::InterfaceMergeKind",
-        "type_queries::LiteralTypeKind",
-        "type_queries::LiteralValueKind",
-        "type_queries::NamespaceMemberKind",
-        "type_queries::TypeResolutionKind",
-        "type_queries::classify_for_augmentation",
-        "type_queries::classify_for_contextual_literal",
-        "type_queries::classify_for_interface_merge",
-        "type_queries::classify_for_literal_value",
-        "type_queries::classify_for_type_resolution",
-        "type_queries::classify_literal_type",
-        "type_queries::classify_namespace_member",
-        "type_queries::data::get_call_signatures",
-        "type_queries::data::get_function_shape",
-        "type_queries::get_enum_member_type",
-        "type_queries::get_function_shape",
-        "type_queries::get_object_shape_id",
-        "type_queries::is_unit_type",
-        "type_queries::self",
-        "type_queries::get_union_members",
     ];
 
     // ── TODO: These imports bypass query_boundaries but wrappers don't exist yet. ──
@@ -3874,12 +3839,13 @@ fn test_direct_interner_type_construction_ceiling() {
 
     // Ceiling: current count of direct interner type-construction calls.
     // This number must only shrink as calls are migrated to query_boundaries.
-    const CEILING: usize = 14;
+    const CEILING: usize = 0;
     assert!(
         total_count <= CEILING,
         "Direct interner type-construction calls outside query_boundaries have increased \
-         to {total_count} (ceiling: {CEILING}). Migrate new calls to use query_boundaries \
-         helpers (e.g., flow_analysis::union_types). Current occurrences:\n{}",
+         to {total_count} (ceiling: {CEILING}). Use query_boundaries helpers \
+         (e.g., flow_analysis::union_types, ::array_type, ::tuple_type, ::intersection_types). \
+         Current occurrences:\n{}",
         violations.join("\n")
     );
 }
@@ -4161,60 +4127,94 @@ fn test_cli_must_not_import_checker_internals() {
 /// direct `tsz_solver::type_queries::` calls (both `use` imports AND inline
 /// fully-qualified calls).
 ///
-/// The existing `test_solver_imports_go_through_query_boundaries` only catches
-/// `use tsz_solver::...` import statements. This test catches inline
-/// `tsz_solver::type_queries::` calls in code that has been migrated to use
-/// boundary wrappers.
-///
-/// When a new module is cleaned up, add its relative path to `CLEAN_MODULES`.
+/// ALL checker code outside `query_boundaries/` and `tests/` must use the
+/// boundary wrappers in `query_boundaries/common.rs` instead of calling
+/// `tsz_solver::type_queries::` directly. This is a blanket zero-tolerance guard.
 #[test]
 fn test_no_inline_type_queries_in_cleaned_modules() {
-    // Modules that have been fully migrated to use query_boundaries wrappers.
-    // These must not contain any direct `tsz_solver::type_queries::` calls.
-    const CLEAN_MODULES: &[&str] = &[
-        "checkers/promise_checker.rs",
-        "checkers/iterable_checker.rs",
-        "flow/control_flow/core.rs",
-        "flow/control_flow/references.rs",
-        "flow/control_flow/narrowing.rs",
-        "flow/reachability_checker.rs",
-        "state/type_analysis/computed_helpers.rs",
-        "state/type_analysis/computed_helpers_private.rs",
-        "state/type_analysis/computed_helpers_binding.rs",
-        // "state/type_analysis/computed/type_alias_variable_alias.rs", // TODO: re-add after migrating is_object_like_type call to query_boundaries
-        "state/type_analysis/core.rs",
-        "state/type_analysis/core_type_query.rs",
-        "state/type_analysis/symbol_type_helpers.rs",
-        "state/type_analysis/computed_commonjs.rs",
-        "state/type_analysis/computed_loops.rs",
-        "context/resolver.rs",
-    ];
-
     let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&checker_src, &mut files);
+
     let mut violations = Vec::new();
 
-    for &module in CLEAN_MODULES {
-        let path = checker_src.join(module);
-        let src = match fs::read_to_string(&path) {
+    for path in &files {
+        let rel = path
+            .strip_prefix(&checker_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        if rel.starts_with("query_boundaries/") || rel.starts_with("tests/") {
+            continue;
+        }
+
+        let src = match fs::read_to_string(path) {
             Ok(s) => s,
             Err(_) => continue,
         };
+
         for (line_num, line) in src.lines().enumerate() {
             let trimmed = line.trim();
-            // Skip comments
             if trimmed.starts_with("//") || trimmed.starts_with("///") {
                 continue;
             }
             if trimmed.contains("tsz_solver::type_queries::") {
-                violations.push(format!("  {}:{} — {}", module, line_num + 1, trimmed));
+                violations.push(format!("  {}:{} — {}", rel, line_num + 1, trimmed));
             }
         }
     }
 
     assert!(
         violations.is_empty(),
-        "Cleaned modules must not contain direct tsz_solver::type_queries:: calls. \
-         Use query_boundaries wrappers instead.\n\
+        "ALL checker code must use query_boundaries wrappers — no direct \
+         tsz_solver::type_queries:: calls allowed outside query_boundaries/.\n\
+         Violations found:\n{}",
+        violations.join("\n")
+    );
+}
+
+/// Zero-tolerance guard: no direct `tsz_solver::visitor::` calls are allowed outside
+/// `query_boundaries/`. All visitor access must go through `query_boundaries::common`.
+#[test]
+fn test_no_inline_visitor_calls_in_checker_modules() {
+    let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&checker_src, &mut files);
+
+    let mut violations = Vec::new();
+
+    for path in &files {
+        let rel = path
+            .strip_prefix(&checker_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        if rel.starts_with("query_boundaries/") || rel.starts_with("tests/") {
+            continue;
+        }
+
+        let src = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") || trimmed.starts_with("///") {
+                continue;
+            }
+            if trimmed.contains("tsz_solver::visitor::") {
+                violations.push(format!("  {}:{} — {}", rel, line_num + 1, trimmed));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "ALL checker code must use query_boundaries wrappers — no direct \
+         tsz_solver::visitor:: calls allowed outside query_boundaries/.\n\
          Violations found:\n{}",
         violations.join("\n")
     );
@@ -4226,7 +4226,7 @@ fn test_no_inline_type_queries_in_cleaned_modules() {
 /// Callers should use `query_boundaries::common::widen_type` (free function) or
 /// `self.widen_literal_type()` (method on `CheckerState`) instead.
 ///
-/// Current ceiling: 8 occurrences. This number must only decrease over time.
+/// Current ceiling: 0 occurrences — all calls migrated to query_boundaries.
 #[test]
 fn test_direct_widening_calls_ceiling() {
     let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -4267,7 +4267,7 @@ fn test_direct_widening_calls_ceiling() {
         }
     }
 
-    const CEILING: usize = 8;
+    const CEILING: usize = 0;
     assert!(
         count <= CEILING,
         "Direct tsz_solver::widening::widen_type calls have grown to {count} (ceiling: {CEILING}). \
@@ -4514,11 +4514,11 @@ fn test_direct_binary_op_evaluator_construction_ceiling() {
         }
     }
 
-    const CEILING: usize = 26;
+    const CEILING: usize = 0;
     assert!(
         count <= CEILING,
         "BinaryOpEvaluator::new() usage ceiling exceeded: found {count} (ceiling: {CEILING}). \
-         Create query_boundaries wrappers instead of adding new direct usages.\n\
+         Use query_boundaries::common::new_binary_op_evaluator() instead.\n\
          Locations:\n{}",
         locations.join("\n")
     );
@@ -4619,7 +4619,7 @@ fn test_direct_type_instantiator_construction_ceiling() {
         }
     }
 
-    const CEILING: usize = 1;
+    const CEILING: usize = 0;
     assert!(
         count <= CEILING,
         "TypeInstantiator::new() usage ceiling exceeded: found {count} (ceiling: {CEILING}). \

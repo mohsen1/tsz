@@ -37,6 +37,8 @@ pub(crate) fn get_function_shape(
     tsz_solver::type_queries::get_function_shape(db, type_id)
 }
 
+pub(crate) use get_function_shape as function_shape_for_type;
+
 pub(crate) fn classify_for_class_decl(db: &dyn TypeDatabase, type_id: TypeId) -> ClassDeclTypeKind {
     tsz_solver::type_queries::classify_for_class_decl(db, type_id)
 }

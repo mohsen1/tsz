@@ -29,7 +29,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         name: &str,
     ) -> (Option<TypeId>, Vec<TypeParamInfo>) {
-        use crate::query_boundaries::common::{TypeInstantiator, TypeSubstitution};
+        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 
         let factory = self.ctx.types.factory();
         let lib_contexts = &*self.ctx.lib_contexts;
@@ -131,9 +131,7 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                             if !subst.is_empty() {
-                                let mut instantiator =
-                                    TypeInstantiator::new(self.ctx.types, &subst);
-                                let substituted_ty = instantiator.instantiate(ty);
+                                let substituted_ty = instantiate_type(self.ctx.types, ty, &subst);
                                 lib_types.push(substituted_ty);
                             } else {
                                 lib_types.push(ty);
@@ -815,7 +813,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         property_name: &str,
     ) -> Option<TypeId> {
-        use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
+        use crate::query_boundaries::common::{NamespaceMemberKind, classify_namespace_member};
 
         let classification = classify_namespace_member(self.ctx.types, object_type);
 
@@ -1145,7 +1143,7 @@ impl<'a> CheckerState<'a> {
             // properties containing the namespace exports
             NamespaceMemberKind::Callable(_) => {
                 // Check if the callable has the property as a member (from namespace merge)
-                tsz_solver::type_queries::find_property_in_type_by_str(
+                crate::query_boundaries::common::find_property_by_str(
                     self.ctx.types,
                     object_type,
                     property_name,
@@ -1185,9 +1183,10 @@ impl<'a> CheckerState<'a> {
                 // Handle intersection types: when a module/namespace value is an
                 // intersection (e.g., `export = __React` produces an intersection of
                 // the namespace's type-side and value-side), try each member.
-                if let Some(members) =
-                    tsz_solver::type_queries::get_intersection_members(self.ctx.types, object_type)
-                {
+                if let Some(members) = crate::query_boundaries::common::intersection_members(
+                    self.ctx.types,
+                    object_type,
+                ) {
                     for member in members {
                         if let Some(result) =
                             self.resolve_namespace_value_member(member, property_name)
@@ -1718,7 +1717,9 @@ impl<'a> CheckerState<'a> {
                     let left_ty = self.literal_type_from_initializer(binary.left);
                     let right_ty = self.literal_type_from_initializer(binary.right);
                     if let (Some(l), Some(r)) = (left_ty, right_ty) {
-                        let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(
+                            self.ctx.types,
+                        );
                         if let crate::query_boundaries::type_computation::core::BinaryOpResult::Success(res) =
                             evaluator.evaluate(l, r, "&&")
                         {
@@ -1730,7 +1731,9 @@ impl<'a> CheckerState<'a> {
                     let left_ty = self.literal_type_from_initializer(binary.left);
                     let right_ty = self.literal_type_from_initializer(binary.right);
                     if let (Some(l), Some(r)) = (left_ty, right_ty) {
-                        let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(
+                            self.ctx.types,
+                        );
                         if let crate::query_boundaries::type_computation::core::BinaryOpResult::Success(res) =
                             evaluator.evaluate(l, r, "||")
                         {
@@ -1763,7 +1766,7 @@ impl<'a> CheckerState<'a> {
                     let expr_type = self.literal_type_from_initializer(span.expression)?;
                     // Stringify the literal type (handles string, number, bigint,
                     // boolean, null, undefined — not just string literals)
-                    let expr_str = tsz_solver::type_queries::stringify_literal_type(
+                    let expr_str = crate::query_boundaries::common::stringify_literal_type(
                         self.ctx.types,
                         expr_type,
                     )?;

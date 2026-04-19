@@ -348,7 +348,7 @@ impl<'a> CheckerState<'a> {
                 .collect();
             if !callable_members.is_empty()
                 && callable_members.iter().all(|&member| {
-                    tsz_solver::type_queries::is_callable_type(self.ctx.types, member)
+                    crate::query_boundaries::common::is_callable_type(self.ctx.types, member)
                 })
             {
                 return Some(
@@ -361,7 +361,8 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        tsz_solver::type_queries::is_callable_type(self.ctx.types, type_id).then_some(type_id)
+        crate::query_boundaries::common::is_callable_type(self.ctx.types, type_id)
+            .then_some(type_id)
     }
 
     pub(crate) fn function_initializer_context_type(
@@ -479,7 +480,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(members) =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, type_id)
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
         {
             let mut saw_unknown = false;
             for member in members {
@@ -747,7 +748,7 @@ impl<'a> CheckerState<'a> {
                                                  intersection_type: TypeId,
                                                  property_name: &str|
          -> Option<TypeId> {
-            let members = tsz_solver::type_queries::get_intersection_members(
+            let members = crate::query_boundaries::common::intersection_members(
                 this.ctx.types,
                 intersection_type,
             )?;
@@ -1231,7 +1232,7 @@ impl<'a> CheckerState<'a> {
                 present_property_names.push(name.clone());
                 // Get the literal type of the initializer without full type computation.
                 if let Some(lit_type) = self.literal_type_from_initializer(prop.initializer)
-                    && tsz_solver::type_queries::is_unit_type(self.ctx.types, lit_type)
+                    && crate::query_boundaries::common::is_unit_type(self.ctx.types, lit_type)
                 {
                     unit_discriminants.push((name, lit_type));
                 }
@@ -1246,7 +1247,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(lit_type) = self
                     .shorthand_const_literal_type(shorthand.name)
                     .or_else(|| self.literal_type_from_initializer(shorthand.name))
-                    && tsz_solver::type_queries::is_unit_type(self.ctx.types, lit_type)
+                    && crate::query_boundaries::common::is_unit_type(self.ctx.types, lit_type)
                 {
                     unit_discriminants.push((name, lit_type));
                 }
@@ -1424,7 +1425,7 @@ impl<'a> CheckerState<'a> {
 
     fn sanitize_contextual_property_type(&self, property_type: TypeId) -> TypeId {
         if property_type == TypeId::ERROR
-            || tsz_solver::type_queries::contains_error_type_db(self.ctx.types, property_type)
+            || crate::query_boundaries::common::contains_error_type(self.ctx.types, property_type)
         {
             return TypeId::UNKNOWN;
         }

@@ -30,7 +30,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
         evaluator.is_arithmetic_operand(type_id)
     }
 
@@ -123,7 +123,7 @@ impl<'a> CheckerState<'a> {
         right_type: TypeId,
         emitted_operator_error: &mut bool,
     ) {
-        let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
         let eval_left = self.evaluate_type_for_binary_ops(left_read_type);
         let eval_right = self.evaluate_type_for_binary_ops(right_type);
         if let Some(binary_op) = tsz_solver::map_compound_assignment_to_binary(operator) {

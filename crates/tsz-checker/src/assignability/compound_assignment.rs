@@ -149,16 +149,23 @@ impl<'a> CheckerState<'a> {
             && left_read_type != TypeId::ERROR
             && right_type != TypeId::ERROR
         {
-            let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+            let evaluator =
+                crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
             let left_is_symbol = evaluator.is_symbol_like(left_read_type);
             let right_is_symbol = evaluator.is_symbol_like(right_type);
             if left_is_symbol || right_is_symbol {
                 let left_is_string_or_any = left_read_type == TypeId::ANY
                     || left_read_type == TypeId::STRING
-                    || tsz_solver::type_queries::is_string_literal(self.ctx.types, left_read_type);
+                    || crate::query_boundaries::checkers::iterable::is_string_literal_type(
+                        self.ctx.types,
+                        left_read_type,
+                    );
                 let right_is_string_or_any = right_type == TypeId::ANY
                     || right_type == TypeId::STRING
-                    || tsz_solver::type_queries::is_string_literal(self.ctx.types, right_type);
+                    || crate::query_boundaries::checkers::iterable::is_string_literal_type(
+                        self.ctx.types,
+                        right_type,
+                    );
                 let should_emit_2469 = (left_is_symbol && right_is_string_or_any)
                     || (right_is_symbol && left_is_string_or_any);
                 if should_emit_2469 {
@@ -193,7 +200,8 @@ impl<'a> CheckerState<'a> {
             && left_read_type != TypeId::ERROR
             && right_type != TypeId::ERROR
         {
-            let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+            let evaluator =
+                crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
             // Evaluate types to resolve IndexAccess/Application types before checking.
             // e.g. `T[K]` where `T extends Record<K, number>` should resolve to `number`
             // so the += operator is correctly accepted.
@@ -322,7 +330,8 @@ impl<'a> CheckerState<'a> {
         );
         if is_boolean_bitwise_compound && !is_function_assignment && !emitted_nullish_error {
             // TS2447: For &=, |=, ^= with both boolean operands, emit special error
-            let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+            let evaluator =
+                crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
             let left_is_boolean = evaluator.is_boolean_like(left_read_type);
             let right_is_boolean = evaluator.is_boolean_like(right_type);
             if left_is_boolean && right_is_boolean {
@@ -431,7 +440,7 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::common::BinaryOpEvaluator;
         use crate::query_boundaries::type_computation::core::BinaryOpResult;
 
-        let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
         let op_str = match operator {
             k if k == SyntaxKind::PlusEqualsToken as u16 => Some("+"),
             k if k == SyntaxKind::MinusEqualsToken as u16 => Some("-"),

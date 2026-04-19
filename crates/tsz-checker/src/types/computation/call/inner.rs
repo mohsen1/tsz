@@ -1044,7 +1044,7 @@ impl<'a> CheckerState<'a> {
                             && sensitive_args[i]
                             && let Some(shape_param_type) = shape.params.get(i).map(|p| p.type_id)
                             && let Some(shape_fn) =
-                                query::get_function_shape(self.ctx.types, shape_param_type)
+                                query::function_shape_for_type(self.ctx.types, shape_param_type)
                             && let Some(arg_node) = self.ctx.arena.get(arg_idx)
                             && let Some(func) = self.ctx.arena.get_function(arg_node)
                         {
@@ -1173,7 +1173,7 @@ impl<'a> CheckerState<'a> {
                                     self.zero_param_callback_first_conditional_branch(arg_idx)
                                 && let Some(param_type) = shape.params.get(i).map(|p| p.type_id)
                                 && let Some(callback_shape) =
-                                    query::get_function_shape(self.ctx.types, param_type)
+                                    query::function_shape_for_type(self.ctx.types, param_type)
                             {
                                 let first_branch_type = self.get_type_of_node(first_branch_idx);
                                 let mut first_branch_substitution =
@@ -1374,7 +1374,7 @@ impl<'a> CheckerState<'a> {
                                         .find(|tp| tp.name == name)
                                         .is_some_and(|tp| !tp.is_const)
                                     {
-                                        if tsz_solver::type_queries::get_object_shape(
+                                        if crate::query_boundaries::common::object_shape_for_type(
                                             self.ctx.types,
                                             raw_ty,
                                         )

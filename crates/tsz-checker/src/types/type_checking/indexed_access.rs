@@ -29,8 +29,8 @@ fn is_broad_index_type(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
 }
 
 fn same_type_param_name(db: &dyn tsz_solver::TypeDatabase, left: TypeId, right: TypeId) -> bool {
-    tsz_solver::type_queries::get_type_parameter_info(db, left)
-        .zip(tsz_solver::type_queries::get_type_parameter_info(db, right))
+    crate::query_boundaries::common::type_param_info(db, left)
+        .zip(crate::query_boundaries::common::type_param_info(db, right))
         .is_some_and(|(l, r)| l.name == r.name)
 }
 
@@ -45,7 +45,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
     ) -> bool {
         let Some(prop_atom) =
-            tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
+            crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
         else {
             return false;
         };
@@ -73,7 +73,7 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|(wants_string, wants_number)| {
                         self.is_element_indexable(object_type, wants_string, wants_number)
                     })
-                || tsz_solver::type_queries::numeric_literal_index_valid_for_object(
+                || crate::query_boundaries::common::numeric_literal_index_valid_for_object(
                     self.ctx.types,
                     member,
                     object_type,
@@ -337,7 +337,7 @@ impl<'a> CheckerState<'a> {
             if let Some(constraint) = object_constraint {
                 // Check if the constraint's type parameter name matches the keyof target
                 if let Some(info) =
-                    tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, constraint)
+                    crate::query_boundaries::common::type_param_info(self.ctx.types, constraint)
                 {
                     let constraint_name = self.ctx.types.resolve_atom(info.name);
                     if constraint_name == *target_name {
@@ -365,7 +365,7 @@ impl<'a> CheckerState<'a> {
         }
         // Decompose the indexed access and check if the base is a type parameter
         if let Some((base, _index)) =
-            tsz_solver::type_queries::get_index_access_types(self.ctx.types, ty)
+            crate::query_boundaries::common::index_access_types(self.ctx.types, ty)
         {
             return crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, base);
         }
@@ -861,7 +861,7 @@ impl<'a> CheckerState<'a> {
         // emits this error. The check fires per-type-parameter in unions but NOT for
         // intersection constraints (tsc skips those).
         if let Some(prop_atom) =
-            tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
+            crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
         {
             let property_name = self.ctx.types.resolve_atom(prop_atom);
             self.check_ts4105_private_on_type_parameter(node_idx, object_type, &property_name);
@@ -959,7 +959,10 @@ impl<'a> CheckerState<'a> {
         )
         .unwrap_or(object_type_for_check);
         if let Some((base_object_type, access_index_type)) =
-            tsz_solver::type_queries::get_index_access_types(self.ctx.types, object_type_for_check)
+            crate::query_boundaries::common::index_access_types(
+                self.ctx.types,
+                object_type_for_check,
+            )
             && let Some(base_constraint) =
                 crate::query_boundaries::common::type_parameter_constraint(
                     self.ctx.types,
@@ -1038,8 +1041,8 @@ impl<'a> CheckerState<'a> {
             self.ctx.types.evaluate_keyof(object_type_for_check)
         };
         let is_self_derived_key_space = |candidate: TypeId| {
-            tsz_solver::type_queries::get_index_access_types(self.ctx.types, candidate).is_some_and(
-                |(derived_object, derived_index)| {
+            crate::query_boundaries::common::index_access_types(self.ctx.types, candidate)
+                .is_some_and(|(derived_object, derived_index)| {
                     crate::query_boundaries::common::is_type_parameter_like(
                         self.ctx.types,
                         index_type,
@@ -1048,13 +1051,12 @@ impl<'a> CheckerState<'a> {
                         derived_object,
                     ) && (derived_index == index_type
                         || same_type_param_name(self.ctx.types, derived_index, index_type))
-                },
-            )
+                })
         };
         let is_self_derived_keyof_space = |candidate: TypeId| {
             crate::query_boundaries::state::checking::keyof_target(self.ctx.types, candidate)
                 .and_then(|target| {
-                    tsz_solver::type_queries::get_index_access_types(self.ctx.types, target)
+                    crate::query_boundaries::common::index_access_types(self.ctx.types, target)
                 })
                 .is_some_and(|(derived_object, derived_index)| {
                     crate::query_boundaries::common::is_type_parameter_like(
@@ -1201,7 +1203,7 @@ impl<'a> CheckerState<'a> {
             }
             // Numeric-literal index keys may stringify differently from our keyof
             // representation; explicitly check if all literals are valid keys.
-            if tsz_solver::type_queries::numeric_literal_index_valid_for_object(
+            if crate::query_boundaries::common::numeric_literal_index_valid_for_object(
                 self.ctx.types,
                 index_type_for_check,
                 object_type_for_check,
@@ -1261,7 +1263,7 @@ impl<'a> CheckerState<'a> {
                     );
                 if nested_index_matches_constrained_base {
                     let constrained_object_type = if let Some(prop_atom) =
-                        tsz_solver::type_queries::get_string_literal_value(
+                        crate::query_boundaries::common::string_literal_value(
                             self.ctx.types,
                             nested_index_type,
                         ) {
@@ -1345,10 +1347,12 @@ impl<'a> CheckerState<'a> {
                         // resolved constraint type. This handles generic class instances
                         // (e.g., ZodType<any>) where evaluate_keyof doesn't enumerate
                         // class members.
-                        if let Some(prop_atom) = tsz_solver::type_queries::get_string_literal_value(
-                            self.ctx.types,
-                            index_type_for_check,
-                        ) {
+                        if let Some(prop_atom) =
+                            crate::query_boundaries::common::string_literal_value(
+                                self.ctx.types,
+                                index_type_for_check,
+                            )
+                        {
                             let property_name = self.ctx.types.resolve_atom(prop_atom);
                             let prop_result = self.resolve_property_access_with_env(
                                 constrained_object_type,
@@ -1375,7 +1379,7 @@ impl<'a> CheckerState<'a> {
             // is a deferred indexed access — tsc still emits TS2536 for patterns
             // like `T[keyof T]["foo"]` where the literal can't be validated as a
             // key of the unresolved indexed access result.
-            let index_is_concrete_literal = tsz_solver::type_queries::get_string_literal_value(
+            let index_is_concrete_literal = crate::query_boundaries::common::string_literal_value(
                 self.ctx.types,
                 index_type_for_check,
             )
@@ -1395,7 +1399,7 @@ impl<'a> CheckerState<'a> {
                 ty == TypeId::ERROR
                     || tsz_solver::is_conditional_type(self.ctx.types, ty)
                     || tsz_solver::is_generic_application(self.ctx.types, ty)
-                    || tsz_solver::type_queries::is_keyof_type(self.ctx.types, ty)
+                    || crate::query_boundaries::common::is_keyof_type(self.ctx.types, ty)
             };
             let key_space_is_unresolved = |ty: TypeId| -> bool {
                 ty == TypeId::ERROR
@@ -1457,7 +1461,7 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            if let Some(prop_atom) = tsz_solver::type_queries::get_string_literal_value(
+            if let Some(prop_atom) = crate::query_boundaries::common::string_literal_value(
                 self.ctx.types,
                 index_type_for_check,
             ) {
@@ -1540,7 +1544,7 @@ impl<'a> CheckerState<'a> {
                 // (which extends extends_type), so if either has the property it's valid.
                 // This handles patterns like Extract<TDef[I], FieldDefinition>["type"]
                 // where FieldDefinition has a "type" property.
-                if let Some(cond_id) = tsz_solver::type_queries::get_conditional_type_id(
+                if let Some(cond_id) = crate::query_boundaries::common::get_conditional_type_id(
                     self.ctx.types,
                     object_type_for_check,
                 ) {
@@ -1642,7 +1646,7 @@ impl<'a> CheckerState<'a> {
             //   { [K in keyof Obj]: Obj[K]['name'] }
             // where Obj has an `as` clause or other constructs that prevent the solver
             // from resolving Obj[K] with a generic K.
-            if let Some((base_obj, _base_idx)) = tsz_solver::type_queries::get_index_access_types(
+            if let Some((base_obj, _base_idx)) = crate::query_boundaries::common::index_access_types(
                 self.ctx.types,
                 object_type_for_check,
             ) {
@@ -1671,10 +1675,12 @@ impl<'a> CheckerState<'a> {
                             return;
                         }
                         // Also try property access for string literal indices
-                        if let Some(prop_atom) = tsz_solver::type_queries::get_string_literal_value(
-                            self.ctx.types,
-                            index_type_for_check,
-                        ) {
+                        if let Some(prop_atom) =
+                            crate::query_boundaries::common::string_literal_value(
+                                self.ctx.types,
+                                index_type_for_check,
+                            )
+                        {
                             let property_name = self.ctx.types.resolve_atom(prop_atom);
                             if matches!(
                                 self.resolve_property_access_with_env(values_union, &property_name),
@@ -1728,13 +1734,18 @@ impl<'a> CheckerState<'a> {
             } else {
                 object_type
             };
-        let object_shape =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, concrete_object_type);
+        let object_shape = crate::query_boundaries::common::object_shape_for_type(
+            self.ctx.types,
+            concrete_object_type,
+        );
         let object_has_shape = object_shape.is_some();
         let object_has_named_shape = object_shape.and_then(|shape| shape.symbol).is_some();
         let object_is_array_like = tsz_solver::is_array_type(self.ctx.types, concrete_object_type)
-            || tsz_solver::type_queries::get_tuple_elements(self.ctx.types, concrete_object_type)
-                .is_some();
+            || crate::query_boundaries::common::tuple_elements(
+                self.ctx.types,
+                concrete_object_type,
+            )
+            .is_some();
 
         if crate::query_boundaries::common::contains_type_parameters(
             self.ctx.types,
@@ -1745,7 +1756,7 @@ impl<'a> CheckerState<'a> {
         ) || tsz_solver::is_index_access_type(self.ctx.types, concrete_object_type)
             || tsz_solver::is_conditional_type(self.ctx.types, concrete_object_type)
             || (tsz_solver::is_primitive_type(self.ctx.types, concrete_object_type)
-                && !tsz_solver::type_queries::is_object_like_type(
+                && !crate::query_boundaries::dispatch::is_object_like_type(
                     self.ctx.types,
                     concrete_object_type,
                 ))
@@ -1819,9 +1830,10 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if let Some(invalid_member) =
-            tsz_solver::type_queries::get_invalid_index_type_member(self.ctx.types, index_type)
-        {
+        if let Some(invalid_member) = crate::query_boundaries::common::get_invalid_index_type_member(
+            self.ctx.types,
+            index_type,
+        ) {
             let index_type_str = self.format_type(invalid_member);
             let message = format_message(
                 diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
@@ -1836,7 +1848,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(prop_atom) =
-            tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
+            crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
         {
             let property_name = self.ctx.types.resolve_atom(prop_atom);
             if self
@@ -1898,9 +1910,9 @@ impl<'a> CheckerState<'a> {
             && !self.is_element_indexable(concrete_object_type, wants_string, wants_number)
         {
             let is_literal_index =
-                tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
+                crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
                     .is_some()
-                    || tsz_solver::type_queries::get_number_literal_value(
+                    || crate::query_boundaries::common::number_literal_value(
                         self.ctx.types,
                         index_type,
                     )

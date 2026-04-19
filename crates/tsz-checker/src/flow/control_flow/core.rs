@@ -1433,7 +1433,7 @@ impl<'a> FlowAnalyzer<'a> {
                                 // Only applies to const (not var/let) to avoid changing
                                 // mutable variable semantics.
                                 if self.is_const_variable_declaration(flow.node)
-                                    && tsz_solver::visitor::enum_components(
+                                    && crate::query_boundaries::common::enum_components(
                                         self.interner,
                                         narrowing_base,
                                     )
