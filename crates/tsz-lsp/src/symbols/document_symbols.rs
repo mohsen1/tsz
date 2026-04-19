@@ -1061,19 +1061,82 @@ impl<'a> DocumentSymbolProvider<'a> {
                     // export default <expression> (non-declaration). tsc
                     // labels these with `default` as the text and only
                     // `export` as the modifier (no `default` modifier).
+                    // The kind depends on the expression shape:
+                    //   - function / arrow expression → `function` (with
+                    //     body-walked children)
+                    //   - object literal / call expression → `const`
+                    //     (with property / argument members)
+                    //   - identifier referencing an existing decl →
+                    //     entry is dropped (tsc doesn't show `export
+                    //     default identifier` as its own nav entry).
+                    //   - everything else → `var`.
                     if is_default {
                         let range =
                             node_range(self.arena, self.line_map, self.source_text, node_idx);
                         let selection_range = self.get_range_keyword(node_idx, 6); // "export".len()
+                        let expr_idx = export_clause;
+                        let Some(expr_node) = self.arena.get(expr_idx) else {
+                            return vec![];
+                        };
+                        let (kind, children) = match expr_node.kind {
+                            k if k == syntax_kind_ext::FUNCTION_EXPRESSION
+                                || k == syntax_kind_ext::ARROW_FUNCTION =>
+                            {
+                                let body = self
+                                    .arena
+                                    .get_function(expr_node)
+                                    .map_or(NodeIndex::NONE, |f| f.body);
+                                (
+                                    SymbolKind::Function,
+                                    self.collect_children_from_block(body, Some("default")),
+                                )
+                            }
+                            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => (
+                                SymbolKind::Constant,
+                                self.collect_object_literal_members(expr_idx, Some("default")),
+                            ),
+                            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                                // `export default foo({ x: 1, y: 1 })` →
+                                // tsc surfaces the argument object's
+                                // members as children of the default
+                                // entry.
+                                let mut children = Vec::new();
+                                if let Some(call) = self.arena.get_call_expr(expr_node)
+                                    && let Some(args) = call.arguments.as_ref()
+                                {
+                                    for &arg_idx in &args.nodes {
+                                        let Some(arg_node) = self.arena.get(arg_idx) else {
+                                            continue;
+                                        };
+                                        if arg_node.kind
+                                            == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                        {
+                                            children.extend(self.collect_object_literal_members(
+                                                arg_idx,
+                                                Some("default"),
+                                            ));
+                                        }
+                                    }
+                                }
+                                (SymbolKind::Constant, children)
+                            }
+                            k if k == SyntaxKind::Identifier as u16 => {
+                                // `export default someName` — tsc
+                                // drops this from the navbar since
+                                // `someName` already has its own entry.
+                                return vec![];
+                            }
+                            _ => (SymbolKind::Variable, Vec::new()),
+                        };
                         return vec![DocumentSymbol {
                             name: "default".to_string(),
                             detail: None,
-                            kind: SymbolKind::Variable,
+                            kind,
                             kind_modifiers: "export".to_string(),
                             range,
                             selection_range,
                             container_name: container_name.map(std::string::ToString::to_string),
-                            children: vec![],
+                            children,
                         }];
                     }
                 }
