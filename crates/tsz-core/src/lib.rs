@@ -245,6 +245,7 @@ pub fn create_scanner(text: String, skip_trivia: bool) -> ScannerState {
 // =============================================================================
 
 use crate::api::wasm::compiler_options::CompilerOptions;
+use crate::api::wasm::transforms::WasmTransformContext;
 use crate::binder::BinderState;
 use crate::checker::context::LibContext;
 use crate::context::emit::EmitContext;
@@ -313,23 +314,6 @@ impl TryFrom<ImportCandidateInput> for ImportCandidate {
             kind,
             is_type_only: input.is_type_only,
         })
-    }
-}
-
-/// Opaque wrapper for transform directives across the wasm boundary.
-#[wasm_bindgen]
-pub struct WasmTransformContext {
-    inner: TransformContext,
-    target_es5: bool,
-    module_kind: ModuleKind,
-}
-
-#[wasm_bindgen]
-impl WasmTransformContext {
-    /// Get the number of transform directives generated.
-    #[wasm_bindgen(js_name = getCount)]
-    pub fn get_count(&self) -> usize {
-        self.inner.len()
     }
 }
 
