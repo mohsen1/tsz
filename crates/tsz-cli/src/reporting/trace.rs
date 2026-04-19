@@ -327,5 +327,5 @@ macro_rules! trace_span {
 }
 
 #[cfg(test)]
-#[path = "trace_tests.rs"]
+#[path = "../trace_tests.rs"]
 mod tests;
