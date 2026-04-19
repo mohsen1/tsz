@@ -959,6 +959,19 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
                     );
                 }
+            } else if has_type_annotation
+                && check_return_type == TypeId::UNKNOWN
+                && !has_return
+                && falls_through
+                && !is_generator
+            {
+                // TS2355 for `method(): unknown {}` (empty body): see the note
+                // on the same pattern in check_function_return_paths.
+                self.error_at_node(
+                    method.type_annotation,
+                    "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
+                    diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
+                );
             } else if self.ctx.no_implicit_returns()
                 && has_return
                 && falls_through
