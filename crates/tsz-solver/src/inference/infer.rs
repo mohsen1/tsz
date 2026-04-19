@@ -1243,6 +1243,19 @@ impl<'a> InferenceContext<'a> {
         info.candidates.is_empty() && !info.contra_candidates.is_empty()
     }
 
+    /// Return deduplicated contravariant candidate types for an inference variable.
+    pub fn get_contra_candidate_types(&mut self, var: InferenceVar) -> Vec<TypeId> {
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
+        let mut out = Vec::new();
+        for candidate in &info.contra_candidates {
+            if !out.contains(&candidate.type_id) {
+                out.push(candidate.type_id);
+            }
+        }
+        out
+    }
+
     pub fn has_index_signature_candidates(&mut self, var: InferenceVar) -> bool {
         let root = self.table.find(var);
         let info = self.table.probe_value(root);
