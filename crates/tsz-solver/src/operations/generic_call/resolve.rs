@@ -1317,6 +1317,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let ty = if has_constraints {
                 let mut resolved_direct = None;
                 let contra_only = infer_ctx.has_only_contra_candidates(var);
+                let has_usable_contra_candidates =
+                    infer_ctx.has_usable_contra_candidates(var, self.interner.as_type_database());
 
                 if direct_param_vars.contains(&var)
                     && let Some(constraint_ty) = tp.constraint
@@ -1343,6 +1345,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             let candidate = self.resolve_direct_parameter_inference_type(
                                 &non_constraint_bounds,
                                 infer_ctx.best_common_type(&non_constraint_bounds),
+                                has_usable_contra_candidates,
                             );
                             let upper_bounds_ok = constraints.upper_bounds.iter().all(|upper| {
                                 !matches!(upper, &TypeId::ANY | &TypeId::UNKNOWN | &TypeId::ERROR)
@@ -1381,15 +1384,86 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 pre_adjusted = ?ty,
                                 "Adjusting resolved inference type"
                             );
-                            let ty = if all_return_type {
+                            let mut ty = if all_return_type {
                                 self.resolve_return_position_inference_type(&lower_bounds, ty)
                             } else if direct_param_vars.contains(&var)
                                 && !has_index_signature_candidates
                             {
-                                self.resolve_direct_parameter_inference_type(&lower_bounds, ty)
+                                self.resolve_direct_parameter_inference_type(
+                                    &lower_bounds,
+                                    ty,
+                                    has_usable_contra_candidates,
+                                )
                             } else {
                                 ty
                             };
+                            if direct_param_vars.contains(&var)
+                                && has_usable_contra_candidates
+                                && lower_bounds.len() == 1
+                            {
+                                let contra_types = infer_ctx.get_contra_candidate_types(var);
+                                let concrete_contra: Vec<_> = contra_types
+                                    .into_iter()
+                                    .filter(|contra| {
+                                        !crate::type_queries::data::is_bare_infer_placeholder_db(
+                                            self.interner.as_type_database(),
+                                            *contra,
+                                        )
+                                    })
+                                    .collect();
+                                if concrete_contra.len() == 1 {
+                                    let contra = concrete_contra[0];
+                                    let mut needs_broader_due_dependent_constraint = false;
+                                    if self.checker.is_assignable_to(ty, contra)
+                                        && !self.checker.is_assignable_to(contra, ty)
+                                    {
+                                        for (other_tp, &other_var) in
+                                            func.type_params.iter().zip(type_param_vars.iter())
+                                        {
+                                            if other_tp.name == tp.name {
+                                                continue;
+                                            }
+                                            let Some(other_constraint) = other_tp.constraint else {
+                                                continue;
+                                            };
+                                            if !crate::visitors::visitor_predicates::contains_type_parameter_named(
+                                                self.interner,
+                                                other_constraint,
+                                                tp.name,
+                                            ) {
+                                                continue;
+                                            }
+                                            let Some(other_constraints) =
+                                                infer_ctx.get_constraints(other_var)
+                                            else {
+                                                continue;
+                                            };
+                                            for lb in other_constraints.lower_bounds.iter().copied()
+                                            {
+                                                if matches!(
+                                                    lb,
+                                                    TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
+                                                ) {
+                                                    continue;
+                                                }
+                                                if !self.checker.is_assignable_to(lb, ty)
+                                                    && self.checker.is_assignable_to(lb, contra)
+                                                {
+                                                    needs_broader_due_dependent_constraint = true;
+                                                    break;
+                                                }
+                                            }
+                                            if needs_broader_due_dependent_constraint {
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    if needs_broader_due_dependent_constraint {
+                                        ty = contra;
+                                    }
+                                }
+                            }
                             trace!(
                                 resolved_type = ?ty,
                                 "Type parameter resolved successfully from constraints"
@@ -1446,6 +1520,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 self.resolve_direct_parameter_inference_type(
                                     &lower_bounds,
                                     fallback,
+                                    has_usable_contra_candidates,
                                 )
                             } else {
                                 fallback
