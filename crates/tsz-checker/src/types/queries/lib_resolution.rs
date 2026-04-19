@@ -1,24 +1,6 @@
-//! Library type resolution: resolving built-in types from `.d.ts` lib files,
-//! merging interface heritage from lib arenas, and handling global augmentations.
-//!
-//! ## Stable Identity Helpers
-//!
-//! Lib lowering resolves `NodeIndex` values from multiple arenas into `SymbolIds`
-//! and `DefIds`.  The canonical resolution path is:
-//!
-//! 1. [`resolve_lib_node_in_arenas`] — `NodeIndex` → `SymbolId` via
-//!    identifier-text lookup across declaration arenas, then `file_locals` lookup.
-//! 2. [`CheckerContext::get_lib_def_id`] — SymbolId → DefId, preferring
-//!    pre-populated identities from `semantic_defs` with on-demand fallback.
-//! 3. [`lib_def_id_from_node`] — one-step `NodeIndex` → DefId via (1)+(2), for
-//!    the merged-binder path.
-//! 4. [`lib_def_id_from_node_in_lib_contexts`] — one-step `NodeIndex` → DefId via
-//!    [`resolve_lib_node_in_lib_contexts`]+(2), for per-lib-context lowering.
-//! 5. [`augmentation_def_id_from_node`] — one-step `NodeIndex` → `DefId` via
-//!    [`resolve_augmentation_node`]+(2), for global-augmentation lowering.
-//!
-//! All lib-lowering resolver closures should delegate to these helpers instead
-//! of maintaining per-call caches.
+//! Library type resolution for built-in `.d.ts` declarations and global
+//! augmentations. Keep resolver logic here as shared helpers to preserve stable
+//! SymbolId/DefId identity across lib arenas.
 
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
@@ -30,24 +12,15 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::is_compiler_managed_type;
 
-/// Map from identifier name to the list of `(file_idx, SymbolId)` pairs where
-/// the name appears in a binder's `file_locals` table. Used as the `O(1)` fast
-/// path when resolving a name across all binders.
+/// Index from identifier text to `(file_idx, SymbolId)` entries in `file_locals`.
 pub(crate) type FileLocalsIndex = FxHashMap<String, Vec<(usize, tsz_binder::SymbolId)>>;
 
-/// Stub value resolver for lib lowering — lib declarations have no runtime values.
-///
-/// All four lib-lowering sites (`resolve_lib_type_by_name`, `prime_lib_type_params`,
-/// `resolve_lib_type_with_params`, `lower_augmentation_for_arena`) pass this as the
-/// `value_resolver` argument to `TypeLowering::with_hybrid_resolver`.
+/// Stub value resolver for lib lowering; lib declarations have no runtime values.
 pub(crate) const fn no_value_resolver(_: NodeIndex) -> Option<u32> {
     None
 }
 
-/// Map a `SyntaxKind` keyword to a built-in `TypeId`.
-///
-/// Returns `None` for non-keyword syntax kinds, letting callers fall through
-/// to more expensive resolution paths only when necessary.
+/// Map a keyword `SyntaxKind` to its built-in `TypeId`.
 pub(crate) const fn keyword_syntax_to_type_id(kind: u16) -> Option<TypeId> {
     match kind {
         k if k == SyntaxKind::StringKeyword as u16 => Some(TypeId::STRING),
@@ -66,11 +39,7 @@ pub(crate) const fn keyword_syntax_to_type_id(kind: u16) -> Option<TypeId> {
     }
 }
 
-/// Map a keyword type *name* (e.g. `"string"`, `"number"`) to a built-in `TypeId`.
-///
-/// This covers the same set as [`keyword_syntax_to_type_id`] but works from
-/// identifier text, which is needed when resolving type references from lib
-/// arenas where the node kind might be `TypeReference` rather than a raw keyword.
+/// Map a keyword type name (for example `"string"`) to a built-in `TypeId`.
 pub(crate) fn keyword_name_to_type_id(name: &str) -> Option<TypeId> {
     match name {
         "string" => Some(TypeId::STRING),
@@ -89,12 +58,7 @@ pub(crate) fn keyword_name_to_type_id(name: &str) -> Option<TypeId> {
     }
 }
 
-/// Resolve the fallback arena for a lib symbol.
-///
-/// This is the canonical lookup order:
-/// 1. Per-symbol arena from `binder.symbol_arenas` (set during lib merging).
-/// 2. First lib context's arena (covers es5.d.ts and similar primary libs).
-/// 3. The user file's arena (final fallback).
+/// Resolve fallback arena for a lib symbol from merged binders/lib contexts.
 pub(crate) fn resolve_lib_fallback_arena<'a>(
     binder: &'a tsz_binder::BinderState,
     sym_id: tsz_binder::SymbolId,
@@ -109,12 +73,7 @@ pub(crate) fn resolve_lib_fallback_arena<'a>(
         .unwrap_or(user_arena)
 }
 
-/// Resolve the fallback arena for a lib symbol within a single lib context.
-///
-/// This is used in per-lib-context iteration (e.g., `resolve_lib_type_with_params`)
-/// where each lib context is processed independently. The lookup order is:
-/// 1. Per-symbol arena from `binder.symbol_arenas`.
-/// 2. The lib context's own arena.
+/// Resolve fallback arena for a lib symbol within a single lib context.
 pub(crate) fn resolve_lib_context_fallback_arena<'a>(
     binder: &'a tsz_binder::BinderState,
     sym_id: tsz_binder::SymbolId,
@@ -128,14 +87,7 @@ pub(crate) fn resolve_lib_context_fallback_arena<'a>(
 }
 
 /// Build `(NodeIndex, &NodeArena)` pairs for a symbol's declarations.
-///
-/// Resolves each declaration to the correct arena via `binder.declaration_arenas`,
-/// falling back to:
-/// - `user_arena` if the declaration node exists there (local augmentations), or
-/// - `fallback_arena` otherwise (lib declarations).
-///
-/// When `user_arena` is `None`, the fallback is used directly (e.g., in
-/// `prime_lib_type_params` which has no user-arena context).
+/// Uses `declaration_arenas`, then falls back to user or lib arena.
 pub(crate) fn collect_lib_decls_with_arenas<'a>(
     binder: &'a tsz_binder::BinderState,
     sym_id: tsz_binder::SymbolId,
@@ -154,9 +106,7 @@ pub(crate) fn collect_lib_decls_with_arenas<'a>(
             } else if let Some(ua) = user_arena
                 && ua.get(decl_idx).is_some()
             {
-                // User augmentations (e.g., `interface Array<T> extends IFoo<T>`)
-                // are not in declaration_arenas. Check the user arena before
-                // falling back.
+                // User augmentations are not in declaration_arenas.
                 vec![(decl_idx, ua)]
             } else {
                 vec![(decl_idx, fallback_arena)]
@@ -165,13 +115,7 @@ pub(crate) fn collect_lib_decls_with_arenas<'a>(
         .collect()
 }
 
-/// Deduplicate `(NodeIndex, &NodeArena)` pairs by both index and arena pointer.
-///
-/// The lib merger can produce duplicate entries when the same lib file is loaded
-/// from multiple lib contexts.  Comparing by both `NodeIndex` AND arena pointer
-/// avoids dropping entries from different lib files that happen to share the same
-/// `NodeIndex` (e.g., `SymbolConstructor` in `es2015.symbol.wellknown.d.ts` vs
-/// `es2020.symbol.wellknown.d.ts`).
+/// Deduplicate declaration-arena pairs by `(NodeIndex, arena pointer)`.
 pub(crate) fn dedup_decl_arenas<'a>(
     decls: &[(NodeIndex, &'a NodeArena)],
 ) -> Vec<(NodeIndex, &'a NodeArena)> {
