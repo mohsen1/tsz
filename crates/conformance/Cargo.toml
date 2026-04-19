@@ -2,6 +2,8 @@
 name = "tsz-conformance"
 version = "0.1.0"
 edition = "2021"
+repository.workspace = true
+homepage.workspace = true
 autotests = false
 publish = false
 
