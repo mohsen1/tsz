@@ -101,19 +101,28 @@ interface Point2D { x: number; y: number }
 const point3d = { x: 1, y: 2, z: 3 };
 const p: Point2D = point3d; // Sound: excess 'z'
 
-// 2. Mutable array covariance
-//    Dog[] → Animal[] lets you push a Cat into a Dog array
-interface Animal { name: string }
-interface Dog extends Animal { breed: string }
-const dogs: Dog[] = [{ name: "Rex", breed: "Lab" }];
-const animals: Animal[] = dogs; // Sound: unsafe covariance
+// 2. Method bivariance
+//    tsc allows subclass methods to narrow parameter types unsafely
+class Animal {
+  feed(food: string | number) {}
+}
 
-// 3. any escape
-//    'any' silences real structural errors
-const data: any = "not an object";
-const num: number = data; // Sound: any bypass
+class Dog extends Animal {
+  feed(food: string) {
+    console.log(food.toUpperCase());
+  }
+}
 
-// 4. Excess properties in function args (via indirection)
+// 3. Nested any escape
+//    sound mode is stricter when any leaks through structure
+interface Payload {
+  user: { name: string };
+}
+
+const payload: { user: any } = { user: "oops" };
+const safePayload: Payload = payload; // Sound: nested any escape
+
+// 4. Excess properties in function args via indirection
 interface Config { host: string; port: number }
 const cfg = { host: "localhost", port: 8080, debug: true };
 function startServer(c: Config) {}
