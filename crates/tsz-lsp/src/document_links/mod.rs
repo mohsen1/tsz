@@ -241,5 +241,5 @@ impl<'a> DocumentLinkProvider<'a> {
 }
 
 #[cfg(test)]
-#[path = "../tests/document_links_tests.rs"]
+#[path = "../../tests/document_links_tests.rs"]
 mod document_links_tests;
