@@ -1699,7 +1699,11 @@ async function runParallel(opts, testsToRun) {
                         const elapsed = msg.elapsed ? ` (${msg.elapsed}ms)` : "";
                         console.log(`  [W${msg.workerId}] ${msg.testName} ${status}${elapsed}`);
                         if (!msg.passed) {
-                            console.log(`    ${msg.error.split("\n")[0]}`);
+                            if (process.env.FOURSLASH_FULL_ERROR) {
+                                console.log(msg.error);
+                            } else {
+                                console.log(`    ${msg.error.split("\n")[0]}`);
+                            }
                         }
                     } else if (completed % 50 === 0) {
                         printProgress();

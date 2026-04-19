@@ -1773,6 +1773,106 @@ fn parse_typescript_config_json(text: &str) -> Option<serde_json::Value> {
     serde_json::from_str(text)
         .ok()
         .or_else(|| json5::from_str::<serde_json::Value>(text).ok())
+        .or_else(|| {
+            // tsconfig.json is permissively parsed by TypeScript — missing
+            // commas between members on separate lines are tolerated. Insert
+            // a comma after `}` / `]` / scalar values when the next
+            // non-whitespace character (after optional newline) is a
+            // double-quoted key, and retry parsing.
+            let repaired = repair_tsconfig_missing_commas(text);
+            serde_json::from_str(&repaired)
+                .ok()
+                .or_else(|| json5::from_str::<serde_json::Value>(&repaired).ok())
+        })
+}
+
+fn repair_tsconfig_missing_commas(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len() + 16);
+    let mut i = 0;
+    let mut in_string = false;
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if in_line_comment {
+            out.push(c as char);
+            if c == b'\n' {
+                in_line_comment = false;
+            }
+            i += 1;
+            continue;
+        }
+        if in_block_comment {
+            out.push(c as char);
+            if c == b'*' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                out.push('/');
+                i += 2;
+                in_block_comment = false;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if in_string {
+            out.push(c as char);
+            if c == b'\\' && i + 1 < bytes.len() {
+                out.push(bytes[i + 1] as char);
+                i += 2;
+                continue;
+            }
+            if c == b'"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        if c == b'"' {
+            out.push('"');
+            in_string = true;
+            i += 1;
+            continue;
+        }
+        if c == b'/' && i + 1 < bytes.len() {
+            match bytes[i + 1] {
+                b'/' => {
+                    out.push_str("//");
+                    in_line_comment = true;
+                    i += 2;
+                    continue;
+                }
+                b'*' => {
+                    out.push_str("/*");
+                    in_block_comment = true;
+                    i += 2;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        let needs_comma_after = matches!(c, b'}' | b']' | b'"' | b'0'..=b'9' | b'e' | b'l' | b'r');
+        out.push(c as char);
+        i += 1;
+        if needs_comma_after {
+            let mut j = i;
+            let mut saw_newline = false;
+            while j < bytes.len() {
+                let nc = bytes[j];
+                if nc == b'\n' {
+                    saw_newline = true;
+                    j += 1;
+                } else if matches!(nc, b' ' | b'\t' | b'\r') {
+                    j += 1;
+                } else {
+                    break;
+                }
+            }
+            if saw_newline && j < bytes.len() && bytes[j] == b'"' {
+                out.push(',');
+            }
+        }
+    }
+    out
 }
 
 fn compare_module_specifier_candidates(a: &String, b: &String) -> Ordering {
