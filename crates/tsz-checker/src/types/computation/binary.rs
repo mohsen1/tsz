@@ -139,10 +139,12 @@ impl<'a> CheckerState<'a> {
                 vec![non_nullish_left, right_type]
             };
 
-            if let Some(normalized) = tsz_solver::normalize_object_union_members_for_write_target(
-                self.ctx.types,
-                &members,
-            ) {
+            if let Some(normalized) =
+                crate::query_boundaries::common::normalize_object_union_members_for_write_target(
+                    self.ctx.types,
+                    &members,
+                )
+            {
                 return tsz_solver::utils::union_or_single(self.ctx.types, normalized);
             }
         }
@@ -1534,8 +1536,10 @@ impl<'a> CheckerState<'a> {
                         } else {
                             // Strip null/undefined before checking — tsc calls checkNonNullType()
                             // first (emitting TS18048/TS2532), then checks the remaining type.
-                            let left_stripped =
-                                tsz_solver::remove_nullish(self.ctx.types, left_type);
+                            let left_stripped = crate::query_boundaries::common::remove_nullish(
+                                self.ctx.types,
+                                left_type,
+                            );
                             if !evaluator.is_arithmetic_operand(left_stripped)
                                 && !self.is_enum_type(left_stripped)
                                 && let Some(node) = self.ctx.arena.get(left_idx)
@@ -1558,8 +1562,10 @@ impl<'a> CheckerState<'a> {
                                 2363, // TS2363
                             );
                         } else {
-                            let right_stripped =
-                                tsz_solver::remove_nullish(self.ctx.types, right_type);
+                            let right_stripped = crate::query_boundaries::common::remove_nullish(
+                                self.ctx.types,
+                                right_type,
+                            );
                             if !evaluator.is_arithmetic_operand(right_stripped)
                                 && !self.is_enum_type(right_stripped)
                                 && let Some(node) = self.ctx.arena.get(right_idx)
@@ -1675,8 +1681,14 @@ impl<'a> CheckerState<'a> {
             // e.g., enum E { A, B } → number, "hello" → string
             let (cmp_left, cmp_right) = if matches!(op_str, "<" | ">" | "<=" | ">=") {
                 (
-                    tsz_solver::get_base_type_for_comparison(self.ctx.types, eval_left),
-                    tsz_solver::get_base_type_for_comparison(self.ctx.types, eval_right),
+                    crate::query_boundaries::common::get_base_type_for_comparison(
+                        self.ctx.types,
+                        eval_left,
+                    ),
+                    crate::query_boundaries::common::get_base_type_for_comparison(
+                        self.ctx.types,
+                        eval_right,
+                    ),
                 )
             } else {
                 (eval_left, eval_right)
@@ -2013,7 +2025,9 @@ impl<'a> CheckerState<'a> {
         // Intersections narrow their members; if any member sits in a primitive
         // family, treat the intersection as belonging to that family (e.g.
         // `T & number` should count as number-family for TS2367 widening).
-        if let Some(list_id) = tsz_solver::intersection_list_id(self.ctx.types, type_id) {
+        if let Some(list_id) =
+            crate::query_boundaries::common::intersection_list_id(self.ctx.types, type_id)
+        {
             for member in self.ctx.types.type_list(list_id).iter() {
                 let family = self.get_primitive_family(*member);
                 if family != TypeId::ERROR {
@@ -2141,13 +2155,17 @@ impl<'a> CheckerState<'a> {
                 {
                     is_valid_rhs = true;
                     let sig_info: Option<(Vec<tsz_solver::ParamInfo>, tsz_solver::TypeId)> =
-                        if let Some(fn_id) =
-                            tsz_solver::function_shape_id(self.ctx.types, has_instance_type)
-                        {
+                        if let Some(fn_id) = crate::query_boundaries::common::function_shape_id(
+                            self.ctx.types,
+                            has_instance_type,
+                        ) {
                             let shape = self.ctx.types.function_shape(fn_id);
                             Some((shape.params.clone(), shape.return_type))
                         } else if let Some(shape_id) =
-                            tsz_solver::callable_shape_id(self.ctx.types, has_instance_type)
+                            crate::query_boundaries::common::callable_shape_id(
+                                self.ctx.types,
+                                has_instance_type,
+                            )
                         {
                             let shape = self.ctx.types.callable_shape(shape_id);
                             shape

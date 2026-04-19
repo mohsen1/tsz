@@ -145,41 +145,48 @@ impl<'a> CheckerState<'a> {
             // Check if the key source directly contains the type parameter without
             // going through a `keyof` wrapper. Strip keyof from the key source first,
             // then check if the remainder still references the type parameter.
-            let key_without_keyof = tsz_solver::keyof_inner_type(self.ctx.types, key_source)
-                .map(|_| {
-                    // The key is `keyof X` or `keyof X & Y`. T only appears inside
-                    // keyof, which is a valid non-circular reference.
-                    false
-                })
-                .unwrap_or_else(|| {
-                    // Key is not wrapped in keyof. Check for intersection like
-                    // `keyof T & string` - strip intersection members that are keyof.
-                    if let Some(members_id) = crate::query_boundaries::common::intersection_list_id(
-                        self.ctx.types,
-                        key_source,
-                    ) {
-                        let members = self.ctx.types.type_list(members_id);
-                        // Check if T only appears inside keyof members of the intersection
-                        members.iter().any(|&member| {
-                            tsz_solver::keyof_inner_type(self.ctx.types, member).is_none()
-                                && tsz_solver::contains_type_parameter_named_shallow(
+            let key_without_keyof =
+                crate::query_boundaries::common::keyof_inner_type(self.ctx.types, key_source)
+                    .map(|_| {
+                        // The key is `keyof X` or `keyof X & Y`. T only appears inside
+                        // keyof, which is a valid non-circular reference.
+                        false
+                    })
+                    .unwrap_or_else(|| {
+                        // Key is not wrapped in keyof. Check for intersection like
+                        // `keyof T & string` - strip intersection members that are keyof.
+                        if let Some(members_id) =
+                            crate::query_boundaries::common::intersection_list_id(
+                                self.ctx.types,
+                                key_source,
+                            )
+                        {
+                            let members = self.ctx.types.type_list(members_id);
+                            // Check if T only appears inside keyof members of the intersection
+                            members.iter().any(|&member| {
+                                crate::query_boundaries::common::keyof_inner_type(
                                     self.ctx.types,
                                     member,
-                                    atom,
                                 )
-                        })
-                    } else {
-                        // Not keyof, not intersection - check directly
-                        tsz_solver::contains_type_parameter_named_shallow(
-                            self.ctx.types,
-                            key_source,
-                            atom,
-                        )
-                    }
-                });
+                                .is_none()
+                                    && crate::query_boundaries::common::contains_type_parameter_named_shallow(
+                                        self.ctx.types,
+                                        member,
+                                        atom,
+                                    )
+                            })
+                        } else {
+                            // Not keyof, not intersection - check directly
+                            crate::query_boundaries::common::contains_type_parameter_named_shallow(
+                                self.ctx.types,
+                                key_source,
+                                atom,
+                            )
+                        }
+                    });
             return key_without_keyof;
         }
-        tsz_solver::constraint_references_type_param_in_resolution_path(
+        crate::query_boundaries::common::constraint_references_type_param_in_resolution_path(
             self.ctx.types,
             constraint_type,
             atom,

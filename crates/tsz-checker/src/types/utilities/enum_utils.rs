@@ -1117,9 +1117,10 @@ impl<'a> CheckerState<'a> {
                 return self.types_have_no_overlap(resolved_type, effective_right);
             }
             // Tier 2: Only do per-member overlap when a primitive member exists
-            let has_primitive = left_members
-                .iter()
-                .any(|m| tsz_solver::is_primitive_type(self.ctx.types, *m) || *m == TypeId::OBJECT);
+            let has_primitive = left_members.iter().any(|m| {
+                crate::query_boundaries::common::is_primitive_type(self.ctx.types, *m)
+                    || *m == TypeId::OBJECT
+            });
             if has_primitive {
                 for member in &left_members {
                     if !self.types_have_no_overlap(*member, effective_right) {
@@ -1159,9 +1160,10 @@ impl<'a> CheckerState<'a> {
                 let resolved_type = self.ctx.types.intersection(resolved);
                 return self.types_have_no_overlap(effective_left, resolved_type);
             }
-            let has_primitive = right_members
-                .iter()
-                .any(|m| tsz_solver::is_primitive_type(self.ctx.types, *m) || *m == TypeId::OBJECT);
+            let has_primitive = right_members.iter().any(|m| {
+                crate::query_boundaries::common::is_primitive_type(self.ctx.types, *m)
+                    || *m == TypeId::OBJECT
+            });
             if has_primitive {
                 for member in &right_members {
                     if !self.types_have_no_overlap(effective_left, *member) {

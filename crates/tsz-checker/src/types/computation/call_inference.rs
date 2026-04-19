@@ -508,13 +508,19 @@ impl<'a> CheckerState<'a> {
                 name == "__@iterator" || name == "[Symbol.iterator]"
             })
         };
-        if let Some(shape_id) = tsz_solver::object_shape_id(self.ctx.types, type_id)
-            .or_else(|| tsz_solver::object_with_index_shape_id(self.ctx.types, type_id))
-        {
+        if let Some(shape_id) = crate::query_boundaries::common::object_shape_id(
+            self.ctx.types,
+            type_id,
+        )
+        .or_else(|| {
+            crate::query_boundaries::common::object_with_index_shape_id(self.ctx.types, type_id)
+        }) {
             let shape = self.ctx.types.object_shape(shape_id);
             return shape.number_index.is_some() || has_iterator_in_props(&shape.properties);
         }
-        if let Some(shape_id) = tsz_solver::callable_shape_id(self.ctx.types, type_id) {
+        if let Some(shape_id) =
+            crate::query_boundaries::common::callable_shape_id(self.ctx.types, type_id)
+        {
             let shape = self.ctx.types.callable_shape(shape_id);
             return shape.number_index.is_some() || has_iterator_in_props(&shape.properties);
         }

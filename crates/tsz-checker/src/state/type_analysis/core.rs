@@ -2257,7 +2257,11 @@ impl<'a> CheckerState<'a> {
                                     )
                                     .is_some_and(|members| {
                                         members.iter().all(|&m| {
-                                            tsz_solver::literal_value(self.ctx.types, m).is_some()
+                                            crate::query_boundaries::common::literal_value(
+                                                self.ctx.types,
+                                                m,
+                                            )
+                                            .is_some()
                                                 || m == TypeId::STRING
                                                 || m == TypeId::NUMBER
                                                 || m == TypeId::BOOLEAN

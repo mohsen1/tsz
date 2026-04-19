@@ -1347,7 +1347,10 @@ impl<'a> CheckerState<'a> {
                         self.evaluate_type_for_assignability(declared_type),
                     )
                     .is_some()
-                        && tsz_solver::is_primitive_type(self.ctx.types, flow_type)
+                        && crate::query_boundaries::common::is_primitive_type(
+                            self.ctx.types,
+                            flow_type,
+                        )
                     {
                         // Guard against stale primitive flow snapshots replacing an object/module
                         // declared type for mutable bindings in JS/checkJs paths.

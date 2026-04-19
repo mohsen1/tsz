@@ -233,7 +233,7 @@ impl<'a> CheckerState<'a> {
                 .is_some()
             || crate::query_boundaries::common::is_index_access_type(self.ctx.types, index_type)
             || crate::query_boundaries::common::is_conditional_type(self.ctx.types, index_type)
-            || tsz_solver::is_generic_application(self.ctx.types, index_type)
+            || crate::query_boundaries::common::is_generic_application(self.ctx.types, index_type)
             || self.intersection_has_generic_index(index_type)
     }
 
@@ -285,7 +285,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if crate::query_boundaries::common::is_index_access_type(self.ctx.types, object_type)
-            || tsz_solver::is_generic_application(self.ctx.types, object_type)
+            || crate::query_boundaries::common::is_generic_application(self.ctx.types, object_type)
         {
             return true;
         }
@@ -295,13 +295,17 @@ impl<'a> CheckerState<'a> {
         {
             return members.iter().copied().any(|member| {
                 crate::query_boundaries::common::is_index_access_type(self.ctx.types, member)
-                    || tsz_solver::is_generic_application(self.ctx.types, member)
-                    || tsz_solver::mapped_type_id(self.ctx.types, member).is_some()
+                    || crate::query_boundaries::common::is_generic_application(
+                        self.ctx.types,
+                        member,
+                    )
+                    || crate::query_boundaries::common::mapped_type_id(self.ctx.types, member)
+                        .is_some()
             });
         }
 
         let resolved = self.resolve_lazy_type(object_type);
-        tsz_solver::mapped_type_id(self.ctx.types, resolved).is_some()
+        crate::query_boundaries::common::mapped_type_id(self.ctx.types, resolved).is_some()
     }
 
     /// Check if an index type is known to be a valid key for a given type parameter.
@@ -322,7 +326,7 @@ impl<'a> CheckerState<'a> {
                 .copied()
                 .any(|member| self.is_valid_index_for_type_param(member, type_param));
         }
-        if tsz_solver::is_generic_application(self.ctx.types, index_type) {
+        if crate::query_boundaries::common::is_generic_application(self.ctx.types, index_type) {
             let evaluated = self.evaluate_type_with_env(index_type);
             if evaluated != index_type && evaluated != TypeId::ERROR {
                 return self.is_valid_index_for_type_param(evaluated, type_param);
@@ -400,7 +404,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if tsz_solver::is_generic_application(self.ctx.types, ty) {
+        if crate::query_boundaries::common::is_generic_application(self.ctx.types, ty) {
             let evaluated = self.evaluate_type_with_env(ty);
             if evaluated != ty
                 && evaluated != TypeId::ERROR
@@ -449,7 +453,7 @@ impl<'a> CheckerState<'a> {
             });
         }
 
-        if tsz_solver::is_generic_application(self.ctx.types, index_type) {
+        if crate::query_boundaries::common::is_generic_application(self.ctx.types, index_type) {
             let evaluated = self.evaluate_type_with_env(index_type);
             if evaluated != index_type && evaluated != TypeId::ERROR {
                 return self

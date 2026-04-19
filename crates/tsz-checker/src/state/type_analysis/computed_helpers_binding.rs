@@ -1312,7 +1312,9 @@ impl<'a> CheckerState<'a> {
         alias_type: TypeId,
         type_node: NodeIndex,
     ) -> TypeId {
-        if tsz_solver::collect_type_queries(self.ctx.types, alias_type).is_empty() {
+        if crate::query_boundaries::common::collect_type_queries(self.ctx.types, alias_type)
+            .is_empty()
+        {
             return alias_type;
         }
 

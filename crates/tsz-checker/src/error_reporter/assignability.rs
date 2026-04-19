@@ -1082,12 +1082,12 @@ impl<'a> CheckerState<'a> {
     /// in `rewrite_{source,target}_display_for_non_literal_*` calls.
     fn type_displays_as_application(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
         // Direct Application: Application(Lazy(Foo), [args])
-        if tsz_solver::is_generic_application(db, ty) {
+        if crate::query_boundaries::common::is_generic_application(db, ty) {
             return true;
         }
         // Evaluated Application: concrete Object that carries display_alias → Application
         if let Some(alias) = db.get_display_alias(ty)
-            && tsz_solver::is_generic_application(db, alias)
+            && crate::query_boundaries::common::is_generic_application(db, alias)
         {
             return true;
         }
@@ -1297,7 +1297,8 @@ impl<'a> CheckerState<'a> {
         // type params — the solver handles generic-to-generic comparison correctly.
         let src_callable = is_callable_application_type(self.ctx.types, source);
         let tgt_callable = is_callable_application_type(self.ctx.types, target);
-        let has_type_params = tsz_solver::contains_type_parameters(self.ctx.types, source);
+        let has_type_params =
+            crate::query_boundaries::common::contains_type_parameters(self.ctx.types, source);
         let both_have_own_sig_params = has_own_signature_type_params(self.ctx.types, source)
             && has_own_signature_type_params(self.ctx.types, target);
         if src_callable && tgt_callable && has_type_params && !both_have_own_sig_params {

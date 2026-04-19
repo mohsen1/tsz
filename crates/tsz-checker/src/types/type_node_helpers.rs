@@ -490,8 +490,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// type parameter spreads. Only concrete array/tuple rest elements are subject to
     /// the "rest after rest" and "optional after rest" restrictions.
     pub(super) fn is_array_or_tuple_type(&self, type_id: tsz_solver::TypeId) -> bool {
-        tsz_solver::is_array_type(self.ctx.types, type_id)
-            || tsz_solver::is_tuple_type(self.ctx.types, type_id)
+        crate::query_boundaries::common::is_array_type(self.ctx.types, type_id)
+            || crate::query_boundaries::common::is_tuple_type(self.ctx.types, type_id)
     }
 
     pub(super) fn is_this_type_allowed(

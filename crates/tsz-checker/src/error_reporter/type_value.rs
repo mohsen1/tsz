@@ -26,8 +26,10 @@ impl<'a> CheckerState<'a> {
         }
         // Widen literal types (including inside function return types) for display.
         // tsc shows `(x: number) => string` not `(x: number) => ""` in TS2403 messages.
-        let prev_display = tsz_solver::widen_type_deep(self.ctx.types, prev_type);
-        let current_display = tsz_solver::widen_type_deep(self.ctx.types, current_type);
+        let prev_display =
+            crate::query_boundaries::common::widen_type_deep(self.ctx.types, prev_type);
+        let current_display =
+            crate::query_boundaries::common::widen_type_deep(self.ctx.types, current_type);
         let prev_type_str = self.format_type_diagnostic(prev_display);
         let current_type_str = self.format_type_diagnostic(current_display);
         // Suppress when both types format to the same name. This handles cross-binder

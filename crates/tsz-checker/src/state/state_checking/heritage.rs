@@ -1808,8 +1808,10 @@ impl<'a> CheckerState<'a> {
             base_constructor_type,
             "prototype",
         );
-        if tsz_solver::is_intersection_type(self.ctx.types, base_constructor_type)
-            || has_intersection_instance
+        if crate::query_boundaries::common::is_intersection_type(
+            self.ctx.types,
+            base_constructor_type,
+        ) || has_intersection_instance
             || has_prototype_property
         {
             return;

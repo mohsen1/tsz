@@ -486,7 +486,7 @@ impl<'a> CheckerState<'a> {
                                 .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
                                 .collect();
                             if !type_params.is_empty() && !type_args.is_empty() {
-                                return tsz_solver::instantiate_generic(
+                                return crate::query_boundaries::common::instantiate_generic(
                                     self.ctx.types,
                                     body_type,
                                     &type_params,

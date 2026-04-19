@@ -289,9 +289,9 @@ impl<'a> CheckerState<'a> {
         // the comparison fails because the solver has no constraint info for `ThisType`.
         {
             // Check if any derived member contains ThisType (fast path: skip if none do)
-            let any_has_this = derived_members
-                .iter()
-                .any(|(_, tid, _, _)| tsz_solver::contains_this_type(self.ctx.types, *tid));
+            let any_has_this = derived_members.iter().any(|(_, tid, _, _)| {
+                crate::query_boundaries::common::contains_this_type(self.ctx.types, *tid)
+            });
             if any_has_this {
                 // Compute the interface's self type as a named type reference
                 // (Lazy(DefId) or Application(Lazy(DefId), [type_params]))
@@ -332,8 +332,11 @@ impl<'a> CheckerState<'a> {
 
                 if let Some(self_type) = interface_self_type {
                     for member in &mut derived_members {
-                        if tsz_solver::contains_this_type(self.ctx.types, member.1) {
-                            member.1 = tsz_solver::substitute_this_type(
+                        if crate::query_boundaries::common::contains_this_type(
+                            self.ctx.types,
+                            member.1,
+                        ) {
+                            member.1 = crate::query_boundaries::common::substitute_this_type(
                                 self.ctx.types,
                                 member.1,
                                 self_type,

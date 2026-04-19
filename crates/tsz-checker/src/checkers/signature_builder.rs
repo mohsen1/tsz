@@ -484,8 +484,10 @@ impl<'a> CheckerState<'a> {
                 && type_id != TypeId::ANY
                 && type_id != TypeId::UNKNOWN
                 && type_id != TypeId::ERROR
-                && !tsz_solver::type_contains_undefined(self.ctx.types, type_id)
-            {
+                && !crate::query_boundaries::common::type_contains_undefined(
+                    self.ctx.types,
+                    type_id,
+                ) {
                 self.ctx.types.factory().union2(type_id, TypeId::UNDEFINED)
             } else {
                 type_id

@@ -567,7 +567,7 @@ impl<'a> CheckerState<'a> {
 
     /// Try to resolve the symbol name for a type.
     fn get_type_symbol_name(&mut self, type_id: TypeId) -> Option<String> {
-        if tsz_solver::is_array_type(self.ctx.types, type_id) {
+        if crate::query_boundaries::common::is_array_type(self.ctx.types, type_id) {
             return Some("Array".to_string());
         }
         if type_id == TypeId::STRING

@@ -1061,8 +1061,14 @@ impl<'a> CheckerState<'a> {
         }
 
         let evaluated_type = self.evaluate_type_for_assignability(iface_type);
-        let shape_id = tsz_solver::object_shape_id(self.ctx.types, evaluated_type)
-            .or_else(|| tsz_solver::object_with_index_shape_id(self.ctx.types, evaluated_type));
+        let shape_id =
+            crate::query_boundaries::common::object_shape_id(self.ctx.types, evaluated_type)
+                .or_else(|| {
+                    crate::query_boundaries::common::object_with_index_shape_id(
+                        self.ctx.types,
+                        evaluated_type,
+                    )
+                });
         let Some(shape_id) = shape_id else {
             return;
         };

@@ -795,11 +795,13 @@ impl<'a> CheckerState<'a> {
                                 &base_type_params[..param_index],
                                 &type_args,
                             );
-                            type_args.push(tsz_solver::instantiate_type_preserving_meta(
-                                self.ctx.types,
-                                fallback,
-                                &substitution,
-                            ));
+                            type_args.push(
+                                crate::query_boundaries::common::instantiate_type_preserving_meta(
+                                    self.ctx.types,
+                                    fallback,
+                                    &substitution,
+                                ),
+                            );
                         }
                     }
                     if type_args.len() > base_type_params.len() {

@@ -73,20 +73,22 @@ impl<'a> CheckerState<'a> {
         );
         let instantiated =
             crate::query_boundaries::common::instantiate_type(self.ctx.types, props, &substitution);
-        let evaluated = if tsz_solver::is_union_type(self.ctx.types, instantiated)
-            || crate::computation::call_inference::should_preserve_contextual_application_shape(
-                self.ctx.types,
-                instantiated,
-            ) {
-            instantiated
-        } else {
-            self.evaluate_type_with_env(instantiated)
-        };
+        let evaluated =
+            if crate::query_boundaries::common::is_union_type(self.ctx.types, instantiated)
+                || crate::computation::call_inference::should_preserve_contextual_application_shape(
+                    self.ctx.types,
+                    instantiated,
+                )
+            {
+                instantiated
+            } else {
+                self.evaluate_type_with_env(instantiated)
+            };
         let managed = self.apply_jsx_library_managed_attributes(component_type, evaluated);
         if managed == TypeId::ANY
             || managed == TypeId::UNKNOWN
             || managed == TypeId::ERROR
-            || tsz_solver::contains_type_parameters(self.ctx.types, managed)
+            || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, managed)
         {
             None
         } else {
@@ -375,15 +377,17 @@ impl<'a> CheckerState<'a> {
             };
             let declared_component_type =
                 self.get_jsx_identifier_declared_type(tag_name_idx, component_type);
-            let prefer_declared_component_type =
-                matches!(
+            let prefer_declared_component_type = matches!(
+                component_type,
+                TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN
+            )
+                || (!crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
                     component_type,
-                    TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN
-                ) || (!tsz_solver::contains_type_parameters(self.ctx.types, component_type)
-                    && tsz_solver::contains_type_parameters(
-                        self.ctx.types,
-                        declared_component_type,
-                    ));
+                ) && crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    declared_component_type,
+                ));
             let component_type = if prefer_declared_component_type {
                 declared_component_type
             } else {
@@ -444,19 +448,19 @@ impl<'a> CheckerState<'a> {
                 && !tried_specific_intrinsic_lookup
             {
                 let needs_dynamic_intrinsic_props_check =
-                    tsz_solver::contains_type_parameters(self.ctx.types, component_type)
-                        || tsz_solver::contains_type_parameters(
-                            self.ctx.types,
-                            resolved_component_type,
-                        )
-                        || crate::query_boundaries::common::is_keyof_type(
-                            self.ctx.types,
-                            component_type,
-                        )
-                        || crate::query_boundaries::common::is_keyof_type(
-                            self.ctx.types,
-                            resolved_component_type,
-                        );
+                    crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        component_type,
+                    ) || crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        resolved_component_type,
+                    ) || crate::query_boundaries::common::is_keyof_type(
+                        self.ctx.types,
+                        component_type,
+                    ) || crate::query_boundaries::common::is_keyof_type(
+                        self.ctx.types,
+                        resolved_component_type,
+                    );
                 if needs_dynamic_intrinsic_props_check
                     && let Some((props_type, raw_has_type_params, display_target)) = self
                         .get_jsx_dynamic_intrinsic_props_for_component_type(
@@ -691,7 +695,7 @@ impl<'a> CheckerState<'a> {
                                             request
                                                 .read()
                                                 .normal_origin()
-                                                .contextual(tsz_solver::remove_undefined(self.ctx.types, type_id))
+                                                .contextual(crate::query_boundaries::common::remove_undefined(self.ctx.types, type_id))
                                         }
                                         _ => {
                                             if attr_name != "as"
@@ -726,7 +730,7 @@ impl<'a> CheckerState<'a> {
                                                     request
                                                         .read()
                                                         .normal_origin()
-                                                        .contextual(tsz_solver::remove_undefined(
+                                                        .contextual(crate::query_boundaries::common::remove_undefined(
                                                             self.ctx.types,
                                                             type_id,
                                                         ))
@@ -1458,11 +1462,13 @@ impl<'a> CheckerState<'a> {
         type_args: &[TypeId],
     ) -> TypeId {
         // Try Function types (single-signature SFCs) - use solver helper
-        if let Some(instantiated) = tsz_solver::instantiate_function_with_type_args(
-            self.ctx.types,
-            component_type,
-            type_args,
-        ) {
+        if let Some(instantiated) =
+            crate::query_boundaries::common::instantiate_function_with_type_args(
+                self.ctx.types,
+                component_type,
+                type_args,
+            )
+        {
             return instantiated;
         }
 

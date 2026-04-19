@@ -1090,7 +1090,9 @@ impl<'a> CheckerState<'a> {
     /// but homomorphic mapped types need to look at the source property.
     fn is_mapped_type_property_readonly(&mut self, type_id: TypeId, prop_name: &str) -> bool {
         let db = self.ctx.types.as_type_database();
-        let Some(mapped_id) = tsz_solver::mapped_type_id(self.ctx.types, type_id) else {
+        let Some(mapped_id) =
+            crate::query_boundaries::common::mapped_type_id(self.ctx.types, type_id)
+        else {
             return false;
         };
         let mapped = db.get_mapped(mapped_id);
