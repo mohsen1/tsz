@@ -4,6 +4,7 @@ use rustc_hash::FxHashMap;
 use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
 
 use crate::api::wasm::compiler_options::{CompilerOptions, parse_compiler_options_json};
+use crate::api::wasm::lib_cache::get_or_create_lib_file;
 use crate::api::wasm::program_results::{
     CheckDiagnosticJson, FileCheckResultJson, ParseDiagnosticJson,
 };
@@ -11,7 +12,6 @@ use crate::lib_loader;
 use crate::parallel::{
     BindResult, MergedProgram, check_files_parallel, merge_bind_results, parse_and_bind_parallel,
 };
-use crate::project::lib_cache::get_or_create_lib_file;
 
 /// Multi-file TypeScript program for cross-file type checking.
 ///
