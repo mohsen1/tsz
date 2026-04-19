@@ -115,7 +115,8 @@ impl<'a> Printer<'a> {
 
             // This is a trailing comment on the same line — emit it
             self.write_space();
-            let comment_text = crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
+            let comment_text =
+                crate::safe_slice::slice_or_empty(text, c_pos as usize, c_end as usize);
             if !comment_text.is_empty() {
                 self.write_comment_with_reindent(comment_text, Some(c_pos));
             }
@@ -333,7 +334,7 @@ impl<'a> Printer<'a> {
                     let c_pos = self.all_comments[self.comment_emit_idx].pos;
                     let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
                     let comment_text =
-                        crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
+                        crate::safe_slice::slice_or_empty(text, c_pos as usize, c_end as usize);
                     self.write_comment_with_reindent(comment_text, Some(c_pos));
                     if c_trailing {
                         self.write_line();
@@ -425,7 +426,8 @@ impl<'a> Printer<'a> {
 
             let comment_pos_usize = comment_pos as usize;
             if comment_pos_usize > cursor_pos {
-                let leading_text = crate::safe_slice::slice(text, cursor_pos, comment_pos_usize);
+                let leading_text =
+                    crate::safe_slice::slice_or_empty(text, cursor_pos, comment_pos_usize);
                 if normalize_leading_text {
                     self.write_normalized_jsx_comment_leading_text(
                         leading_text,
@@ -442,7 +444,7 @@ impl<'a> Printer<'a> {
             }
 
             let comment_text =
-                crate::safe_slice::slice(text, comment_pos as usize, comment_end as usize);
+                crate::safe_slice::slice_or_empty(text, comment_pos as usize, comment_end as usize);
             self.write_comment_with_reindent(comment_text, Some(comment_pos));
             if comment_has_new_line {
                 self.write_line();
@@ -618,7 +620,8 @@ impl<'a> Printer<'a> {
         let mut trailing = Vec::new();
         for c in &self.all_comments {
             if c.pos >= actual_end && c.end <= line_end {
-                let comment_text = crate::safe_slice::slice(text, c.pos as usize, c.end as usize);
+                let comment_text =
+                    crate::safe_slice::slice_or_empty(text, c.pos as usize, c.end as usize);
                 trailing.push(comment_text.to_string());
             }
             if c.pos > line_end {
@@ -661,7 +664,7 @@ impl<'a> Printer<'a> {
                     && bytes[c.pos as usize + 1] == b'*'
                 {
                     let comment_text =
-                        crate::safe_slice::slice(text, c.pos as usize, c.end as usize);
+                        crate::safe_slice::slice_or_empty(text, c.pos as usize, c.end as usize);
                     result.push(comment_text.to_string());
                 }
             }
@@ -689,7 +692,8 @@ impl<'a> Printer<'a> {
         while idx < self.all_comments.len() {
             let c = &self.all_comments[idx];
             if c.end <= actual_start {
-                let comment_text = crate::safe_slice::slice(text, c.pos as usize, c.end as usize);
+                let comment_text =
+                    crate::safe_slice::slice_or_empty(text, c.pos as usize, c.end as usize);
                 result.push((comment_text.to_string(), c.pos));
                 idx += 1;
             } else {

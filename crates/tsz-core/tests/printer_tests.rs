@@ -141,17 +141,22 @@ fn test_printer_struct() {
 #[test]
 fn test_safe_slice_normal() {
     let s = "hello world";
-    assert_eq!(safe_slice::slice(s, 0, 5), "hello");
-    assert_eq!(safe_slice::slice(s, 6, 11), "world");
-    assert_eq!(safe_slice::slice(s, 0, 11), "hello world");
+    assert_eq!(safe_slice::slice(s, 0, 5), Ok("hello"));
+    assert_eq!(safe_slice::slice(s, 6, 11), Ok("world"));
+    assert_eq!(safe_slice::slice(s, 0, 11), Ok("hello world"));
 }
 
 #[test]
 fn test_safe_slice_out_of_bounds() {
     let s = "hello";
-    assert_eq!(safe_slice::slice(s, 0, 100), "");
-    assert_eq!(safe_slice::slice(s, 100, 200), "");
-    assert_eq!(safe_slice::slice(s, 5, 3), ""); // start > end
+    assert!(safe_slice::slice(s, 0, 100).is_err());
+    assert!(safe_slice::slice(s, 100, 200).is_err());
+    assert!(safe_slice::slice(s, 5, 3).is_err()); // start > end
+
+    // The compatibility shim preserves the old "empty on invalid" behavior.
+    assert_eq!(safe_slice::slice_or_empty(s, 0, 100), "");
+    assert_eq!(safe_slice::slice_or_empty(s, 100, 200), "");
+    assert_eq!(safe_slice::slice_or_empty(s, 5, 3), "");
 }
 
 #[test]
@@ -161,11 +166,12 @@ fn test_safe_slice_unicode() {
     let crab_end = 10; // 🦀 is 4 bytes
 
     // Valid boundaries
-    assert_eq!(safe_slice::slice(s, 0, crab_start), "hello ");
-    assert_eq!(safe_slice::slice(s, crab_end + 1, s.len()), "world");
+    assert_eq!(safe_slice::slice(s, 0, crab_start), Ok("hello "));
+    assert_eq!(safe_slice::slice(s, crab_end + 1, s.len()), Ok("world"));
 
-    // Invalid boundaries (mid-emoji)
-    assert_eq!(safe_slice::slice(s, 7, 9), "");
+    // Invalid boundaries (mid-emoji) surface a structured error.
+    assert!(safe_slice::slice(s, 7, 9).is_err());
+    assert_eq!(safe_slice::slice_or_empty(s, 7, 9), "");
 }
 
 // =============================================================================

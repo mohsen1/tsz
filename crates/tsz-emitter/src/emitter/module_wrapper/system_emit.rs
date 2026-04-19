@@ -300,7 +300,7 @@ impl<'a> Printer<'a> {
                 let is_use_strict = if let Some(lit) = self.arena.get_literal(expr_node) {
                     lit.text == "use strict"
                 } else if let Some(text) = self.source_text {
-                    let s = crate::safe_slice::slice(
+                    let s = crate::safe_slice::slice_or_empty(
                         text,
                         expr_node.pos as usize,
                         expr_node.end as usize,
