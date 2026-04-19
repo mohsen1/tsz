@@ -204,6 +204,8 @@ pub mod config;
 // Re-exports from tsz-wasm crate (when available as a dependency)
 // WASM integration code has been moved to crates/tsz-wasm/
 
+mod module_tracking;
+
 // Module Resolution Infrastructure (non-wasm targets only - requires file system access)
 #[cfg(not(target_arch = "wasm32"))]
 pub mod module_resolver;
@@ -216,11 +218,11 @@ pub use module_resolver::{
 };
 
 // Import/Export Tracking
-pub mod imports;
 pub use imports::{ImportDeclaration, ImportKind, ImportTracker, ImportedBinding};
+pub use module_tracking::imports;
 
-pub mod exports;
 pub use exports::{ExportDeclaration, ExportKind, ExportTracker, ExportedBinding};
+pub use module_tracking::exports;
 
 // Module Dependency Graph (non-wasm targets only - requires module_resolver)
 #[cfg(not(target_arch = "wasm32"))]
