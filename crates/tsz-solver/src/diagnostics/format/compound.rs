@@ -489,24 +489,21 @@ impl<'a> TypeFormatter<'a> {
         // match source declaration order. Display-time sorting fixes this for diagnostics.
         //
         // Sorting rules:
-        // - Tier 0/1 (builtins/user types with source): always sort these
-        // - Tier 2 objects only (all anonymous objects): sort by property count
-        // - Mixed tier 2 or non-object tier 2: preserve original order
+        // - Tier 0/1 (builtins/user types with source): sort by source position.
+        // - Tier 2 (anonymous objects without source): preserve declaration order.
+        //   The previous "sort tier-2 objects by property count" heuristic matched
+        //   tsc's output for some `{} | { a: number }`-style unions but reordered
+        //   legitimate discriminated-union displays (e.g. TS2353/TS2322 messages)
+        //   where tsc preserves declaration order of the anonymous members.
         if let Some(def_store) = self.def_store {
             let positions: Vec<_> = ordered
                 .iter()
                 .map(|&m| self.get_source_position_for_type(m, def_store))
                 .collect();
 
-            // Check if we should sort: either all have positions (tier < 2),
-            // or all are tier 2 objects (which have property count as sort key)
             let all_tier_0_or_1 = positions.iter().all(|&(tier, _, _)| tier < 2);
-            let all_tier_2_objects = positions.iter().all(|&(tier, second, _)| {
-                // Tier 2 objects have second=0, non-objects have second=u32::MAX
-                tier == 2 && second == 0
-            });
 
-            if all_tier_0_or_1 || all_tier_2_objects {
+            if all_tier_0_or_1 {
                 let mut pairs: Vec<_> = ordered.iter().copied().zip(positions).collect();
                 pairs.sort_by_key(|&(_, pos)| pos);
                 ordered = pairs.into_iter().map(|(id, _)| id).collect();
