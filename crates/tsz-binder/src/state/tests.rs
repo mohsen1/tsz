@@ -169,14 +169,31 @@ class C {}
     assert_eq!(ns_sym.import_module.as_deref(), Some("./a"));
     assert_eq!(ns_sym.import_name.as_deref(), Some("*"));
 
-    assert!(
-        binder.file_locals.get("RenamedI").is_none(),
-        "named JSDoc imports should stay in typedef machinery (no binder alias)"
-    );
-    assert!(
-        binder.file_locals.get("DefaultThing").is_none(),
-        "default JSDoc imports should stay in typedef machinery (no binder alias)"
-    );
+    let renamed_i_sym_id = binder
+        .file_locals
+        .get("RenamedI")
+        .expect("expected JSDoc named import alias");
+    let renamed_i_sym = binder
+        .symbols
+        .get(renamed_i_sym_id)
+        .expect("expected symbol data for RenamedI");
+    assert_ne!(renamed_i_sym.flags & symbol_flags::ALIAS, 0);
+    assert!(renamed_i_sym.is_type_only);
+    assert_eq!(renamed_i_sym.import_module.as_deref(), Some("./a"));
+    assert_eq!(renamed_i_sym.import_name.as_deref(), Some("I"));
+
+    let default_sym_id = binder
+        .file_locals
+        .get("DefaultThing")
+        .expect("expected JSDoc default import alias");
+    let default_sym = binder
+        .symbols
+        .get(default_sym_id)
+        .expect("expected symbol data for DefaultThing");
+    assert_ne!(default_sym.flags & symbol_flags::ALIAS, 0);
+    assert!(default_sym.is_type_only);
+    assert_eq!(default_sym.import_module.as_deref(), Some("./a"));
+    assert_eq!(default_sym.import_name.as_deref(), Some("default"));
 
     assert!(
         binder.file_import_sources.iter().any(|spec| spec == "./a"),
