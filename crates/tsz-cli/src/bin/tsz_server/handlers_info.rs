@@ -58,18 +58,38 @@ fn symbol_kind_to_tsserver(
 }
 
 /// Sort a navtree/navbar symbol slice in-place, recursively sorting each
-/// node's children. Mirrors TypeScript's `compareChildren`: primary key is
-/// case-insensitive name, tiebreaker is source position. tsc sorts nav
-/// items regardless of declaration order, so tsz has to match or every
-/// declaration-order-dependent test drifts.
+/// node's children. Mirrors TypeScript's `compareChildren`: primary key
+/// is case-insensitive name, tiebreaker is source position.
+///
+/// Computed property names (`[key]`, `[1]`, `["foo"]`) are treated as
+/// nameless — tsc's `tryGetName` returns undefined for them and the
+/// comparer then falls back to source position only. Matching that
+/// keeps their relative order stable (otherwise `[a]` gets sorted
+/// before `[E.A]` purely by bracket-text, and the navbar diverges
+/// from the source-ordered expected output).
 fn sort_symbols_deep(symbols: &mut [tsz::lsp::symbols::document_symbols::DocumentSymbol]) {
+    fn sort_key(sym: &tsz::lsp::symbols::document_symbols::DocumentSymbol) -> Option<String> {
+        if sym.name.starts_with('[') {
+            None
+        } else {
+            Some(sym.name.to_lowercase())
+        }
+    }
     symbols.sort_by(|a, b| {
-        let na = a.name.to_lowercase();
-        let nb = b.name.to_lowercase();
-        match na.cmp(&nb) {
-            std::cmp::Ordering::Equal => (a.range.start.line, a.range.start.character)
+        match (sort_key(a), sort_key(b)) {
+            (Some(na), Some(nb)) => match na.cmp(&nb) {
+                std::cmp::Ordering::Equal => (a.range.start.line, a.range.start.character)
+                    .cmp(&(b.range.start.line, b.range.start.character)),
+                other => other,
+            },
+            // tsc: `compareStringsCaseInsensitive(undefined, x)` sorts
+            // undefined before any string. Computed-name items therefore
+            // sort ahead of identifier-name items at the same level, and
+            // amongst themselves fall back to source position.
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (Some(_), None) => std::cmp::Ordering::Greater,
+            (None, None) => (a.range.start.line, a.range.start.character)
                 .cmp(&(b.range.start.line, b.range.start.character)),
-            other => other,
         }
     });
     for sym in symbols.iter_mut() {

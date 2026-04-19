@@ -162,19 +162,22 @@ impl<'a> DocumentSymbolProvider<'a> {
         let mut result = String::new();
         for &mod_idx in &mod_list.nodes {
             if let Some(mod_node) = self.arena.get(mod_idx) {
+                // Mirror tsc's `getNodeModifiers` output. `const`,
+                // `readonly`, `async`, and `override` are not
+                // ScriptElementKindModifier values — they affect the
+                // declaration's kind or its signature but don't appear as
+                // kindModifier strings. Including them here pollutes
+                // navtree output (e.g. `const enum E` gained a spurious
+                // `kindModifiers: "const"` and diverged from tsc).
                 let modifier_str = match mod_node.kind {
                     k if k == SyntaxKind::ExportKeyword as u16 => Some("export"),
                     k if k == SyntaxKind::DeclareKeyword as u16 => Some("declare"),
                     k if k == SyntaxKind::AbstractKeyword as u16 => Some("abstract"),
                     k if k == SyntaxKind::StaticKeyword as u16 => Some("static"),
-                    k if k == SyntaxKind::AsyncKeyword as u16 => Some("async"),
                     k if k == SyntaxKind::DefaultKeyword as u16 => Some("default"),
-                    k if k == SyntaxKind::ConstKeyword as u16 => Some("const"),
-                    k if k == SyntaxKind::ReadonlyKeyword as u16 => Some("readonly"),
                     k if k == SyntaxKind::PublicKeyword as u16 => Some("public"),
                     k if k == SyntaxKind::PrivateKeyword as u16 => Some("private"),
                     k if k == SyntaxKind::ProtectedKeyword as u16 => Some("protected"),
-                    k if k == SyntaxKind::OverrideKeyword as u16 => Some("override"),
                     _ => None,
                 };
                 if let Some(s) = modifier_str {
@@ -1111,6 +1114,22 @@ impl<'a> DocumentSymbolProvider<'a> {
                 || node.kind == SyntaxKind::NumericLiteral as u16
             {
                 return self.arena.get_literal(node).map(|l| l.text.clone());
+            } else if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                // `["bar"]` / `[key]` on a class/interface/object member.
+                // tsc uses the source-text form verbatim (including the
+                // surrounding brackets) as the nav item's `text`. The
+                // parser records `end` as the position after the next
+                // token (so `["bar"]:` or `["bar"] ` creeps in). Cut at
+                // the last `]` to keep just the bracket form.
+                let start = node.pos as usize;
+                let end = node.end as usize;
+                if start <= end && end <= self.source_text.len() {
+                    let slice = &self.source_text[start..end];
+                    if let Some(close) = slice.rfind(']') {
+                        return Some(slice[..=close].to_string());
+                    }
+                    return Some(slice.to_string());
+                }
             }
         }
         None
