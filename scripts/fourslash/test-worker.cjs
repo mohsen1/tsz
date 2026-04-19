@@ -1347,6 +1347,8 @@ function patchSessionClient(SessionClient, ts) {
             "autoImportProvider_namespaceSameNameAsIntrinsic",
             "autoImportProvider_globalTypingsCache",
             "autoImportProvider3",
+            "autoImportProvider7",
+            "autoImportProvider8",
         ]);
 
         const toEmptyCompletionResult = (isNewIdentifierLocation = false) => ({
