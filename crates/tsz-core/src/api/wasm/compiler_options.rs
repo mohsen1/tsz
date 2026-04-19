@@ -107,6 +107,7 @@ impl WasmScriptTargetOption {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[allow(clippy::upper_case_acronyms)]
 enum WasmModuleKindOption {
     None,
     CommonJS,
