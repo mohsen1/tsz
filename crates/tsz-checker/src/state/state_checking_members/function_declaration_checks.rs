@@ -278,6 +278,18 @@ impl<'a> CheckerState<'a> {
                 self.check_type_for_parameter_properties(param.type_annotation);
                 // Check for undefined type names in parameter type
                 self.check_type_for_missing_names(param.type_annotation);
+                // Validate top-level indexed-access parameter annotations (`T[K]`)
+                // so TS2536 is reported for mismatched key spaces (e.g. `B[T]`
+                // where `T extends keyof A` and `A != B`). Keep this scoped to
+                // direct indexed-access nodes to avoid broad recursive checks.
+                if self
+                    .ctx
+                    .arena
+                    .get(param.type_annotation)
+                    .is_some_and(|type_node| type_node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE)
+                {
+                    self.check_type_node(param.type_annotation);
+                }
             }
         }
 

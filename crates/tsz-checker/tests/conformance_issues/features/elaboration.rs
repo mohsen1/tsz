@@ -716,7 +716,6 @@ namespace A {
 }
 
 #[test]
-#[ignore] // TODO: check_type_node for param types causes Partial<T>[K] false positives
 fn test_ts2536_mismatched_keyof_source_in_param_type() {
     // B[T] as parameter type where T extends keyof A, but B != A
     // Currently not checked: adding check_type_node for param types

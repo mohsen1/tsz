@@ -569,7 +569,6 @@ namespace Editor {
 }
 
 #[test]
-#[ignore] // TODO: static method type params should shadow class type params
 fn test_static_method_type_params_shadow_class_type_params() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",
