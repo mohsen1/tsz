@@ -56,6 +56,8 @@ fn symbol_kind_to_tsserver(
         SymbolKind::CallSignature => "call",
         SymbolKind::ConstructSignature => "construct",
         SymbolKind::IndexSignature => "index",
+        SymbolKind::SynthesizedConstructor => "constructor",
+        SymbolKind::Unknown => "",
         _ => "unknown",
     }
 }
@@ -102,6 +104,25 @@ fn escape_string_double_quote(s: &str) -> String {
 /// from the source-ordered expected output).
 fn sort_symbols_deep(symbols: &mut [tsz::lsp::symbols::document_symbols::DocumentSymbol]) {
     use tsz::lsp::symbols::document_symbols::SymbolKind;
+    // Children of an expando-promoted class (synthesized constructor +
+    // BinaryExpression / CallExpression nav nodes from
+    // `X.prototype.y = …` / `Object.defineProperty(X, …)`) sort by
+    // source position — tsc's `compareChildren` falls through to
+    // `compareValues(node.pos, node.pos)` for expando nodes since
+    // their `tryGetName` returns undefined (or the owner's name).
+    let is_expando_container = symbols
+        .iter()
+        .any(|s| matches!(s.kind, SymbolKind::SynthesizedConstructor));
+    if is_expando_container {
+        symbols.sort_by(|a, b| {
+            (a.range.start.line, a.range.start.character)
+                .cmp(&(b.range.start.line, b.range.start.character))
+        });
+        for sym in symbols.iter_mut() {
+            sort_symbols_deep(&mut sym.children);
+        }
+        return;
+    }
     fn sort_key(sym: &tsz::lsp::symbols::document_symbols::DocumentSymbol) -> Option<String> {
         // Mirror tsc's `tryGetName`: anything without a normal declaration
         // name compares as "nameless" (sorts ahead of named siblings and
@@ -155,6 +176,13 @@ fn sort_symbols_deep(symbols: &mut [tsz::lsp::symbols::document_symbols::Documen
             SymbolKind::CallSignature => 180,
             SymbolKind::ConstructSignature => 181,
             SymbolKind::IndexSignature => 182,
+            // Same ordinal as FunctionDeclaration: the synthetic
+            // constructor is backed by a function node, so tsc's
+            // comparer uses the FunctionDeclaration SyntaxKind.
+            SymbolKind::SynthesizedConstructor => 262,
+            // Unknown maps to BinaryExpression (227) — expando assignments
+            // like `X.y = 42` are BinaryExpression nav nodes in tsc.
+            SymbolKind::Unknown => 227,
         }
     }
     symbols.sort_by(|a, b| {
