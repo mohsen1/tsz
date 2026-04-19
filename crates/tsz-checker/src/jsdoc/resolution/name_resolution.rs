@@ -1210,8 +1210,12 @@ impl<'a> CheckerState<'a> {
         for segment in segments {
             if let Some(member_sym) = self.jsdoc_direct_module_member_symbol(current_sym, segment) {
                 if let Some(current_file_idx) = current_file_idx {
-                    self.ctx
-                        .register_symbol_file_target(member_sym, current_file_idx);
+                    // Cross-file import-member resolution already registers the owning file.
+                    // Preserve that mapping and only stamp local symbols that have no owner yet.
+                    if !self.ctx.has_symbol_file_index(member_sym) {
+                        self.ctx
+                            .register_symbol_file_target(member_sym, current_file_idx);
+                    }
                 }
                 current_sym = member_sym;
                 continue;
@@ -1240,8 +1244,10 @@ impl<'a> CheckerState<'a> {
                 })
             {
                 if let Some(current_file_idx) = current_file_idx {
-                    self.ctx
-                        .register_symbol_file_target(member_sym, current_file_idx);
+                    if !self.ctx.has_symbol_file_index(member_sym) {
+                        self.ctx
+                            .register_symbol_file_target(member_sym, current_file_idx);
+                    }
                 }
                 current_sym = member_sym;
                 continue;
@@ -1255,8 +1261,10 @@ impl<'a> CheckerState<'a> {
                     &mut visited_aliases,
                 ) {
                     if let Some(current_file_idx) = current_file_idx {
-                        self.ctx
-                            .register_symbol_file_target(member_sym, current_file_idx);
+                        if !self.ctx.has_symbol_file_index(member_sym) {
+                            self.ctx
+                                .register_symbol_file_target(member_sym, current_file_idx);
+                        }
                     }
                     current_sym = member_sym;
                     continue;

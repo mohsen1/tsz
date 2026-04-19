@@ -1344,26 +1344,104 @@ impl<'a> CheckerState<'a> {
                         .join(" ");
                     let joined = joined.trim();
 
-                    // TS2857: JSDoc `@import` tags are type-only imports, and attribute
-                    // objects are invalid except for a resolution-mode-only form.
-                    if let Some(with_off) = rest_full[..next_tag].find("with")
-                        && let Some(attr_part) = joined.split_once(" with ").map(|(_, rhs)| rhs)
-                        && attr_part.contains('{')
-                    {
-                        let has_resolution_mode = attr_part.contains("resolution-mode");
-                        let is_resolution_mode_only = has_resolution_mode
-                            && !attr_part.contains(',')
-                            && !attr_part.contains(" type ")
-                            && !attr_part.contains(" type:")
-                            && !attr_part.contains("{type")
-                            && !attr_part.contains("{ type");
-                        if !is_resolution_mode_only {
+                    // JSDoc `@import` attribute diagnostics:
+                    // - TS2823/TS1464/TS1005 for malformed `with` clauses (e.g. `with` without `{...}`)
+                    // - TS2857 when an attribute object is present but invalid for type-only import tags
+                    let raw_import_clause = &rest_full[..next_tag];
+                    if let Some(with_off) = raw_import_clause.find("with") {
+                        let attr_part = raw_import_clause[with_off + 4..]
+                            .trim()
+                            .trim_end_matches("*/")
+                            .trim();
+                        let attr_trimmed = attr_part.trim_start();
+                        if !attr_trimmed.starts_with('{') {
+                            let with_pos = comment.pos + after_import as u32 + with_off as u32;
                             self.error_at_position(
-                                comment.pos + after_import as u32 + with_off as u32,
+                                with_pos,
                                 4,
-                                crate::diagnostics::diagnostic_messages::IMPORT_ATTRIBUTES_CANNOT_BE_USED_WITH_TYPE_ONLY_IMPORTS_OR_EXPORTS,
-                                crate::diagnostics::diagnostic_codes::IMPORT_ATTRIBUTES_CANNOT_BE_USED_WITH_TYPE_ONLY_IMPORTS_OR_EXPORTS,
+                                crate::diagnostics::diagnostic_messages::IMPORT_ATTRIBUTES_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ESNEXT_NOD,
+                                crate::diagnostics::diagnostic_codes::IMPORT_ATTRIBUTES_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ESNEXT_NOD,
                             );
+                            self.error_at_position(
+                                with_pos,
+                                4,
+                                crate::diagnostics::diagnostic_messages::TYPE_IMPORT_ATTRIBUTES_SHOULD_HAVE_EXACTLY_ONE_KEY_RESOLUTION_MODE_WITH_VALUE_IM,
+                                crate::diagnostics::diagnostic_codes::TYPE_IMPORT_ATTRIBUTES_SHOULD_HAVE_EXACTLY_ONE_KEY_RESOLUTION_MODE_WITH_VALUE_IM,
+                            );
+
+                            // TS1005: after `with`, parser expects `{`.
+                            let after_with = &raw_import_clause[with_off + 4..];
+                            let ws_len = after_with.len() - after_with.trim_start().len();
+                            let expected_pos =
+                                comment.pos + after_import as u32 + (with_off + 4 + ws_len) as u32;
+                            self.error_at_position(
+                                expected_pos,
+                                1,
+                                "'{' expected.",
+                                crate::diagnostics::diagnostic_codes::EXPECTED,
+                            );
+
+                            // TS2306 at the module specifier location when target isn't a module.
+                            if let Some((_local, specifier, _import_name)) =
+                                Self::parse_jsdoc_import_tag(raw_import_clause)
+                                    .into_iter()
+                                    .next()
+                            {
+                                let quoted_spec = format!("\"{specifier}\"");
+                                let single_quoted_spec = format!("'{specifier}'");
+                                let spec_off = raw_import_clause
+                                    .find(&quoted_spec)
+                                    .or_else(|| raw_import_clause.find(&single_quoted_spec))
+                                    .unwrap_or(with_off);
+                                let spec_pos = comment.pos + after_import as u32 + spec_off as u32;
+                                let spec_len = (specifier.len() + 2) as u32;
+
+                                if let Some(target_idx) = self.ctx.resolve_import_target(&specifier)
+                                    && let Some(target_binder) =
+                                        self.ctx.get_binder_for_file(target_idx)
+                                    && !target_binder.is_external_module
+                                {
+                                    let target_arena =
+                                        self.ctx.get_arena_for_file(target_idx as u32);
+                                    if let Some(target_sf) = target_arena.source_files.first() {
+                                        let display_name = target_sf
+                                            .file_name
+                                            .rsplit('/')
+                                            .next()
+                                            .unwrap_or(&target_sf.file_name)
+                                            .rsplit('\\')
+                                            .next()
+                                            .unwrap_or(&target_sf.file_name)
+                                            .to_string();
+                                        let message = crate::diagnostics::format_message(
+                                            crate::diagnostics::diagnostic_messages::FILE_IS_NOT_A_MODULE,
+                                            &[&display_name],
+                                        );
+                                        self.error_at_position(
+                                            spec_pos,
+                                            spec_len,
+                                            &message,
+                                            crate::diagnostics::diagnostic_codes::FILE_IS_NOT_A_MODULE,
+                                        );
+                                    }
+                                }
+                            }
+                        } else {
+                            let has_resolution_mode = attr_part.contains("resolution-mode");
+                            let is_resolution_mode_only = has_resolution_mode
+                                && !attr_part.contains(',')
+                                && !attr_part.contains(" type ")
+                                && !attr_part.contains(" type:")
+                                && !attr_part.contains("{type")
+                                && !attr_part.contains("{ type");
+                            if !is_resolution_mode_only {
+                                self.error_at_position(
+                                    comment.pos + after_import as u32 + with_off as u32,
+                                    4,
+                                    crate::diagnostics::diagnostic_messages::IMPORT_ATTRIBUTES_CANNOT_BE_USED_WITH_TYPE_ONLY_IMPORTS_OR_EXPORTS,
+                                    crate::diagnostics::diagnostic_codes::IMPORT_ATTRIBUTES_CANNOT_BE_USED_WITH_TYPE_ONLY_IMPORTS_OR_EXPORTS,
+                                );
+                            }
                         }
                     }
 
