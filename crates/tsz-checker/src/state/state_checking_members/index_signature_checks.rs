@@ -692,14 +692,22 @@ impl<'a> CheckerState<'a> {
                 {
                     // Both signatures inherited or number from synthesized computed
                     // members — report on the declaration name.
-                    let error_node = self
-                        .get_declaration_name_node(container_node)
-                        .unwrap_or(container_node);
-                    self.error_at_node_msg(
-                        error_node,
-                        diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                        &["number", &num_value_str, "string", &str_value_str],
-                    );
+                    //
+                    // Skip if a single direct heritage base already has BOTH conflicting
+                    // index sigs: that base's own check already reported the error.
+                    let skip = string_index_nodes.is_empty()
+                        && has_extends_clause
+                        && self.any_heritage_base_has_both_index_sigs(container_node);
+                    if !skip {
+                        let error_node = self
+                            .get_declaration_name_node(container_node)
+                            .unwrap_or(container_node);
+                        self.error_at_node_msg(
+                            error_node,
+                            diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                            &["number", &num_value_str, "string", &str_value_str],
+                        );
+                    }
                 }
             }
         }
@@ -999,45 +1007,145 @@ impl<'a> CheckerState<'a> {
             })
             .unwrap_or(iface_node);
 
-        let mut own_names = std::collections::HashSet::new();
+        // Pre-collect index signature info in a separate pass (avoids mutable borrow conflicts).
+        // Keywords like `number`/`string` in type position are parsed as Identifier nodes,
+        // so we cannot rely on SyntaxKind; instead we resolve via get_type_from_type_node.
+        let sig_type_annotations: Vec<(NodeIndex, NodeIndex)> = own_members
+            .iter()
+            .filter_map(|&m| {
+                let node = self.ctx.arena.get(m)?;
+                if node.kind != syntax_kind_ext::INDEX_SIGNATURE {
+                    return None;
+                }
+                let idx_data = self.ctx.arena.get_index_signature(node)?;
+                let param_idx = *idx_data.parameters.nodes.first()?;
+                let param_node = self.ctx.arena.get(param_idx)?;
+                let param_data = self.ctx.arena.get_parameter(param_node)?;
+                Some((m, param_data.type_annotation))
+            })
+            .collect();
+
         // Find index signature nodes to use as error positions (matching TSC behavior).
         // TSC reports TS2411 for inherited properties on the index signature member,
         // not on the interface declaration.
         let mut number_index_sig_node: Option<NodeIndex> = None;
         let mut string_index_sig_node: Option<NodeIndex> = None;
-        for &member_idx in own_members {
-            let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-            if member_node.kind == syntax_kind_ext::INDEX_SIGNATURE {
-                // Determine if this is a number or string index signature by checking
-                // the parameter's type annotation keyword
-                if let Some(idx_data) = self.ctx.arena.get_index_signature(member_node) {
-                    for &param_idx in &idx_data.parameters.nodes {
-                        if let Some(param_node) = self.ctx.arena.get(param_idx)
-                            && let Some(param_data) = self.ctx.arena.get_parameter(param_node)
-                            && let Some(type_node) = self.ctx.arena.get(param_data.type_annotation)
-                        {
-                            if type_node.kind == tsz_scanner::SyntaxKind::NumberKeyword as u16 {
-                                number_index_sig_node = Some(member_idx);
-                            } else {
-                                string_index_sig_node = Some(member_idx);
-                            }
-                        }
-                    }
-                }
+        for &(sig_idx, type_ann) in &sig_type_annotations {
+            if type_ann.is_none() {
                 continue;
             }
-            let resolved_name = self
-                .get_member_name_node(member_node)
-                .and_then(|name_idx| self.get_property_name_resolved(name_idx))
-                .or_else(|| self.get_member_name(member_idx));
-            if let Some(name_text) = resolved_name {
-                own_names.insert(name_text);
+            let param_type = self.get_type_from_type_node(type_ann);
+            if param_type == TypeId::NUMBER {
+                number_index_sig_node = Some(sig_idx);
+            } else if param_type == TypeId::SYMBOL {
+                // Symbol index signatures use string_index_sig_node slot
+                string_index_sig_node = Some(sig_idx);
+            } else {
+                string_index_sig_node = Some(sig_idx);
             }
         }
 
+        // Build own_names from ALL declarations of this interface symbol so that
+        // properties from merged declarations of the same interface are excluded
+        // from the inherited-property check (tsc only checks base-type properties).
+        let all_own_member_names: std::collections::HashSet<String> = {
+            // Try to find the interface symbol and collect members from all its declarations
+            let sym_id_opt = self
+                .ctx
+                .arena
+                .get(iface_node)
+                .and_then(|n| {
+                    if n.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                        self.ctx.arena.get_interface(n)
+                    } else {
+                        None
+                    }
+                })
+                .and_then(|iface_data| self.ctx.arena.get(iface_data.name))
+                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                .and_then(|ident| self.ctx.binder.file_locals.get(&ident.escaped_text));
+
+            if let Some(sym_id) = sym_id_opt {
+                if let Some(symbol) = self.ctx.binder.symbols.get(sym_id) {
+                    let decls = symbol.declarations.clone();
+                    let mut names = std::collections::HashSet::new();
+                    for decl_idx in decls {
+                        if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
+                            if decl_node.kind != syntax_kind_ext::INTERFACE_DECLARATION {
+                                continue;
+                            }
+                            if let Some(iface_data) = self.ctx.arena.get_interface(decl_node) {
+                                for &member_idx in &iface_data.members.nodes {
+                                    if let Some(member_node) = self.ctx.arena.get(member_idx) {
+                                        if member_node.kind == syntax_kind_ext::INDEX_SIGNATURE {
+                                            continue;
+                                        }
+                                        let name = self
+                                            .get_member_name_node(member_node)
+                                            .and_then(|ni| self.get_property_name_resolved(ni))
+                                            .or_else(|| self.get_member_name(member_idx));
+                                        if let Some(n) = name {
+                                            names.insert(n);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    names
+                } else {
+                    // Fall back to own_members only
+                    let mut names = std::collections::HashSet::new();
+                    for &member_idx in own_members {
+                        if let Some(member_node) = self.ctx.arena.get(member_idx) {
+                            if member_node.kind == syntax_kind_ext::INDEX_SIGNATURE {
+                                continue;
+                            }
+                            let name = self
+                                .get_member_name_node(member_node)
+                                .and_then(|ni| self.get_property_name_resolved(ni))
+                                .or_else(|| self.get_member_name(member_idx));
+                            if let Some(n) = name {
+                                names.insert(n);
+                            }
+                        }
+                    }
+                    names
+                }
+            } else {
+                // Fall back to own_members only
+                let mut names = std::collections::HashSet::new();
+                for &member_idx in own_members {
+                    if let Some(member_node) = self.ctx.arena.get(member_idx) {
+                        if member_node.kind == syntax_kind_ext::INDEX_SIGNATURE {
+                            continue;
+                        }
+                        let name = self
+                            .get_member_name_node(member_node)
+                            .and_then(|ni| self.get_property_name_resolved(ni))
+                            .or_else(|| self.get_member_name(member_idx));
+                        if let Some(n) = name {
+                            names.insert(n);
+                        }
+                    }
+                }
+                names
+            }
+        };
+        let own_names = all_own_member_names;
+
         let mut index_info = self.ctx.types.get_index_signatures(iface_type);
+        // If iface_type is lazy/unresolved, fall back to the evaluated type.
+        // This handles interfaces that only inherit index sigs (no own sig) when
+        // their TypeId is stored as Lazy(DefId) rather than ObjectWithIndex.
+        if index_info.string_index.is_none() && index_info.number_index.is_none() {
+            let evaluated = self.evaluate_type_for_assignability(iface_type);
+            let eval_info = self.ctx.types.get_index_signatures(evaluated);
+            if eval_info.string_index.is_some() || eval_info.number_index.is_some() {
+                index_info = eval_info;
+            }
+        }
+        let evaluated_type = self.evaluate_type_for_assignability(iface_type);
 
         // The solver's IndexInfo may store a symbol index signature in the
         // string_index slot with key_type=SYMBOL. Extract it so symbol-keyed
@@ -1060,7 +1168,106 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let evaluated_type = self.evaluate_type_for_assignability(iface_type);
+        // For each direct heritage base that owns an index sig, collect its properties
+        // into a "covered" set. Properties already in a base that has the conflicting
+        // index sig were already checked (and potentially errored) at the base type level,
+        // so we skip them here to avoid duplicate errors at the derived interface name.
+        let (string_index_covered, number_index_covered): (
+            std::collections::HashSet<String>,
+            std::collections::HashSet<String>,
+        ) = {
+            use tsz_parser::parser::syntax_kind_ext;
+
+            // Phase 1: collect heritage expression NodeIndices via immutable arena reads only.
+            let heritage_expr_idxs: Vec<NodeIndex> = {
+                let mut idxs = Vec::new();
+                let clause_type_lists: Option<Vec<Vec<NodeIndex>>> =
+                    self.ctx.arena.get(iface_node).and_then(|node| {
+                        if node.kind != syntax_kind_ext::INTERFACE_DECLARATION {
+                            return None;
+                        }
+                        let iface_data = self.ctx.arena.get_interface(node)?;
+                        let heritage_clauses = iface_data.heritage_clauses.as_ref()?;
+                        Some(
+                            heritage_clauses
+                                .nodes
+                                .iter()
+                                .filter_map(|&clause_idx| {
+                                    let clause_node = self.ctx.arena.get(clause_idx)?;
+                                    let heritage =
+                                        self.ctx.arena.get_heritage_clause(clause_node)?;
+                                    Some(heritage.types.nodes.clone())
+                                })
+                                .collect(),
+                        )
+                    });
+
+                if let Some(type_lists) = clause_type_lists {
+                    for type_idxs in type_lists {
+                        for type_idx in type_idxs {
+                            let expr_idx = self
+                                .ctx
+                                .arena
+                                .get(type_idx)
+                                .and_then(|n| self.ctx.arena.get_expr_type_args(n))
+                                .map(|eta| eta.expression)
+                                .unwrap_or(type_idx);
+                            idxs.push(expr_idx);
+                        }
+                    }
+                }
+                idxs
+            };
+
+            // Phase 2: resolve each base to TypeId, check its index sigs, collect names.
+            let mut str_covered = std::collections::HashSet::new();
+            let mut num_covered = std::collections::HashSet::new();
+
+            for expr_idx in heritage_expr_idxs {
+                let Some(sym_id) = self.resolve_heritage_symbol(expr_idx) else {
+                    continue;
+                };
+                let base_type_id = self.get_type_of_symbol(sym_id);
+                let evaluated_base = self.evaluate_type_for_assignability(base_type_id);
+                let base_index_info = self.ctx.types.get_index_signatures(evaluated_base);
+
+                let has_str = base_index_info.string_index.is_some()
+                    && base_index_info.string_index.as_ref().map(|s| s.key_type)
+                        != Some(TypeId::SYMBOL);
+                let has_num = base_index_info.number_index.is_some();
+
+                if !has_str && !has_num {
+                    continue;
+                }
+
+                let base_shape_id = crate::query_boundaries::common::object_shape_id(
+                    self.ctx.types,
+                    evaluated_base,
+                )
+                .or_else(|| {
+                    crate::query_boundaries::common::object_with_index_shape_id(
+                        self.ctx.types,
+                        evaluated_base,
+                    )
+                });
+
+                if let Some(base_shape_id) = base_shape_id {
+                    let base_shape = self.ctx.types.object_shape(base_shape_id);
+                    for prop in &base_shape.properties {
+                        let name = self.ctx.types.resolve_atom(prop.name);
+                        if has_str {
+                            str_covered.insert(name.clone());
+                        }
+                        if has_num {
+                            num_covered.insert(name);
+                        }
+                    }
+                }
+            }
+
+            (str_covered, num_covered)
+        };
+
         let shape_id =
             crate::query_boundaries::common::object_shape_id(self.ctx.types, evaluated_type)
                 .or_else(|| {
@@ -1111,8 +1318,11 @@ impl<'a> CheckerState<'a> {
 
             let is_numeric_property = tsz_solver::utils::is_numeric_literal_name(&prop_name);
 
+            // Skip properties already covered by a base that owns the number index sig:
+            // they were checked (and possibly errored) at the base type level.
             if let Some(ref number_idx) = index_info.number_index
                 && is_numeric_property
+                && !number_index_covered.contains(&prop_name)
                 && !self.is_assignable_to(prop_type, number_idx.value_type)
             {
                 let prop_type_str = self.format_type(prop_type);
@@ -1126,7 +1336,9 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
+            // Skip properties already covered by a base that owns the string index sig.
             if let Some(ref string_idx) = index_info.string_index
+                && !string_index_covered.contains(&prop_name)
                 && !self.is_assignable_to(prop_type, string_idx.value_type)
             {
                 let prop_type_str = self.format_type(prop_type);
@@ -1182,6 +1394,153 @@ impl<'a> CheckerState<'a> {
     fn is_symbol_or_unique_symbol(&self, type_id: TypeId) -> bool {
         use crate::query_boundaries::type_checking as query;
         query::is_symbol_or_unique_symbol(self.ctx.types, type_id)
+    }
+
+    /// Returns `true` if any single direct heritage base of `container_node` already
+    /// has BOTH a string index sig and a number index sig. When true, the incompatibility
+    /// was already reported in that base, so we skip the redundant TS2413 at the derived
+    /// interface's name.
+    fn any_heritage_base_has_both_index_sigs(&mut self, container_node: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Collect heritage expression NodeIndices (immutable arena reads only).
+        let heritage_expr_idxs: Vec<NodeIndex> = {
+            let mut idxs = Vec::new();
+            let clause_type_lists: Option<Vec<Vec<NodeIndex>>> = self
+                .ctx
+                .arena
+                .get(container_node)
+                .and_then(|node| {
+                    if node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                        self.ctx.arena.get_interface(node)
+                    } else if node.kind == syntax_kind_ext::CLASS_DECLARATION {
+                        None // classes handled elsewhere
+                    } else {
+                        None
+                    }
+                })
+                .and_then(|iface_data| iface_data.heritage_clauses.as_ref())
+                .map(|clauses| {
+                    clauses
+                        .nodes
+                        .iter()
+                        .filter_map(|&clause_idx| {
+                            let clause_node = self.ctx.arena.get(clause_idx)?;
+                            let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
+                            Some(heritage.types.nodes.clone())
+                        })
+                        .collect()
+                });
+            if let Some(type_lists) = clause_type_lists {
+                for type_idxs in type_lists {
+                    for type_idx in type_idxs {
+                        let expr_idx = self
+                            .ctx
+                            .arena
+                            .get(type_idx)
+                            .and_then(|n| self.ctx.arena.get_expr_type_args(n))
+                            .map(|eta| eta.expression)
+                            .unwrap_or(type_idx);
+                        idxs.push(expr_idx);
+                    }
+                }
+            }
+            idxs
+        };
+
+        for expr_idx in heritage_expr_idxs {
+            let sym_id = self.resolve_heritage_symbol(expr_idx).or_else(|| {
+                self.ctx
+                    .arena
+                    .get_identifier_at(expr_idx)
+                    .and_then(|ident| self.ctx.binder.file_locals.get(&ident.escaped_text))
+            });
+            let Some(sym_id) = sym_id else {
+                continue;
+            };
+
+            // Primary: inspect the base's AST declarations for index sigs.
+            // This is more reliable than type-resolution which may leave A as
+            // Lazy(DefId) in the conformance context (with lib types loaded).
+            let decls: Vec<NodeIndex> = self
+                .ctx
+                .binder
+                .symbols
+                .get(sym_id)
+                .map(|sym| sym.declarations.clone())
+                .unwrap_or_default();
+
+            let mut has_string_index = false;
+            let mut has_number_index = false;
+
+            'decl_loop: for decl_idx in &decls {
+                let Some(decl_node) = self.ctx.arena.get(*decl_idx) else {
+                    continue;
+                };
+                let members: Vec<NodeIndex> =
+                    if decl_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                        self.ctx
+                            .arena
+                            .get_interface(decl_node)
+                            .map(|d| d.members.nodes.clone())
+                            .unwrap_or_default()
+                    } else {
+                        continue;
+                    };
+                for member_idx in members {
+                    let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                        continue;
+                    };
+                    if member_node.kind != syntax_kind_ext::INDEX_SIGNATURE {
+                        continue;
+                    }
+                    let Some(idx_data) = self.ctx.arena.get_index_signature(member_node) else {
+                        continue;
+                    };
+                    let param_idx = idx_data
+                        .parameters
+                        .nodes
+                        .first()
+                        .copied()
+                        .unwrap_or(NodeIndex::NONE);
+                    let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                        continue;
+                    };
+                    let Some(param_data) = self.ctx.arena.get_parameter(param_node) else {
+                        continue;
+                    };
+                    let key_type = self.get_type_from_type_node(param_data.type_annotation);
+                    if key_type == TypeId::NUMBER {
+                        has_number_index = true;
+                    } else if key_type == TypeId::STRING {
+                        has_string_index = true;
+                    }
+                    if has_string_index && has_number_index {
+                        break 'decl_loop;
+                    }
+                }
+            }
+
+            if has_string_index && has_number_index {
+                return true;
+            }
+
+            // Fallback: type-based check for cases where symbol has no AST decl
+            // (e.g. lib types or external declarations).
+            let base_type_id = self.get_type_of_symbol(sym_id);
+            let mut base_info = self.ctx.types.get_index_signatures(base_type_id);
+            if base_info.string_index.is_none() && base_info.number_index.is_none() {
+                let evaluated = self.evaluate_type_for_assignability(base_type_id);
+                let eval_info = self.ctx.types.get_index_signatures(evaluated);
+                if eval_info.string_index.is_some() || eval_info.number_index.is_some() {
+                    base_info = eval_info;
+                }
+            }
+            if base_info.string_index.is_some() && base_info.number_index.is_some() {
+                return true;
+            }
+        }
+        false
     }
 
     fn synthesized_computed_member_index_info(
@@ -1356,6 +1715,57 @@ interface C extends A, B {}
         assert!(
             !matching.is_empty(),
             "Expected TS2413 for inherited index signature conflict, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2413_base_has_both_index_sigs_no_duplicate_at_derived() {
+        // interface A has conflicting own index sigs → TS2413 reported on A.
+        // interface B extends A with no own index sigs → should NOT get another TS2413.
+        let diags = check_source_diagnostics(
+            r#"
+interface A {
+    [n: number]: string;
+    [s: string]: number;
+}
+interface B extends A {}
+"#,
+        );
+        let ts2413: Vec<_> = diags.iter().filter(|d| d.code == 2413).collect();
+        assert_eq!(
+            ts2413.len(),
+            1,
+            "Expected exactly 1 TS2413 (on A), not a duplicate at B's name. Got: {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn ts2413_base_has_both_index_sigs_derived_has_own_members() {
+        // Same as above but B has own (non-index) members — the guard must still fire.
+        let diags = check_source_diagnostics(
+            r#"
+interface A {
+    [n: number]: string;
+    [s: string]: number;
+}
+interface B extends A {
+    c: string;
+    3: string;
+    Infinity: string;
+    "-Infinity": string;
+    NaN: string;
+    "-NaN": string;
+    6(): string;
+}
+"#,
+        );
+        let ts2413: Vec<_> = diags.iter().filter(|d| d.code == 2413).collect();
+        assert_eq!(
+            ts2413.len(),
+            1,
+            "Expected exactly 1 TS2413 (on A), not a duplicate at B's name. Got codes: {:?}",
             diags.iter().map(|d| d.code).collect::<Vec<_>>()
         );
     }

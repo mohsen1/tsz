@@ -288,7 +288,16 @@ impl<'a> CheckerState<'a> {
             // Also check inherited members from base interfaces against index
             // signatures. The AST-based check above only sees own members; inherited
             // properties live in the solver's resolved type and must be checked too.
-            if iface.heritage_clauses.is_some() {
+            //
+            // Run when the interface has heritage AND either:
+            //   (a) owns an index signature (errors anchor at the index sig node), OR
+            //   (b) only inherits index sigs (no own sig → errors anchor at the
+            //       interface name via name_fallback_node in the callee).
+            if iface.heritage_clauses.is_some()
+                && (has_own_index_sig
+                    || index_info.string_index.is_some()
+                    || index_info.number_index.is_some())
+            {
                 self.check_inherited_properties_against_index_signatures(
                     iface_type,
                     &iface.members.nodes,
