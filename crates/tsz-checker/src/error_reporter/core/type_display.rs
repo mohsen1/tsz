@@ -1186,55 +1186,83 @@ impl<'a> CheckerState<'a> {
         // spaces inside braces and trailing semicolons for inline object types.
         // Handle both standalone `{...}` and intersection parts `& {...}`.
         formatted = Self::normalize_inline_object_braces(&formatted);
-        // tsc always displays Array<T> as T[] in error messages.
-        // Convert generic Array form to shorthand when reading from source annotations.
+        // Prefer Array<T> shorthand conversion in annotation text, but preserve
+        // generic constraint surface syntax (`<T extends Array<U>>`) where tsc
+        // keeps the declared Array form.
         formatted = Self::normalize_array_generic_to_shorthand(&formatted);
         formatted
     }
 
     /// Convert `Array<T>` to `T[]` and `ReadonlyArray<T>` to `readonly T[]`
     /// in annotation text to match tsc's diagnostic display.
+    ///
+    /// Do not normalize when the generic array appears directly in a type
+    /// parameter `extends` clause; tsc preserves `Array<T>` there.
     fn normalize_array_generic_to_shorthand(text: &str) -> String {
         if !text.contains("Array<") {
             return text.to_string();
         }
-        let mut result = text.to_string();
-        // Process ReadonlyArray<T> first (before Array<T> to avoid partial matches)
-        while let Some(start) = result.find("ReadonlyArray<") {
-            if let Some(inner) = Self::extract_balanced_angle_bracket_content(&result, start + 14) {
-                let needs_parens = inner.contains("=>") || inner.contains(" | ");
-                let replacement = if needs_parens {
-                    format!("readonly ({inner})[]")
-                } else {
-                    format!("readonly {inner}[]")
-                };
-                let end = start + 14 + inner.len() + 1; // "ReadonlyArray<" + inner + ">"
-                result = format!("{}{}{}", &result[..start], replacement, &result[end..]);
+        let is_extends_constraint_position = |s: &str, start: usize| -> bool {
+            let prefix_start = start.saturating_sub(32);
+            let prefix = &s[prefix_start..start];
+            prefix.trim_end().ends_with("extends")
+        };
+        let mut out = String::with_capacity(text.len());
+        let mut i = 0usize;
+
+        while i < text.len() {
+            let slice = &text[i..];
+
+            // Process ReadonlyArray<T> first to avoid matching inner Array<T>.
+            if slice.starts_with("ReadonlyArray<")
+                && (i == 0 || !text.as_bytes()[i - 1].is_ascii_alphanumeric())
+            {
+                if let Some(inner) = Self::extract_balanced_angle_bracket_content(text, i + 14) {
+                    let end = i + 14 + inner.len() + 1; // "ReadonlyArray<" + inner + ">"
+                    if is_extends_constraint_position(text, i) {
+                        out.push_str(&text[i..end]);
+                    } else {
+                        let needs_parens = inner.contains("=>") || inner.contains(" | ");
+                        if needs_parens {
+                            out.push_str(&format!("readonly ({inner})[]"));
+                        } else {
+                            out.push_str(&format!("readonly {inner}[]"));
+                        }
+                    }
+                    i = end;
+                    continue;
+                }
+            }
+
+            if slice.starts_with("Array<")
+                && (i == 0 || !text.as_bytes()[i - 1].is_ascii_alphanumeric())
+            {
+                if let Some(inner) = Self::extract_balanced_angle_bracket_content(text, i + 6) {
+                    let end = i + 6 + inner.len() + 1; // "Array<" + inner + ">"
+                    if is_extends_constraint_position(text, i) {
+                        out.push_str(&text[i..end]);
+                    } else {
+                        let needs_parens = inner.contains("=>") || inner.contains(" | ");
+                        if needs_parens {
+                            out.push_str(&format!("({inner})[]"));
+                        } else {
+                            out.push_str(&format!("{inner}[]"));
+                        }
+                    }
+                    i = end;
+                    continue;
+                }
+            }
+
+            if let Some(ch) = slice.chars().next() {
+                out.push(ch);
+                i += ch.len_utf8();
             } else {
                 break;
             }
         }
-        // Then Array<T>
-        while let Some(start) = result.find("Array<") {
-            // Make sure it's not part of a longer name (e.g., "ReadonlyArray" already handled)
-            if start > 0 && result.as_bytes()[start - 1].is_ascii_alphanumeric() {
-                // Part of a longer identifier, skip
-                break;
-            }
-            if let Some(inner) = Self::extract_balanced_angle_bracket_content(&result, start + 6) {
-                let needs_parens = inner.contains("=>") || inner.contains(" | ");
-                let replacement = if needs_parens {
-                    format!("({inner})[]")
-                } else {
-                    format!("{inner}[]")
-                };
-                let end = start + 6 + inner.len() + 1; // "Array<" + inner + ">"
-                result = format!("{}{}{}", &result[..start], replacement, &result[end..]);
-            } else {
-                break;
-            }
-        }
-        result
+
+        out
     }
 
     /// Extract content between balanced angle brackets starting at `pos`.
