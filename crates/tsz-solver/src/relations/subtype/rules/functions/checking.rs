@@ -1049,12 +1049,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let t_fn = self.interner.function_shape(t_fn_id);
 
         if t_fn.is_constructor {
+            let has_multiple_source_construct_sigs = s_callable.construct_signatures.len() > 1;
             for s_sig in &s_callable.construct_signatures {
-                if self
+                let direct = self
                     .check_call_signature_subtype_to_fn(s_sig, &t_fn)
-                    .is_true()
-                {
+                    .is_true();
+                if direct {
                     return SubtypeResult::True;
+                }
+            }
+
+            // tsc N×M path: when the source has multiple constructor signatures,
+            // retry by erasing type parameters to `any`.
+            if has_multiple_source_construct_sigs {
+                for s_sig in &s_callable.construct_signatures {
+                    let erased = self
+                        .check_erased_signature_subtype_to_fn(s_sig, &t_fn)
+                        .is_true();
+                    if erased {
+                        return SubtypeResult::True;
+                    }
                 }
             }
             return SubtypeResult::False;
@@ -1126,7 +1140,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         s_sig: &CallSignature,
         t_fn: &FunctionShape,
     ) -> SubtypeResult {
-        let s_erased = erase_call_sig_to_any(s_sig, self.interner);
+        let mut s_erased = erase_call_sig_to_any(s_sig, self.interner);
+        // Preserve constructor-vs-callable intent from the target function shape.
+        // `erase_call_sig_to_any` always returns `is_constructor = false`, which
+        // would immediately fail `check_function_subtype` on constructor targets.
+        s_erased.is_constructor = t_fn.is_constructor;
         let t_erased = erase_fn_shape_to_any(t_fn, self.interner);
         self.check_function_subtype(&s_erased, &t_erased)
     }
@@ -1241,6 +1259,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     break;
                 }
             }
+            if !found_match
+                && (source.construct_signatures.len() > 1 || target.construct_signatures.len() > 1)
+            {
+                for s_sig in &source.construct_signatures {
+                    if self
+                        .check_erased_call_signature_subtype_as_constructor(s_sig, t_sig)
+                        .is_true()
+                    {
+                        found_match = true;
+                        break;
+                    }
+                }
+            }
             if !found_match {
                 return SubtypeResult::False;
             }
@@ -1342,6 +1373,52 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let s_erased = erase_call_sig_to_any(source, self.interner);
         let t_erased = erase_call_sig_to_any(target, self.interner);
         self.check_function_subtype(&s_erased, &t_erased)
+    }
+
+    /// Compare constructor signatures after erasing type parameters to `any`.
+    /// Used in N×M constructor-signature comparison to match tsc behavior.
+    fn check_erased_call_signature_subtype_as_constructor(
+        &mut self,
+        source: &CallSignature,
+        target: &CallSignature,
+    ) -> SubtypeResult {
+        // Guard against over-erasing higher-order callable modality differences.
+        // If a source parameter is constructor-like while the target parameter is
+        // call-like (or vice versa), erasing both sides to `any` would mask a real
+        // incompatibility (e.g. `{ new (...) }` vs `(x) => ...`).
+        for (s_param, t_param) in source.params.iter().zip(target.params.iter()) {
+            let (s_has_call, s_has_construct) =
+                self.callable_modality_flags_for_type(s_param.type_id);
+            let (t_has_call, t_has_construct) =
+                self.callable_modality_flags_for_type(t_param.type_id);
+            let modality_mismatch =
+                (s_has_construct != t_has_construct) || (s_has_call != t_has_call);
+            if modality_mismatch && (s_has_call || s_has_construct || t_has_call || t_has_construct)
+            {
+                return SubtypeResult::False;
+            }
+        }
+
+        let mut s_erased = erase_call_sig_to_any(source, self.interner);
+        let mut t_erased = erase_call_sig_to_any(target, self.interner);
+        s_erased.is_constructor = true;
+        t_erased.is_constructor = true;
+        self.check_function_subtype(&s_erased, &t_erased)
+    }
+
+    pub(crate) fn callable_modality_flags_for_type(&self, type_id: TypeId) -> (bool, bool) {
+        if let Some(shape_id) = callable_shape_id(self.interner, type_id) {
+            let shape = self.interner.callable_shape(shape_id);
+            return (
+                !shape.call_signatures.is_empty(),
+                !shape.construct_signatures.is_empty(),
+            );
+        }
+        if let Some(fn_id) = crate::visitor::function_shape_id(self.interner, type_id) {
+            let f = self.interner.function_shape(fn_id);
+            return (!f.is_constructor, f.is_constructor);
+        }
+        (false, false)
     }
 
     pub(crate) fn check_call_signature_subtype_as_constructor(
