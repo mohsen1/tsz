@@ -725,9 +725,11 @@ impl<'a> CheckerState<'a> {
 
                 // Check attribute value assignability
                 if attr_data.initializer.is_none() {
-                    // Shorthand boolean is represented as `true`, but TS reports the
-                    // source as `true` only for boolean-literal targets and `boolean`
-                    // for non-literal targets (for example `string`).
+                    // Shorthand JSX attribute (e.g. `<X foo />`) is the
+                    // literal type `true`. tsc emits the source as `true`
+                    // when the target is a literal type (boolean literal or
+                    // other literal like `2`), and widens to `boolean` for
+                    // non-literal targets (like `number` or `string`).
                     if let Some(entry) = provided_attrs.last_mut() {
                         entry.1 = TypeId::BOOLEAN_TRUE;
                     }
@@ -735,7 +737,11 @@ impl<'a> CheckerState<'a> {
                         use crate::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
                         };
-                        let source_str = if expected_type_is_boolean_literal {
+                        let is_literal_target = matches!(
+                            self.ctx.types.lookup(expected_type),
+                            Some(tsz_solver::TypeData::Literal(_))
+                        );
+                        let source_str = if expected_type_is_boolean_literal || is_literal_target {
                             "true"
                         } else {
                             "boolean"
