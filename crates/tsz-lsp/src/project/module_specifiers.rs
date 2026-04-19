@@ -763,21 +763,8 @@ impl Project {
             for config_name in ["tsconfig.json", "jsconfig.json"] {
                 let config_path = normalize_path(&dir.join(config_name));
                 let config_key = path_to_string(&config_path).replace('\\', "/");
-                let config_text = self
-                    .files
-                    .get(&config_key)
-                    .map(|f| f.source_text().to_string())
-                    .or_else(|| std::fs::read_to_string(&config_key).ok());
-                let Some(config_text) = config_text else {
-                    continue;
-                };
-                let Some(config_json) = parse_typescript_config_json(&config_text) else {
-                    continue;
-                };
-                let Some(compiler_options) = config_json
-                    .get("compilerOptions")
-                    .and_then(serde_json::Value::as_object)
-                    .cloned()
+                let Some((compiler_options, _)) =
+                    self.resolve_tsconfig_compiler_options(&config_key, &mut FxHashSet::default())
                 else {
                     continue;
                 };
@@ -786,6 +773,134 @@ impl Project {
             current = dir.parent();
         }
         None
+    }
+
+    /// Resolve a tsconfig/jsconfig file, following any `extends` chain.
+    /// Returns the merged compilerOptions plus the effective config dir.
+    fn resolve_tsconfig_compiler_options(
+        &self,
+        config_key: &str,
+        visited: &mut FxHashSet<String>,
+    ) -> Option<(serde_json::Map<String, serde_json::Value>, PathBuf)> {
+        if !visited.insert(config_key.to_string()) {
+            return None;
+        }
+        let config_text = self
+            .files
+            .get(config_key)
+            .map(|f| f.source_text().to_string())
+            .or_else(|| std::fs::read_to_string(config_key).ok())?;
+        let config_json = parse_typescript_config_json(&config_text)?;
+        let config_dir = Path::new(config_key)
+            .parent()
+            .map(normalize_path)
+            .unwrap_or_else(|| PathBuf::from(""));
+        let mut merged: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+        // Handle `extends` first: single path or array of paths.
+        if let Some(extends_value) = config_json.get("extends") {
+            let extend_entries: Vec<&str> = if let Some(text) = extends_value.as_str() {
+                vec![text]
+            } else if let Some(arr) = extends_value.as_array() {
+                arr.iter().filter_map(serde_json::Value::as_str).collect()
+            } else {
+                Vec::new()
+            };
+            for entry in extend_entries {
+                let candidate = if entry.starts_with('.') || entry.starts_with('/') {
+                    let joined = normalize_path(&config_dir.join(entry));
+                    let joined_str = path_to_string(&joined).replace('\\', "/");
+                    let candidates = if joined_str.ends_with(".json") {
+                        vec![joined_str.clone()]
+                    } else {
+                        vec![
+                            format!("{joined_str}.json"),
+                            format!("{joined_str}/tsconfig.json"),
+                        ]
+                    };
+                    candidates.into_iter().find(|path| {
+                        self.files.contains_key(path) || std::fs::metadata(path).is_ok()
+                    })
+                } else {
+                    None
+                };
+                if let Some(base_path) = candidate
+                    && let Some((base_options, base_dir)) =
+                        self.resolve_tsconfig_compiler_options(&base_path, visited)
+                {
+                    let rebased = Self::rebase_path_options(base_options, &base_dir, &config_dir);
+                    for (key, value) in rebased {
+                        merged.insert(key, value);
+                    }
+                }
+            }
+        }
+        if let Some(own_options) = config_json
+            .get("compilerOptions")
+            .and_then(serde_json::Value::as_object)
+        {
+            for (key, value) in own_options {
+                merged.insert(key.clone(), value.clone());
+            }
+        }
+        if merged.is_empty() {
+            return None;
+        }
+        Some((merged, config_dir))
+    }
+
+    /// Rewrite path-valued options inherited from a base tsconfig so they
+    /// are expressed relative to the extending tsconfig's directory.
+    /// Matches tsc's rule that "any relative paths in extended tsconfig
+    /// files are resolved relative to the containing file" — i.e., the
+    /// base's paths should point to files relative to the base, not the
+    /// extending tsconfig.
+    fn rebase_path_options(
+        mut options: serde_json::Map<String, serde_json::Value>,
+        base_dir: &Path,
+        config_dir: &Path,
+    ) -> serde_json::Map<String, serde_json::Value> {
+        let rebase_text = |text: &str| -> Option<String> {
+            if text.starts_with("${configDir}") || text.starts_with('/') {
+                return None;
+            }
+            // Resolve the base-relative path to an absolute form. Using an
+            // absolute string here side-steps the brittle relativization of
+            // paths that traverse above the extending tsconfig's dir, which
+            // can mis-normalize (e.g. `/../x` → `x`).
+            let abs = normalize_path(&base_dir.join(text));
+            let mut s = path_to_string(&abs).replace('\\', "/");
+            if !s.starts_with('/') {
+                s = format!("/{s}");
+            }
+            Some(s)
+        };
+        if let Some(base_url_val) = options.get("baseUrl").cloned()
+            && let Some(base_url) = base_url_val.as_str()
+            && let Some(rebased) = rebase_text(base_url)
+        {
+            options.insert("baseUrl".to_string(), serde_json::json!(rebased));
+        }
+        if let Some(paths_val) = options.get("paths").cloned()
+            && let Some(paths_obj) = paths_val.as_object()
+        {
+            let mut new_paths = serde_json::Map::new();
+            for (alias, targets) in paths_obj {
+                if let Some(targets_arr) = targets.as_array() {
+                    let mut new_targets = Vec::new();
+                    for t in targets_arr {
+                        if let Some(text) = t.as_str() {
+                            match rebase_text(text) {
+                                Some(rebased) => new_targets.push(serde_json::json!(rebased)),
+                                None => new_targets.push(serde_json::json!(text)),
+                            }
+                        }
+                    }
+                    new_paths.insert(alias.clone(), serde_json::json!(new_targets));
+                }
+            }
+            options.insert("paths".to_string(), serde_json::json!(new_paths));
+        }
+        options
     }
 
     fn module_resolution_supports_package_exports(&self, from_file: &str) -> bool {
