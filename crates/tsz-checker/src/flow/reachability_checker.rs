@@ -834,17 +834,22 @@ impl<'a> CheckerState<'a> {
         let Some(var_data) = self.ctx.arena.get_variable(node) else {
             return false;
         };
-        // Check if it's `var` (not let/const) by examining declaration list flags
-        // The flags are on the VariableDeclarationList child node
-        for &decl_idx in &var_data.declarations.nodes {
-            if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
-                // Check if it's let/const (not var) using combined node+parent flags
+        // VARIABLE_STATEMENT.declarations holds a VARIABLE_DECLARATION_LIST; the
+        // individual VARIABLE_DECLARATION nodes live one level deeper.
+        for &list_idx in &var_data.declarations.nodes {
+            let Some(list_node) = self.ctx.arena.get(list_idx) else {
+                continue;
+            };
+            let Some(list_data) = self.ctx.arena.get_variable(list_node) else {
+                continue;
+            };
+            for &decl_idx in &list_data.declarations.nodes {
                 let flags = self.ctx.arena.get_variable_declaration_flags(decl_idx);
                 if (flags & (node_flags::LET | node_flags::CONST)) != 0 {
                     return false;
                 }
-                // Check that declaration has no initializer
-                if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+                if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                    && let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
                     && var_decl.initializer.is_some()
                 {
                     return false;
