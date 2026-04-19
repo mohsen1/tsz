@@ -927,7 +927,52 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        if !self.is_uninformative_contextual_inference_input(target.return_type) {
+        // When inferring a generic source signature in the context of a concrete
+        // target signature, incompatible parameter-driven contra-candidates for
+        // the same source type parameter must not be "repaired" by return-type
+        // inference. In cases like `<T>(x: {a:T; b:T}) => T` contextualized by
+        // `(x: {a:string; b:number}) => Object`, return inference can otherwise
+        // push `T = Object` and incorrectly accept an unsound parameter relation.
+        let mut conflicting_param_contra_candidates: FxHashSet<_> = FxHashSet::default();
+        if target.type_params.is_empty() {
+            for (original_tp, renamed_tp) in source
+                .type_params
+                .iter()
+                .zip(renamed_source.type_params.iter())
+            {
+                let Some(var) = infer_ctx.find_type_param(renamed_tp.name) else {
+                    continue;
+                };
+                let contra_candidates = infer_ctx.get_contra_candidate_types(var);
+
+                let mut has_conflict = false;
+                for i in 0..contra_candidates.len() {
+                    for &right in contra_candidates.iter().skip(i + 1) {
+                        let left = contra_candidates[i];
+                        if left == right {
+                            continue;
+                        }
+                        let comparable = self.check_subtype(left, right).is_true()
+                            || self.check_subtype(right, left).is_true();
+                        if !comparable {
+                            has_conflict = true;
+                            break;
+                        }
+                    }
+                    if has_conflict {
+                        break;
+                    }
+                }
+
+                if has_conflict {
+                    conflicting_param_contra_candidates.insert(original_tp.name);
+                }
+            }
+        }
+
+        if conflicting_param_contra_candidates.is_empty()
+            && !self.is_uninformative_contextual_inference_input(target.return_type)
+        {
             let _ = infer_ctx.infer_from_types(
                 target.return_type,
                 renamed_source.return_type,
@@ -1009,6 +1054,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     (constraints.upper_bounds, has_any_bounds)
                 })
                 .unwrap_or_default();
+            let has_conflicting_param_upper_bounds =
+                conflicting_param_contra_candidates.contains(&original_tp.name);
             let inferred_ty = inferred.as_ref().ok().and_then(|results| {
                 results
                     .iter()
@@ -1030,7 +1077,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 && upper_bounds
                     .iter()
                     .all(|&ub| original_tp.constraint == Some(ub));
-            let inferred_ty = if no_actual_inference_candidates
+            let inferred_ty = if has_conflicting_param_upper_bounds {
+                None
+            } else if no_actual_inference_candidates
                 && inferred_ty.is_some()
                 && inferred_ty == original_tp.constraint
             {
@@ -1038,7 +1087,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             } else {
                 inferred_ty
             };
-            let fallback_ty = if inferred_ty.is_none() {
+            let fallback_ty = if has_conflicting_param_upper_bounds {
+                None
+            } else if inferred_ty.is_none() {
                 // No inference result — try using parameter-based upper bounds.
                 // When parameters provide a concrete type (e.g., T <: string from
                 // a parameter position), use the tightest upper bound as the
@@ -1071,16 +1122,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             };
             let inferred_is_unconstrained_unknown =
                 inferred_ty == Some(TypeId::UNKNOWN) && !has_any_bounds && upper_bounds.is_empty();
-            let preserve_uninferred_type_param = (inferred_ty.is_none()
-                || inferred_is_unconstrained_unknown)
-                && fallback_ty.is_none()
-                && original_tp.constraint.is_none()
-                && (source.params.iter().any(|param| {
-                    self.type_param_appears_in_mapped_context(param.type_id, original_tp.name)
-                }) || source.this_type.is_some_and(|this_type| {
-                    self.type_param_appears_in_mapped_context(this_type, original_tp.name)
-                }) || self
-                    .type_param_appears_in_mapped_context(source.return_type, original_tp.name));
+            let preserve_uninferred_type_param = has_conflicting_param_upper_bounds
+                || ((inferred_ty.is_none() || inferred_is_unconstrained_unknown)
+                    && fallback_ty.is_none()
+                    && original_tp.constraint.is_none()
+                    && (source.params.iter().any(|param| {
+                        self.type_param_appears_in_mapped_context(param.type_id, original_tp.name)
+                    }) || source.this_type.is_some_and(|this_type| {
+                        self.type_param_appears_in_mapped_context(this_type, original_tp.name)
+                    }) || self.type_param_appears_in_mapped_context(
+                        source.return_type,
+                        original_tp.name,
+                    )));
             let fallback = if self.strict_function_types {
                 TypeId::UNKNOWN
             } else {
