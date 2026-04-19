@@ -298,21 +298,16 @@ CHECKS = [
         },
     ),
     (
-        "Core boundary: global mutable cache statics must stay in dedicated cache modules",
+        "Core boundary: wasm bindings must stay in current wasm surface files",
         ROOT / "crates" / "tsz-core" / "src",
-        re.compile(
-            r"\bstatic\s+[A-Z_][A-Z0-9_]*\s*:\s*"
-            r"(?:std::sync::Mutex|Mutex<|std::sync::RwLock|RwLock<|"
-            r"Lazy<\s*(?:Mutex|RwLock)<|LazyLock<\s*(?:Mutex|RwLock)<|"
-            r"std::sync::LazyLock<\s*(?:Mutex|RwLock)<)"
-        ),
+        re.compile(r"\bwasm_bindgen\b|\bserde_wasm_bindgen\b|\bJsValue\b"),
         {
             "exclude_dirs": {"tests"},
             "exclude_files": {
-                # Transitional baseline: config-level map cache.
-                "crates/tsz-core/src/config.rs",
-                # Transitional baseline: project library cache.
-                "crates/tsz-core/src/project/lib_cache.rs",
+                # Transitional baseline: core lib exports the wasm API today.
+                "crates/tsz-core/src/lib.rs",
+                # Explicit wasm API module.
+                "crates/tsz-core/src/api/wasm/code_actions.rs",
             },
             "ignore_comment_lines": True,
         },
@@ -482,11 +477,10 @@ def find_matches(file_text: str, pattern: re.Pattern[str], rel: str, excludes: d
     if excludes.get("exclude_test_files") and is_test_file(rel):
         return matches
 
-    text_for_matching = (
-        strip_rust_comments(file_text) if excludes.get("ignore_comment_lines", False) else file_text
-    )
-
-    for i, line in enumerate(text_for_matching.splitlines(), start=1):
+    for i, line in enumerate(file_text.splitlines(), start=1):
+        if excludes.get("ignore_comment_lines", False):
+            if line.lstrip().startswith("//"):
+                continue
         if pattern.search(line):
             matches.append(i)
     return matches
