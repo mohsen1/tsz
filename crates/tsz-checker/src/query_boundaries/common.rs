@@ -1315,7 +1315,7 @@ pub(crate) fn find_property_in_object_by_str(
     db: &dyn TypeDatabase,
     type_id: TypeId,
     name: &str,
-) -> Option<tsz_solver::types::PropertyInfo> {
+) -> Option<tsz_solver::PropertyInfo> {
     tsz_solver::type_queries::find_property_in_object_by_str(db, type_id, name)
 }
 
@@ -1407,7 +1407,7 @@ pub(crate) fn get_tuple_element_type_union(
 pub(crate) fn get_type_query_symbol_ref(
     db: &dyn TypeDatabase,
     type_id: TypeId,
-) -> Option<tsz_solver::types::SymbolRef> {
+) -> Option<tsz_solver::SymbolRef> {
     tsz_solver::type_queries::get_type_query_symbol_ref(db, type_id)
 }
 
@@ -1487,7 +1487,7 @@ pub(crate) use tsz_solver::type_queries::{
 
 pub(crate) fn get_construct_return_type_union(
     db: &dyn TypeDatabase,
-    shape_id: tsz_solver::types::CallableShapeId,
+    shape_id: tsz_solver::CallableShapeId,
 ) -> Option<TypeId> {
     tsz_solver::type_queries::get_construct_return_type_union(db, shape_id)
 }
@@ -1495,7 +1495,7 @@ pub(crate) fn get_construct_return_type_union(
 pub(crate) fn get_conditional_type_id(
     db: &dyn TypeDatabase,
     type_id: TypeId,
-) -> Option<tsz_solver::types::ConditionalTypeId> {
+) -> Option<tsz_solver::ConditionalTypeId> {
     tsz_solver::type_queries::get_conditional_type_id(db, type_id)
 }
 
@@ -1509,7 +1509,7 @@ pub(crate) fn collect_lazy_def_ids(
 pub(crate) fn collect_type_queries(
     db: &dyn TypeDatabase,
     root: TypeId,
-) -> Vec<tsz_solver::types::SymbolRef> {
+) -> Vec<tsz_solver::SymbolRef> {
     tsz_solver::visitor::collect_type_queries(db, root)
 }
 
@@ -1520,7 +1520,7 @@ pub(crate) fn is_string_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool 
 pub(crate) fn callable_shape_id(
     db: &dyn TypeDatabase,
     type_id: TypeId,
-) -> Option<tsz_solver::types::CallableShapeId> {
+) -> Option<tsz_solver::CallableShapeId> {
     tsz_solver::visitor::callable_shape_id(db, type_id)
 }
 
@@ -1534,7 +1534,7 @@ pub(crate) fn enum_components(
 pub(crate) fn union_list_id(
     db: &dyn TypeDatabase,
     type_id: TypeId,
-) -> Option<tsz_solver::types::TypeListId> {
+) -> Option<tsz_solver::TypeListId> {
     tsz_solver::visitor::union_list_id(db, type_id)
 }
 
@@ -1553,7 +1553,7 @@ pub(crate) fn new_binary_op_evaluator(
 pub(crate) fn intersection_list_id(
     db: &dyn TypeDatabase,
     type_id: TypeId,
-) -> Option<tsz_solver::types::TypeListId> {
+) -> Option<tsz_solver::TypeListId> {
     tsz_solver::visitor::intersection_list_id(db, type_id)
 }
 
@@ -1567,7 +1567,7 @@ pub(crate) fn tuple_list_id(
 pub(crate) fn unique_symbol_ref(
     db: &dyn TypeDatabase,
     type_id: TypeId,
-) -> Option<tsz_solver::types::SymbolRef> {
+) -> Option<tsz_solver::SymbolRef> {
     tsz_solver::visitor::unique_symbol_ref(db, type_id)
 }
 
@@ -1634,7 +1634,7 @@ pub(crate) fn readonly_inner_type(db: &dyn TypeDatabase, type_id: TypeId) -> Opt
 pub(crate) fn type_query_symbol(
     db: &dyn TypeDatabase,
     type_id: TypeId,
-) -> Option<tsz_solver::types::SymbolRef> {
+) -> Option<tsz_solver::SymbolRef> {
     tsz_solver::visitor::type_query_symbol(db, type_id)
 }
 
