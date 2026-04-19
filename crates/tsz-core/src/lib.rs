@@ -244,9 +244,7 @@ pub fn create_scanner(text: String, skip_trivia: bool) -> ScannerState {
 // Parser WASM Interface (High-Performance Parser)
 // =============================================================================
 
-use crate::api::wasm::code_actions::{default_code_action_context, parse_code_action_context};
-use crate::api::wasm::compiler_options::CompilerOptions;
-use crate::api::wasm::transforms::WasmTransformContext;
+use crate::api::wasm::compiler_options::{CompilerOptions, parse_compiler_options_json};
 use crate::binder::BinderState;
 use crate::checker::context::LibContext;
 use crate::context::emit::EmitContext;
@@ -258,14 +256,82 @@ use crate::lsp::diagnostics::convert_diagnostic;
 use crate::lsp::position::{LineMap, Position, Range};
 use crate::lsp::resolver::ScopeCache;
 use crate::lsp::{
-    CodeActionProvider, Completions, DocumentSymbolProvider, FindReferences, GoToDefinition,
-    HoverProvider, RenameProvider, SemanticTokensProvider, SignatureHelpProvider,
+    CodeActionContext, CodeActionKind, CodeActionProvider, Completions, DocumentSymbolProvider,
+    FindReferences, GoToDefinition, HoverProvider, ImportCandidate, ImportCandidateKind,
+    RenameProvider, SemanticTokensProvider, SignatureHelpProvider,
 };
 use crate::parser::ParserState;
+use crate::project::lib_cache::get_or_create_lib_file;
+use serde::Deserialize;
 use std::sync::Arc;
 use tsz_solver::TypeInterner;
 
-pub use crate::api::wasm::program::WasmProgram;
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportCandidateInput {
+    module_specifier: String,
+    local_name: String,
+    kind: String,
+    export_name: Option<String>,
+    #[serde(default)]
+    is_type_only: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodeActionContextInput {
+    #[serde(default)]
+    diagnostics: Vec<tsz_lsp::diagnostics::LspDiagnostic>,
+    #[serde(default)]
+    only: Option<Vec<CodeActionKind>>,
+    #[serde(default)]
+    import_candidates: Vec<ImportCandidateInput>,
+}
+
+impl TryFrom<ImportCandidateInput> for ImportCandidate {
+    type Error = JsValue;
+
+    fn try_from(input: ImportCandidateInput) -> Result<Self, Self::Error> {
+        let local_name = input.local_name;
+        let kind = match input.kind.as_str() {
+            "named" => {
+                let export_name = input.export_name.unwrap_or_else(|| local_name.clone());
+                ImportCandidateKind::Named { export_name }
+            }
+            "default" => ImportCandidateKind::Default,
+            "namespace" => ImportCandidateKind::Namespace,
+            other => {
+                return Err(JsValue::from_str(&format!(
+                    "Unsupported import candidate kind: {other}"
+                )));
+            }
+        };
+
+        Ok(Self {
+            module_specifier: input.module_specifier,
+            local_name,
+            kind,
+            is_type_only: input.is_type_only,
+        })
+    }
+}
+
+/// Opaque wrapper for transform directives across the wasm boundary.
+#[wasm_bindgen]
+pub struct WasmTransformContext {
+    inner: TransformContext,
+    target_es5: bool,
+    module_kind: ModuleKind,
+}
+
+#[wasm_bindgen]
+impl WasmTransformContext {
+    /// Get the number of transform directives generated.
+    #[wasm_bindgen(js_name = getCount)]
+    pub fn get_count(&self) -> usize {
+        self.inner.len()
+    }
+}
 
 /// High-performance parser using Node architecture (16 bytes/node).
 /// This is the optimized path for Phase 8 test suite evaluation.
@@ -325,17 +391,11 @@ impl Parser {
     /// ```
     #[wasm_bindgen(js_name = setCompilerOptions)]
     pub fn set_compiler_options(&mut self, options_json: &str) -> Result<(), JsValue> {
-        match serde_json::from_str::<CompilerOptions>(options_json) {
-            Ok(options) => {
-                self.compiler_options = options;
-                // Invalidate type cache when compiler options change
-                self.type_cache = None;
-                Ok(())
-            }
-            Err(e) => Err(JsValue::from_str(&format!(
-                "Failed to parse compiler options: {e}"
-            ))),
-        }
+        let options = parse_compiler_options_json(options_json)?;
+        self.compiler_options = options;
+        // Invalidate type cache when compiler options change
+        self.type_cache = None;
+        Ok(())
     }
 
     /// Add a lib file (e.g., lib.es5.d.ts) for global type resolution.
@@ -1392,7 +1452,11 @@ impl Parser {
             Position::new(end_line, end_char),
         );
 
-        let context = default_code_action_context();
+        let context = CodeActionContext {
+            diagnostics: Vec::new(),
+            only: None,
+            import_candidates: Vec::new(),
+        };
 
         let result = provider.provide_code_actions(root, range, context);
         Ok(serde_wasm_bindgen::to_value(&result)?)
@@ -1411,7 +1475,25 @@ impl Parser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let context = parse_code_action_context(context)?;
+        let context = if context.is_null() || context.is_undefined() {
+            CodeActionContext {
+                diagnostics: Vec::new(),
+                only: None,
+                import_candidates: Vec::new(),
+            }
+        } else {
+            let context_input: CodeActionContextInput = serde_wasm_bindgen::from_value(context)?;
+            let import_candidates = context_input
+                .import_candidates
+                .into_iter()
+                .map(ImportCandidate::try_from)
+                .collect::<Result<Vec<_>, _>>()?;
+            CodeActionContext {
+                diagnostics: context_input.diagnostics,
+                only: context_input.only,
+                import_candidates,
+            }
+        };
 
         let root = self
             .source_file_idx
@@ -1506,6 +1588,377 @@ impl Parser {
 #[wasm_bindgen(js_name = createParser)]
 pub fn create_parser(file_name: String, source_text: String) -> Parser {
     Parser::new(file_name, source_text)
+}
+
+// =============================================================================
+// WasmProgram - Multi-file TypeScript Program Support
+// =============================================================================
+
+use crate::parallel::{
+    BindResult, MergedProgram, check_files_parallel, merge_bind_results, parse_and_bind_parallel,
+};
+
+/// Result of checking a single file in a multi-file program
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileCheckResultJson {
+    file_name: String,
+    parse_diagnostics: Vec<ParseDiagnosticJson>,
+    check_diagnostics: Vec<CheckDiagnosticJson>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ParseDiagnosticJson {
+    message: String,
+    start: u32,
+    length: u32,
+    code: u32,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CheckDiagnosticJson {
+    message_text: String,
+    code: u32,
+    start: u32,
+    length: u32,
+    category: String,
+}
+
+/// Multi-file TypeScript program for cross-file type checking.
+///
+/// This struct provides an API for compiling multiple TypeScript files together,
+/// enabling proper module resolution and cross-file type checking.
+///
+/// # Example (JavaScript)
+/// ```javascript
+/// const program = new WasmProgram();
+/// program.addFile("a.ts", "export const x = 1;");
+/// program.addFile("b.ts", "import { x } from './a'; const y = x + 1;");
+/// const result = program.checkAll();
+/// console.log(result);
+/// ```
+#[wasm_bindgen]
+pub struct WasmProgram {
+    /// Accumulated files before compilation
+    files: Vec<(String, String)>,
+    /// Merged program state after compilation (lazy)
+    merged: Option<MergedProgram>,
+    /// Bind results (kept for diagnostics access)
+    bind_results: Option<Vec<BindResult>>,
+    /// Lib files (lib.d.ts, lib.dom.d.ts, etc.) for global symbol resolution
+    lib_files: Vec<(String, String)>,
+    /// Compiler options for type checking
+    compiler_options: CompilerOptions,
+}
+
+impl Default for WasmProgram {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[wasm_bindgen]
+impl WasmProgram {
+    /// Create a new empty program.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            files: Vec::new(),
+            lib_files: Vec::new(),
+            merged: None,
+            bind_results: None,
+            compiler_options: CompilerOptions::default(),
+        }
+    }
+
+    /// Add a file to the program.
+    ///
+    /// Files are accumulated and compiled together when `checkAll` is called.
+    /// The `file_name` should be a relative path like "src/a.ts".
+    ///
+    /// For TypeScript library files (lib.d.ts, lib.dom.d.ts, etc.), use `addLibFile` instead.
+    #[wasm_bindgen(js_name = addFile)]
+    pub fn add_file(&mut self, file_name: String, source_text: String) {
+        // Invalidate any previous compilation
+        self.merged = None;
+        self.bind_results = None;
+
+        // Skip package.json files - they're used for module resolution but not parsed
+        if file_name.ends_with("package.json") {
+            return;
+        }
+
+        self.files.push((file_name, source_text));
+    }
+
+    /// Add a TypeScript library file (lib.d.ts, lib.dom.d.ts, etc.) to the program.
+    ///
+    /// Lib files are used for global symbol resolution and are merged into
+    /// the symbol table before user files are processed.
+    ///
+    /// Use this method explicitly instead of relying on automatic file name detection.
+    /// This makes the API behavior predictable and explicit.
+    ///
+    /// # Example (JavaScript)
+    /// ```javascript
+    /// const program = new WasmProgram();
+    /// program.addLibFile("lib.d.ts", libContent);
+    /// program.addFile("src/a.ts", userCode);
+    /// ```
+    #[wasm_bindgen(js_name = addLibFile)]
+    pub fn add_lib_file(&mut self, file_name: String, source_text: String) {
+        // Invalidate any previous compilation
+        self.merged = None;
+        self.bind_results = None;
+
+        self.lib_files.push((file_name, source_text));
+    }
+
+    /// Set compiler options from JSON.
+    ///
+    /// # Arguments
+    /// * `options_json` - JSON string containing compiler options
+    #[wasm_bindgen(js_name = setCompilerOptions)]
+    pub fn set_compiler_options(&mut self, options_json: &str) -> Result<(), JsValue> {
+        let options = parse_compiler_options_json(options_json)?;
+        self.compiler_options = options;
+        // Invalidate any previous compilation since options affect typing
+        self.merged = None;
+        self.bind_results = None;
+        Ok(())
+    }
+
+    /// Get the number of files in the program.
+    #[allow(clippy::missing_const_for_fn)] // wasm_bindgen does not support const fn
+    #[wasm_bindgen(js_name = getFileCount)]
+    pub fn get_file_count(&self) -> usize {
+        self.files.len()
+    }
+
+    /// Clear all files and reset the program state.
+    #[wasm_bindgen]
+    pub fn clear(&mut self) {
+        self.files.clear();
+        self.lib_files.clear();
+        self.merged = None;
+        self.bind_results = None;
+    }
+
+    /// Compile all files and return diagnostics as JSON.
+    ///
+    /// This performs:
+    /// 1. Load lib files for global symbol resolution
+    /// 2. Parallel parsing of all files
+    /// 3. Parallel binding of all files with lib symbols merged
+    /// 4. Symbol merging (sequential)
+    /// 5. Parallel type checking
+    ///
+    /// Returns a JSON object with diagnostics per file.
+    #[wasm_bindgen(js_name = checkAll)]
+    pub fn check_all(&mut self) -> String {
+        if self.files.is_empty() && self.lib_files.is_empty() {
+            return r#"{"files":[],"stats":{"totalFiles":0,"totalDiagnostics":0}}"#.to_string();
+        }
+
+        // Load lib files for binding
+        // Use cache to avoid re-parsing lib.d.ts for every test
+        let lib_file_objects: Vec<Arc<lib_loader::LibFile>> = self
+            .lib_files
+            .iter()
+            .map(|(file_name, source_text)| {
+                get_or_create_lib_file(file_name.clone(), source_text.clone())
+            })
+            .collect();
+
+        // Parse and bind all files in parallel with lib symbols
+        let bind_results = if !lib_file_objects.is_empty() {
+            // Use lib-aware binding
+            use crate::parallel;
+            parallel::parse_and_bind_parallel_with_libs(self.files.clone(), &lib_file_objects)
+        } else {
+            // No lib files - use regular binding
+            parse_and_bind_parallel(self.files.clone())
+        };
+
+        // Collect parse diagnostics before merging
+        let parse_diags: Vec<Vec<_>> = bind_results
+            .iter()
+            .map(|r| r.parse_diagnostics.clone())
+            .collect();
+        let file_names: Vec<String> = bind_results.iter().map(|r| r.file_name.clone()).collect();
+
+        // Merge bind results into unified program
+        let merged = merge_bind_results(bind_results);
+
+        // Type check all files in parallel
+        let checker_options = self.compiler_options.to_checker_options();
+        let check_result = check_files_parallel(&merged, &checker_options, &lib_file_objects);
+
+        // Build JSON result
+        let mut file_results: Vec<FileCheckResultJson> = Vec::new();
+        let mut total_diagnostics = 0;
+
+        for (i, file_name) in file_names.iter().enumerate() {
+            let parse_diagnostics: Vec<ParseDiagnosticJson> = parse_diags[i]
+                .iter()
+                .map(|d| ParseDiagnosticJson {
+                    message: d.message.clone(),
+                    start: d.start,
+                    length: d.length,
+                    code: d.code,
+                })
+                .collect();
+
+            // Find check diagnostics for this file
+            let check_diagnostics: Vec<CheckDiagnosticJson> = check_result
+                .file_results
+                .iter()
+                .find(|r| &r.file_name == file_name)
+                .map(|r| {
+                    r.diagnostics
+                        .iter()
+                        .map(|d| CheckDiagnosticJson {
+                            message_text: d.message_text.clone(),
+                            code: d.code,
+                            start: d.start,
+                            length: d.length,
+                            category: format!("{:?}", d.category),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            total_diagnostics += parse_diagnostics.len() + check_diagnostics.len();
+
+            file_results.push(FileCheckResultJson {
+                file_name: file_name.clone(),
+                parse_diagnostics,
+                check_diagnostics,
+            });
+        }
+
+        // Store merged program for potential future queries
+        self.merged = Some(merged);
+
+        let result = serde_json::json!({
+            "files": file_results,
+            "stats": {
+                "totalFiles": file_names.len(),
+                "totalDiagnostics": total_diagnostics,
+            }
+        });
+
+        serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Get diagnostic codes for all files (for conformance testing).
+    ///
+    /// Returns a JSON object mapping file names to arrays of error codes.
+    #[wasm_bindgen(js_name = getDiagnosticCodes)]
+    pub fn get_diagnostic_codes(&mut self) -> String {
+        if self.files.is_empty() && self.lib_files.is_empty() {
+            return "{}".to_string();
+        }
+
+        // Load lib files for binding (enables global symbol resolution: console, Array, etc.)
+        // Use cache to avoid re-parsing lib.d.ts for every test
+        let lib_file_objects: Vec<Arc<lib_loader::LibFile>> = self
+            .lib_files
+            .iter()
+            .map(|(file_name, source_text)| {
+                get_or_create_lib_file(file_name.clone(), source_text.clone())
+            })
+            .collect();
+
+        // Parse and bind all files in parallel with lib symbols
+        let bind_results = if !lib_file_objects.is_empty() {
+            use crate::parallel;
+            parallel::parse_and_bind_parallel_with_libs(self.files.clone(), &lib_file_objects)
+        } else {
+            parse_and_bind_parallel(self.files.clone())
+        };
+
+        // Collect parse diagnostic codes
+        let mut file_codes: FxHashMap<String, Vec<u32>> = FxHashMap::default();
+        for result in &bind_results {
+            let codes: Vec<u32> = result.parse_diagnostics.iter().map(|d| d.code).collect();
+            file_codes.insert(result.file_name.clone(), codes);
+        }
+
+        // Merge and check
+        let merged = merge_bind_results(bind_results);
+        let checker_options = self.compiler_options.to_checker_options();
+        let check_result = check_files_parallel(&merged, &checker_options, &lib_file_objects);
+
+        // Add check diagnostic codes
+        for file_result in &check_result.file_results {
+            let entry = file_codes.entry(file_result.file_name.clone()).or_default();
+            for diag in &file_result.diagnostics {
+                entry.push(diag.code);
+            }
+        }
+
+        // Store merged program
+        self.merged = Some(merged);
+
+        serde_json::to_string(&file_codes).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Get all diagnostic codes as a flat array (for simple conformance comparison).
+    ///
+    /// This combines all parse and check diagnostics from all files into a single
+    /// array of error codes, which can be compared against tsc output.
+    #[wasm_bindgen(js_name = getAllDiagnosticCodes)]
+    pub fn get_all_diagnostic_codes(&mut self) -> Vec<u32> {
+        if self.files.is_empty() && self.lib_files.is_empty() {
+            return Vec::new();
+        }
+
+        // Load lib files for binding (enables global symbol resolution: console, Array, etc.)
+        // Use cache to avoid re-parsing lib.d.ts for every test
+        let lib_file_objects: Vec<Arc<lib_loader::LibFile>> = self
+            .lib_files
+            .iter()
+            .map(|(file_name, source_text)| {
+                get_or_create_lib_file(file_name.clone(), source_text.clone())
+            })
+            .collect();
+
+        // Parse and bind all files in parallel with lib symbols
+        let bind_results = if !lib_file_objects.is_empty() {
+            use crate::parallel;
+            parallel::parse_and_bind_parallel_with_libs(self.files.clone(), &lib_file_objects)
+        } else {
+            parse_and_bind_parallel(self.files.clone())
+        };
+
+        // Collect all parse diagnostic codes
+        let mut all_codes: Vec<u32> = Vec::new();
+        for result in &bind_results {
+            for diag in &result.parse_diagnostics {
+                all_codes.push(diag.code);
+            }
+        }
+
+        // Merge and check
+        let merged = merge_bind_results(bind_results);
+        let checker_options = self.compiler_options.to_checker_options();
+        let check_result = check_files_parallel(&merged, &checker_options, &lib_file_objects);
+
+        // Add all check diagnostic codes
+        for file_result in &check_result.file_results {
+            for diag in &file_result.diagnostics {
+                all_codes.push(diag.code);
+            }
+        }
+
+        // Store merged program
+        self.merged = Some(merged);
+
+        all_codes
+    }
 }
 
 /// Create a new multi-file program.
