@@ -3193,9 +3193,8 @@ fn test_project_info_configured_project_excludes_non_existent_files() {
     // tsconfig declares files: [a.ts, c.ts, b.ts]; c.ts is not in open_files
     // so it must be filtered out, preserving the relative order of the rest.
     let mut server = make_server_with_real_libs();
-    let tsconfig_path = "/tests/cases/fourslash/server/tsconfig.json".to_string();
     server.open_files.insert(
-        tsconfig_path,
+        "/tests/cases/fourslash/server/tsconfig.json".to_string(),
         r#"{ "files": ["a.ts", "c.ts", "b.ts"], "compilerOptions": { "lib": ["es5"] } }"#
             .to_string(),
     );
