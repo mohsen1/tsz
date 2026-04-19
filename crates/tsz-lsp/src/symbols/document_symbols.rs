@@ -1587,8 +1587,16 @@ impl<'a> DocumentSymbolProvider<'a> {
     fn apply_identifier_object_assignments(
         &self,
         statements: &[NodeIndex],
-        symbols: &mut [DocumentSymbol],
+        symbols: &mut Vec<DocumentSymbol>,
     ) {
+        // Collect top-level assignments `x = { foo: function() {…}, … }`
+        // where x is a previously-declared (empty) var. tsc surfaces
+        // each function-valued property of the RHS object as a TOP-LEVEL
+        // nav entry (the binding expression's `parent` is the
+        // ExpressionStatement, which is a direct child of the source
+        // file), not as children of `x`. Non-function-valued properties
+        // are dropped.
+        let mut new_entries: Vec<DocumentSymbol> = Vec::new();
         for &stmt_idx in statements {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
@@ -1626,16 +1634,63 @@ impl<'a> DocumentSymbolProvider<'a> {
             if rhs_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
                 continue;
             }
-            for sym in symbols.iter_mut() {
-                if sym.name == owner
-                    && sym.children.is_empty()
-                    && matches!(sym.kind, SymbolKind::Variable | SymbolKind::Constant)
-                {
-                    sym.children = self.collect_object_literal_members(bin.right, Some(&sym.name));
-                    break;
+            // Only process when the owner is a previously-declared var /
+            // const with no initializer-driven children yet. (If the var
+            // already has children from its initializer, we'd be
+            // duplicating.)
+            let owner_exists = symbols.iter().any(|s| {
+                s.name == owner
+                    && matches!(s.kind, SymbolKind::Variable | SymbolKind::Constant)
+                    && s.children.is_empty()
+            });
+            if !owner_exists {
+                continue;
+            }
+            let Some(obj) = self.arena.get_literal_expr(rhs_node) else {
+                continue;
+            };
+            for &prop_idx in &obj.elements.nodes {
+                let Some(prop_node) = self.arena.get(prop_idx) else {
+                    continue;
+                };
+                if prop_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                    continue;
                 }
+                let Some(prop) = self.arena.get_property_assignment(prop_node) else {
+                    continue;
+                };
+                let Some(name) = self.get_name(prop.name) else {
+                    continue;
+                };
+                let Some(init) = self.arena.get(prop.initializer) else {
+                    continue;
+                };
+                if init.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+                    && init.kind != syntax_kind_ext::ARROW_FUNCTION
+                {
+                    continue;
+                }
+                let body = self
+                    .arena
+                    .get_function(init)
+                    .map_or(NodeIndex::NONE, |f| f.body);
+                let children = self.collect_children_from_block(body, Some(&name));
+                let range = node_range(self.arena, self.line_map, self.source_text, prop_idx);
+                let selection_range =
+                    node_range(self.arena, self.line_map, self.source_text, prop.name);
+                new_entries.push(DocumentSymbol {
+                    name,
+                    detail: None,
+                    kind: SymbolKind::Method,
+                    kind_modifiers: String::new(),
+                    range,
+                    selection_range,
+                    container_name: None,
+                    children,
+                });
             }
         }
+        symbols.extend(new_entries);
     }
 
     fn apply_expando_assignments(&self, statements: &[NodeIndex], symbols: &mut [DocumentSymbol]) {
