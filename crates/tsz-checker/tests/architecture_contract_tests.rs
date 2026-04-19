@@ -244,7 +244,7 @@ fn test_direct_call_evaluator_usage_is_quarantined_to_query_boundaries() {
 }
 
 #[test]
-fn test_direct_solver_variance_usage_is_quarantined_to_query_boundaries() {
+fn test_direct_solver_relations_usage_is_quarantined_to_query_boundaries() {
     fn collect_checker_rs_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
         let entries = fs::read_dir(dir).unwrap_or_else(|_| {
             panic!("failed to read checker source directory {}", dir.display())
@@ -281,7 +281,7 @@ fn test_direct_solver_variance_usage_is_quarantined_to_query_boundaries() {
                 continue;
             }
 
-            if line.contains("tsz_solver::relations::variance::") {
+            if line.contains("tsz_solver::relations::") {
                 violations.push(format!("{}:{}", rel, line_index + 1));
             }
         }
@@ -289,7 +289,7 @@ fn test_direct_solver_variance_usage_is_quarantined_to_query_boundaries() {
 
     assert!(
         violations.is_empty(),
-        "direct solver variance usage should stay in query_boundaries modules; violations: {}",
+        "direct solver relations usage should stay in query_boundaries modules; violations: {}",
         violations.join(", ")
     );
 }
