@@ -93,7 +93,6 @@ FAIL TypeScript/tests/cases/compiler/isolatedModulesReExportType.ts | expected:[
 FAIL TypeScript/tests/cases/compiler/iterableTReturnTNext.ts | expected:[TS2322,TS2416,TS5024] actual:[TS2322,TS2416,TS5024]
 FAIL TypeScript/tests/cases/compiler/jsElementAccessNoContextualTypeCrash.ts | expected:[TS2741] actual:[TS2741]
 FAIL TypeScript/tests/cases/compiler/jsExportMemberMergedWithModuleAugmentation2.ts | expected:[TS2300,TS2551] actual:[]
-FAIL TypeScript/tests/cases/compiler/jsFileCompilationBindReachabilityErrors.ts | expected:[TS1344,TS5024,TS7027,TS7028,TS7029] actual:[TS1344,TS5024,TS7028,TS7029]
 FAIL TypeScript/tests/cases/compiler/jsFunctionWithPrototypeNoErrorTruncationNoCrash.ts | expected:[TS2339,TS7006] actual:[TS2339,TS7006]
 FAIL TypeScript/tests/cases/compiler/jsdocArrayObjectPromiseNoImplicitAny.ts | expected:[TS2314,TS2322] actual:[TS2314,TS2322]
 FAIL TypeScript/tests/cases/compiler/jsdocFunctionTypeFalsePositive.ts | expected:[TS1098,TS1139] actual:[]
@@ -136,6 +135,7 @@ FAIL TypeScript/tests/cases/compiler/moduleNodeDefaultImports.ts | expected:[TS2
 FAIL TypeScript/tests/cases/compiler/modulePreserve4.ts | expected:[TS8002] actual:[TS1192,TS1295,TS2305,TS2339,TS2591,TS8002]
 FAIL TypeScript/tests/cases/compiler/moduleResolutionWithExtensions_notSupported.ts
 FAIL TypeScript/tests/cases/compiler/moduleResolutionWithExtensions_notSupported3.ts
+FAIL TypeScript/tests/cases/compiler/moduleResolutionWithExtensions_unexpected.ts | expected:[] actual:[TS1003,TS1434,TS1435]
 FAIL TypeScript/tests/cases/compiler/moduleResolutionWithSymlinks.ts | expected:[TS2322,TS2454,TS2564] actual:[TS2322,TS2454,TS2564]
 FAIL TypeScript/tests/cases/compiler/moduleResolutionWithSymlinks_preserveSymlinks.ts | expected:[TS2307,TS2322] actual:[TS2307,TS2322]
 FAIL TypeScript/tests/cases/compiler/moduleResolutionWithSymlinks_withOutDir.ts | expected:[TS2322,TS2454,TS2564] actual:[TS2322,TS2454,TS2564]
@@ -4216,6 +4216,7 @@ PASS TypeScript/tests/cases/compiler/jsFileCompilationBindDeepExportsAssignment.
 PASS TypeScript/tests/cases/compiler/jsFileCompilationBindDuplicateIdentifier.ts
 PASS TypeScript/tests/cases/compiler/jsFileCompilationBindErrors.ts
 PASS TypeScript/tests/cases/compiler/jsFileCompilationBindMultipleDefaultExports.ts
+PASS TypeScript/tests/cases/compiler/jsFileCompilationBindReachabilityErrors.ts
 PASS TypeScript/tests/cases/compiler/jsFileCompilationBindStrictModeErrors.ts
 PASS TypeScript/tests/cases/compiler/jsFileCompilationClassMethodContainingArrowFunction.ts
 PASS TypeScript/tests/cases/compiler/jsFileCompilationConstModifier.ts
@@ -4735,7 +4736,6 @@ PASS TypeScript/tests/cases/compiler/moduleResolutionNoTsCJS.ts
 PASS TypeScript/tests/cases/compiler/moduleResolutionNoTsESM.ts
 PASS TypeScript/tests/cases/compiler/moduleResolutionPackageIdWithRelativeAndAbsolutePath.ts
 PASS TypeScript/tests/cases/compiler/moduleResolutionWithExtensions_notSupported2.ts
-PASS TypeScript/tests/cases/compiler/moduleResolutionWithExtensions_unexpected.ts
 PASS TypeScript/tests/cases/compiler/moduleResolutionWithExtensions_unexpected2.ts
 PASS TypeScript/tests/cases/compiler/moduleResolutionWithExtensions_withAmbientPresent.ts
 PASS TypeScript/tests/cases/compiler/moduleResolutionWithExtensions_withPaths.ts
