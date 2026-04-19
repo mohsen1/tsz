@@ -427,5 +427,5 @@ impl WorkspaceDiagnosticReport {
 }
 
 #[cfg(test)]
-#[path = "../tests/diagnostics_tests.rs"]
+#[path = "../../tests/diagnostics_tests.rs"]
 mod diagnostics_tests;
