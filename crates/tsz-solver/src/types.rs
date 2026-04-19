@@ -239,76 +239,295 @@ impl TypeId {
     }
 }
 
-/// Cache key for type relation queries (subtype, assignability, etc.).
+/// Which relation is being cached.
 ///
-/// This key includes Lawyer-layer configuration flags to ensure that results
-/// computed under different rules (strict vs non-strict) don't contaminate each other.
+/// This enum replaces the historical `u8` relation tag (`SUBTYPE=0`,
+/// `ASSIGNABLE=1`, `IDENTICAL=2`). Using a real enum prevents accidental
+/// collisions with unrelated `u8` values and makes cache partitioning visible
+/// at API boundaries.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum RelationCacheKind {
+    /// Structural subtyping (Judge layer).
+    Subtype,
+    /// TypeScript assignability (Lawyer layer).
+    Assignable,
+    /// Variable-redeclaration identity.
+    Identical,
+}
+
+bitflags::bitflags! {
+    /// Behavior-affecting boolean configuration for a relation check.
+    ///
+    /// Every bit here corresponds to a compiler option or mode toggle that
+    /// can change whether two types are considered related. The cache key
+    /// encodes these bits so that results computed under one configuration
+    /// never leak into another.
+    ///
+    /// Bits `0..=8` are preserved from the original packed `u16` layout so
+    /// legacy callers (e.g. checker boundary helpers that import the
+    /// `FLAG_*` constants) continue to interoperate byte-for-byte. Bits
+    /// `9..=12` are new and encode previously-missing Lawyer-layer options
+    /// that were silently missing from the cache key.
+    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
+    pub struct RelationFlags: u32 {
+        /// `strictNullChecks` compiler option.
+        const STRICT_NULL_CHECKS            = 1 << 0;
+        /// `strictFunctionTypes` compiler option.
+        const STRICT_FUNCTION_TYPES         = 1 << 1;
+        /// `exactOptionalPropertyTypes` compiler option.
+        const EXACT_OPTIONAL_PROPERTY_TYPES = 1 << 2;
+        /// `noUncheckedIndexedAccess` compiler option.
+        const NO_UNCHECKED_INDEXED_ACCESS   = 1 << 3;
+        /// Disable method bivariance (Sound Mode).
+        const DISABLE_METHOD_BIVARIANCE     = 1 << 4;
+        /// Allow `any` return type to be compatible with `void` target returns.
+        const ALLOW_VOID_RETURN             = 1 << 5;
+        /// Treat rest parameters of `any`/`unknown` as bivariant.
+        const ALLOW_BIVARIANT_REST          = 1 << 6;
+        /// Allow required-parameter count mismatches for bivariant methods.
+        const ALLOW_BIVARIANT_PARAM_COUNT   = 1 << 7;
+        /// Disable generic type-parameter erasure in function subtype checks.
+        const NO_ERASE_GENERICS             = 1 << 8;
+        // --- Lawyer-layer options added to close the drift between
+        //     `RelationPolicy` and `RelationCacheKey` ---
+        /// Additional strictness in the compatibility layer (lib.d.ts).
+        const STRICT_SUBTYPE_CHECKING       = 1 << 9;
+        /// Strict-any propagation in Sound Mode. When set, `any` does not
+        /// silence structural mismatches in the Lawyer layer.
+        ///
+        /// Must be set explicitly; it is NOT derived from
+        /// `STRICT_FUNCTION_TYPES`.
+        const STRICT_ANY_PROPAGATION        = 1 << 10;
+        /// Skip TS2559 weak-type checks. Matches tsc's `isTypeAssignableTo`.
+        const SKIP_WEAK_TYPE_CHECKS         = 1 << 11;
+        /// Treat recursive relation cycles as assumed-related. When clear,
+        /// cycles resolve to "not related".
+        const ASSUME_RELATED_ON_CYCLE       = 1 << 12;
+    }
+}
+
+/// How `any` should be treated at the current depth when caching.
+///
+/// The `SubtypeChecker` uses `AnyPropagationMode` to decide whether to
+/// short-circuit on `any`. Because `TopLevelOnly` behavior depends on the
+/// current recursion depth, we encode the *effective* mode in the cache key
+/// rather than the configured mode — otherwise a top-level and a nested
+/// lookup could share a slot and contaminate one another.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
+pub enum CachedAnyMode {
+    /// Propagate `any` at every depth (TypeScript default).
+    #[default]
+    All,
+    /// Configured `TopLevelOnly`, currently at depth 0.
+    TopLevelOnlyAtTop,
+    /// Configured `TopLevelOnly`, currently nested (depth > 0).
+    TopLevelOnlyNested,
+}
+
+/// Canonical cache-partitioning configuration for relation queries.
+///
+/// Every behavior-affecting option that can change the outcome of a relation
+/// check lives here. Two relation results computed under different
+/// `RelationCacheConfig` values are guaranteed to live in different cache
+/// slots, which makes it impossible to accidentally share a slot across
+/// behavioral boundaries.
+///
+/// Fields that are strictly diagnostic (they affect error messages but not
+/// the boolean relation outcome) must not be added here; they belong on the
+/// higher-level `RelationPolicy` instead.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
+pub struct RelationCacheConfig {
+    /// Packed behavior-affecting boolean options.
+    pub flags: RelationFlags,
+    /// Effective `any`-propagation mode for this lookup.
+    pub any_mode: CachedAnyMode,
+}
+
+impl RelationCacheConfig {
+    /// Construct a cache config with the given flags and any-mode.
+    pub const fn new(flags: RelationFlags, any_mode: CachedAnyMode) -> Self {
+        Self { flags, any_mode }
+    }
+
+    /// Build a config that only encodes boolean flags (any-mode defaults
+    /// to `All`, matching tsc's default).
+    pub const fn from_flags(flags: RelationFlags) -> Self {
+        Self {
+            flags,
+            any_mode: CachedAnyMode::All,
+        }
+    }
+
+    /// Bridge for callers that still hold a packed `u16` (the legacy
+    /// `pack_relation_flags()` surface). Truncates any out-of-range bits —
+    /// the documented `FLAG_*` constants all fit in `u16`.
+    pub const fn from_legacy_flags_u16(legacy: u16) -> Self {
+        Self {
+            flags: RelationFlags::from_bits_truncate(legacy as u32),
+            any_mode: CachedAnyMode::All,
+        }
+    }
+
+    /// Legacy `u16` projection for callers interoperating with older code
+    /// paths (e.g. `CompatChecker::apply_flags`). Only the low 16 bits that
+    /// exist in the legacy layout are returned; Lawyer-only bits are
+    /// silently dropped because the legacy flag protocol cannot express
+    /// them.
+    pub const fn legacy_flags_u16(self) -> u16 {
+        (self.flags.bits() & 0xFFFF) as u16
+    }
+
+    /// Fluent builder override.
+    pub const fn with_any_mode(mut self, any_mode: CachedAnyMode) -> Self {
+        self.any_mode = any_mode;
+        self
+    }
+}
+
+/// Cache key for type relation queries (subtype, assignability, identity).
+///
+/// This key fully represents every behavior-affecting input that can change
+/// the outcome of a relation check. Two queries that differ in *any*
+/// behavior-affecting configuration will produce different keys, which makes
+/// it impossible to accidentally share a cache slot across behavioral
+/// boundaries.
 ///
 /// ## Fields
 ///
-/// - `source`: The source type being compared
-/// - `target`: The target type being compared
-/// - `relation`: Distinguishes between different relation types (0 = subtype, 1 = assignability, etc.)
-/// - `flags`: Bitmask for boolean compiler options (u16 to support current and future flags):
-///   - bit 0: `strict_null_checks`
-///   - bit 1: `strict_function_types`
-///   - bit 2: `exact_optional_property_types`
-///   - bit 3: `no_unchecked_indexed_access`
-///   - bit 4: `disable_method_bivariance` (Sound Mode)
-///   - bit 5: `allow_void_return`
-///   - bit 6: `allow_bivariant_rest`
-///   - bit 7: `allow_bivariant_param_count`
-///   - bits 8-15: Reserved for future flags (`strict_any_propagation`, `strict_structural_checking`, etc.)
-/// - `any_mode`: Controls how `any` is treated (0 = All, 1 = `TopLevelOnly`)
+/// - `source`: The source type being compared.
+/// - `target`: The target type being compared.
+/// - `relation`: Which relation is being cached. See [`RelationCacheKind`].
+/// - `config`:   The behavior-affecting configuration. See [`RelationCacheConfig`].
+///
+/// ## Construction
+///
+/// Prefer the typed [`RelationCacheKey::for_subtype`],
+/// [`RelationCacheKey::for_assignability`], and
+/// [`RelationCacheKey::for_identical`] builders. The older
+/// [`RelationCacheKey::subtype`] / [`RelationCacheKey::assignability`]
+/// constructors accept legacy `u16`/`u8` tuples and exist only for
+/// back-compat with callers that have not migrated yet; they funnel into the
+/// same typed representation.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct RelationCacheKey {
     pub source: TypeId,
     pub target: TypeId,
-    pub relation: u8,
-    pub flags: u16,
-    pub any_mode: u8,
+    pub relation: RelationCacheKind,
+    pub config: RelationCacheConfig,
 }
 
 impl RelationCacheKey {
-    /// Relation type constants to prevent magic number errors.
-    pub const SUBTYPE: u8 = 0;
-    pub const ASSIGNABLE: u8 = 1;
-    pub const IDENTICAL: u8 = 2;
-
-    // Named flag constants for the `flags` bitmask.
-    // Each bit represents a compiler option that affects type relation results.
-    pub const FLAG_STRICT_NULL_CHECKS: u16 = 1 << 0;
-    pub const FLAG_STRICT_FUNCTION_TYPES: u16 = 1 << 1;
-    pub const FLAG_EXACT_OPTIONAL_PROPERTY_TYPES: u16 = 1 << 2;
-    pub const FLAG_NO_UNCHECKED_INDEXED_ACCESS: u16 = 1 << 3;
-    pub const FLAG_DISABLE_METHOD_BIVARIANCE: u16 = 1 << 4;
-    pub const FLAG_ALLOW_VOID_RETURN: u16 = 1 << 5;
-    pub const FLAG_ALLOW_BIVARIANT_REST: u16 = 1 << 6;
-    pub const FLAG_ALLOW_BIVARIANT_PARAM_COUNT: u16 = 1 << 7;
+    // Legacy `FLAG_*` constants preserved as `u16` so that callers still on
+    // the packed protocol (checker `RelationFlags` boundary, tests, docs)
+    // continue to compile unchanged. All new code should use the typed
+    // `RelationFlags` bitflags via the typed builders instead.
+    pub const FLAG_STRICT_NULL_CHECKS: u16 = RelationFlags::STRICT_NULL_CHECKS.bits() as u16;
+    pub const FLAG_STRICT_FUNCTION_TYPES: u16 = RelationFlags::STRICT_FUNCTION_TYPES.bits() as u16;
+    pub const FLAG_EXACT_OPTIONAL_PROPERTY_TYPES: u16 =
+        RelationFlags::EXACT_OPTIONAL_PROPERTY_TYPES.bits() as u16;
+    pub const FLAG_NO_UNCHECKED_INDEXED_ACCESS: u16 =
+        RelationFlags::NO_UNCHECKED_INDEXED_ACCESS.bits() as u16;
+    pub const FLAG_DISABLE_METHOD_BIVARIANCE: u16 =
+        RelationFlags::DISABLE_METHOD_BIVARIANCE.bits() as u16;
+    pub const FLAG_ALLOW_VOID_RETURN: u16 = RelationFlags::ALLOW_VOID_RETURN.bits() as u16;
+    pub const FLAG_ALLOW_BIVARIANT_REST: u16 = RelationFlags::ALLOW_BIVARIANT_REST.bits() as u16;
+    pub const FLAG_ALLOW_BIVARIANT_PARAM_COUNT: u16 =
+        RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT.bits() as u16;
     /// Disable generic type parameter erasure in function subtype checks.
     /// When set, non-generic functions are NOT assignable to generic functions,
     /// matching tsc's `eraseGenerics=false` behavior for implements/extends checks.
-    pub const FLAG_NO_ERASE_GENERICS: u16 = 1 << 8;
+    pub const FLAG_NO_ERASE_GENERICS: u16 = RelationFlags::NO_ERASE_GENERICS.bits() as u16;
 
-    /// Create a new cache key for subtype checking.
-    pub const fn subtype(source: TypeId, target: TypeId, flags: u16, any_mode: u8) -> Self {
+    /// Typed builder for subtype cache entries.
+    pub const fn for_subtype(source: TypeId, target: TypeId, config: RelationCacheConfig) -> Self {
         Self {
             source,
             target,
-            relation: Self::SUBTYPE,
-            flags,
-            any_mode,
+            relation: RelationCacheKind::Subtype,
+            config,
         }
     }
 
-    /// Create a new cache key for assignability checking.
-    pub const fn assignability(source: TypeId, target: TypeId, flags: u16, any_mode: u8) -> Self {
+    /// Typed builder for assignability cache entries.
+    pub const fn for_assignability(
+        source: TypeId,
+        target: TypeId,
+        config: RelationCacheConfig,
+    ) -> Self {
         Self {
             source,
             target,
-            relation: Self::ASSIGNABLE,
-            flags,
-            any_mode,
+            relation: RelationCacheKind::Assignable,
+            config,
+        }
+    }
+
+    /// Typed builder for redeclaration-identity cache entries.
+    pub const fn for_identical(
+        source: TypeId,
+        target: TypeId,
+        config: RelationCacheConfig,
+    ) -> Self {
+        Self {
+            source,
+            target,
+            relation: RelationCacheKind::Identical,
+            config,
+        }
+    }
+
+    /// Legacy subtype constructor kept for back-compat with callers that
+    /// still hand-roll `u16`/`u8` values. New code should use
+    /// [`RelationCacheKey::for_subtype`] with a typed
+    /// [`RelationCacheConfig`].
+    pub const fn subtype(source: TypeId, target: TypeId, flags: u16, any_mode_raw: u8) -> Self {
+        Self::for_subtype(
+            source,
+            target,
+            RelationCacheConfig {
+                flags: RelationFlags::from_bits_truncate(flags as u32),
+                any_mode: CachedAnyMode::from_legacy_u8(any_mode_raw),
+            },
+        )
+    }
+
+    /// Legacy assignability constructor. See [`RelationCacheKey::subtype`].
+    pub const fn assignability(
+        source: TypeId,
+        target: TypeId,
+        flags: u16,
+        any_mode_raw: u8,
+    ) -> Self {
+        Self::for_assignability(
+            source,
+            target,
+            RelationCacheConfig {
+                flags: RelationFlags::from_bits_truncate(flags as u32),
+                any_mode: CachedAnyMode::from_legacy_u8(any_mode_raw),
+            },
+        )
+    }
+}
+
+impl CachedAnyMode {
+    /// Decode the packed `u8` layout historically used by the subtype
+    /// checker's `make_cache_key`: `0 => All`, `1 => TopLevelOnly @ top`,
+    /// anything else => `TopLevelOnly` nested.
+    pub const fn from_legacy_u8(raw: u8) -> Self {
+        match raw {
+            0 => Self::All,
+            1 => Self::TopLevelOnlyAtTop,
+            _ => Self::TopLevelOnlyNested,
+        }
+    }
+
+    /// Encode back to the legacy `u8` layout. Only used by callers that still
+    /// speak the packed protocol.
+    pub const fn to_legacy_u8(self) -> u8 {
+        match self {
+            Self::All => 0,
+            Self::TopLevelOnlyAtTop => 1,
+            Self::TopLevelOnlyNested => 2,
         }
     }
 }

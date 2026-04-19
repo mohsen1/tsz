@@ -244,15 +244,16 @@ pub use relations::subtype::{
 };
 pub use type_queries::is_const_type_variable;
 pub use types::{
+    CachedAnyMode, CallableShape, ConditionalType, ConditionalTypeId, FunctionShape,
+    FunctionShapeId, IndexSignature, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
+    OrderedFloat, ParamInfo, RelationCacheConfig, RelationCacheKey, RelationCacheKind,
+    RelationFlags, StringIntrinsicKind, TemplateSpan, TupleElement, TupleListId, TypeParamInfo,
+    TypePredicate, TypePredicateTarget,
+};
+pub use types::{
     CallSignature, CallableShapeId, IntrinsicKind, LiteralValue, MappedModifier, ObjectShapeId,
     PropertyInfo, PropertyLookup, SymbolRef, TypeApplication, TypeApplicationId, TypeData, TypeId,
     TypeListId, Visibility, is_compiler_managed_type,
-};
-pub use types::{
-    CallableShape, ConditionalType, ConditionalTypeId, FunctionShape, FunctionShapeId,
-    IndexSignature, MappedType, MappedTypeId, ObjectFlags, ObjectShape, OrderedFloat, ParamInfo,
-    RelationCacheKey, StringIntrinsicKind, TemplateSpan, TupleElement, TupleListId, TypeParamInfo,
-    TypePredicate, TypePredicateTarget,
 };
 // unsoundness_audit: accessed via tsz_solver::unsoundness_audit module path
 pub use widening::*;
@@ -379,6 +380,9 @@ mod narrowing_discriminant_tests;
 #[cfg(test)]
 #[path = "../tests/property_helpers_tests.rs"]
 mod property_helpers_tests;
+#[cfg(test)]
+#[path = "../tests/relation_cache_config_tests.rs"]
+mod relation_cache_config_tests;
 #[cfg(test)]
 #[path = "tests/solver_file_size_ceiling_tests.rs"]
 mod solver_file_size_ceiling_tests;

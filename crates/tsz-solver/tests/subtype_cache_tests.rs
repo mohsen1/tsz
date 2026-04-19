@@ -10,7 +10,7 @@
 //! - Separates subtype and assignability caches (no cross-contamination)
 
 use super::*;
-use crate::caches::query_cache::QueryCache;
+use crate::caches::query_cache::{QueryCache, subtype_cache_config_from_legacy_flags};
 use crate::intern::TypeInterner;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{PropertyInfo, RelationCacheKey, TypeId};
@@ -547,7 +547,12 @@ fn probe_returns_hit_after_check() {
     // Do a non-trivial check to populate cache (trivial pairs use fast-path)
     assert!(db.is_subtype_of(hello, TypeId::STRING));
 
-    let key = RelationCacheKey::subtype(hello, TypeId::STRING, 0, 0);
+    // Probe with the canonical cache config for `is_subtype_of_with_flags(0)`.
+    let key = RelationCacheKey::for_subtype(
+        hello,
+        TypeId::STRING,
+        subtype_cache_config_from_legacy_flags(0),
+    );
     assert_eq!(
         db.probe_subtype_cache(key),
         crate::RelationCacheProbe::Hit(true)
@@ -561,7 +566,11 @@ fn probe_negative_hit_after_failed_check() {
 
     assert!(!db.is_subtype_of(TypeId::STRING, TypeId::NUMBER));
 
-    let key = RelationCacheKey::subtype(TypeId::STRING, TypeId::NUMBER, 0, 0);
+    let key = RelationCacheKey::for_subtype(
+        TypeId::STRING,
+        TypeId::NUMBER,
+        subtype_cache_config_from_legacy_flags(0),
+    );
     assert_eq!(
         db.probe_subtype_cache(key),
         crate::RelationCacheProbe::Hit(false)
@@ -591,12 +600,11 @@ fn subtype_checker_with_query_db_uses_cache() {
     let mut checker = SubtypeChecker::new(&interner).with_query_db(&db);
     assert!(checker.is_subtype_of(wider, narrow));
 
-    // The result should be in the shared cache.
-    // SubtypeChecker defaults: strict_null_checks=true, strict_function_types=true
-    // So the cache key has flags = FLAG_STRICT_NULL_CHECKS | FLAG_STRICT_FUNCTION_TYPES = 3
-    let default_flags =
-        RelationCacheKey::FLAG_STRICT_NULL_CHECKS | RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES;
-    let key = RelationCacheKey::subtype(wider, narrow, default_flags, 0);
+    // The result should be in the shared cache. Construct the probe key
+    // through the typed API so it reflects every behavior-affecting default
+    // baked into `SubtypeChecker::new()` (strict_null_checks,
+    // strict_function_types, assume_related_on_cycle, ...).
+    let key = checker.debug_cache_key_for(wider, narrow);
     assert!(
         db.lookup_subtype_cache(key).is_some(),
         "SubtypeChecker with query_db should populate the shared cache"
