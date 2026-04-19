@@ -124,6 +124,16 @@ impl<'a> CheckerState<'a> {
         formatter.format(type_id).into_owned()
     }
 
+    /// Format a type for TS2741 messages, showing the merged object form
+    /// instead of following display_alias to intersection types.
+    pub fn format_type_diagnostic_flattened(&self, type_id: TypeId) -> String {
+        let mut formatter = self
+            .ctx
+            .create_diagnostic_type_formatter()
+            .with_skip_intersection_display_alias();
+        formatter.format(type_id).into_owned()
+    }
+
     /// Format a type for diagnostics while suppressing function-type parameter
     /// binders in the displayed surface.
     ///

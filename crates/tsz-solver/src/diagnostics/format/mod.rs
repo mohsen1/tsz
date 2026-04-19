@@ -95,6 +95,10 @@ pub struct TypeFormatter<'a> {
     /// Application (e.g., `type Foo = Id<{...}>`). In assignability error messages,
     /// tsc shows the Application form `Id<{...}>` rather than the outer alias `Foo`.
     skip_application_alias_names: bool,
+    /// When true, don't follow display_alias when it points to an Intersection
+    /// type and the current type is an Object. Used for TS2741 messages where
+    /// tsc shows the merged object form instead of the intersection form.
+    skip_intersection_display_alias: bool,
 }
 
 impl<'a> TypeFormatter<'a> {
@@ -117,6 +121,7 @@ impl<'a> TypeFormatter<'a> {
             display_alias_visiting: FxHashSet::default(),
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
+            skip_intersection_display_alias: false,
         }
     }
 
@@ -143,6 +148,7 @@ impl<'a> TypeFormatter<'a> {
             display_alias_visiting: FxHashSet::default(),
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
+            skip_intersection_display_alias: false,
         }
     }
 
@@ -200,6 +206,14 @@ impl<'a> TypeFormatter<'a> {
     /// Used in assignability messages where tsc shows the Application form.
     pub const fn with_skip_application_alias_names(mut self) -> Self {
         self.skip_application_alias_names = true;
+        self
+    }
+
+    /// Don't follow display_alias when it points to an Intersection type
+    /// and the current type is an Object. tsc shows the merged object form
+    /// in TS2741 messages, not the intersection form.
+    pub const fn with_skip_intersection_display_alias(mut self) -> Self {
+        self.skip_intersection_display_alias = true;
         self
     }
 
@@ -534,7 +548,15 @@ impl<'a> TypeFormatter<'a> {
                     false
                 };
 
+            let skip_intersection_alias = self.skip_intersection_display_alias
+                && matches!(
+                    self.interner.lookup(alias_origin),
+                    Some(TypeData::Intersection(_))
+                )
+                && matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_));
+
             if (!is_simple_type || use_keyof_alias || use_application_alias)
+                && !skip_intersection_alias
                 && self.display_alias_visiting.insert(alias_origin)
             {
                 let result = self.format(alias_origin);
