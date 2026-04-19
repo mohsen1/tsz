@@ -217,6 +217,34 @@ export let bar;
 }
 
 #[test]
+fn jsdoc_named_import_binding_is_visible_to_implements_clause() {
+    let codes = check_js_file_with_types(
+        "a.ts",
+        r#"
+export interface I {
+    method(): void;
+}
+"#,
+        "b.js",
+        r#"
+/** @import { I as ImportedI } from "./a" */
+/** @implements {ImportedI} */
+class C {}
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        codes.contains(&2420),
+        "Expected TS2420 when @implements references a named JSDoc @import alias, got codes: {codes:?}"
+    );
+}
+
+#[test]
 fn exported_js_variable_with_jsdoc_type_is_not_implicit_any() {
     let codes = check_js_file_with_types(
         "types.d.ts",

@@ -172,12 +172,8 @@ impl<'a> CheckerState<'a> {
             member_name,
             Some(self.ctx.current_file_idx),
         )
-        .or_else(|| {
-            self.ctx
-                .binder
-                .resolve_import_with_reexports_type_only(module_specifier, member_name)
-                .map(|(sym_id, _)| sym_id)
-        })
+        // Avoid raw binder fallback here: it returns unscoped SymbolIds without
+        // file-target registration, which can alias-collide across binders.
         .or_else(|| self.resolve_cross_file_export(module_specifier, member_name))
     }
 
