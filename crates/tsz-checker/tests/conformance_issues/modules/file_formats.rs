@@ -334,7 +334,6 @@ C.getClass().#field;
 }
 
 #[test]
-#[ignore] // TODO: shadowed private access should use constructor type name in TS18014
 fn ts18014_shadowed_private_access_uses_constructor_type_name() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"

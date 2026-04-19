@@ -30305,6 +30305,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             preserve_const_enums: false,
             strict_builtin_iterator_return: true,
             erasable_syntax_only: false,
+            no_fallthrough_cases_in_switch: false,
         },
     );
     assert!(

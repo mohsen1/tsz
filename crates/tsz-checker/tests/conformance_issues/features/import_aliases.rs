@@ -550,7 +550,6 @@ interface RI<T extends "a" | "b"> {
 }
 
 #[test]
-#[ignore] // VuexStoreOptions pattern: nested modules through mapped types with constrained type params
 fn test_no_false_ts18046_nested_mapped_type_with_constrained_state() {
     // When State extends Record<string, unknown> and we have nested modules
     // through a mapped type, the nested module's State should be inferred
