@@ -1039,7 +1039,33 @@ impl DefinitionStore {
     /// so the `TypeFormatter` can display named types (e.g., "A" instead of
     /// "{ a: string }") even across file boundaries.
     pub fn register_type_to_def(&self, type_id: TypeId, def_id: DefId) {
-        self.type_to_def.insert(type_id, def_id);
+        use dashmap::mapref::entry::Entry;
+        match self.type_to_def.entry(type_id) {
+            Entry::Vacant(e) => {
+                e.insert(def_id);
+            }
+            Entry::Occupied(mut e) => {
+                let existing = *e.get();
+                if existing == def_id {
+                    return;
+                }
+                let existing_pos = self
+                    .get(existing)
+                    .and_then(|d| Some((d.file_id?, d.span?.0)));
+                let new_pos = self.get(def_id).and_then(|d| Some((d.file_id?, d.span?.0)));
+                match (existing_pos, new_pos) {
+                    (Some((ef, ep)), Some((nf, np))) => {
+                        if (nf, np) < (ef, ep) {
+                            e.insert(def_id);
+                        }
+                    }
+                    (None, Some(_)) => {
+                        e.insert(def_id);
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 
     /// Look up the `DefId` that produced the given `TypeId`.
