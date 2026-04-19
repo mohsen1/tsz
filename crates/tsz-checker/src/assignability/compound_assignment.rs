@@ -437,7 +437,6 @@ impl<'a> CheckerState<'a> {
         right_type: TypeId,
         operator: u16,
     ) -> TypeId {
-        use crate::query_boundaries::common::BinaryOpEvaluator;
         use crate::query_boundaries::type_computation::core::BinaryOpResult;
 
         let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);

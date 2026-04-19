@@ -640,7 +640,6 @@ impl<'a> CheckerState<'a> {
                 let mut arithmetic_ok = true;
 
                 {
-                    use crate::query_boundaries::common::BinaryOpEvaluator;
                     let evaluator =
                         crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
                     let (non_nullish, nullish_cause) = self.split_nullish_type(operand_type);
@@ -878,11 +877,10 @@ impl<'a> CheckerState<'a> {
                                     let is_optional =
                                         self.is_property_optional(object_type, &prop_name);
                                     let type_includes_undefined =
-                                        !self.ctx.compiler_options.exact_optional_property_types
-                                            && tsz_solver::type_queries::type_includes_undefined(
-                                                self.ctx.types,
-                                                prop_type,
-                                            );
+                                        crate::query_boundaries::class_type::type_includes_undefined(
+                                            self.ctx.types,
+                                            prop_type,
+                                        );
                                     if !is_optional && !type_includes_undefined {
                                         self.error_at_node(
                                             operand_idx,
