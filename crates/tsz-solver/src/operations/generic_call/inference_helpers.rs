@@ -11,18 +11,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         &self,
         lower_bounds: &[TypeId],
         inferred: TypeId,
+        has_usable_contra_candidates: bool,
     ) -> TypeId {
         if lower_bounds.len() <= 1 {
-            return inferred;
-        }
-
-        let member_list_id = match self.interner.lookup(inferred) {
-            Some(TypeData::Union(id)) => id,
-            _ => return inferred,
-        };
-
-        // If this is already a single-member union, keep it as-is.
-        if self.interner.type_list(member_list_id).len() <= 1 {
             return inferred;
         }
 
@@ -32,19 +23,33 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return preferred_tuple_candidate;
         }
 
+        let inferred_is_union = matches!(self.interner.lookup(inferred), Some(TypeData::Union(_)));
+
+        let all_mergeable = lower_bounds
+            .iter()
+            .all(|ty| self.is_mergeable_direct_inference_candidate(*ty));
+
         // Direct arguments should stay narrow when there are heterogeneous candidates.
         // Otherwise TypeScript-style checks can get masked by a broad union result.
-        if lower_bounds
-            .iter()
-            .all(|ty| self.is_mergeable_direct_inference_candidate(*ty))
-        {
+        if all_mergeable {
             // Guard: if lower bounds contain literals with different primitive bases
             // (e.g., "" and 3 → string vs number), fall back to the first candidate.
             // tsc keeps the first candidate in those cases so later argument checks
             // can report a proper TS2345 mismatch.
             if !self.has_conflicting_literal_bases(lower_bounds) {
+                // If direct inference collapsed to a single non-union candidate while
+                // we also have contravariant evidence, preserve the combined direct
+                // argument information. This prevents over-narrowing from first-wins in
+                // co/contra scenarios such as callback predicates over union arrays.
+                if has_usable_contra_candidates && !inferred_is_union {
+                    return crate::utils::union_or_single(self.interner, lower_bounds.to_vec());
+                }
                 return inferred;
             }
+        }
+
+        if !inferred_is_union {
+            return inferred;
         }
 
         // Fall back to the first lower-bound candidate so later argument checks
