@@ -227,8 +227,8 @@ impl<'a> CheckerState<'a> {
         // interface (for merged interfaces, each declaration can contribute members).
         let mut derived_member_names: rustc_hash::FxHashSet<String> =
             rustc_hash::FxHashSet::default();
-        // (name, type, node_idx, kind) — used for TS2430 derived-vs-base compatibility checks.
-        let mut derived_members: Vec<(String, TypeId, NodeIndex, u16)> = Vec::new();
+        // (name, type, node_idx, kind, is_optional) — used for TS2430 derived-vs-base checks.
+        let mut derived_members: Vec<(String, TypeId, NodeIndex, u16, bool)> = Vec::new();
 
         // Collect all interface declaration indices for this symbol
         let all_iface_decls: Vec<NodeIndex> = self
@@ -274,7 +274,13 @@ impl<'a> CheckerState<'a> {
                     {
                         derived_member_names.insert(name.clone());
                         let type_id = self.get_type_of_interface_member(member_idx);
-                        derived_members.push((name, type_id, member_idx, member_node.kind));
+                        derived_members.push((
+                            name,
+                            type_id,
+                            member_idx,
+                            member_node.kind,
+                            sig.question_token,
+                        ));
                     }
                 }
             }
@@ -289,7 +295,7 @@ impl<'a> CheckerState<'a> {
         // the comparison fails because the solver has no constraint info for `ThisType`.
         {
             // Check if any derived member contains ThisType (fast path: skip if none do)
-            let any_has_this = derived_members.iter().any(|(_, tid, _, _)| {
+            let any_has_this = derived_members.iter().any(|(_, tid, _, _, _)| {
                 crate::query_boundaries::common::contains_this_type(self.ctx.types, *tid)
             });
             if any_has_this {
@@ -851,7 +857,7 @@ impl<'a> CheckerState<'a> {
                     );
 
                     // Check if any interface member redeclares a private/protected class member
-                    for (member_name, _, _derived_member_idx, _) in &derived_members {
+                    for (member_name, _, _derived_member_idx, _, _) in &derived_members {
                         for &class_member_idx in &class_data.members.nodes {
                             let Some(class_member_node) = self.ctx.arena.get(class_member_idx)
                             else {
@@ -1102,6 +1108,7 @@ impl<'a> CheckerState<'a> {
                                         member_type,
                                         _derived_member_idx,
                                         _derived_kind,
+                                        _,
                                     ) in &derived_members
                                     {
                                         // Extract the derived property's raw type
@@ -1133,7 +1140,7 @@ impl<'a> CheckerState<'a> {
                         }
 
                         // Check each derived member against the base type's properties
-                        for (member_name, member_type, derived_member_idx, _derived_kind) in
+                        for (member_name, member_type, derived_member_idx, _derived_kind, _) in
                             &derived_members
                         {
                             // Look up the property in the base type
@@ -1289,8 +1296,13 @@ impl<'a> CheckerState<'a> {
             };
 
             let mut ts2430_emitted_for_base = false;
-            'derived_loop: for (member_name, member_type, derived_member_idx, derived_kind) in
-                &derived_members
+            'derived_loop: for (
+                member_name,
+                member_type,
+                derived_member_idx,
+                derived_kind,
+                derived_is_optional,
+            ) in &derived_members
             {
                 let mut found = false;
 
@@ -1383,7 +1395,11 @@ impl<'a> CheckerState<'a> {
                             )
                         };
 
-                        if param_count_incompatible || type_mismatch {
+                        // Making a required base property optional is an error (TS2430):
+                        // an S value with Foo=undefined would not satisfy T which requires Foo.
+                        let optionality_widened = *derived_is_optional && !base_is_optional;
+
+                        if param_count_incompatible || type_mismatch || optionality_widened {
                             self.error_at_node(
                                     iface_data.name,
                                     &format!(
@@ -1457,7 +1473,7 @@ impl<'a> CheckerState<'a> {
                     String,
                     Vec<(TypeId, NodeIndex)>,
                 > = rustc_hash::FxHashMap::default();
-                for (name, type_id, idx, kind) in &derived_members {
+                for (name, type_id, idx, kind, _) in &derived_members {
                     if *kind == METHOD_SIGNATURE {
                         derived_method_overloads
                             .entry(name.clone())
