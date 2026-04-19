@@ -1,5 +1,17 @@
 pub mod data;
 
+/// True when `code` is in the TypeScript parser/grammar diagnostic range
+/// (1000–1999) — syntactic errors and grammar rule violations.
+pub fn is_parser_grammar_diagnostic(code: u32) -> bool {
+    (1000..2000).contains(&code)
+}
+
+/// True when `code` is in the TypeScript JavaScript grammar diagnostic range
+/// (8000–8999) — JS-specific parser errors emitted for `.js`/`.jsx` sources.
+pub fn is_js_grammar_diagnostic(code: u32) -> bool {
+    (8000..9000).contains(&code)
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum DiagnosticCategory {
     Warning,

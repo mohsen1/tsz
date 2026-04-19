@@ -43,9 +43,8 @@ fn main() -> Result<()> {
     // Run on a larger stack for project-sized and multi-file workflows.
     // Single-file CLI probes avoid this extra thread hop for lower startup overhead.
     if should_use_large_stack_thread(&args) {
-        const MAIN_STACK_SIZE: usize = 64 * 1024 * 1024;
         std::thread::Builder::new()
-            .stack_size(MAIN_STACK_SIZE)
+            .stack_size(tsz_common::limits::THREAD_STACK_SIZE_BYTES)
             .spawn(move || actual_main(args, cwd))
             .expect("failed to spawn main thread")
             .join()

@@ -90,7 +90,8 @@ pub use types_domain::{
 pub mod diagnostics {
     pub use tsz_common::diagnostics::{
         Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
-        diagnostic_messages, format_message,
+        diagnostic_messages, format_message, is_js_grammar_diagnostic,
+        is_parser_grammar_diagnostic,
     };
 }
 

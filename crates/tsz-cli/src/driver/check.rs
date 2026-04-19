@@ -123,7 +123,7 @@ fn keep_checker_diagnostic_when_program_has_real_syntax_errors(code: u32) -> boo
     // diagnostics such as TS2427/TS2457 alongside parse errors because the parser
     // accepts those names and defers validation to the checker.
     code < 2000
-        || (8000..9000).contains(&code)
+        || tsz::checker::diagnostics::is_js_grammar_diagnostic(code)
         || is_reserved_type_name_declaration_diagnostic(code)
 }
 
@@ -150,7 +150,7 @@ fn post_process_checker_diagnostics(
         // explicitly set, suppress ALL semantic errors.
         checker_diagnostics.retain(|diag| {
             diag.code < 2000
-                || (8000..9000).contains(&diag.code)
+                || tsz::checker::diagnostics::is_js_grammar_diagnostic(diag.code)
                 || (!options.explicit_check_js_false && is_plain_js_allowed_code(diag.code))
         });
     }
@@ -163,7 +163,7 @@ fn post_process_checker_diagnostics(
     // Only keep TS1xxx codes that tsc is known to emit for JS files.
     if is_js {
         checker_diagnostics.retain(|diag| {
-            if (1000..2000).contains(&diag.code) {
+            if tsz::checker::diagnostics::is_parser_grammar_diagnostic(diag.code) {
                 return is_ts1xxx_allowed_in_js(diag.code);
             }
             // Also suppress checker-emitted grammar codes outside the 1xxx range
@@ -237,7 +237,7 @@ fn post_process_checker_diagnostics(
         const MAX_CASCADE_DISTANCE: u32 = 300;
         checker_diagnostics.retain(|diag| {
             // Keep parse/grammar errors (1xxx) and JS grammar errors (8xxx)
-            if diag.code < 2000 || (8000..9000).contains(&diag.code) {
+            if diag.code < 2000 || tsz::checker::diagnostics::is_js_grammar_diagnostic(diag.code) {
                 return true;
             }
             // Some semantic errors are deliberately emitted alongside

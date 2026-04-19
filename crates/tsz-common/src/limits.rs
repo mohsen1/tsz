@@ -212,6 +212,20 @@ pub const MAX_TYPE_RESOLUTION_OPS: u32 = 20_000;
 #[cfg(not(target_arch = "wasm32"))]
 pub const MAX_TYPE_RESOLUTION_OPS: u32 = 100_000;
 
+// =============================================================================
+// Thread / Runtime Limits
+// =============================================================================
+
+/// Thread stack size for project-sized and multi-file compilation work.
+///
+/// The default 8 MB thread stack is insufficient for deeply nested
+/// conditional/mapped-type evaluation chains produced by libraries like
+/// `ts-toolbelt` or `ts-essentials`; the `evaluate -> instantiate -> evaluate`
+/// cycle consumes real stack frames even with logical recursion guards.
+///
+/// Used by `tsz-cli` (CLI entrypoint) and `tsz-core` (rayon global pool init).
+pub const THREAD_STACK_SIZE_BYTES: usize = 64 * 1024 * 1024;
+
 #[cfg(test)]
 #[path = "../tests/limits.rs"]
 mod tests;
