@@ -1297,11 +1297,12 @@ impl<'a> DocumentSymbolProvider<'a> {
             && let Some(block) = self.arena.get_block(node)
         {
             for &stmt in &block.statements.nodes {
-                // Collect declaration-ish statements that tsc includes in
-                // the outline for a block body: functions, classes,
-                // interfaces, enums, and type aliases. Variable
-                // declarations inside function/constructor/method bodies
-                // are deliberately omitted — tsc doesn't surface them.
+                // tsc's `addChildrenRecursively` walks every statement
+                // inside a block and treats function/class/interface/
+                // enum/type-alias/module declarations AND variable
+                // statements as nav nodes. Surfacing vars matches tests
+                // like `navigationBarItemsFunctions` which expect
+                // `function baz() { var v = 10 }` → baz has child v.
                 if let Some(stmt_node) = self.arena.get(stmt)
                     && matches!(
                         stmt_node.kind,
@@ -1311,6 +1312,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                             || k == syntax_kind_ext::ENUM_DECLARATION
                             || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
                             || k == syntax_kind_ext::MODULE_DECLARATION
+                            || k == syntax_kind_ext::VARIABLE_STATEMENT
                     )
                 {
                     symbols.extend(self.collect_symbols(stmt, container_name));
