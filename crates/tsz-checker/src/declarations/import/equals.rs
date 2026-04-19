@@ -1044,10 +1044,14 @@ impl<'a> CheckerState<'a> {
                         .is_some_and(|export_assignment| export_assignment.is_export_equals)
                 })
             });
+            // tsc emits TS2708 for `export import a = x.c` / `import a = x.c`
+            // when `x` is a type-only namespace, regardless of whether the file
+            // contains `export = ...`. The previous `file_has_export_equals`
+            // gate over-suppressed the diagnostic.
             let emits_export_import_ts2708 = export_parent.is_some()
-                && file_has_export_equals
                 && !self.is_ambient_declaration(stmt_idx)
                 && !export_parent.is_some_and(|parent| self.is_ambient_declaration(parent));
+            let _ = file_has_export_equals;
 
             // Check the leftmost part first - this is what determines TS2503 vs TS2694
             let left_name = self.get_leftmost_identifier_name(qn.left);
