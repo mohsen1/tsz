@@ -1123,6 +1123,25 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // TS2355 for explicitly annotated `unknown` return type with no return
+        // statements. `unknown` is exempt from the general `requires_return_value`
+        // check (since `undefined` is assignable to `unknown`), but tsc still
+        // requires at least one return statement when the annotation is `unknown`.
+        if has_type_annotation
+            && !is_generator
+            && check_return_type == TypeId::UNKNOWN
+            && self.function_body_falls_through(func.body)
+            && !self.body_has_return_with_value(func.body)
+        {
+            let error_node = func.type_annotation;
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node(
+                error_node,
+                "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
+                diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
+            );
+        }
+
         if check_explicit_return_paths && requires_return && falls_through {
             // For JSDoc @type, the error node is the function name/node
             // (there's no separate type annotation node in the AST).
