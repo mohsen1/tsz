@@ -214,19 +214,19 @@ fn normalize_locale(locale: &str) -> Option<&'static str> {
 /// Get the embedded locale content.
 fn get_locale_content(locale: &str) -> Option<&'static str> {
     match locale {
-        "cs" => Some(include_str!("locales/cs.json")),
-        "de" => Some(include_str!("locales/de.json")),
-        "es" => Some(include_str!("locales/es.json")),
-        "fr" => Some(include_str!("locales/fr.json")),
-        "it" => Some(include_str!("locales/it.json")),
-        "ja" => Some(include_str!("locales/ja.json")),
-        "ko" => Some(include_str!("locales/ko.json")),
-        "pl" => Some(include_str!("locales/pl.json")),
-        "pt-br" => Some(include_str!("locales/pt-br.json")),
-        "ru" => Some(include_str!("locales/ru.json")),
-        "tr" => Some(include_str!("locales/tr.json")),
-        "zh-cn" => Some(include_str!("locales/zh-cn.json")),
-        "zh-tw" => Some(include_str!("locales/zh-tw.json")),
+        "cs" => Some(include_str!("../locales/cs.json")),
+        "de" => Some(include_str!("../locales/de.json")),
+        "es" => Some(include_str!("../locales/es.json")),
+        "fr" => Some(include_str!("../locales/fr.json")),
+        "it" => Some(include_str!("../locales/it.json")),
+        "ja" => Some(include_str!("../locales/ja.json")),
+        "ko" => Some(include_str!("../locales/ko.json")),
+        "pl" => Some(include_str!("../locales/pl.json")),
+        "pt-br" => Some(include_str!("../locales/pt-br.json")),
+        "ru" => Some(include_str!("../locales/ru.json")),
+        "tr" => Some(include_str!("../locales/tr.json")),
+        "zh-cn" => Some(include_str!("../locales/zh-cn.json")),
+        "zh-tw" => Some(include_str!("../locales/zh-tw.json")),
         _ => None,
     }
 }
@@ -273,5 +273,5 @@ pub const fn supported_locales() -> &'static [&'static str] {
 }
 
 #[cfg(test)]
-#[path = "locale_tests.rs"]
+#[path = "../locale_tests.rs"]
 mod tests;
