@@ -2485,7 +2485,7 @@ mod tests {
     use crate::module_resolution::build_module_resolution_maps;
     use crate::query_boundaries::common::TypeInterner;
     use std::sync::Arc;
-    use tsz_binder::BinderState;
+    use tsz_binder::{BinderState, symbol_flags};
     use tsz_parser::parser::ParserState;
 
     // TODO: module augmentation should take precedence over named reexport,
@@ -2591,5 +2591,109 @@ export interface Row2 { b: string }
             Some(index_dts_idx),
             "Row2 currently resolves through the re-export chain (index.d.ts), not the augmentation"
         );
+    }
+
+    #[test]
+    fn resolve_named_export_via_export_equals_handles_qualified_and_alias_targets() {
+        let source = r#"
+declare module "events" {
+    namespace EventEmitter {
+        class EventEmitter {
+            constructor();
+        }
+    }
+    export = EventEmitter;
+}
+
+declare module "nestNamespaceModule" {
+    namespace a1.a2 {
+        class d { }
+    }
+    namespace a1.a2.n3 {
+        class c { }
+    }
+    export = a1.a2;
+}
+
+declare module "renameModule" {
+    namespace a.b {
+        class c { }
+    }
+    import d = a.b;
+    export = d;
+}
+"#;
+
+        let mut parser = ParserState::new("/ambient.d.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+        let all_arenas = Arc::new(vec![Arc::clone(&arena)]);
+        let all_binders = Arc::new(vec![Arc::clone(&binder)]);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "/ambient.d.ts".to_string(),
+            CheckerOptions {
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        checker.ctx.set_all_arenas(all_arenas);
+        checker.ctx.set_all_binders(all_binders);
+        checker.ctx.set_current_file_idx(0);
+
+        let n3_sym = checker
+            .resolve_named_export_via_export_equals("nestNamespaceModule", "n3")
+            .expect("expected n3 to resolve via export= a1.a2");
+        let d_sym = checker
+            .resolve_named_export_via_export_equals("nestNamespaceModule", "d")
+            .expect("expected d to resolve via export= a1.a2");
+        let c_sym = checker
+            .resolve_named_export_via_export_equals("renameModule", "c")
+            .expect("expected c to resolve via export= d (import equals alias)");
+        let ee_sym = checker
+            .resolve_named_export_via_export_equals("events", "EventEmitter")
+            .expect("expected EventEmitter to resolve via export= namespace");
+
+        let n3_symbol = checker
+            .ctx
+            .binder
+            .get_symbol(n3_sym)
+            .expect("expected symbol data for n3");
+        let d_symbol = checker
+            .ctx
+            .binder
+            .get_symbol(d_sym)
+            .expect("expected symbol data for d");
+        let c_symbol = checker
+            .ctx
+            .binder
+            .get_symbol(c_sym)
+            .expect("expected symbol data for c");
+        let ee_symbol = checker
+            .ctx
+            .binder
+            .get_symbol(ee_sym)
+            .expect("expected symbol data for EventEmitter");
+
+        assert_eq!(n3_symbol.escaped_name, "n3");
+        assert!(
+            (n3_symbol.flags
+                & (symbol_flags::MODULE
+                    | symbol_flags::NAMESPACE_MODULE
+                    | symbol_flags::VALUE_MODULE))
+                != 0,
+            "n3 should resolve to a namespace/module-like symbol"
+        );
+        assert_ne!(d_symbol.flags & symbol_flags::CLASS, 0);
+        assert_ne!(c_symbol.flags & symbol_flags::CLASS, 0);
+        assert_ne!(ee_symbol.flags & symbol_flags::CLASS, 0);
     }
 }
