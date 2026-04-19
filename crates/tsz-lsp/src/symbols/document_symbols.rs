@@ -1166,17 +1166,27 @@ impl<'a> DocumentSymbolProvider<'a> {
 
                     let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
                     let selection_range = self.get_range_keyword(node_idx, 6); // "export".len()
-                    let modifiers = self.get_kind_modifiers_from_list(&export_assign.modifiers);
+                    // tsc always emits `export` as the kindModifier for
+                    // `export = <expr>` regardless of whether the
+                    // declaration's modifier list carries anything.
+                    let mut modifiers = self.get_kind_modifiers_from_list(&export_assign.modifiers);
+                    append_modifier(&mut modifiers, "export");
+
+                    // Classify by the RHS expression shape, matching
+                    // tsc's `getNodeKind` behavior for export= /
+                    // export default.
+                    let expr_idx = export_assign.expression;
+                    let (kind, children) = self.classify_export_expression(expr_idx);
 
                     vec![DocumentSymbol {
                         name,
                         detail: None,
-                        kind: SymbolKind::Variable,
+                        kind,
                         kind_modifiers: modifiers,
                         range,
                         selection_range,
                         container_name: container_name.map(std::string::ToString::to_string),
-                        children: vec![],
+                        children,
                     }]
                 } else {
                     vec![]
@@ -1336,6 +1346,89 @@ impl<'a> DocumentSymbolProvider<'a> {
             }
         }
         symbols
+    }
+
+    /// Classify an `export = <expr>` / `export default <expr>`
+    /// right-hand side for navbar display.
+    ///   - function / arrow → `function` with body-walked children
+    ///   - class expression → `class` with class members
+    ///   - object literal → `const` with members
+    ///   - call expression → `const`, members come from an
+    ///     object-literal argument if present
+    ///   - anything else → `var`
+    fn classify_export_expression(&self, expr_idx: NodeIndex) -> (SymbolKind, Vec<DocumentSymbol>) {
+        if expr_idx.is_none() {
+            return (SymbolKind::Variable, Vec::new());
+        }
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return (SymbolKind::Variable, Vec::new());
+        };
+        match expr_node.kind {
+            k if k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION =>
+            {
+                let body = self
+                    .arena
+                    .get_function(expr_node)
+                    .map_or(NodeIndex::NONE, |f| f.body);
+                let children = self.collect_children_from_block(body, None);
+                (SymbolKind::Function, children)
+            }
+            k if k == syntax_kind_ext::CLASS_EXPRESSION => {
+                // Walk the class's members via the CLASS_EXPRESSION
+                // collect_symbols path and unwrap the single class
+                // wrapper to inline its children under the export= /
+                // default entry.
+                let wrapper = self.collect_symbols(expr_idx, None);
+                if wrapper.len() == 1 {
+                    return (
+                        SymbolKind::Class,
+                        wrapper.into_iter().next().unwrap().children,
+                    );
+                }
+                (SymbolKind::Variable, Vec::new())
+            }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                let members = self.collect_object_literal_members(expr_idx, None);
+                (SymbolKind::Constant, members)
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                let mut members = Vec::new();
+                if let Some(call) = self.arena.get_call_expr(expr_node)
+                    && let Some(args) = call.arguments.as_ref()
+                {
+                    for &arg_idx in &args.nodes {
+                        let Some(arg_node) = self.arena.get(arg_idx) else {
+                            continue;
+                        };
+                        if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                            members.extend(self.collect_object_literal_members(arg_idx, None));
+                        }
+                    }
+                }
+                (SymbolKind::Constant, members)
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                // `export = (class Foo {})` — unwrap the parens and
+                // reclassify the inner expression.
+                if let Some(paren) = self.arena.get_parenthesized(expr_node) {
+                    return self.classify_export_expression(paren.expression);
+                }
+                (SymbolKind::Variable, Vec::new())
+            }
+            k if k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                // `X as Type` / `X satisfies Type` — unwrap and
+                // reclassify the inner.
+                if let Some(ass) = self.arena.get_binary_expr(expr_node) {
+                    return self.classify_export_expression(ass.left);
+                }
+                (SymbolKind::Variable, Vec::new())
+            }
+            _ => (SymbolKind::Variable, Vec::new()),
+        }
     }
 
     /// Classify a PROPERTY_ASSIGNMENT's initializer for navbar display.
