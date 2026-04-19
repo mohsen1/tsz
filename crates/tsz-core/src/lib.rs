@@ -243,8 +243,6 @@ pub fn create_scanner(text: String, skip_trivia: bool) -> ScannerState {
 // Parser WASM Interface (High-Performance Parser)
 // =============================================================================
 
-use crate::context::transform::TransformContext;
-
 pub use crate::api::wasm::transforms::WasmTransformContext;
 
 pub use crate::api::wasm::parser::Parser;
