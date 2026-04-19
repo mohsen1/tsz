@@ -7,7 +7,9 @@ use crate::context::transform::TransformContext;
 #[wasm_bindgen]
 pub struct WasmTransformContext {
     pub(crate) inner: TransformContext,
+    #[allow(dead_code)]
     pub(crate) target_es5: bool,
+    #[allow(dead_code)]
     pub(crate) module_kind: ModuleKind,
 }
 
