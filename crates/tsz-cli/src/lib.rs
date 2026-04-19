@@ -6,19 +6,19 @@
 
 pub mod args;
 pub mod commands;
-pub use commands::build;
-pub use commands::help;
 pub use tsz::config;
 pub mod driver;
+pub mod fs;
 pub mod incremental;
 pub mod locale;
-pub mod project;
 pub mod project_refs;
 pub mod reporter;
-pub mod trace;
+pub mod reporting;
 pub mod tracing_config;
 pub mod watch;
-pub use project::fs;
+pub use commands::build;
+pub use commands::help;
+pub use reporting::trace;
 
 #[cfg(test)]
 #[path = "../tests/args_tests.rs"]
