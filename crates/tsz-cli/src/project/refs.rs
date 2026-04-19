@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BinaryHeap;
 use std::path::{Path, PathBuf};
 
-use super::config::{CompilerOptions, TsConfig};
+use crate::config::{CompilerOptions, TsConfig};
 
 /// A project reference as specified in tsconfig.json
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -695,5 +695,5 @@ fn remove_trailing_commas(input: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "project_refs_tests.rs"]
+#[path = "../project_refs_tests.rs"]
 mod tests;
