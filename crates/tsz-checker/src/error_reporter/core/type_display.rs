@@ -538,13 +538,23 @@ impl<'a> CheckerState<'a> {
                     let params: Vec<_> = shape
                         .params
                         .iter()
-                        .map(|param| tsz_solver::ParamInfo {
-                            type_id: self.normalize_assignability_display_type_inner(
+                        .map(|param| {
+                            // Skip normalizing TypeQuery param types to preserve typeof
+                            // syntax, matching tsc's behavior of not expanding typeof
+                            // references in parameter positions.
+                            let type_id = if crate::query_boundaries::common::is_type_query_type(
+                                self.ctx.types,
                                 param.type_id,
-                                visiting,
-                                depth + 1,
-                            ),
-                            ..*param
+                            ) {
+                                param.type_id
+                            } else {
+                                self.normalize_assignability_display_type_inner(
+                                    param.type_id,
+                                    visiting,
+                                    depth + 1,
+                                )
+                            };
+                            tsz_solver::ParamInfo { type_id, ..*param }
                         })
                         .collect();
                     // Skip normalizing TypeQuery return types to preserve the typeof
