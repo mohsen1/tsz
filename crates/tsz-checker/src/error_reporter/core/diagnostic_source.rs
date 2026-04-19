@@ -1920,6 +1920,12 @@ impl<'a> CheckerState<'a> {
         if (symbol.flags & tsz_binder::symbol_flags::VARIABLE) == 0 {
             return None;
         }
+        // Merged INTERFACE+VALUE (e.g. `Date`): `get_type_of_symbol` returns the interface side, not the value-position constructor.
+        if (symbol.flags & tsz_binder::symbol_flags::INTERFACE) != 0
+            && (symbol.flags & tsz_binder::symbol_flags::CLASS) == 0
+        {
+            return None;
+        }
 
         let declared_type = self.get_type_of_symbol(sym_id);
         if matches!(declared_type, TypeId::ERROR | TypeId::UNKNOWN) {
