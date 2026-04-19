@@ -1405,10 +1405,10 @@ fn test_contextual_instantiation_generic_function_to_callable_target() {
 /// Non-generic construct signature source is NOT assignable to a generic
 /// construct signature target. `new() => MyClass` is not <: `new<T>() => T`
 /// because T is universally quantified — the generic constructor returns *any*
-/// With erase_generics=true, target type params are erased to their constraints
-/// (tsc's getErasedSignature behavior), so `new() => MyClass` IS assignable to
-/// `new<T extends { value: number }>() => T` when MyClass matches the constraint.
-/// See 7131d1b165 which restored erase-to-constraints for erase_generics=true.
+/// With `erase_generics=true`, target type params are erased to their constraints
+/// (tsc's `getErasedSignature` behavior), so `new() => MyClass` IS assignable to
+/// `new<T extends { value: number }>() => T` when `MyClass` matches the constraint.
+/// See 7131d1b165 which restored erase-to-constraints for `erase_generics=true`.
 #[test]
 fn test_nongeneric_construct_sig_assignable_to_generic_target() {
     let interner = TypeInterner::new();

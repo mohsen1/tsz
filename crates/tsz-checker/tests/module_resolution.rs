@@ -451,7 +451,7 @@ fn test_nested_bare_alias_is_not_registered() {
         "/tmp/test/lib/utils.ts".to_string(),
     ];
     let (paths, _) = build_module_resolution_maps(&files);
-    assert!(paths.get(&(0, "lib/utils".to_string())).is_none());
+    assert!(!paths.contains_key(&(0, "lib/utils".to_string())));
 }
 
 #[test]
@@ -699,8 +699,8 @@ fn test_arbitrary_extension_declaration_file_is_not_mapped() {
     // and `./foo` both remain unmapped (there is no other file providing them).
     let files = vec!["/proj/app.ts".to_string(), "/proj/foo.d.ts.ts".to_string()];
     let (paths, modules) = build_module_resolution_maps(&files);
-    assert!(paths.get(&(0, "./foo.d.ts".to_string())).is_none());
-    assert!(paths.get(&(0, "./foo".to_string())).is_none());
+    assert!(!paths.contains_key(&(0, "./foo.d.ts".to_string())));
+    assert!(!paths.contains_key(&(0, "./foo".to_string())));
     assert!(!modules.contains("./foo.d.ts"));
     assert!(!modules.contains("./foo"));
 }
