@@ -184,7 +184,6 @@ Enum.One;
 /// due to per-file binder differences in alias resolution for namespace imports
 /// merged with interfaces). Ignored until full-pipeline unit test infra is available.
 #[test]
-#[ignore]
 fn no_ts1362_for_namespace_import_merged_with_interface_then_reexported() {
     let b = r#"
 export const zzz = 123;
