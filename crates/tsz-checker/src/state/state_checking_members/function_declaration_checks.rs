@@ -1079,8 +1079,18 @@ impl<'a> CheckerState<'a> {
             false
         };
         let check_no_implicit_returns = self.ctx.no_implicit_returns();
-        let need_return_flow_scan =
-            (check_explicit_return_paths && requires_return) || check_no_implicit_returns;
+        // For an explicit `: unknown` annotation on a non-generator function, tsc
+        // still emits TS2355 when the body has no returns at all and falls
+        // through (e.g. empty body). requires_return_value returns false for
+        // UNKNOWN to skip TS2366; this scan supports the empty-body TS2355
+        // check below. Generators must be excluded — `return_type_for_implicit_return_check`
+        // returns UNKNOWN as a stub for any generator, and generators legitimately
+        // have no `return` statement (they `yield`).
+        let needs_unknown_empty_body_scan =
+            check_explicit_return_paths && check_return_type == TypeId::UNKNOWN && !is_generator;
+        let need_return_flow_scan = (check_explicit_return_paths && requires_return)
+            || check_no_implicit_returns
+            || needs_unknown_empty_body_scan;
         let (has_return, falls_through) = if need_return_flow_scan {
             (
                 self.body_has_return_with_value(func.body),
@@ -1142,6 +1152,24 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
                 );
             }
+        } else if check_explicit_return_paths
+            && check_return_type == TypeId::UNKNOWN
+            && has_type_annotation
+            && !has_return
+            && falls_through
+            && !is_generator
+        {
+            // tsc treats `unknown` as undefined-assignable for TS2366 (no error
+            // when SOME paths return), but it still emits TS2355 when the body
+            // has no returns at all and falls through. Mirror that asymmetric
+            // rule here: requires_return_value returns false for UNKNOWN to
+            // skip TS2366; this branch handles the empty-body TS2355 case.
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node(
+                func.type_annotation,
+                "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
+                diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
+            );
         } else if check_no_implicit_returns
             && has_return
             && falls_through
