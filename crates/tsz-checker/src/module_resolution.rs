@@ -35,6 +35,25 @@ fn strip_ts_extension(path: &str) -> &str {
     path
 }
 
+/// Returns true when the file name matches the arbitrary-extension declaration
+/// pattern `<base>.d.<ext>.ts` where `<ext>` is a known TypeScript or JavaScript
+/// extension. These files are addressable only via their corresponding
+/// implementation specifier (e.g. `./file.d.ts.ts` is reached through `./file.ts`,
+/// not `./file.d.ts`). Registering the stripped form would create a phantom
+/// specifier that collides with declaration imports the user actually wrote.
+fn is_arbitrary_extension_declaration_file(name: &str) -> bool {
+    let Some(without_ts) = name.strip_suffix(".ts") else {
+        return false;
+    };
+    // Allow only literal-`.<ext>` matches so `<base>.d.<ext>` is well-formed.
+    const ARBITRARY_EXT_TAILS: &[&str] = &[
+        ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".d.js", ".d.jsx", ".d.mjs", ".d.cjs", ".d.json",
+    ];
+    ARBITRARY_EXT_TAILS
+        .iter()
+        .any(|tail| without_ts.ends_with(tail))
+}
+
 fn relative_directory_chain_alias(specifier: &str) -> Option<String> {
     let trimmed = specifier.trim_end_matches(['/', '\\']);
     if trimmed.is_empty() || trimmed == specifier {
@@ -138,6 +157,16 @@ pub fn build_module_resolution_maps(
 
         for (tgt_idx, tgt_name) in file_names.iter().enumerate() {
             let tgt_path = Path::new(tgt_name);
+
+            // Arbitrary-extension declaration files (`<base>.d.<ext>.ts`) are only
+            // addressable via the implementation extension (e.g. `./file.ts` resolving
+            // to `./file.d.ts.ts`). Skip them in the cross-file specifier map so the
+            // stripped phantom specifier (`./file.d.ts`) does not shadow real
+            // declaration-file imports the user wrote.
+            let tgt_file_name = tgt_path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+            if is_arbitrary_extension_declaration_file(tgt_file_name) {
+                continue;
+            }
 
             // Compute the relative specifier from source directory to target file
             if let Some(specifier) = relative_specifier(src_dir, tgt_path) {
