@@ -244,27 +244,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Collect the names of a symbol's namespace exports (merged `namespace X { ... }`
-    /// declarations). Used to decide whether a class-namespace merge could
-    /// shadow or conflict with a base class's static members for the TS2417
-    /// static-side compatibility check.
-    fn collect_namespace_export_names_for_symbol(
-        &self,
-        sym_id: tsz_binder::SymbolId,
-    ) -> rustc_hash::FxHashSet<String> {
-        let mut names = rustc_hash::FxHashSet::default();
-        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && let Some(exports) = symbol.exports.as_ref()
-        {
-            for (name, _sym_id) in exports.iter() {
-                if !name.is_empty() {
-                    names.insert(name.clone());
-                }
-            }
-        }
-        names
-    }
-
     /// Collect all property names from a type via the solver query boundary API.
     /// Used for type-level override checking when the base class is a complex
     /// expression (function call, intersection constructor).
@@ -1972,23 +1951,7 @@ impl<'a> CheckerState<'a> {
                 if derived_has_namespace {
                     let derived_ctor_type = self.get_type_of_symbol(derived_sym);
                     let base_ctor_type = self.get_type_of_symbol(base_sym);
-                    // Only flag TS2417 when derived's namespace exports a name
-                    // that already exists on base's static (constructor) side.
-                    // Without such overlap, the namespace merge cannot shadow
-                    // a base static member, so the structural check would
-                    // otherwise over-fire on self-referential clodule generics
-                    // (e.g. `class C extends B<typeof C.X> { } ;
-                    // namespace C { export const X = ... }`) where
-                    // is_assignable_to rejects a technically-compatible
-                    // constructor pair purely because of the self-reference.
-                    let derived_ns_names =
-                        self.collect_namespace_export_names_for_symbol(derived_sym);
-                    let base_static_names = self.collect_property_names_from_type(base_ctor_type);
-                    let has_name_overlap = derived_ns_names
-                        .iter()
-                        .any(|n| base_static_names.contains(n));
-                    if has_name_overlap
-                        && derived_ctor_type != TypeId::UNKNOWN
+                    if derived_ctor_type != TypeId::UNKNOWN
                         && derived_ctor_type != TypeId::ERROR
                         && base_ctor_type != TypeId::UNKNOWN
                         && base_ctor_type != TypeId::ERROR
