@@ -4,13 +4,13 @@
 //! all CLI-specific modules (argument parsing, file discovery, config loading,
 //! compilation driver, watch mode, etc.).
 
-pub mod args;
 pub mod commands;
 pub use tsz::config;
 pub mod driver;
 pub mod localization;
 pub mod project;
 pub mod reporting;
+pub use commands::args;
 pub use commands::build;
 pub use commands::help;
 pub use commands::watch;
