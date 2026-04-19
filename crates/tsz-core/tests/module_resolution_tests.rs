@@ -373,20 +373,27 @@ fn check_with_module_not_found_errors(
 }
 
 #[test]
-fn module_specifier_candidates_alias_directory_dot_chains() {
+fn module_specifier_candidates_does_not_fan_out_dot_chain_variants() {
+    // Contract of the new compatibility shim: at most two entries (canonical
+    // plus raw input if different). The old implementation manufactured dot
+    // and trailing-slash variants ("." vs "./") on the lookup side so the
+    // caller could iterate all spellings. The new design registers BOTH
+    // spellings directly in the resolution map (see
+    // `index_import_dot_aliases_resolve_in_module_maps`), so no per-lookup
+    // fan-out is required.
     use crate::checker::module_resolution::module_specifier_candidates;
 
-    let dot = module_specifier_candidates(".");
-    assert!(dot.contains(&".".to_string()));
-    assert!(dot.contains(&"./".to_string()));
-
-    let parent = module_specifier_candidates("../..");
-    assert!(parent.contains(&"../..".to_string()));
-    assert!(parent.contains(&"../../".to_string()));
-
-    let with_slash = module_specifier_candidates("../");
-    assert!(with_slash.contains(&"../".to_string()));
-    assert!(with_slash.contains(&"..".to_string()));
+    for raw in [".", "./", "..", "../", "../.."] {
+        let candidates = module_specifier_candidates(raw);
+        assert!(
+            candidates.len() <= 2,
+            "candidates must not fan out dot-chain variants, got {candidates:?} for {raw:?}",
+        );
+        assert!(
+            candidates.contains(&raw.to_string()),
+            "canonical dot-chain specifier must appear in candidates",
+        );
+    }
 }
 
 #[test]
