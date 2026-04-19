@@ -246,6 +246,9 @@ pub fn create_scanner(text: String, skip_trivia: bool) -> ScannerState {
 
 use crate::api::wasm::code_actions::{default_code_action_context, parse_code_action_context};
 use crate::api::wasm::compiler_options::CompilerOptions;
+use crate::api::wasm::program_results::{
+    CheckDiagnosticJson, FileCheckResultJson, ParseDiagnosticJson,
+};
 use crate::binder::BinderState;
 use crate::checker::context::LibContext;
 use crate::context::emit::EmitContext;
@@ -1530,34 +1533,6 @@ pub fn create_parser(file_name: String, source_text: String) -> Parser {
 use crate::parallel::{
     BindResult, MergedProgram, check_files_parallel, merge_bind_results, parse_and_bind_parallel,
 };
-
-/// Result of checking a single file in a multi-file program
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct FileCheckResultJson {
-    file_name: String,
-    parse_diagnostics: Vec<ParseDiagnosticJson>,
-    check_diagnostics: Vec<CheckDiagnosticJson>,
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ParseDiagnosticJson {
-    message: String,
-    start: u32,
-    length: u32,
-    code: u32,
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CheckDiagnosticJson {
-    message_text: String,
-    code: u32,
-    start: u32,
-    length: u32,
-    category: String,
-}
 
 /// Multi-file TypeScript program for cross-file type checking.
 ///
