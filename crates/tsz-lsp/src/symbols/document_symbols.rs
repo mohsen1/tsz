@@ -2236,7 +2236,10 @@ impl<'a> DocumentSymbolProvider<'a> {
         )
     }
 
-    /// Check if a node kind is a declaration.
+    /// Check if a node kind is a declaration. Used in the
+    /// EXPORT_DECLARATION arm to decide whether to recurse into the
+    /// exported clause (declarations) vs. treat it as a re-export
+    /// (NAMED_EXPORTS etc).
     const fn is_declaration(&self, kind: u16) -> bool {
         kind == syntax_kind_ext::FUNCTION_DECLARATION
             || kind == syntax_kind_ext::CLASS_DECLARATION
@@ -2244,6 +2247,10 @@ impl<'a> DocumentSymbolProvider<'a> {
             || kind == syntax_kind_ext::INTERFACE_DECLARATION
             || kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
             || kind == syntax_kind_ext::ENUM_DECLARATION
+            // `export namespace X {}` inside an ambient module wraps
+            // the MODULE_DECLARATION in an EXPORT_DECLARATION. Without
+            // this, the module body drops on the floor.
+            || kind == syntax_kind_ext::MODULE_DECLARATION
     }
 
     /// Build an `alias` entry for a single import/export binding. The `name`
