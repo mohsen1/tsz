@@ -335,16 +335,13 @@ impl<'a> CheckerState<'a> {
                                 && let Some(exports) = binder.module_exports.get(module_name)
                                 && let Some(target_sym_id) = exports.get(export_name)
                             {
-                                let resolved_target = if self.symbol_is_namespace_only(target_sym_id)
-                                {
-                                    export_equals_member.unwrap_or(target_sym_id)
-                                } else {
-                                    target_sym_id
-                                };
-                                return self.resolve_alias_symbol(
-                                    resolved_target,
-                                    visited_aliases,
-                                );
+                                let resolved_target =
+                                    if self.symbol_is_namespace_only(target_sym_id) {
+                                        export_equals_member.unwrap_or(target_sym_id)
+                                    } else {
+                                        target_sym_id
+                                    };
+                                return self.resolve_alias_symbol(resolved_target, visited_aliases);
                             }
                         }
                     } else {
@@ -352,16 +349,13 @@ impl<'a> CheckerState<'a> {
                             if let Some(exports) = binder.module_exports.get(module_name)
                                 && let Some(target_sym_id) = exports.get(export_name)
                             {
-                                let resolved_target = if self.symbol_is_namespace_only(target_sym_id)
-                                {
-                                    export_equals_member.unwrap_or(target_sym_id)
-                                } else {
-                                    target_sym_id
-                                };
-                                return self.resolve_alias_symbol(
-                                    resolved_target,
-                                    visited_aliases,
-                                );
+                                let resolved_target =
+                                    if self.symbol_is_namespace_only(target_sym_id) {
+                                        export_equals_member.unwrap_or(target_sym_id)
+                                    } else {
+                                        target_sym_id
+                                    };
+                                return self.resolve_alias_symbol(resolved_target, visited_aliases);
                             }
                         }
                     }

@@ -2172,7 +2172,8 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
 
-                    if let Some(member_id) = symbol_export_named_member(candidate_symbol, export_name)
+                    if let Some(member_id) =
+                        symbol_export_named_member(candidate_symbol, export_name)
                     {
                         return Some(prefer_value_named_member(member_id));
                     }
