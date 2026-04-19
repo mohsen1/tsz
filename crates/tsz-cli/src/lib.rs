@@ -12,13 +12,13 @@ pub mod incremental;
 pub mod locale;
 pub mod project;
 pub mod project_refs;
-pub mod reporter;
 pub mod reporting;
 pub mod tracing_config;
 pub mod watch;
 pub use commands::build;
 pub use commands::help;
 pub use project::fs;
+pub use reporting::reporter;
 pub use reporting::trace;
 
 #[cfg(test)]
