@@ -237,7 +237,13 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let modifiers = self.get_kind_modifiers_from_list(&func.modifiers);
 
                     // Collect nested symbols (functions/classes inside this function)
-                    let children = self.collect_children_from_block(func.body, Some(&name));
+                    let mut children = self.collect_children_from_block(func.body, Some(&name));
+                    // Also surface members of a returned object literal —
+                    // tsc treats `function F() { return { a, b } }` as if
+                    // `a` and `b` were direct children of F.
+                    if children.is_empty() {
+                        children = self.collect_returned_object_members(func.body, Some(&name));
+                    }
 
                     let mut sym = DocumentSymbol {
                         name,
@@ -1228,6 +1234,52 @@ impl<'a> DocumentSymbolProvider<'a> {
         }
     }
 
+    /// Scan a function/method body for a RETURN_STATEMENT whose
+    /// expression is an OBJECT_LITERAL_EXPRESSION. When found, emit
+    /// that object's members as if they were direct children of the
+    /// enclosing function — this mirrors tsc's treatment of factory
+    /// functions (`function F() { return { a, b } }`).
+    fn collect_returned_object_members(
+        &self,
+        block_idx: NodeIndex,
+        container_name: Option<&str>,
+    ) -> Vec<DocumentSymbol> {
+        if block_idx.is_none() {
+            return Vec::new();
+        }
+        let Some(block_node) = self.arena.get(block_idx) else {
+            return Vec::new();
+        };
+        if block_node.kind != syntax_kind_ext::BLOCK {
+            return Vec::new();
+        }
+        let Some(block) = self.arena.get_block(block_node) else {
+            return Vec::new();
+        };
+        for &stmt in &block.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                continue;
+            }
+            let Some(ret) = self.arena.get_return_statement(stmt_node) else {
+                continue;
+            };
+            let expr_idx = ret.expression;
+            if expr_idx.is_none() {
+                continue;
+            }
+            let Some(expr_node) = self.arena.get(expr_idx) else {
+                continue;
+            };
+            if expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                return self.collect_object_literal_members(expr_idx, container_name);
+            }
+        }
+        Vec::new()
+    }
+
     /// Helper to collect children from a block (e.g. inside function).
     /// Only collects nested functions/classes for the outline.
     fn collect_children_from_block(
@@ -1487,9 +1539,18 @@ impl<'a> DocumentSymbolProvider<'a> {
                         format!("#{}", id.escaped_text)
                     }
                 });
-            } else if node.kind == SyntaxKind::StringLiteral as u16
-                || node.kind == SyntaxKind::NumericLiteral as u16
-            {
+            } else if node.kind == SyntaxKind::StringLiteral as u16 {
+                // tsc's `nodeText(name)` returns the literal's source
+                // form — keep the surrounding quotes so `"prop": 1` in
+                // an object literal becomes navbar text `"prop"` (and
+                // `declare module 'x'` stays `'x'` with single quotes).
+                let start = node.pos as usize;
+                let end = node.end as usize;
+                if start <= end && end <= self.source_text.len() {
+                    return Some(self.source_text[start..end].trim().to_string());
+                }
+                return self.arena.get_literal(node).map(|l| l.text.clone());
+            } else if node.kind == SyntaxKind::NumericLiteral as u16 {
                 return self.arena.get_literal(node).map(|l| l.text.clone());
             } else if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
                 // `["bar"]` / `[key]` on a class/interface/object member.
